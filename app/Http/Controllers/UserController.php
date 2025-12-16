@@ -41,19 +41,19 @@ class UserController extends Controller
 
     public function store(Request $request)
     {
-        // $validated = $request->validate([
-        //     'name' => 'required|string|max:255',
-        //     'email' => 'required|email|unique:users,email', // email must be unique
-        //     'password' => 'required|string|min:6',
-        // ]);
+        
+        $data = $request->only(['name','email','password','role_id']);
+        $exists = User::where('email', $data['email'])->first();
 
-        $user = User::create($request->only([
-            'name',
-            'email',
-            'password',
-            'role_id'
-        ]));
-
+        if($exists)
+        {
+            return response()->json([
+                'message' => 'Email is already used.'
+            ], 401);
+        }
+        
+        $user = User::create($data);
+        
         return new UserResource($user);
     }
 
@@ -110,8 +110,14 @@ class UserController extends Controller
             ], 401);
         }
 
-        // Create a personal access token
-        $token = $user->createToken('API Token')->plainTextToken;
+        if($user->remember_token == null)
+        {
+            $token = $user->createToken('API Token')->plainTextToken;
+            $user->remember_token = $token;
+            $user->save();
+        }else{
+            $token = $user->remember_token;
+        }
 
         return response()->json([
             'user' => $user,
