@@ -30,6 +30,6 @@ class Agent extends Model
 
     public function user()
     {
-        return $this->hasOne(Agent::class, 'id');
+        return $this->hasOne(User::class, 'id');
     }
 }
