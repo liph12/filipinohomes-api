@@ -13,13 +13,14 @@ class AgentController extends Controller
     public function index()
     {
         $agents = Agent::with('user')->get();
+        
         return new AgentResourceCollection($agents);
     }
 
     public function profile()
     {
         $profile = Agent::find(Auth::user()->id);
-        
+
         return new AgentResource($profile);
     }
     
