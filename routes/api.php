@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AgentController;
+use App\Http\Controllers\CategoryController;
 use Illuminate\Support\Facades\Route;
 
 Route::apiResource('users', UserController::class);
@@ -11,5 +12,6 @@ Route::middleware('auth:sanctum')->group(function(){
 
     Route::apiResource('agents', AgentController::class);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
+    Route::apiResource('categories', CategoryController::class);
 
 });
