@@ -25,7 +25,7 @@ class AgentResource extends JsonResource
             'socials'       => $this->socials,
             'bio'           => $this->bio,
             'avatar'        => $this->avatar,
-            'geo_location'  => $this->geo_location
+            'geo_location'  => $this->geo_location,
         ];
     }
 }

@@ -22,6 +22,7 @@ class AgentController extends Controller
         $profile = Agent::with('user')->findOrFail($id);
         return new AgentResource($profile);
     }
+    
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -37,10 +38,11 @@ class AgentController extends Controller
             'geo_location'  => 'nullable|string',
         ]);
 
-        $validated['user_id']= Auth::user()->id;
+        $userId = Auth::user()->id;
+        $validated['user_id']= $userId;
 
-        $profile = Agent::create($validated);
+        $profile = Agent::updateOrCreate(['user_id' => $userId], $validated);
 
-        return new AgentResource($profile->load('user'));
+        return new AgentResource($profile);
     }
 }
