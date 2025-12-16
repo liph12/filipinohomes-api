@@ -10,8 +10,6 @@ Route::post('/login', [UserController::class, 'login']);
 Route::middleware('auth:sanctum')->group(function(){
 
     Route::apiResource('agents', AgentController::class);
+    Route::get('/agent/profile', [AgentController::class, 'profile']);
 
 });
-
-Route::apiResource('agents', AgentController::class)->except('store');
-

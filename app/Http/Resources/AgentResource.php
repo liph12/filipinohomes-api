@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Http\Resources\UserResource;
 
 class AgentResource extends JsonResource
 {
@@ -26,7 +27,7 @@ class AgentResource extends JsonResource
             'bio'           => $this->bio,
             'avatar'        => $this->avatar,
             'geo_location'  => $this->geo_location,
-            'user'          => $this->user
+            'user'          => new UserResource($this->user)
         ];
     }
 }

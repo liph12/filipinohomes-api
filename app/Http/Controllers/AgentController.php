@@ -16,10 +16,10 @@ class AgentController extends Controller
         return new AgentResourceCollection($agents);
     }
 
-    // GET /agents/{id}
-    public function show($id)
+    public function profile()
     {
-        $profile = Agent::with('user')->findOrFail($id);
+        $profile = Agent::find(Auth::user()->id);
+        
         return new AgentResource($profile);
     }
     

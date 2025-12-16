@@ -41,12 +41,12 @@ class UserController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email', // email must be unique
-            'password' => 'required|string|min:6',
-        ]);
-        // store user implementation
+        // $validated = $request->validate([
+        //     'name' => 'required|string|max:255',
+        //     'email' => 'required|email|unique:users,email', // email must be unique
+        //     'password' => 'required|string|min:6',
+        // ]);
+
         $user = User::create($request->only([
             'name',
             'email',
@@ -54,7 +54,7 @@ class UserController extends Controller
             'role_id'
         ]));
 
-    return new UserResource($user);
+        return new UserResource($user);
     }
 
     public function update($id, Request $request)
