@@ -46,4 +46,14 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+
+    public function role()
+    {
+        return $this->hasOne(Role::class, 'role_id');
+    }
+
+    public function agent()
+    {
+        return $this->belongsTo(Agent::class, 'user_id');
+    }
 }
