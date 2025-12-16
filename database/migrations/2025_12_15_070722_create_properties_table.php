@@ -20,13 +20,11 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->json('geo_coordinates')->nullable(); // "lat,lng"
             $table->boolean('is_project')->default(false);
-            // $table->unsignedBigInteger('property_attributes_id');
             $table->foreignId('property_attribute_id')
                 ->constrained('property_attributes')
                 ->cascadeOnDelete();
-            // $table->unsignedBigInteger('furnishing_id');
             $table->foreignId('furnishing_id')
-                ->constrained('furnishing')
+                ->constrained('furnishings')
                 ->cascadeOnDelete();
             $table->timestamps();
         });

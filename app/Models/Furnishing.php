@@ -9,4 +9,8 @@ class Furnishing extends Model
 {
     /** @use HasFactory<\Database\Factories\FurnishingFactory> */
     use HasFactory;
+     protected $fillable = [
+        'name',
+        'status'
+    ];
 }
