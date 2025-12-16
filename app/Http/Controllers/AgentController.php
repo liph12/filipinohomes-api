@@ -1,11 +1,11 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use App\Models\Agent;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
 use Illuminate\Support\Facades\Auth;
-
 use Illuminate\Http\Request;
 
 class AgentController extends Controller
