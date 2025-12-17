@@ -50,8 +50,6 @@ class PropertyController extends Controller
             'message'  => $message,
             'property' => new PropertyResource($properties)
         ]);
-
-        return new PropertyResource($properties);
     }
     public function destroy($id)
     {
