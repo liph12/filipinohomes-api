@@ -4,6 +4,8 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\AgentController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\FurnishingController;
+use App\Http\Controllers\PropertyAttributesController;
+use App\Http\Controllers\PropertyController;
 use Illuminate\Support\Facades\Route;
 
 Route::apiResource('users', UserController::class);
@@ -15,5 +17,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::apiResource('categories', CategoryController::class);
     Route::apiResource('furnishings', FurnishingController::class);
-
+    Route::apiResource('property_attributes', PropertyAttributesController::class);
+    Route::apiResource('properties', PropertyController::class);
 });
