@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use App\Http\Resources\FurnishingResourceCollection;
 use App\Http\Resources\FurnishingResource;
 use App\Models\Furnishing;

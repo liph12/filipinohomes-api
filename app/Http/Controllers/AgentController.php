@@ -13,7 +13,7 @@ class AgentController extends Controller
     public function index()
     {
         $agents = Agent::with('user')->get();
-        
+
         return new AgentResourceCollection($agents);
     }
 
@@ -23,7 +23,7 @@ class AgentController extends Controller
 
         return new AgentResource($profile);
     }
-    
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -40,7 +40,7 @@ class AgentController extends Controller
         ]);
 
         $userId = Auth::user()->id;
-        $validated['user_id']= $userId;
+        $validated['user_id'] = $userId;
 
         $profile = Agent::updateOrCreate(['user_id' => $userId], $validated);
 

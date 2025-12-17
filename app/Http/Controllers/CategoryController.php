@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use App\Http\Resources\CategoryResourceCollection;
 use App\Http\Resources\CategoryResource;
 use App\Models\Category;
@@ -57,5 +58,4 @@ class CategoryController extends Controller
             'id' => $id
         ], 200);
     }
-
 }
