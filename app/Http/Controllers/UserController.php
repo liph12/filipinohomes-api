@@ -87,43 +87,4 @@ class UserController extends Controller
             ], $e->getCode() ?: 401);
         }
     }
-
-    // public function login(Request $request)
-    // {
-    //     // Validate email and password
-    //     $credentials = $request->validate([
-    //         'email' => 'required|email',
-    //         'password' => 'required|string'
-    //     ]);
-
-    //     // Find user by email
-    //     $user = User::where('email', $credentials['email'])->first();
-
-    //     if (!$user) {
-    //         // Email does not exist
-    //         return response()->json([
-    //             'message' => 'Email not found'
-    //         ], 404);
-    //     }
-
-    //     if (!Hash::check($credentials['password'], $user->password)) {
-    //         // Password is incorrect
-    //         return response()->json([
-    //             'message' => 'Incorrect password'
-    //         ], 401);
-    //     }
-
-    //     if ($user->remember_token == null) {
-    //         $token = $user->createToken('API Token')->plainTextToken;
-    //         $user->remember_token = $token;
-    //         $user->save();
-    //     } else {
-    //         $token = $user->remember_token;
-    //     }
-
-    //     return response()->json([
-    //         'user' => $user,
-    //         'token' => $token
-    //     ], 200);
-    // }
 }
