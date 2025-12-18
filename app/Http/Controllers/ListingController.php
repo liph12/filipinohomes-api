@@ -32,7 +32,7 @@ class ListingController extends Controller
         'featured_photo' => 'nullable|string|max:255',
         'is_featured'    => 'sometimes|boolean',
         'clicks'         => 'nullable|integer|min:0',
-        'property_id'    => 'required|integer|exists:properties,id',
+        'property_id'    => 'nullable|integer|exists:properties,id',
         'category_id'    => 'required|integer|exists:categories,id',
         'agent_id'       => 'required|integer|exists:agents,id',
     ]);
