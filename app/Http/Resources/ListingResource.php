@@ -5,6 +5,8 @@ namespace App\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentResource;
+use App\Http\Resources\CategoryResource;
+use App\Http\Resources\PropertyResource;
 
 class ListingResource extends JsonResource
 {
@@ -25,8 +27,8 @@ class ListingResource extends JsonResource
             'featured_photo' => $this->featured_photo,
             'is_featured'    => $this->is_featured,
             'clicks'         => $this->clicks,
-            'property_id'    => $this->property_id,
-            'category_id'    => $this->category_id,
+            'property'       => new PropertyResource($this->property),
+            'category'       => new CategoryResource($this->category),
             'agent'          => new AgentResource($this->agent)
 
         ];

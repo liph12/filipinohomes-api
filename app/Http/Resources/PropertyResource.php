@@ -4,7 +4,8 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-
+use App\Http\Resources\PropertyAttributesResource;
+use App\Http\Resources\FurnishingResource;
 class PropertyResource extends JsonResource
 {
     /**
@@ -23,8 +24,8 @@ class PropertyResource extends JsonResource
             'description'           => $this->description,
             'geo_coordinates'       => $this->geo_coordinates,
             'is_project'            => $this->is_project,
-            'property_attribute_id' => $this->property_attribute_id,
-            'furnishing_id'         => $this->furnishing_id
+            'property'              => new PropertyAttributesResource($this->propertyAttribute),
+            'furnishing'            => new FurnishingResource($this->furnishing),
         ];
     }
 }
