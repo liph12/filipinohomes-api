@@ -26,5 +26,4 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('listing_conversations', ListingConversationController::class);
     Route::apiResource('listing_inquiries', ListingInquiryController::class);
 
-    
 });

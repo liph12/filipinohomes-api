@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use App\Http\Resources\PropertyResourceCollection;
 use App\Http\Resources\PropertyResource;
 use App\Models\Property;
@@ -42,8 +43,8 @@ class PropertyController extends Controller
             ['id' => $request->id], // MUST be provided
             $validated
         );
-        $message = $properties->wasRecentlyCreated 
-            ? 'Property has been created successfully.' 
+        $message = $properties->wasRecentlyCreated
+            ? 'Property has been created successfully.'
             : 'Property has been updated successfully.';
 
         return response()->json([

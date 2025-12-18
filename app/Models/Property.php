@@ -36,5 +36,4 @@ class Property extends Model
     {
         return $this->belongsTo(Furnishing::class, 'furnishing_id');
     }
-
 }

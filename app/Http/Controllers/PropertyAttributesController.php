@@ -6,6 +6,7 @@ use App\Http\Resources\PropertyAttributesResourceCollection;
 use App\Http\Resources\PropertyAttributesResource;
 use App\Models\PropertyAttribute;
 use Illuminate\Http\Request;
+
 class PropertyAttributesController extends Controller
 {
     public function index()

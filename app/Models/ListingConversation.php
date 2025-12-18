@@ -9,7 +9,7 @@ class ListingConversation extends Model
 {
     /** @use HasFactory<\Database\Factories\ListingConversationFactory> */
     use HasFactory;
-      protected $fillable = [
+    protected $fillable = [
         'messages',
         'client_status',
         'agent_status'
