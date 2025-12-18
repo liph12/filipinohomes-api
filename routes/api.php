@@ -6,6 +6,7 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\FurnishingController;
 use App\Http\Controllers\PropertyAttributesController;
 use App\Http\Controllers\PropertyController;
+use App\Http\Controllers\ListingController;
 use Illuminate\Support\Facades\Route;
 
 Route::apiResource('users', UserController::class);
@@ -19,4 +20,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('furnishings', FurnishingController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
+    Route::apiResource('listings', ListingController::class);
+    
 });
