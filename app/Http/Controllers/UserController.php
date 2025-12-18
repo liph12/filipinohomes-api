@@ -7,23 +7,9 @@ use App\Models\User;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use Illuminate\Support\Facades\Hash;
-
+use App\Services\User\LoginUserService;
 class UserController extends Controller
 {
-
-    /*
-    
-    GET, POST, PUT
-
-    GET - index()
-
-    GET - show($id)
-
-    POST - store()
-
-    PUT - update($id)
-
-    */
 
     public function index()
     {
@@ -84,42 +70,21 @@ class UserController extends Controller
         ], 200);
     }
 
-    public function login(Request $request)
+    public function login(Request $request, LoginUserService $loginUserService)
     {
-        // Validate email and password
         $credentials = $request->validate([
             'email' => 'required|email',
             'password' => 'required|string'
         ]);
 
-        // Find user by email
-        $user = User::where('email', $credentials['email'])->first();
+        try {
+            $result = $loginUserService->execute($credentials);
 
-        if (!$user) {
-            // Email does not exist
+            return response()->json($result, 200);
+        } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Email not found'
-            ], 404);
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 401);
         }
-
-        if (!Hash::check($credentials['password'], $user->password)) {
-            // Password is incorrect
-            return response()->json([
-                'message' => 'Incorrect password'
-            ], 401);
-        }
-
-        if ($user->remember_token == null) {
-            $token = $user->createToken('API Token')->plainTextToken;
-            $user->remember_token = $token;
-            $user->save();
-        } else {
-            $token = $user->remember_token;
-        }
-
-        return response()->json([
-            'user' => $user,
-            'token' => $token
-        ], 200);
     }
 }
