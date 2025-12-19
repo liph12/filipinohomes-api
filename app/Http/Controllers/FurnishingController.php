@@ -8,23 +8,26 @@ class FurnishingController extends Controller
 {
     public function index()
     {
-        $furnishings = Furnishing::get();
-        return new FurnishingResourceCollection($furnishings);
+        return new FurnishingResourceCollection(
+            Furnishing::get()
+        );
     }
 
     public function show($id)
     {
-        $furnishings = Furnishing::find($id);
-        return new FurnishingResource($furnishings);
+        return new FurnishingResource(
+            Furnishing::find($id)
+        );
     }
 
     public function store(Request $request)
     {
-        $furnishings = Furnishing::create($request->only([
-            'name',
-            'status'
-        ]));
-        return new FurnishingResource($furnishings);
+        return new FurnishingResource(
+            Furnishing::create($request->only([
+                'name',
+                'status'
+            ]))
+        );
     }
 
     public function update($id, Request $request)
@@ -40,11 +43,6 @@ class FurnishingController extends Controller
 
     public function destroy($id)
     {
-        $furnishings = Furnishing::findOrFail($id);
-        $furnishings->delete();
-        return response()->json([
-            'message' => 'Furnishing deleted successfully',
-            'id' => $id
-        ], 200);
+        Furnishing::findOrFail($id)->delete();
     }
 }

@@ -8,14 +8,16 @@ class ListingConversationController extends Controller
 {
     public function index()
     {
-        $listing_Conversations = ListingConversation::get();
-        return new ListingConversationResourceCollection($listing_Conversations);
+        return new ListingConversationResourceCollection(
+            ListingConversation::get()
+        );
     }
 
     public function show($id)
     {
-        $listing_Conversations = ListingConversation::find($id);
-        return new ListingConversationResource($listing_Conversations);
+        return new ListingConversationResource(
+            ListingConversation::find($id)
+        );
     }
 
     public function store(Request $request)
@@ -34,11 +36,6 @@ class ListingConversationController extends Controller
 
     public function destroy($id)
     {
-        $listing_Conversations = ListingConversation::findOrFail($id);
-        $listing_Conversations->delete();
-        return response()->json([
-            'message' => 'Listing Conversation deleted successfully',
-            'id' => $id
-        ], 200);
+        ListingConversation::findOrFail($id)->delete();
     }
 }

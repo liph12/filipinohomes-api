@@ -9,14 +9,16 @@ class AgentController extends Controller
 {
     public function index()
     {
-        $agents = Agent::with('user')->get();
-        return new AgentResourceCollection($agents);
+        return new AgentResourceCollection(
+            Agent::with('user')->get()
+        );
     }
 
     public function profile()
     {
-        $profile = Agent::find(Auth::user()->id);
-        return new AgentResource($profile);
+        return new AgentResource( 
+            Agent::find(Auth::user()->id)
+        );
     }
 
     public function store(Request $request)
@@ -36,7 +38,9 @@ class AgentController extends Controller
 
         $userId = Auth::user()->id;
         $validated['user_id'] = $userId;
-        $profile = Agent::updateOrCreate(['user_id' => $userId], $validated);
-        return new AgentResource($profile);
+
+        return new AgentResource(
+            Agent::updateOrCreate(['user_id' => $userId], $validated)
+        );
     }
 }

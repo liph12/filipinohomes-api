@@ -8,14 +8,16 @@ class ListingInquiryController extends Controller
 {
     public function index()
     {
-        $listing_inquiries = ListingInquiry::get();
-        return new ListingInquiryResourceCollection($listing_inquiries);
+        return new ListingInquiryResourceCollection(
+            ListingInquiry::get()
+        );
     }
 
     public function show($id)
     {
-        $listing_inquiries = ListingInquiry::find($id);
-        return new ListingInquiryResource($listing_inquiries);
+        return new ListingInquiryResource(
+            ListingInquiry::find($id)
+        );
     }
 
     public function store(Request $request)
@@ -36,11 +38,6 @@ class ListingInquiryController extends Controller
 
     public function destroy($id)
     {
-        $listing_inquiries = ListingInquiry::findOrFail($id);
-        $listing_inquiries->delete();
-        return response()->json([
-            'message' => 'Listing Inquiry deleted successfully',
-            'id' => $id
-        ], 200);
+        ListingInquiry::findOrFail($id)->delete();
     }
 }

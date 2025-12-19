@@ -9,14 +9,16 @@ class UserController extends Controller
 {
     public function index()
     {
-        $users = User::get();
-        return new UserResourceCollection($users);
+        return new UserResourceCollection(
+            User::get()
+        );
     }
 
     public function show($id)
     {
-        $user = User::find($id);
-        return new UserResource($user);
+        return new UserResource(
+            User::find($id)
+        );
     }
 
     public function store(Request $request)
@@ -47,12 +49,7 @@ class UserController extends Controller
 
     public function destroy($id)
     {
-        $user = User::findOrFail($id);
-        $user->delete();
-        return response()->json([
-            'message' => 'User deleted successfully',
-            'id' => $id
-        ], 200);
+        User::findOrFail($id)->delete();
     }
 
     public function login(Request $request, LoginUserService $loginUserService)

@@ -8,23 +8,26 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        $categories = Category::get();
-        return new CategoryResourceCollection($categories);
+        return new CategoryResourceCollection(
+           Category::get()
+        );
     }
 
     public function show($id)
     {
-        $category = Category::find($id);
-        return new CategoryResource($category);
+        return new CategoryResource(
+            Category::find($id)
+        );
     }
 
     public function store(Request $request)
     {
-        $category = Category::create($request->only([
-            'name',
-            'status'
-        ]));
-        return new CategoryResource($category);
+        return new CategoryResource(
+            Category::create($request->only([
+                'name',
+                'status'
+            ]))
+        );
     }
 
     public function update($id, Request $request)
@@ -40,11 +43,6 @@ class CategoryController extends Controller
 
     public function destroy($id)
     {
-        $category = Category::findOrFail($id);
-        $category->delete();
-        return response()->json([
-            'message' => 'Category deleted successfully',
-            'id' => $id
-        ], 200);
+        Category::findOrFail($id)->delete();
     }
 }

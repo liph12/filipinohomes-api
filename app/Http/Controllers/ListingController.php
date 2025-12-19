@@ -8,16 +8,18 @@ class ListingController extends Controller
 {
     public function index()
     {
-        $listings = Listing::get();
-        return new ListingResourceCollection($listings);
+        return new ListingResourceCollection(
+            Listing::get()
+        );
     }
 
     public function show($id)
     {
-        $listings = Listing::find($id);
-        return new ListingResource($listings);
+        return new ListingResource(
+            Listing::find($id)
+        );
     }
-    
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -42,11 +44,6 @@ class ListingController extends Controller
 
     public function destroy($id)
     {
-        $listings = Listing::findOrFail($id);
-        $listings->delete();
-        return response()->json([
-            'message' => 'Listing deleted successfully',
-            'id' => $id
-        ], 200);
+        Listing::findOrFail($id)->delete();
     }
 }

@@ -8,14 +8,16 @@ class PropertyAttributesController extends Controller
 {
     public function index()
     {
-        $property_attributes = PropertyAttribute::get();
-        return new PropertyAttributesResourceCollection($property_attributes);
+        return new PropertyAttributesResourceCollection(
+            PropertyAttribute::get()
+        );
     }
 
     public function show($id)
     {
-        $property_attributes = PropertyAttribute::find($id);
-        return new PropertyAttributesResource($property_attributes);
+        return new PropertyAttributesResource(
+            PropertyAttribute::find($id)
+        );
     }
 
     public function store(Request $request)
@@ -36,11 +38,6 @@ class PropertyAttributesController extends Controller
 
     public function destroy($id)
     {
-        $property_attributes = PropertyAttribute::findOrFail($id);
-        $property_attributes->delete();
-        return response()->json([
-            'message' => 'PropertyAttributes deleted successfully',
-            'id' => $id
-        ], 200);
+        PropertyAttribute::findOrFail($id)->delete();
     }
 }
