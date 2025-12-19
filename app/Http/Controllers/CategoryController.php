@@ -22,25 +22,23 @@ class CategoryController extends Controller
 
     public function store(Request $request)
     {
+        $validated = $request->validate([
+            'id'     => 'sometimes|integer|exists:categories,id',
+            'name'   => 'required|string|max:255',
+            'status' => 'required|string|max:255',
+        ]);
+
         return new CategoryResource(
-            Category::create($request->only([
-                'name',
-                'status'
-            ]))
+            Category::updateOrCreate(
+                ['id' => $validated['id'] ?? null],
+                [
+                    'name'   => $validated['name'],
+                    'status' => $validated['status'],
+                ]
+            )
         );
     }
-
-    public function update($id, Request $request)
-    {
-        $category = Category::findOrFail($id);
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'status' => 'sometimes|string|max:255'
-        ]);
-        $category->update($validated);
-        return new CategoryResource($category);
-    }
-
+    
     public function destroy($id)
     {
         Category::findOrFail($id)->delete();

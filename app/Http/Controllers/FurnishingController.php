@@ -22,24 +22,23 @@ class FurnishingController extends Controller
 
     public function store(Request $request)
     {
+        $validated = $request->validate([
+            'id'     => 'sometimes|integer|exists:furnishings,id',
+            'name'   => 'required|string|max:255',
+            'status' => 'required|string|max:255',
+        ]);
+
         return new FurnishingResource(
-            Furnishing::create($request->only([
-                'name',
-                'status'
-            ]))
+            Furnishing::updateOrCreate(
+                ['id' => $validated['id'] ?? null],
+                [
+                    'name'   => $validated['name'],
+                    'status' => $validated['status'],
+                ]
+            )
         );
     }
 
-    public function update($id, Request $request)
-    {
-        $furnishings = Furnishing::findOrFail($id);
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'status' => 'sometimes|string|max:255'
-        ]);
-        $furnishings->update($validated);
-        return new FurnishingResource($furnishings);
-    }
 
     public function destroy($id)
     {
