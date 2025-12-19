@@ -1,14 +1,15 @@
 <?php
-
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\AgentController;
-use App\Http\Controllers\CategoryController;
-use App\Http\Controllers\FurnishingController;
-use App\Http\Controllers\PropertyAttributesController;
-use App\Http\Controllers\PropertyController;
-use App\Http\Controllers\ListingController;
-use App\Http\Controllers\ListingConversationController;
-use App\Http\Controllers\ListingInquiryController;
+use App\Http\Controllers\{
+    UserController,
+    AgentController,
+    CategoryController,
+    FurnishingController,
+    PropertyAttributesController,
+    PropertyController,
+    ListingController,
+    ListingConversationController,
+    ListingInquiryController
+};
 use Illuminate\Support\Facades\Route;
 
 Route::apiResource('users', UserController::class);

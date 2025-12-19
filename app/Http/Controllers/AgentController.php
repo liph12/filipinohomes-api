@@ -1,26 +1,21 @@
 <?php
-
 namespace App\Http\Controllers;
-
 use App\Models\Agent;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
-
 class AgentController extends Controller
 {
     public function index()
     {
         $agents = Agent::with('user')->get();
-
         return new AgentResourceCollection($agents);
     }
 
     public function profile()
     {
         $profile = Agent::find(Auth::user()->id);
-
         return new AgentResource($profile);
     }
 
@@ -41,9 +36,7 @@ class AgentController extends Controller
 
         $userId = Auth::user()->id;
         $validated['user_id'] = $userId;
-
         $profile = Agent::updateOrCreate(['user_id' => $userId], $validated);
-
         return new AgentResource($profile);
     }
 }

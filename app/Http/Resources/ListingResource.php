@@ -1,13 +1,10 @@
 <?php
-
 namespace App\Http\Resources;
-
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentResource;
 use App\Http\Resources\CategoryResource;
 use App\Http\Resources\PropertyResource;
-
 class ListingResource extends JsonResource
 {
     /**

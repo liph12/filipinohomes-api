@@ -1,25 +1,20 @@
 <?php
-
 namespace App\Http\Controllers;
-
 use App\Http\Resources\PropertyResourceCollection;
 use App\Http\Resources\PropertyResource;
 use App\Models\Property;
 use Illuminate\Http\Request;
-
 class PropertyController extends Controller
 {
     public function index()
     {
         $properties = Property::get();
-
         return new PropertyResourceCollection($properties);
     }
 
     public function show($id)
     {
         $properties = Property::find($id);
-
         return new PropertyResource($properties);
     }
 
@@ -52,11 +47,10 @@ class PropertyController extends Controller
             'property' => new PropertyResource($properties)
         ]);
     }
+
     public function destroy($id)
     {
-        // Find the user or fail with 404
         $properties = Property::findOrFail($id);
-
         $properties->delete();
         return response()->json([
             'message' => 'Property deleted successfully',
