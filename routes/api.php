@@ -3,12 +3,14 @@ use App\Http\Controllers\{
     UserController,
     AgentController,
     CategoryController,
+    PropertyTypeController,
     FurnishingController,
     PropertyAttributesController,
     PropertyController,
     ListingController,
     ListingConversationController,
-    ListingInquiryController
+    ListingInquiryController,
+    PropertySubtypeController
 };
 use Illuminate\Support\Facades\Route;
 
@@ -20,6 +22,8 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('agents', AgentController::class);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::apiResource('categories', CategoryController::class);
+    Route::apiResource('property_types', PropertyTypeController::class);
+    Route::apiResource('property_subtypes', PropertySubtypeController::class);
     Route::apiResource('furnishings', FurnishingController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);

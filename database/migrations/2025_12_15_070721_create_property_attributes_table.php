@@ -18,6 +18,9 @@ return new class extends Migration
             $table->unsignedInteger('garage_count')->default(0);
             $table->decimal('lot_area');   
             $table->decimal('floor_area'); 
+            $table->foreignId('property_subtype_id')
+                ->constrained('property_subtypes')
+                ->cascadeOnDelete();
             $table->timestamps();
         });
     }

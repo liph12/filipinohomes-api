@@ -10,6 +10,11 @@ class PropertyAttribute extends Model
         'bathroom_count',
         'garage_count',
         'lot_area',
-        'floor_area'
+        'floor_area',
+        'property_subtype_id',
     ];
+    public function subtype()
+    {
+        return $this->belongsTo(PropertySubtype::class);
+    }
 }
