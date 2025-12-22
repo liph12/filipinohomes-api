@@ -28,10 +28,10 @@ class PropertyAttributesController extends Controller
             'garage_count'    => 'required|integer|min:0',
             'lot_area'        => 'required|numeric',
             'floor_area'      => 'required|numeric',
-            'property_sub_id'   => 'required|integer|exists:property_subtypes,id',
+            'property_subtype_id'   => 'required|integer|exists:property_subtypes,id',
         ]);
         $propertyAttributes = PropertyAttribute::updateOrCreate(
-            ['id' => $request->id], // MUST be provided
+            ['id' => $request->id],
             $validated
         );
         return new PropertyAttributesResource($propertyAttributes);

@@ -15,6 +15,6 @@ class PropertyAttribute extends Model
     ];
     public function subtype()
     {
-        return $this->belongsTo(PropertySubtype::class);
+        return $this->belongsTo(PropertySubtype::class, 'property_subtype_id');
     }
 }
