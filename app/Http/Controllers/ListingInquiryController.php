@@ -23,10 +23,10 @@ class ListingInquiryController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'status'       => 'sometimes|string|max:255',
-            'client_id'  => 'required|integer|exists:users,id',
-            'listing_id'   => 'required|integer|exists:listings,id',
-            'conversation_id'   => 'required|integer|exists:listing_conversations,id',
+            'status'         => 'sometimes|string|max:255',
+            'client_id'      => 'required|integer|exists:users,id',
+            'listing_id'     => 'required|integer|exists:listings,id',
+            'conversation_id'=> 'required|integer|exists:listing_conversations,id',
         ]);
 
         $listingConversation = ListingInquiry::updateOrCreate(

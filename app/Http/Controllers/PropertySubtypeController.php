@@ -34,9 +34,9 @@ class PropertySubtypeController extends Controller
             PropertySubtype::updateOrCreate(
                 ['id' => $validated['id'] ?? null],
                 [
-                    'name'   => $validated['name'],
-                    'status' => $validated['status'],
-                    'property_type_id' => $validated['property_type_id'],
+                    'name'              => $validated['name'],
+                    'status'            => $validated['status'],
+                    'property_type_id'  => $validated['property_type_id'],
                 ]
             )
         );

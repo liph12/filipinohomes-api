@@ -55,8 +55,8 @@ class UserController extends Controller
     public function login(Request $request, LoginUserService $loginUserService)
     {
         $credentials = $request->validate([
-            'email' => 'required|email',
-            'password' => 'required|string'
+            'email'     => 'required|email',
+            'password'  => 'required|string'
         ]);
 
         try {
