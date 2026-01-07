@@ -68,4 +68,15 @@ class UserController extends Controller
             ], $e->getCode() ?: 401);
         }
     }
+
+    public function logout(Request $request)
+    {
+        $request->user()
+            ->currentAccessToken()
+            ->delete();
+
+        return response()->json([
+            'message' => 'Logged out successfully'
+        ], 200);
+    }
 }

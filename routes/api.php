@@ -30,5 +30,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('listings', ListingController::class);
     Route::apiResource('listing_conversations', ListingConversationController::class);
     Route::apiResource('listing_inquiries', ListingInquiryController::class);
+    Route::post('/logout', [UserController::class, 'logout']);
 
 });
