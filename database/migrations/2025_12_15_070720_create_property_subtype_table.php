@@ -14,7 +14,6 @@ return new class extends Migration
         Schema::create('property_subtypes', function (Blueprint $table) {
             $table->id();
             $table->string('name');
-            $table->string('status');
             $table->foreignId('property_type_id')
                 ->constrained('property_types')
                 ->cascadeOnDelete();
