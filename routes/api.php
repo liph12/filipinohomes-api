@@ -10,15 +10,15 @@ use App\Http\Controllers\{
     ListingController,
     ListingConversationController,
     ListingInquiryController,
+    FullListingController,
     PropertySubtypeController
 };
 use Illuminate\Support\Facades\Route;
 
 Route::apiResource('users', UserController::class);
 Route::post('/login', [UserController::class, 'login']);
-
 Route::middleware('auth:sanctum')->group(function(){
-
+    
     Route::apiResource('agents', AgentController::class);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::apiResource('categories', CategoryController::class);
@@ -31,5 +31,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('listing_conversations', ListingConversationController::class);
     Route::apiResource('listing_inquiries', ListingInquiryController::class);
     Route::post('/logout', [UserController::class, 'logout']);
-
+    Route::post('/full-listing', [FullListingController::class, 'store']);
+    
 });
