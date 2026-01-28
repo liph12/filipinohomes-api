@@ -7,28 +7,29 @@ use Illuminate\Support\Facades\DB;
 
 class PropertyTypeSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
         $types = [
-            'Condominium',
-            'House',
-            'Land',
-            'Commercial',
+            1 => 'Condominium',
+            2 => 'House',
+            3 => 'Land',
+            4 => 'Commercial',
         ];
 
-        foreach ($types as $type) {
+        foreach ($types as $id => $name) {
             DB::table('property_types')->updateOrInsert(
-                ['name' => $type], // prevent duplicates
+                ['id' => $id], // fixed ID
                 [
+                    'name' => $name,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]
             );
         }
 
-        $this->command->info('Property types seeded successfully!');
+        // Set next auto-increment to avoid collisions
+        DB::statement('ALTER TABLE property_types AUTO_INCREMENT = 5');
+
+        $this->command->info('Property types seeded successfully with fixed IDs!');
     }
 }
