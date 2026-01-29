@@ -11,7 +11,8 @@ use App\Http\Controllers\{
     ListingConversationController,
     ListingInquiryController,
     FullListingController,
-    PropertySubtypeController
+    PropertySubtypeController,
+    ProjectController
 };
 use Illuminate\Support\Facades\Route;
 
@@ -32,5 +33,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('listing_inquiries', ListingInquiryController::class);
     Route::post('/logout', [UserController::class, 'logout']);
     Route::post('/full-listing', [FullListingController::class, 'store']);
-    
+    Route::get('/projects', [ProjectController::class, 'index']);
+
 });

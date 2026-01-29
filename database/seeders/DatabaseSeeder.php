@@ -14,7 +14,7 @@ class DatabaseSeeder extends Seeder
         // Call your custom seeder
         $this->call(PropertyTypeSeeder::class);
         $this->call(PropertySubtypeSeeder::class);
-        $this->call(OldToNewPropertiesSeeder::class);
+        // $this->call(OldToNewPropertiesSeeder::class);
 
 
         // Example: call other seeders if needed
