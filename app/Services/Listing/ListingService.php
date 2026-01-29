@@ -1,0 +1,140 @@
+<?php
+
+namespace App\Services\Listing;
+
+use App\Models\Agent;
+use App\Models\Category;
+use App\Models\Furnishing;
+use App\Models\Listing;
+use App\Models\Property;
+use App\Models\PropertyAttribute;
+use App\Models\PropertySubtype;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
+class ListingService
+{
+    public function createListing(array $data, Agent $agent): Listing
+    {
+        // Verify property subtype belongs to property type
+        $this->validatePropertySubtype($data['property_subtype_id'], $data['property_type_id']);
+
+        return DB::transaction(function () use ($data, $agent) {
+            // Create property attributes
+            $propertyAttribute = $this->createPropertyAttribute($data);
+
+            // Get or create furnishing
+            $furnishingId = $this->getOrCreateFurnishing($data['furnishing_name'] ?? null);
+
+            // Create property
+            $property = $this->createProperty($data, $propertyAttribute->id, $furnishingId);
+
+            // Get or create category
+            $categoryId = $this->getOrCreateCategory($data['category_name'] ?? null);
+
+            // Create listing
+            $listing = $this->createListingRecord($data, $property->id, $categoryId, $agent->id);
+
+            // Load relationships
+            $listing->load(['property', 'category', 'agent']);
+
+            return $listing;
+        });
+    }
+
+    protected function validatePropertySubtype(int $propertySubtypeId, int $propertyTypeId): void
+    {
+        $propertySubtype = PropertySubtype::findOrFail($propertySubtypeId);
+
+        if ($propertySubtype->property_type_id !== $propertyTypeId) {
+            throw new \InvalidArgumentException(
+                'Property subtype does not belong to the selected property type'
+            );
+        }
+    }
+
+    protected function createPropertyAttribute(array $data): PropertyAttribute
+    {
+        return PropertyAttribute::create([
+            'bedroom_count' => $data['bedroom_count'] ?? null,
+            'bathroom_count' => $data['bathroom_count'] ?? null,
+            'garage_count' => $data['garage_count'] ?? null,
+            'lot_area' => $data['lot_area'] ?? null,
+            'floor_area' => $data['floor_area'] ?? null,
+            'property_subtype_id' => $data['property_subtype_id'],
+        ]);
+    }
+
+    protected function getOrCreateFurnishing(?string $furnishingName): ?int
+    {
+        if (empty($furnishingName)) {
+            return null;
+        }
+
+        $furnishing = Furnishing::firstOrCreate(
+            ['name' => $furnishingName],
+            ['status' => 'active']
+        );
+
+        return $furnishing->id;
+    }
+
+    protected function createProperty(array $data, int $propertyAttributeId, ?int $furnishingId): Property
+    {
+        return Property::create([
+            'name' => $data['name'],
+            'address' => $data['address'],
+            'photos' => $data['photos'] ?? [],
+            'amenities' => $data['amenities'] ?? [],
+            'description' => $data['description'] ?? null,
+            'geo_coordinates' => isset($data['geo_coordinates']) 
+                ? json_encode($data['geo_coordinates']) 
+                : null,
+            'is_project' => $data['is_project'] ?? false,
+            'property_attribute_id' => $propertyAttributeId,
+            'furnishing_id' => $furnishingId,
+        ]);
+    }
+
+    protected function getOrCreateCategory(?string $categoryName): ?int
+    {
+        if (empty($categoryName)) {
+            return null;
+        }
+
+        $category = Category::firstOrCreate(
+            ['name' => $categoryName],
+            ['status' => 'active']
+        );
+
+        return $category->id;
+    }
+
+    protected function createListingRecord(
+        array $data, 
+        int $propertyId, 
+        ?int $categoryId, 
+        int $agentId
+    ): Listing {
+
+        return Listing::create([
+            'code' => $data['code'],
+            'status' => $data['status'] ?? 'active',
+            'name' => $data['name'],
+            'slug' => $data['slug'] ?? Str::slug($data['name']),
+            'price' => $data['price'],
+           'featured_photo' => isset($data['featured_photo'])
+            ? json_encode(
+                is_array($data['featured_photo']) 
+                    ? $data['featured_photo'] 
+                    : [$data['featured_photo']]
+              )
+            : null,
+            'is_featured' => $data['is_featured'] ?? false,
+            'clicks' => 0,
+            'property_id' => $propertyId,
+            'category_id' => $categoryId,
+            'agent_id' => $agentId,
+        ]);
+    }
+}
