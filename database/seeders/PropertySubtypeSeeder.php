@@ -9,7 +9,6 @@ class PropertySubtypeSeeder extends Seeder
 {
     public function run(): void
     {
-        // Subtypes grouped by property_type_id, with fixed IDs
         $subtypes = [
             1 => [ // Condominium
                 1 => 'Studio',
@@ -51,7 +50,7 @@ class PropertySubtypeSeeder extends Seeder
         foreach ($subtypes as $propertyTypeId => $list) {
             foreach ($list as $id => $subtypeName) {
                 DB::table('property_subtypes')->updateOrInsert(
-                    ['id' => $id], // fixed ID
+                    ['id' => $id], 
                     [
                         'name' => $subtypeName,
                         'property_type_id' => $propertyTypeId,
@@ -61,9 +60,6 @@ class PropertySubtypeSeeder extends Seeder
                 );
             }
         }
-
-        // Adjust auto-increment so it starts after the last fixed ID
-        DB::statement('ALTER TABLE property_subtypes AUTO_INCREMENT = 407');
 
         $this->command->info('Property subtypes seeded successfully with fixed IDs!');
     }

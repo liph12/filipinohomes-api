@@ -9,6 +9,8 @@ class PropertyTypeSeeder extends Seeder
 {
     public function run(): void
     {
+        // DB::table('property_types')->truncate();
+
         $types = [
             1 => 'Condominium',
             2 => 'House',
@@ -18,7 +20,7 @@ class PropertyTypeSeeder extends Seeder
 
         foreach ($types as $id => $name) {
             DB::table('property_types')->updateOrInsert(
-                ['id' => $id], // fixed ID
+                ['id' => $id], 
                 [
                     'name' => $name,
                     'created_at' => now(),
@@ -26,9 +28,6 @@ class PropertyTypeSeeder extends Seeder
                 ]
             );
         }
-
-        // Set next auto-increment to avoid collisions
-        DB::statement('ALTER TABLE property_types AUTO_INCREMENT = 5');
 
         $this->command->info('Property types seeded successfully with fixed IDs!');
     }

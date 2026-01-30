@@ -11,14 +11,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Call your custom seeder
         $this->call(PropertyTypeSeeder::class);
         $this->call(PropertySubtypeSeeder::class);
+        $this->call(CategorySeeder::class);
+        $this->call(FurnishingSeeder::class);
+        $this->call(UserSeeder::class);
+        $this->call(AgentSeeder::class);
         // $this->call(OldToNewPropertiesSeeder::class);
 
-
-        // Example: call other seeders if needed
-        // $this->call(CategoriesSeeder::class);
-        // $this->call(FurnishingsSeeder::class);
     }
 }

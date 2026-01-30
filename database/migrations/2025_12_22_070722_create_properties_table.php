@@ -24,6 +24,7 @@ return new class extends Migration
                 ->constrained('property_attributes')
                 ->cascadeOnDelete();
             $table->foreignId('furnishing_id')
+                ->nullable()
                 ->constrained('furnishings')
                 ->cascadeOnDelete();
             $table->timestamps();

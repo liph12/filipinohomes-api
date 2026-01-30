@@ -33,7 +33,7 @@ class PropertyController extends Controller
             'geo_coordinates'       => 'nullable|string', // or regex for lat,lng
             'is_project'            => 'sometimes|boolean',
             'property_attribute_id' => 'required|integer|exists:property_attributes,id',
-            'furnishing_id'         => 'required|integer|exists:furnishings,id',
+            'furnishing_id'         => 'nullable|integer|exists:furnishings,id',
         ]);
 
         $properties = Property::updateOrCreate(
