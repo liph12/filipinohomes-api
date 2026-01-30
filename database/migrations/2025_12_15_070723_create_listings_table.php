@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('status');
             $table->string('name');
             $table->string('slug')->unique()->nullable();
-            $table->decimal('price', 12, 2);
+            $table->decimal('price', 20, 2);
             $table->json('featured_photo')->nullable();
             $table->boolean('is_featured')->default(false);
             $table->unsignedBigInteger('clicks')->default(0);

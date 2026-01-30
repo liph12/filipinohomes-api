@@ -22,7 +22,7 @@ class FullListingController extends Controller
 
             return response()->json([
                 'message' => 'Listing created successfully',
-                'data' => $listing,
+                 'data' => $listing->toArray(), // ensure JSON-serializable
             ], 201);
 
         } catch (\InvalidArgumentException $e) {
