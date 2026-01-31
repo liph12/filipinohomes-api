@@ -24,15 +24,15 @@ return new class extends Migration
             // Foreign keys
             $table->foreignId('property_id')
                 ->constrained('properties')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
 
             $table->foreignId('category_id')
                 ->constrained('categories')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
 
             $table->foreignId('agent_id')
                 ->constrained('agents')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
 
             $table->timestamps();
         });

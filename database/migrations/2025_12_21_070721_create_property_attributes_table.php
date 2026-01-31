@@ -20,7 +20,7 @@ return new class extends Migration
             $table->decimal('floor_area'); 
             $table->foreignId('property_subtype_id')
                 ->constrained('property_subtypes')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
             $table->timestamps();
         });
     }

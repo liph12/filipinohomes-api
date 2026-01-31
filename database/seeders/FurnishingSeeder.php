@@ -15,7 +15,7 @@ class FurnishingSeeder extends Seeder
 
          $furnishings = [
             ['id' => 1, 'name' => 'Fully Furnished'],
-            ['id' => 2, 'name' => 'Semi-Furnished'],
+            ['id' => 2, 'name' => 'Semi Furnished'],
             ['id' => 3, 'name' => 'Unfurnished'],
             ['id' => 4, 'name' => 'Finish'],
         ];

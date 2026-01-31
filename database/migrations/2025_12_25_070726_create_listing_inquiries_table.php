@@ -16,10 +16,10 @@ return new class extends Migration
             $table->string('status');
             $table->foreignId('client_id')
                 ->constrained('users') // assuming clients are users
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
             $table->foreignId('listing_id')
                 ->constrained('listings')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
             $table->foreignId('conversation_id')
                 ->nullable() // optional if threaded
                 ->constrained('listing_conversations') 

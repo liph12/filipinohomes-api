@@ -15,8 +15,11 @@ class DatabaseSeeder extends Seeder
         $this->call(PropertySubtypeSeeder::class);
         $this->call(CategorySeeder::class);
         $this->call(FurnishingSeeder::class);
+        $this->call(RoleSeeder::class);
         $this->call(UserSeeder::class);
         $this->call(AgentSeeder::class);
+        $this->call(AmenitiesSeeder::class);
+
         // $this->call(OldToNewPropertiesSeeder::class);
 
     }

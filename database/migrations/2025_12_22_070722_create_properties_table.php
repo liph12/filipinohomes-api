@@ -22,11 +22,11 @@ return new class extends Migration
             $table->boolean('is_project')->default(false);
             $table->foreignId('property_attribute_id')
                 ->constrained('property_attributes')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
             $table->foreignId('furnishing_id')
                 ->nullable()
                 ->constrained('furnishings')
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
             $table->timestamps();
         });
 

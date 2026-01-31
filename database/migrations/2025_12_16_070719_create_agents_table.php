@@ -26,7 +26,7 @@ return new class extends Migration
             $table->string('geo_location')->nullable(); // lat,long OR place name
             $table->foreignId('user_id')
                 ->constrained()
-                ->cascadeOnDelete();
+                ->restrictOnDelete();
             $table->timestamps();
         });
     }
