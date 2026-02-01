@@ -33,9 +33,7 @@ class StoreListingRequest extends FormRequest
             'is_project' => 'boolean',
             'furnishing_id' => 'nullable|exists:furnishings,id',
             'category_id' => 'required|exists:categories,id',
-            'code' => 'required|string|unique:listings,code',
             'status' => 'nullable|in:active,inactive,sold,rented',
-            'slug' => 'nullable|string|unique:listings,slug',
             'featured_photo' => ['nullable', function ($attribute, $value, $fail) {
                 if (is_string($value)) {
                     if (!filter_var($value, FILTER_VALIDATE_URL)) {
@@ -62,7 +60,6 @@ class StoreListingRequest extends FormRequest
             'property_subtype_id.required' => 'Please select a property subtype',
             'name.required' => 'Listing name is required',
             'price.required' => 'Price is required',
-            'code.unique' => 'This listing code is already in use',
         ];
     }
 

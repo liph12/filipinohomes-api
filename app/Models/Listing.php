@@ -2,6 +2,8 @@
 namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
+
 class Listing extends Model
 {
     use HasFactory;
@@ -24,6 +26,29 @@ class Listing extends Model
         'is_featured'  => 'boolean',
         'clicks'       => 'integer',
     ];
+
+    protected static function booted()
+    {
+        // Generate slug BEFORE insert
+        static::creating(function ($listing) {
+            $baseSlug = Str::slug($listing->name);
+            $slug = $baseSlug;
+            $counter = 1;
+
+            while (self::where('slug', $slug)->exists()) {
+                $slug = $baseSlug . '-' . $counter++;
+            }
+
+            $listing->slug = $slug;
+        });
+
+        // Generate code AFTER insert (no redundancy)
+        static::created(function ($listing) {
+            $listing->updateQuietly([
+                'code' => 'FH-' . now()->year . '-' . str_pad($listing->id, 10, '0', STR_PAD_LEFT),
+            ]);
+        });
+    }
 
     public function property()
     {

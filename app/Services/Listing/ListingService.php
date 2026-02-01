@@ -96,7 +96,6 @@ class ListingService
         int $agentId
     ): Listing {
         return Listing::create([
-            'code' => $data['code'],
             'status' => $data['status'] ?? 'active',
             'name' => $data['name'],
             'slug' => $data['slug'] ?? Str::slug($data['name']),

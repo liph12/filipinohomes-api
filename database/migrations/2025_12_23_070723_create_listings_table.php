@@ -13,7 +13,7 @@ return new class extends Migration
     {
        Schema::create('listings', function (Blueprint $table) {
             $table->id(); // default primary key
-            $table->string('code')->unique();
+            $table->string('code')->unique()->nullable();
             $table->string('status');
             $table->string('name');
             $table->string('slug')->unique()->nullable();
