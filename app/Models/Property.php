@@ -21,6 +21,7 @@ class Property extends Model
     protected $casts = [
         'photos'     => 'array',
         'amenities'  => 'array',
+        'geo_coordinates'  => 'array',
         'is_project' => 'boolean',
     ];
 
