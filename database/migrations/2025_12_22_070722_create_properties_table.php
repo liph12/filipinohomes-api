@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('properties', function (Blueprint $table) {
             $table->id();
             $table->string('name');
+            $table->string('status')->default("active");
             $table->text('address')->nullable();
             $table->json('photos')->nullable();     // array of image paths
             $table->json('amenities')->nullable();  // array of amenities

@@ -18,10 +18,10 @@ use App\Http\Controllers\{
 };
 use Illuminate\Support\Facades\Route;
 
-Route::apiResource('users', UserController::class);
 Route::post('/login', [UserController::class, 'login']);
 Route::middleware('auth:sanctum')->group(function(){
     
+    Route::apiResource('users', UserController::class);
     Route::apiResource('agents', AgentController::class);
     Route::apiResource('categories', CategoryController::class);
     Route::apiResource('property_types', PropertyTypeController::class);

@@ -25,6 +25,7 @@ class PropertyController extends Controller
         $validated = $request->validate([
             'name'                  => 'required|string|max:255',
             'address'               => 'nullable|string|max:255',
+            'status'                => 'nullable|in:active,leased,sold,rented',
             'photos'                => 'nullable|array',
             'photos.*'              => 'string', // each photo filename or URL
             'amenities'             => 'nullable|array',

@@ -14,11 +14,11 @@ return new class extends Migration
        Schema::create('listings', function (Blueprint $table) {
             $table->id(); // default primary key
             $table->string('code')->unique()->nullable();
-            $table->string('status');
             $table->string('name');
             $table->string('slug')->unique()->nullable();
             $table->decimal('price', 20, 2);
             $table->json('featured_photo')->nullable();
+            $table->string('visibility')->default("private");
             $table->boolean('is_featured')->default(false);
             $table->unsignedBigInteger('clicks')->default(0);
             // Foreign keys

@@ -74,8 +74,15 @@ class ListingService
         int $propertyAttributeId,
         ?int $furnishingId
     ): Property {
+        // Determine property name based on is_project flag
+        $propertyName = $data['name']; // default: listing name
+
+        if (($data['is_project'] ?? false) && isset($data['project']['name'])) {
+            $propertyName = $data['project']['name']; // use project name
+        }
+
         return Property::create([
-            'name' => $data['name'],
+            'name' => $propertyName,
             'address' => $data['address'],
             'photos' => $data['photos'] ?? [],
             'amenities' => $data['amenities'] ?? [],
@@ -96,7 +103,7 @@ class ListingService
         int $agentId
     ): Listing {
         return Listing::create([
-            'status' => $data['status'] ?? 'active',
+            'visibility' => $data['visibility'] ?? 'private',
             'name' => $data['name'],
             'slug' => $data['slug'] ?? Str::slug($data['name']),
             'price' => $data['price'],

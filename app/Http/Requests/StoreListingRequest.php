@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\Models\User;
+
 class StoreListingRequest extends FormRequest
 {
     public function user($guard = null)
@@ -30,10 +31,15 @@ class StoreListingRequest extends FormRequest
             'amenities' => 'nullable|array',
             'amenities.*' => 'string',
             'geo_coordinates' => 'nullable|array',
-            'is_project' => 'boolean',
+            'is_project' => 'nullable|boolean',
+            'project_id' => 'nullable|integer',
+            'project' => 'nullable|array',
+            'project.id' => 'nullable|integer',
+            'project.name' => 'nullable|string|max:255',
             'furnishing_id' => 'nullable|exists:furnishings,id',
             'category_id' => 'required|exists:categories,id',
-            'status' => 'nullable|in:active,inactive,sold,rented',
+            'visibility' => 'in:public,private',
+            'status' => 'in:active,rented,sold,leased',
             'featured_photo' => ['nullable', function ($attribute, $value, $fail) {
                 if (is_string($value)) {
                     if (!filter_var($value, FILTER_VALIDATE_URL)) {
