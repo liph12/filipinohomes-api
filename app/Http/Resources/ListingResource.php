@@ -24,6 +24,7 @@ class ListingResource extends JsonResource
             'featured_photo' => $this->featured_photo,
             'is_featured'    => $this->is_featured,
             'clicks'         => $this->clicks,
+            'created_at'     => $this->created_at,
             'property'       => new PropertyResource($this->property),
             'category'       => new CategoryResource($this->category),
             'agent'          => new AgentResource($this->agent)

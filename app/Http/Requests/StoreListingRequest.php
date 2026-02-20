@@ -4,12 +4,40 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\Models\User;
-
+use App\Models\PropertySubtype;
 class StoreListingRequest extends FormRequest
 {
     public function user($guard = null)
     {
         return auth('sanctum')->user();
+    }
+
+    protected function prepareForValidation()
+    {
+        if (($this->bedroom_count === 0 || is_null($this->bedroom_count)) && $this->property_subtype_id) {
+            $subtype = PropertySubtype::find($this->property_subtype_id);
+            
+            if ($subtype) {
+                $bedroomCount = null;
+                $subtypeName = $subtype->name;
+                
+                if (stripos($subtypeName, '1 Bedroom') !== false) {
+                    $bedroomCount = 1;
+                } elseif (stripos($subtypeName, '2 Bedroom') !== false) {
+                    $bedroomCount = 2;
+                } elseif (stripos($subtypeName, '3 Bedroom') !== false) {
+                    $bedroomCount = 3;
+                } elseif (stripos($subtypeName, '4 Bedroom') !== false) {
+                    $bedroomCount = 4;
+                }
+                
+                if (!is_null($bedroomCount)) {
+                    $this->merge([
+                        'bedroom_count' => $bedroomCount
+                    ]);
+                }
+            }
+        }
     }
 
     public function rules(): array
