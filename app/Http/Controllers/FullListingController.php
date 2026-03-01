@@ -5,13 +5,14 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreListingRequest;
 use App\Services\Listing\ListingService;
 use Illuminate\Http\JsonResponse;
-
+use App\Http\Middleware\RoleMiddleware;
 class FullListingController extends Controller
 {
-    public function __construct(
-        protected ListingService $listingService
-    ) {}
-
+    public function __construct(protected ListingService $listingService)
+    {
+        $this->middleware('auth:sanctum'); 
+        $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
+    }
     public function store(StoreListingRequest $request): JsonResponse
     {
         try {
@@ -22,7 +23,7 @@ class FullListingController extends Controller
 
             return response()->json([
                 'message' => 'Listing created successfully',
-                 'data' => $listing->toArray(), // ensure JSON-serializable
+                 'data' => $listing->toArray(),
             ], 201);
 
         } catch (\InvalidArgumentException $e) {

@@ -12,8 +12,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('listing_conversations', function (Blueprint $table) {
-            $table->id(); // default primary key
-            $table->string('messages'); // inquiry messages
+            $table->id(); 
+            $table->string('messages'); 
             $table->string('client_status')->nullable();
             $table->string('agent_status')->nullable();
             $table->timestamps();

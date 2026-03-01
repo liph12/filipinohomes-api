@@ -36,9 +36,4 @@ class PropertyAttributesController extends Controller
         );
         return new PropertyAttributesResource($propertyAttributes);
     }
-
-    public function destroy($id)
-    {
-        PropertyAttribute::findOrFail($id)->delete();
-    }
 }

@@ -5,6 +5,8 @@ use App\Models\User;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
+use Illuminate\Support\Facades\Auth;
+
 class UserController extends Controller
 {
     public function index()
@@ -18,6 +20,12 @@ class UserController extends Controller
     {
         return new UserResource(
             User::find($id)
+        );
+    }
+    public function profile()
+    {
+        return new UserResource( 
+            User::find(Auth::user()->id)
         );
     }
 

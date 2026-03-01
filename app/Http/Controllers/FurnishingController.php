@@ -12,36 +12,4 @@ class FurnishingController extends Controller
             Furnishing::get()
         );
     }
-
-    public function show($id)
-    {
-        return new FurnishingResource(
-            Furnishing::find($id)
-        );
-    }
-
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'id'     => 'sometimes|integer|exists:furnishings,id',
-            'name'   => 'required|string|max:255',
-            'status' => 'required|string|max:255',
-        ]);
-
-        return new FurnishingResource(
-            Furnishing::updateOrCreate(
-                ['id' => $validated['id'] ?? null],
-                [
-                    'name'   => $validated['name'],
-                    'status' => $validated['status'],
-                ]
-            )
-        );
-    }
-
-
-    public function destroy($id)
-    {
-        Furnishing::findOrFail($id)->delete();
-    }
 }

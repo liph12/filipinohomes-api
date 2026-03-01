@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
        Schema::create('listings', function (Blueprint $table) {
-            $table->id(); // default primary key
+            $table->id(); 
             $table->string('code')->unique()->nullable();
             $table->string('name');
             $table->string('slug')->unique()->nullable();
@@ -21,7 +21,6 @@ return new class extends Migration
             $table->string('visibility')->default("private");
             $table->boolean('is_featured')->default(false);
             $table->unsignedBigInteger('clicks')->default(0);
-            // Foreign keys
             $table->foreignId('property_id')
                 ->constrained('properties')
                 ->restrictOnDelete();

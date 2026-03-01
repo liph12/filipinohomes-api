@@ -25,6 +25,11 @@ class Agent extends Model
 
     public function user()
     {
-        return $this->hasOne(User::class, 'id');
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function listings()
+    {
+        return $this->hasMany(Listing::class, 'agent_id');
     }
 }

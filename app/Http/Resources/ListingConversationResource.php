@@ -12,10 +12,10 @@ class ListingConversationResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id' => $this->id,
-            'messages' => $this->messages,
+            'id'            => $this->id,
+            'messages'      => $this->messages,
             'client_status' => $this->client_status,
-            'agent_status' => $this->agent_status
+            'agent_status'  => $this->agent_status
         ];
     }
 }

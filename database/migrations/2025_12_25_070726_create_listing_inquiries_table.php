@@ -12,16 +12,16 @@ return new class extends Migration
     public function up(): void
     {
            Schema::create('listing_inquiries', function (Blueprint $table) {
-            $table->id(); // default primary key
+            $table->id(); 
             $table->string('status');
             $table->foreignId('client_id')
-                ->constrained('users') // assuming clients are users
+                ->constrained('users') 
                 ->restrictOnDelete();
             $table->foreignId('listing_id')
                 ->constrained('listings')
                 ->restrictOnDelete();
             $table->foreignId('conversation_id')
-                ->nullable() // optional if threaded
+                ->nullable() 
                 ->constrained('listing_conversations') 
                 ->nullOnDelete(); 
             $table->timestamps();

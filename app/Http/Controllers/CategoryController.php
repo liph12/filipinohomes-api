@@ -12,35 +12,4 @@ class CategoryController extends Controller
            Category::get()
         );
     }
-
-    public function show($id)
-    {
-        return new CategoryResource(
-            Category::find($id)
-        );
-    }
-
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'id'     => 'sometimes|integer|exists:categories,id',
-            'name'   => 'required|string|max:255',
-            'status' => 'required|string|max:255',
-        ]);
-
-        return new CategoryResource(
-            Category::updateOrCreate(
-                ['id' => $validated['id'] ?? null],
-                [
-                    'name'   => $validated['name'],
-                    'status' => $validated['status'],
-                ]
-            )
-        );
-    }
-    
-    public function destroy($id)
-    {
-        Category::findOrFail($id)->delete();
-    }
 }

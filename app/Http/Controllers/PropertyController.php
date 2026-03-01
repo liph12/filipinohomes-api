@@ -50,9 +50,4 @@ class PropertyController extends Controller
             'property' => new PropertyResource($properties)
         ]);
     }
-
-    public function destroy($id)
-    {
-        Property::findOrFail($id)->delete();
-    }
 }

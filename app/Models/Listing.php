@@ -50,6 +50,15 @@ class Listing extends Model
         });
     }
 
+    public function scopeVisibleTo($query, $user = null)
+    {
+        if (!$user) {
+            return $query->where('visibility', 'public');
+        }
+
+        return $query; // logged users see everything
+    }
+
     public function property()
     {
         return $this->belongsTo(Property::class);
