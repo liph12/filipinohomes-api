@@ -63,10 +63,14 @@ class ListingController extends Controller
     {
         $user = $request->user();
 
-        if ($user->role->name === 'agent') {
-            $listings = Listing::where('agent_id', $user->agent->id)->paginate(10);
-        } else {
+        if ($user->role->name === 'admin') {
             $listings = Listing::paginate(10);
+        }
+        elseif ($user->role->name === 'agent') {
+            $listings = Listing::where('agent_id', $user->agent->id)->paginate(10);
+        }
+        else {
+            abort(403, 'Unauthorized.');
         }
 
         return new ListingResourceCollection($listings);
