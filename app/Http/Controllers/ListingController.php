@@ -8,11 +8,12 @@ use App\Models\Listing;
 use Illuminate\Http\Request;
 use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Support\Facades\DB;
+
 class ListingController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
     }
 
@@ -27,8 +28,103 @@ class ListingController extends Controller
         $perPage = $request->get('per_page', 10);
         $sortBy  = $request->get('sort_by', 'featured');
 
-        $query = Listing::visibleTo($user);
+        $query = Listing::visibleTo($user)
+            ->with(['property.propertyAttribute.subtype', 'category', 'agent']);
 
+        if ($search = $request->get('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('listings.name', 'like', "%{$search}%")
+                    ->orWhereHas('property', function ($sub) use ($search) {
+                        $sub->where('address', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Categories
+        if ($categories = $request->get('categories')) {
+            $cats = is_array($categories) ? $categories : explode(',', $categories);
+            $query->whereHas('category', fn($q) => $q->whereIn('name', $cats));
+        }
+
+        // Subtypes
+        if ($subtypes = $request->get('subtypes')) {
+            $ids = is_array($subtypes) ? $subtypes : explode(',', $subtypes);
+            $query->whereHas('property.propertyAttribute.subtype', fn($q) => $q->whereIn('id', $ids));
+        }
+
+        // Price
+        if ($priceMin = $request->get('price_min')) {
+            $query->where('listings.price', '>=', $priceMin);
+        }
+        if ($priceMax = $request->get('price_max')) {
+            $query->where('listings.price', '<=', $priceMax);
+        }
+
+        if ($request->filled('sqm_min')) {
+            $query->whereHas('property.propertyAttribute', function ($q) use ($request) {
+                $q->whereRaw(
+                    "GREATEST(COALESCE(lot_area,0), COALESCE(floor_area,0)) >= ?",
+                    [$request->sqm_min]
+                );
+            });
+        }
+
+        if ($request->filled('sqm_max')) {
+            $query->whereHas('property.propertyAttribute', function ($q) use ($request) {
+                $q->whereRaw(
+                    "GREATEST(COALESCE(lot_area,0), COALESCE(floor_area,0)) <= ?",
+                    [$request->sqm_max]
+                );
+            });
+        }
+
+        // Beds
+        if ($request->filled('beds')) {
+            $beds = (int) $request->get('beds');
+            $bedsCondition = $request->get('beds_condition', 'equal');
+            $query->whereHas('property.propertyAttribute', function ($q) use ($beds, $bedsCondition) {
+                if ($bedsCondition === 'plus') {
+                    $q->where('bedroom_count', '>=', $beds);
+                } elseif ($bedsCondition === 'minus') {
+                    $q->where('bedroom_count', '<=', $beds); // ✅ includes 0
+                } else {
+                    $q->where('bedroom_count', '=', $beds);
+                }
+            });
+        }
+
+        // Baths
+        if ($request->filled('baths')) {
+            $baths = (int) $request->get('baths');
+            $bathsCondition = $request->get('baths_condition', 'equal');
+            $query->whereHas('property.propertyAttribute', function ($q) use ($baths, $bathsCondition) {
+                if ($bathsCondition === 'plus') {
+                    $q->where('bathroom_count', '>=', $baths);
+                } elseif ($bathsCondition === 'minus') {
+                    $q->where('bathroom_count', '<=', $baths); // ✅ includes 0
+                } else {
+                    $q->where('bathroom_count', '=', $baths);
+                }
+            });
+        }
+        // Furnishings
+        if ($furnishings = $request->get('furnishings')) {
+            $ids = is_array($furnishings) ? $furnishings : explode(',', $furnishings);
+            $query->whereHas('property', fn($q) => $q->whereIn('furnishing_id', $ids));
+        }
+
+        // Amenities (stored inside properties.amenities as JSON)
+        if ($amenities = $request->get('amenities')) {
+            $names = is_array($amenities) ? $amenities : explode(',', $amenities);
+
+            $query->whereHas('property', function ($q) use ($names) {
+                foreach ($names as $name) {
+                    $q->whereJsonContains('amenities', $name);
+                }
+            });
+        }
+
+        // Sort
         switch ($sortBy) {
             case 'most-viewed':
                 $query->orderBy('clicks', 'desc');
@@ -45,9 +141,9 @@ class ListingController extends Controller
             case 'sqm-low':
             case 'sqm-high':
                 $direction = $sortBy === 'sqm-low' ? 'ASC' : 'DESC';
-                $query->leftJoin('properties', 'listings.property_id', '=', 'properties.id')
-                    ->leftJoin('property_attributes', 'properties.property_attribute_id', '=', 'property_attributes.id')
-                    ->orderByRaw("GREATEST(COALESCE(property_attributes.lot_area, 0), COALESCE(property_attributes.floor_area, 0)) {$direction}")
+                $query->leftJoin('property', 'listings.property_id', '=', 'property.id')
+                    ->leftJoin('propertyAttribute ', 'property.propertyAttribute ', '=', 'propertyAttribute.id')
+                    ->orderByRaw("GREATEST(COALESCE(propertyAttribute .lot_area, 0), COALESCE(propertyAttribute.floor_area, 0)) {$direction}")
                     ->select('listings.*');
                 break;
             case 'featured':
@@ -65,11 +161,9 @@ class ListingController extends Controller
 
         if ($user->role->name === 'admin') {
             $listings = Listing::paginate(10);
-        }
-        elseif ($user->role->name === 'agent') {
+        } elseif ($user->role->name === 'agent') {
             $listings = Listing::where('agent_id', $user->agent->id)->paginate(10);
-        }
-        else {
+        } else {
             abort(403, 'Unauthorized.');
         }
 
@@ -165,29 +259,109 @@ class ListingController extends Controller
         return response()->json(['message' => 'Listing deleted successfully']);
     }
 
-    public function subtypeCounts()
+    public function subtypeCounts(Request $request)
     {
         $user = null;
-        if (request()->bearerToken()) {
-            $user = \Laravel\Sanctum\PersonalAccessToken::findToken(request()->bearerToken())
-                ?->tokenable;
+
+        if ($request->bearerToken()) {
+            $user = \Laravel\Sanctum\PersonalAccessToken::findToken(
+                $request->bearerToken()
+            )?->tokenable;
         }
 
-        $counts = DB::table('listings')
+        $query = DB::table('listings')
             ->join('properties', 'listings.property_id', '=', 'properties.id')
             ->join('property_attributes', 'properties.property_attribute_id', '=', 'property_attributes.id')
             ->join('property_subtypes', 'property_attributes.property_subtype_id', '=', 'property_subtypes.id')
-            ->when(!$user, fn($q) => $q->where('listings.visibility', 'public'))
-            ->select('property_subtypes.name', DB::raw('count(*) as count'))
-            ->groupBy('property_subtypes.name')
-            ->get()
-            ->pluck('count', 'name');
+            ->join('property_types', 'property_subtypes.property_type_id', '=', 'property_types.id')
+            ->join('categories', 'listings.category_id', '=', 'categories.id')
+            ->leftJoin('furnishings', 'properties.furnishing_id', '=', 'furnishings.id')
+            ->when(!$user, fn($q) => $q->where('listings.visibility', 'public'));
 
-        $total = $counts->sum();
+        // Search
+        if ($search = $request->get('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('listings.name', 'like', "%{$search}%")
+                    ->orWhere('properties.address', 'like', "%{$search}%");
+            });
+        }
+
+        // Categories — by name, supports comma-separated or array
+        if ($categories = $request->get('categories')) {
+            $cats = is_array($categories) ? $categories : explode(',', $categories);
+            $query->whereIn('categories.name', $cats);
+        }
+
+        // Subtypes — by ID (matching index())
+        if ($subtypes = $request->get('subtypes')) {
+            $ids = is_array($subtypes) ? $subtypes : explode(',', $subtypes);
+            $query->whereIn('property_subtypes.id', $ids);
+        }
+
+        // Price
+        if ($priceMin = $request->get('price_min')) {
+            $query->where('listings.price', '>=', $priceMin);
+        }
+        if ($priceMax = $request->get('price_max')) {
+            $query->where('listings.price', '<=', $priceMax);
+        }
+
+        // SQM — matching GREATEST(lot_area, floor_area) logic
+        if ($request->filled('sqm_min')) {
+            $query->whereRaw(
+                "GREATEST(COALESCE(property_attributes.lot_area, 0), COALESCE(property_attributes.floor_area, 0)) >= ?",
+                [$request->sqm_min]
+            );
+        }
+        if ($request->filled('sqm_max')) {
+            $query->whereRaw(
+                "GREATEST(COALESCE(property_attributes.lot_area, 0), COALESCE(property_attributes.floor_area, 0)) <= ?",
+                [$request->sqm_max]
+            );
+        }
+
+        if ($request->filled('beds') || $request->get('beds') === '0') {
+            $beds = (int) $request->get('beds');
+            $bedsCondition = $request->get('beds_condition', 'equal');
+            $query->where('property_attributes.bedroom_count', match ($bedsCondition) {
+                'plus'  => '>=',
+                'minus' => '<=',
+                default => '=',
+            }, $beds);
+        }
+
+        if ($request->filled('baths') || $request->get('baths') === '0') {
+            $baths = (int) $request->get('baths');
+            $bathsCondition = $request->get('baths_condition', 'equal');
+            $query->where('property_attributes.bathroom_count', match ($bathsCondition) {
+                'plus'  => '>=',
+                'minus' => '<=',
+                default => '=',
+            }, $baths);
+        }
+        // Furnishings — by ID (matching index())
+        if ($furnishings = $request->get('furnishings')) {
+            $ids = is_array($furnishings) ? $furnishings : explode(',', $furnishings);
+            $query->whereIn('properties.furnishing_id', $ids);
+        }
+
+        // Amenities filter (stored in properties.amenities as JSON)
+        if ($amenities = $request->get('amenities')) {
+            $names = is_array($amenities) ? $amenities : explode(',', $amenities);
+
+            foreach ($names as $name) {
+                $query->whereJsonContains('properties.amenities', $name);
+            }
+        }
+
+        $counts = $query
+            ->select('property_subtypes.name', DB::raw('COUNT(DISTINCT listings.id) as count'))
+            ->groupBy('property_subtypes.name')
+            ->pluck('count', 'property_subtypes.name');
 
         return response()->json([
             'counts' => $counts,
-            'total' => $total,
+            'total'  => $counts->sum(),
         ]);
     }
 }
