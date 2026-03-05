@@ -21,6 +21,7 @@ class Agent extends Model
 
     protected $casts = [
         'socials' => 'array',
+        'avatar' => 'array',
     ];
 
     public function user()

@@ -87,12 +87,10 @@ class ListingService
             'photos' => $data['photos'] ?? [],
             'amenities' => $data['amenities'] ?? [],
             'description' => $data['description'] ?? null,
-            'geo_coordinates' => isset($data['geo_coordinates'])
-                ? json_encode($data['geo_coordinates'])
-                : null,
+            'geo_coordinates' => $data['geo_coordinates'] ?? null, 
             'is_project' => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
-            'furnishing_id' => $furnishingId, // nullable ✔
+            'furnishing_id' => $furnishingId,
         ]);
     }
 
@@ -108,11 +106,9 @@ class ListingService
             'slug' => $data['slug'] ?? Str::slug($data['name']),
             'price' => $data['price'],
             'featured_photo' => isset($data['featured_photo'])
-                ? json_encode(
-                    is_array($data['featured_photo'])
-                        ? $data['featured_photo']
-                        : [$data['featured_photo']]
-                )
+                ? (is_array($data['featured_photo']) 
+                    ? $data['featured_photo'] 
+                    : [$data['featured_photo']]) 
                 : null,
             'is_featured' => $data['is_featured'] ?? false,
             'clicks' => 0,

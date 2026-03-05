@@ -29,7 +29,7 @@ Route::get('/posts/{slug}', [PostController::class, 'show']);
 Route::get('/offices', [OfficeController::class, 'index']);
 Route::get('/listings', [ListingController::class, 'index']); 
 Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
-Route::get('/listings/{listing}', [ListingController::class, 'show']);
+Route::get('/listings/{slug}', [ListingController::class, 'show']);
 Route::get('/categories', [CategoryController::class, 'index']);
 Route::get('/property_types', [PropertyTypeController::class, 'index']);
 Route::get('/property_subtypes', [PropertySubtypeController::class, 'index']);
@@ -42,8 +42,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('agents', AgentController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
-    Route::apiResource('listing_conversations', ListingConversationController::class);
-    Route::apiResource('listing_inquiries', ListingInquiryController::class);
     Route::post('/listings', [ListingController::class, 'store']);
     Route::patch('/listings/{listing}', [ListingController::class, 'update']);
     Route::delete('/listings/{listing}', [ListingController::class, 'destroy']);
@@ -56,5 +54,11 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::get('/projects', [ProjectController::class, 'index']);
+
+    Route::apiResource('listing-inquiries', ListingInquiryController::class);
+
+    Route::apiResource('listing-conversations', ListingConversationController::class)
+        ->only(['index', 'store']);
+
     
 });

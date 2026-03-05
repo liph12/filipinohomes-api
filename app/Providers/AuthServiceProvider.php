@@ -5,7 +5,8 @@ namespace App\Providers;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use App\Models\Listing;
 use App\Policies\ListingPolicy;
-
+use App\Models\ListingInquiry;
+use App\Policies\ListingInquiryPolicy;
 class AuthServiceProvider extends ServiceProvider
 {
     /**
@@ -13,6 +14,8 @@ class AuthServiceProvider extends ServiceProvider
      */
     protected $policies = [
         Listing::class => ListingPolicy::class, // map Listing model to ListingPolicy
+        ListingInquiry::class => ListingInquiryPolicy::class,
+
     ];
 
     /**

@@ -16,6 +16,7 @@ class UserResource extends JsonResource
             'name'  => $this->name,
             'email' => $this->email,
             'role'  => $this->role?->name,
+            'agent' => $this->agent ? ['id' => $this->agent->id] : null,
         ];
     }
 }

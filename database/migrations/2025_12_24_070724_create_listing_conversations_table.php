@@ -6,23 +6,26 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
+        // Must run AFTER listing_inquiries migration
         Schema::create('listing_conversations', function (Blueprint $table) {
-            $table->id(); 
-            $table->string('messages'); 
-            $table->string('client_status')->nullable();
-            $table->string('agent_status')->nullable();
+            $table->id();
+            $table->foreignId('inquiry_id')
+                ->constrained('listing_inquiries')
+                ->cascadeOnDelete();
+            $table->foreignId('sender_id')
+                ->constrained('users')
+                ->cascadeOnDelete();
+            $table->text('message');
+            $table->boolean('is_read')->default(false);
+            $table->timestamp('read_at')->nullable();
             $table->timestamps();
+            $table->index(['inquiry_id', 'read_at']);
+            $table->index('sender_id');
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('listing_conversations');

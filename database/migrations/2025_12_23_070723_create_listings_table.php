@@ -14,7 +14,7 @@ return new class extends Migration
        Schema::create('listings', function (Blueprint $table) {
             $table->id(); 
             $table->string('code')->unique()->nullable();
-            $table->string('name');
+            $table->string('name')->unique();
             $table->string('slug')->unique()->nullable();
             $table->decimal('price', 20, 2);
             $table->json('featured_photo')->nullable();

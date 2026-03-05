@@ -45,7 +45,7 @@ class StoreListingRequest extends FormRequest
         return [
             'property_type_id' => 'required|exists:property_types,id',
             'property_subtype_id' => 'required|exists:property_subtypes,id',
-            'name' => 'required|string|max:255',
+            'name' => 'required|string|max:255|unique:listings,name',
             'address' => 'required|string',
             'price' => 'required|numeric|min:0',
             'bedroom_count' => 'nullable|integer|min:0',

@@ -1,27 +1,54 @@
 <?php
+
 namespace App\Models;
+
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+
 class ListingInquiry extends Model
 {
     use HasFactory;
+
     protected $fillable = [
-        'status',
-        'client_id',
         'listing_id',
-        'conversation_id'
+        'agent_id',
+        'client_id',
+        'status',
     ];
-    public function client()
+
+    public function listing(): BelongsTo
+    {
+        return $this->belongsTo(Listing::class);
+    }
+
+    public function agent(): BelongsTo
+    {
+        return $this->belongsTo(Agent::class);
+    }
+
+    public function client(): BelongsTo
     {
         return $this->belongsTo(User::class, 'client_id');
     }
-     public function listing()
+
+    public function conversations(): HasMany
     {
-        return $this->belongsTo(listing::class, 'listing_id');
-    }
-    public function listingConversation()
-    {
-        return $this->belongsTo(ListingConversation::class, 'conversation_id');
+        return $this->hasMany(ListingConversation::class, 'inquiry_id')->orderBy('created_at');
     }
 
+    public function latestMessage(): HasOne
+    {
+        return $this->hasOne(ListingConversation::class, 'inquiry_id')->latestOfMany();
+    }
+
+    public function unreadCountFor(int $userId): int
+    {
+        return $this->conversations()
+            ->whereNull('read_at')
+            ->where('sender_id', '!=', $userId)
+            ->count();
+    }
 }

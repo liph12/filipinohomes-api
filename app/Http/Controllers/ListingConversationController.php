@@ -1,41 +1,68 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Http\Resources\ListingConversationResourceCollection;
-use App\Http\Resources\ListingConversationResource;
+
 use App\Models\ListingConversation;
+use App\Models\ListingInquiry;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+
 class ListingConversationController extends Controller
 {
-    public function index()
+    /**
+     * Get all messages for a specific inquiry.
+     */
+    public function index(Request $request): JsonResponse
     {
-        return new ListingConversationResourceCollection(
-            ListingConversation::get()
-        );
-    }
-
-    public function show($id)
-    {
-        return new ListingConversationResource(
-            ListingConversation::find($id)
-        );
-    }
-
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'messages'       => 'sometimes|string|max:255',
-            'client_status'  => 'sometimes|string|max:255',
-            'agent_status'   => 'sometimes|string|max:255',
+        $request->validate([
+            'inquiry_id' => ['required', 'integer', 'exists:listing_inquiries,id'],
         ]);
-        $listingConversation = ListingConversation::updateOrCreate(
-            ['id' => $request->id], // MUST be provided for update
-            $validated
-        );
-        return new ListingConversationResource($listingConversation);
+
+        $inquiry = ListingInquiry::findOrFail($request->inquiry_id);
+
+        $this->authorize('view', $inquiry);
+
+        $messages = $inquiry->conversations()
+            ->with('sender:id,name')
+            ->paginate($request->integer('per_page', 50));
+
+        // Mark incoming messages as read
+        $inquiry->conversations()
+            ->whereNull('read_at')
+            ->where('sender_id', '!=', $request->user()->id)
+            ->update(['read_at' => now(), 'is_read' => true]);
+
+        return response()->json($messages);
     }
 
-    public function destroy($id)
+    /**
+     * Send a message in an existing inquiry thread.
+     */
+    public function store(Request $request): JsonResponse
     {
-        ListingConversation::findOrFail($id)->delete();
+        $request->validate([
+            'inquiry_id' => ['required', 'integer', 'exists:listing_inquiries,id'],
+            'message'    => ['required', 'string', 'max:2000'],
+        ]);
+
+        $inquiry = ListingInquiry::findOrFail($request->inquiry_id);
+
+        $this->authorize('view', $inquiry);
+
+        abort_if($inquiry->status === 'closed', 403, 'This inquiry is closed.');
+
+        $conversation = $inquiry->conversations()->create([
+            'sender_id' => $request->user()->id,
+            'message'   => $request->message,
+        ]);
+
+        // Reactivate if it was pending
+        if ($inquiry->status === 'pending') {
+            $inquiry->update(['status' => 'active']);
+        }
+
+        return response()->json([
+            'data' => $conversation->load('sender:id,name'),
+        ], 201);
     }
 }
