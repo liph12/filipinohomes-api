@@ -6,7 +6,7 @@ use App\Models\Listing;
 use App\Models\ListingInquiry;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-
+use Illuminate\Support\Facades\Http;
 class ListingInquiryController extends Controller
 {
     /**
@@ -40,53 +40,62 @@ class ListingInquiryController extends Controller
         return response()->json($inquiries);
     }
 
-    /**
-     * Create a new inquiry.
-     * The agent is automatically resolved from the listing.
-     * One inquiry per client per listing (enforced by DB unique constraint).
-     */
-    public function store(Request $request): JsonResponse
-    {
-        $request->validate([
-            'listing_id' => ['required', 'integer', 'exists:listings,id'],
-            'message'    => ['required', 'string', 'max:2000'],
-        ]);
+public function store(Request $request): JsonResponse
+{
+    $request->validate([
+        'listing_id' => ['required', 'integer', 'exists:listings,id'],
+        'message'    => ['required', 'string', 'max:2000'],
+    ]);
 
-        $listing = Listing::findOrFail($request->listing_id);
-        $user    = $request->user();
+    $listing = Listing::findOrFail($request->listing_id);
+    $user    = $request->user();
 
-        // Reuse existing inquiry if already exists for this client+listing
-        $inquiry = ListingInquiry::firstOrCreate(
-            [
-                'listing_id' => $listing->id,
-                'client_id'  => $user->id,
-            ],
-            [
-                'agent_id' => $listing->agent_id,
-                'status'   => 'pending',
-            ]
-        );
+    $ipResponse = Http::get('https://socket.leuteriorealty.com/user-info');
+    $ipData = $ipResponse->json();
+    $clientIp = $ipData['ip'] ?? $request->ip();
 
-        // Always add the opening message
-        $inquiry->conversations()->create([
-            'sender_id' => $user->id,
-            'message'   => $request->message,
-        ]);
+    $geoResponse = Http::get('https://api.leuteriorealty.com/core-system/v1/public/api/user-info', [
+        'ip' => $clientIp
+    ]);
+    $geoData = $geoResponse->json();
 
-        // Activate inquiry once first message is sent
-        if ($inquiry->status === 'pending') {
-            $inquiry->update(['status' => 'active']);
-        }
-
-        return response()->json([
-            'message'    => 'Inquiry sent successfully.',
-            'inquiry_id' => $inquiry->id,
-        ], 201);
+    $coordinates = null;
+    if (!empty($geoData['location'])) {
+        [$lat, $lng] = explode(',', $geoData['location']);
+        $coordinates = [
+            'lat' => (float) $lat,
+            'lng' => (float) $lng,
+        ];
     }
 
-    /**
-     * Show a single inquiry with full conversation thread.
-     */
+    $inquiry = ListingInquiry::firstOrCreate(
+        [
+            'listing_id' => $listing->id,
+            'client_id'  => $user->id,
+        ],
+        [
+            'agent_id' => $listing->agent_id,
+            'status'   => 'pending',
+            'geo_coordinates' => $coordinates,
+        ]
+    );
+
+    // Add opening message
+    $inquiry->conversations()->create([
+        'sender_id' => $user->id,
+        'message'   => $request->message,
+    ]);
+
+    if ($inquiry->status === 'pending') {
+        $inquiry->update(['status' => 'active']);
+    }
+
+    // Return safe info only — hide geo
+    return response()->json([
+        'message'    => 'Inquiry sent successfully.',
+        'inquiry_id' => $inquiry->id,
+    ], 201);
+}
     public function show(Request $request, ListingInquiry $listingInquiry): JsonResponse
     {
         $this->authorize('view', $listingInquiry);

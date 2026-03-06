@@ -89,10 +89,9 @@ public function show(string $slug)
         ->firstOrFail();
 
     $user = auth('sanctum')->user();
-    $isPrivileged = $user && in_array($user->role?->name, ['admin', 'agent']);
 
-    if (!$isPrivileged && $listing->visibility !== 'public') {
-        abort(403, 'This listing is private.');
+    if (!$user && $listing->visibility !== 'public') {
+        abort(403, 'This listing is private. Login is required!');
     }
 
     return new ListingResource($listing);

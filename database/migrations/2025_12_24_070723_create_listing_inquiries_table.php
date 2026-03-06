@@ -20,6 +20,7 @@ return new class extends Migration
                 ->constrained('agents')
                 ->cascadeOnDelete();
             $table->enum('status', ['pending', 'active', 'closed'])->default('pending');
+            $table->string('geo_coordinates')->nullable();
             $table->timestamps();
 
             // One inquiry per client per listing

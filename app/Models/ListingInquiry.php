@@ -17,6 +17,11 @@ class ListingInquiry extends Model
         'agent_id',
         'client_id',
         'status',
+        'geo_coordinates',
+    ];
+
+       protected $casts = [
+        'geo_coordinates' => 'array', 
     ];
 
     public function listing(): BelongsTo
