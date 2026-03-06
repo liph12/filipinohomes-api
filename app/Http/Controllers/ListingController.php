@@ -77,50 +77,26 @@ class ListingController extends Controller
         return response()->json(['visibility' => $listing->visibility]);
     }
 
-    public function show(Request $request, string $slug)
-    {
-        $listing = Listing::where('slug', $slug)->firstOrFail();
+public function show(string $slug)
+{
+    $listing = Listing::where('slug', $slug)
+        ->with([
+            'property.propertyAttribute.subtype.type',
+            'property.furnishing',
+            'category',
+            'agent.user',
+        ])
+        ->firstOrFail();
 
-        $this->authorize('view', $listing);
+    $user = auth('sanctum')->user();
+    $isPrivileged = $user && in_array($user->role?->name, ['admin', 'agent']);
 
-        return new ListingResource($listing);
+    if (!$isPrivileged && $listing->visibility !== 'public') {
+        abort(403, 'This listing is private.');
     }
 
-    // public function store(Request $request)
-    // {
-    //     $user = $request->user();
-
-    //     // Only agents can create, admins will create if needed
-    //     $agent = $user->agent ?? null;
-    //     if (!$agent && $user->role->name === 'agent') {
-    //         return response()->json(['message' => 'Agent profile not found for this user.'], 403);
-    //     }
-
-    //     $validated = $request->validate([
-    //         'code'           => 'required|string|max:255',
-    //         'status'         => 'required|string|max:255',
-    //         'name'           => 'required|string|max:255',
-    //         'slug'           => 'nullable|string|max:255',
-    //         'price'          => 'required|numeric|min:0',
-    //         'featured_photo' => 'nullable|string|max:255',
-    //         'is_featured'    => 'sometimes|boolean',
-    //         'clicks'         => 'nullable|integer|min:0',
-    //         'property_id'    => 'required|integer|exists:properties,id',
-    //         'category_id'    => 'required|integer|exists:categories,id',
-    //     ]);
-
-    //     // Agents are forced to their own agent_id, admins can choose
-    //     if ($user->role->name === 'agent') {
-    //         $validated['agent_id'] = $agent->id;
-    //     }
-
-    //     $listing = Listing::updateOrCreate(
-    //         ['id' => $request->id ?? null],
-    //         $validated
-    //     );
-
-    //     return new ListingResource($listing);
-    // }
+    return new ListingResource($listing);
+}
 
     public function update(Request $request, Listing $listing)
     {

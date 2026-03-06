@@ -58,7 +58,7 @@ class Listing extends Model
             return $query->where('visibility', 'public');
         }
 
-        return $query; // logged users see everything
+        return $query; 
     }
 
     public function scopeFilter(Builder $query, Request $request): Builder

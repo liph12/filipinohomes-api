@@ -42,23 +42,16 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('agents', AgentController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
-    Route::post('/listings', [ListingController::class, 'store']);
-    Route::patch('/listings/{listing}', [ListingController::class, 'update']);
-    Route::delete('/listings/{listing}', [ListingController::class, 'destroy']);
+    Route::apiResource('listing-inquiries', ListingInquiryController::class);
+    Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
+    Route::apiResource('listing-conversations', ListingConversationController::class)->only(['index', 'store']);
     Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
-    Route::get('/my-listings', [ListingController::class, 'myListings']);
-    Route::post('/full-listing', [FullListingController::class, 'store']);
-    Route::post('/logout', [UserController::class, 'logout']);
-    Route::post('/upload', [ImageUploadController::class, 'upload']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::get('/projects', [ProjectController::class, 'index']);
+    Route::post('/upload', [ImageUploadController::class, 'upload']);
+    Route::post('/logout', [UserController::class, 'logout']);
+    Route::post('/full-listing', [FullListingController::class, 'store']);
 
-    Route::apiResource('listing-inquiries', ListingInquiryController::class);
-
-    Route::apiResource('listing-conversations', ListingConversationController::class)
-        ->only(['index', 'store']);
-
-    
 });
