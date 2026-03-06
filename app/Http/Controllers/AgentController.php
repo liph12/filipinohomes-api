@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 use App\Models\Agent;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
+use App\Http\Resources\UserResource;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 class AgentController extends Controller
@@ -15,10 +16,18 @@ class AgentController extends Controller
     }
 
     public function profile()
-    {
-        return new AgentResource( 
-            Agent::find(Auth::user()->id)
-        );
+    {   
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        $agent = Agent::where('user_id', $user->id)
+                    ->with('user.role') 
+                    ->first();
+
+        if (!$agent) {
+            return new UserResource($user->load('role'));  
+        }
+
+        return new AgentResource($agent);
     }
 
     public function store(Request $request)

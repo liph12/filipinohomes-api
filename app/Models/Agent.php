@@ -22,6 +22,7 @@ class Agent extends Model
     protected $casts = [
         'socials' => 'array',
         'avatar' => 'array',
+        'geo_location' => 'array',
     ];
 
     public function user()
