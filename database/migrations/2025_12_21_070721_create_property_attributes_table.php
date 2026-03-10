@@ -16,8 +16,8 @@ return new class extends Migration
             $table->unsignedInteger('bedroom_count')->default(0);
             $table->unsignedInteger('bathroom_count')->default(0);
             $table->unsignedInteger('garage_count')->default(0);
-            $table->decimal('lot_area');   
-            $table->decimal('floor_area'); 
+            $table->decimal('lot_area', 11, 2);   
+            $table->decimal('floor_area', 11, 2); 
             $table->foreignId('property_subtype_id')
                 ->constrained('property_subtypes')
                 ->restrictOnDelete();

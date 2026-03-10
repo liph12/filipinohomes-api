@@ -19,6 +19,7 @@ return new class extends Migration
             $table->json('photos')->nullable();     // array of image paths
             $table->json('amenities')->nullable();  // array of amenities
             $table->text('description')->nullable();
+            $table->integer('address_id')->nullable();
             $table->string('geo_coordinates')->nullable(); 
             $table->boolean('is_project')->default(false);
             $table->foreignId('property_attribute_id')
@@ -30,7 +31,6 @@ return new class extends Migration
                 ->restrictOnDelete();
             $table->timestamps();
         });
-
     }
 
     /**

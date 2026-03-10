@@ -28,22 +28,22 @@ class Listing extends Model
     protected static function booted()
     {
         // Generate slug BEFORE insert
-        static::creating(function ($listing) {
-            $baseSlug = Str::slug($listing->name);
-            $slug     = $baseSlug;
-            $counter  = 1;
-            while (self::where('slug', $slug)->exists()) {
-                $slug = $baseSlug . '-' . $counter++;
-            }
-            $listing->slug = $slug;
-        });
+        // static::creating(function ($listing) {
+        //     $baseSlug = Str::slug($listing->name);
+        //     $slug     = $baseSlug;
+        //     $counter  = 1;
+        //     while (self::where('slug', $slug)->exists()) {
+        //         $slug = $baseSlug . '-' . $counter++;
+        //     }
+        //     $listing->slug = $slug;
+        // });
 
         // Generate code AFTER insert (no redundancy)
-        static::created(function ($listing) {
-            $listing->updateQuietly([
-                'code' => 'FH-' . now()->year . '-' . str_pad($listing->id, 10, '0', STR_PAD_LEFT),
-            ]);
-        });
+        // static::created(function ($listing) {
+        //     $listing->updateQuietly([
+        //         'code' => 'FH-' . now()->year . '-' . str_pad($listing->id, 10, '0', STR_PAD_LEFT),
+        //     ]);
+        // });
     }
     public function scopeVisibleTo($query, $user = null)
     {
