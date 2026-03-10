@@ -25,10 +25,6 @@ class RoleSeeder extends Seeder
                 'id' => 3,
                 'name' => 'client',
             ],
-            [
-                'id' => 4,
-                'name' => 'guest',
-            ],
         ];
 
         // Insert roles into the roles table
