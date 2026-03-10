@@ -50,6 +50,15 @@ class PropertySeeder extends Seeder
 
             if($agent)
             {
+                $photosUpdated = [];
+                $photos = json_decode($l->gallery);
+
+                foreach($photos as $p)
+                {
+                    $hasDomain = str_contains($p, "https://");
+                    $photosUpdated[] = $hasDomain ? $p : "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$p;
+                }
+                
                 $attribute = PropertyAttribute::create([
                     'bedroom_count' => ($l->bedroom === null || $l->bedroom === '' || $l->bedroom < 0) ? 0 : (float) str_replace(',', '',$l->bedroom),
                     'bathroom_count' => ($l->bathroom === null || $l->bathroom === '' || $l->bathroom < 0) ? 0 : (float) str_replace(',', '',$l->bathroom),
@@ -62,7 +71,7 @@ class PropertySeeder extends Seeder
                 $property = Property::create([
                     'name' => $l->condo_name === null ? $l->property_title : $l->condo_name,
                     'address' => $l->mapaddress,
-                    'photos' => json_decode($l->gallery),
+                    'photos' => $photosUpdated,
                     'amenities' => $amenitiesArray,
                     'description' => $l->description,
                     'address_id' => $l->brgy_id,
