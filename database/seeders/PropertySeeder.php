@@ -51,12 +51,15 @@ class PropertySeeder extends Seeder
             if($agent)
             {
                 $photosUpdated = [];
-                $photos = json_decode($l->gallery);
+                $photos = json_decode($l->gallery) ?? [];
 
-                foreach($photos as $p)
+                if(count($photos) > 0)
                 {
-                    $hasDomain = str_contains($p, "https://");
-                    $photosUpdated[] = $hasDomain ? $p : "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$p;
+                    foreach($photos as $p)
+                    {
+                        $hasDomain = str_contains($p, "https://");
+                        $photosUpdated[] = $hasDomain ? $p : "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$p;
+                    }
                 }
                 
                 $attribute = PropertyAttribute::create([
