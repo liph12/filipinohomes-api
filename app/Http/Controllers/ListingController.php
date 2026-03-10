@@ -76,6 +76,20 @@ class ListingController extends Controller
 
         return response()->json(['visibility' => $listing->visibility]);
     }
+public function updateStatus(Request $request, Listing $listing)
+{
+    $this->authorize('update', $listing);
+
+    $data = $request->validate([
+        'status' => 'required|in:active,rented,sold,leased',
+    ]);
+
+    $listing->property->update($data);
+
+    return response()->json([
+        'status' => $listing->property->status
+    ]);
+}
 
 public function show(string $slug)
 {

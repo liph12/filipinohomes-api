@@ -46,6 +46,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
     Route::apiResource('listing-conversations', ListingConversationController::class)->only(['index', 'store']);
     Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
+    Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::get('/agent/profile', [AgentController::class, 'profile']);

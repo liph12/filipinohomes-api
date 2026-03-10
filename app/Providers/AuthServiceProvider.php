@@ -13,7 +13,7 @@ class AuthServiceProvider extends ServiceProvider
      * The policy mappings for the application.
      */
     protected $policies = [
-        Listing::class => ListingPolicy::class, // map Listing model to ListingPolicy
+        Listing::class => ListingPolicy::class, 
         ListingInquiry::class => ListingInquiryPolicy::class,
 
     ];

@@ -20,10 +20,10 @@ return new class extends Migration
             $table->string('mobile_no');
             $table->string('whats_app_no')->nullable();
             $table->text('address')->nullable();
-            $table->json('socials')->nullable(); // facebook, instagram, etc.
+            $table->string('socials')->nullable(); 
             $table->text('bio')->nullable();
-            $table->string('avatar')->nullable(); // image path
-            $table->string('geo_location')->nullable(); // lat,long OR place name
+            $table->string('avatar')->nullable(); 
+            $table->string('geo_location')->nullable(); 
             $table->foreignId('user_id')
                 ->constrained()
                 ->restrictOnDelete();

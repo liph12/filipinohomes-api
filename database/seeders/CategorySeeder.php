@@ -15,8 +15,8 @@ class CategorySeeder extends Seeder
         // DB::table('categories')->truncate();
 
         $statuses = [
-            ['id' => 1, 'name' => 'For Rent'],
-            ['id' => 2, 'name' => 'For Sale'],
+            ['id' => 1, 'name' => 'For Sale'],
+            ['id' => 2, 'name' => 'For Rent'],
             ['id' => 3, 'name' => 'Foreclosure'],
         ];
 
