@@ -39,7 +39,7 @@ class PropertySeeder extends Seeder
 
                 if($binAmenitiesArray[$i] == '1')
                 {
-                    $amenitiesArray[] = Amenity::find($index);
+                    $amenitiesArray[] = Amenity::find($index)->name;
                 }
             }
 
@@ -61,7 +61,7 @@ class PropertySeeder extends Seeder
                         $photosUpdated[] = $hasDomain ? $p : "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$p;
                     }
                 }
-                
+
                 $attribute = PropertyAttribute::create([
                     'bedroom_count' => ($l->bedroom === null || $l->bedroom === '' || $l->bedroom < 0) ? 0 : (float) str_replace(',', '',$l->bedroom),
                     'bathroom_count' => ($l->bathroom === null || $l->bathroom === '' || $l->bathroom < 0) ? 0 : (float) str_replace(',', '',$l->bathroom),
@@ -79,8 +79,8 @@ class PropertySeeder extends Seeder
                     'description' => $l->description,
                     'address_id' => $l->brgy_id,
                     'geo_coordinates' => [
-                        'lat' => $l->latitude,
-                        'lng' => $l->longitude
+                        'lat' => (float) $l->latitude,
+                        'lng' => (float) $l->longitude
                     ],
                     'is_project' => $l->condo_name !== null,
                     'property_attribute_id' => $attribute->id,
@@ -92,7 +92,7 @@ class PropertySeeder extends Seeder
                     'name' => $l->property_title,
                     'slug' => $slug,
                     'price' => $price,
-                    'featured_photo' => [$l->featured_photo],
+                    'featured_photo' => [!str_contains($l->featured_photo, "https://") ? "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$l->featured_photo : $l->featured_photo],
                     'visibility' => $l->listing_status,
                     'is_featured' => false,
                     'clicks' => $l->views === null ? 0 : $l->views,

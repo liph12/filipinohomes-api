@@ -20,7 +20,7 @@ return new class extends Migration
             $table->json('amenities')->nullable();  // array of amenities
             $table->text('description')->nullable();
             $table->integer('address_id')->nullable();
-            $table->string('geo_coordinates')->nullable(); 
+            $table->json('geo_coordinates')->nullable(); 
             $table->boolean('is_project')->default(false);
             $table->foreignId('property_attribute_id')
                 ->constrained('property_attributes')
