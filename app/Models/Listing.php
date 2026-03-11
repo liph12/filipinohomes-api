@@ -45,28 +45,16 @@ class Listing extends Model
         //     ]);
         // });
     }
-    public function scopeVisibleTo($query, $user = null)
-    {
-        if (! $user) {
-            return $query->where('listings.visibility', 'public');
-        }
-
-        // Admins see everything
-        if ($user->role?->name === 'admin') {
-            return $query;
-        }
-
-        // Agents see public listings + their own private ones
-        $agentId = $user->agent?->id;
-
-        return $query->where(function ($q) use ($agentId) {
-            $q->where('listings.visibility', 'public')
-              ->orWhere(function ($q2) use ($agentId) {
-                  $q2->where('listings.visibility', 'private')
-                     ->where('listings.agent_id', $agentId);
-              });
-        });
+public function scopeVisibleTo($query, $user = null)
+{
+    // If no user is logged in, show only public listings
+    if (!$user) {
+        return $query->where('listings.visibility', 'public');
     }
+
+    // If user is logged in, show everything
+    return $query;
+}
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {

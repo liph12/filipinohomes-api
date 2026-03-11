@@ -77,14 +77,12 @@ class UserController extends Controller
         }
     }
 
-   public function logout(Request $request)
+    public function logout(Request $request)
     {
         $user = $request->user();
 
-        // Delete current access token (Sanctum)
         $user->currentAccessToken()->delete();
 
-        // Clear remember_token
         $user->forceFill([
             'remember_token' => null,
         ])->save();
