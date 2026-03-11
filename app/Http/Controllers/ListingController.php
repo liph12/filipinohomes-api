@@ -13,7 +13,7 @@ class ListingController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
     }
 
@@ -108,6 +108,23 @@ public function show(string $slug)
     }
 
     return new ListingResource($listing);
+}
+
+public function featured(Request $request): ListingResourceCollection
+{
+    $user = auth('sanctum')->user();
+
+    $query = Listing::where('is_featured', true);
+
+    if (!$user) {
+        $query->where('visibility', 'public');
+    }
+
+    $listings = $query
+        ->with(['property.propertyAttribute.subtype', 'category', 'agent'])
+        ->get();
+
+    return new ListingResourceCollection($listings);
 }
 
     public function update(Request $request, Listing $listing)

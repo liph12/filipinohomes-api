@@ -29,6 +29,7 @@ Route::get('/posts/{slug}', [PostController::class, 'show']);
 Route::get('/offices', [OfficeController::class, 'index']);
 Route::get('/listings', [ListingController::class, 'index']); 
 Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
+Route::get('/listings/featured', [ListingController::class, 'featured']);
 Route::get('/listings/{slug}', [ListingController::class, 'show']);
 Route::get('/categories', [CategoryController::class, 'index']);
 Route::get('/property_types', [PropertyTypeController::class, 'index']);
