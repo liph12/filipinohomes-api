@@ -48,15 +48,14 @@ class ListingController extends Controller
         ]);
     }
 
-
     public function myListings(Request $request)
     {
         $user = $request->user();
 
         if ($user->role->name === 'admin') {
-            $listings = Listing::paginate(10);
+            $listings = Listing::all();
         } elseif ($user->role->name === 'agent') {
-            $listings = Listing::where('agent_id', $user->agent->id)->paginate(10);
+            $listings = Listing::where('agent_id', $user->agent->id)->get();
         } else {
             abort(403, 'Unauthorized.');
         }
