@@ -46,6 +46,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('listing-inquiries', ListingInquiryController::class);
     Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
     Route::apiResource('listing-conversations', ListingConversationController::class)->only(['index', 'store']);
+    Route::apiResource('full-listing', FullListingController::class)->only(['store', 'update', 'destroy'])->parameters(['full-listing' => 'listing']);
     Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
     Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
@@ -54,6 +55,5 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::post('/upload', [ImageUploadController::class, 'upload']);
     Route::post('/logout', [UserController::class, 'logout']);
-    Route::post('/full-listing', [FullListingController::class, 'store']);
 
 });
