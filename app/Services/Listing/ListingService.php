@@ -118,83 +118,83 @@ class ListingService
         ]);
     }
 
-    public function updateListing(array $data, Listing $listing, Agent $agent): Listing
-    {
-        // If subtype + type both provided, validate they match
-        if (isset($data['property_subtype_id'], $data['property_type_id'])) {
-            $this->validatePropertySubtype(
-                $data['property_subtype_id'],
-                $data['property_type_id']
-            );
+public function updateListing(array $data, Listing $listing, Agent $agent): Listing
+{
+    // If subtype + type both provided, validate they match
+    if (isset($data['property_subtype_id'], $data['property_type_id'])) {
+        $this->validatePropertySubtype(
+            $data['property_subtype_id'],
+            $data['property_type_id']
+        );
+    }
+
+    return DB::transaction(function () use ($data, $listing, $agent) {
+        $property = $listing->property;
+        $propertyAttribute = $property->propertyAttribute;
+
+        // 1. Update Property Attributes (Only fields present in $data)
+        $attributeData = array_intersect_key($data, array_flip([
+            'bedroom_count', 'bathroom_count', 'garage_count', 
+            'lot_area', 'floor_area', 'property_subtype_id'
+        ]));
+        $propertyAttribute->update($attributeData);
+
+        // 2. Determine property name logic
+        $propertyName = $property->name;
+        if (isset($data['is_project']) && $data['is_project'] && isset($data['project']['name'])) {
+            $propertyName = $data['project']['name'];
+        } elseif (isset($data['name'])) {
+            $propertyName = $data['name'];
         }
 
-        return DB::transaction(function () use ($data, $listing, $agent) {
+        // 3. Update Property (Only fields present in $data)
+        $propertyFields = [
+            'address', 'photos', 'amenities', 'description', 
+            'geo_coordinates', 'is_project', 'furnishing_id'
+        ];
+        $propertyData = array_intersect_key($data, array_flip($propertyFields));
+        $propertyData['name'] = $propertyName; 
+        
+        $property->update($propertyData);
 
-            $property          = $listing->property;
-            $propertyAttribute = $property->propertyAttribute;
+        // 4. Resolve slug only if name is actually in the request and changed
+        $slug = $listing->slug;
+        if (isset($data['name']) && $data['name'] !== $listing->name) {
+            $baseSlug = Str::slug($data['name']);
+            $slugTaken = Listing::where('slug', $baseSlug)
+                ->where('id', '!=', $listing->id)
+                ->exists();
 
-            // Update property attributes
-            $propertyAttribute->update([
-                'bedroom_count'      => $data['bedroom_count']      ?? $propertyAttribute->bedroom_count,
-                'bathroom_count'     => $data['bathroom_count']     ?? $propertyAttribute->bathroom_count,
-                'garage_count'       => $data['garage_count']       ?? $propertyAttribute->garage_count,
-                'lot_area'           => $data['lot_area']           ?? $propertyAttribute->lot_area,
-                'floor_area'         => $data['floor_area']         ?? $propertyAttribute->floor_area,
-                'property_subtype_id'=> $data['property_subtype_id']?? $propertyAttribute->property_subtype_id,
-            ]);
+            $slug = $slugTaken ? "{$baseSlug}-{$listing->id}" : $baseSlug;
+        }
 
-            // Determine property name
-            $propertyName = $property->name;
-            if (isset($data['is_project']) && $data['is_project'] && isset($data['project']['name'])) {
-                $propertyName = $data['project']['name'];
-            } elseif (isset($data['name'])) {
-                $propertyName = $data['name'];
-            }
+        // 5. Update Listing (Only fields present in $data)
+        $listingFields = [
+            'name', 'price', 'visibility', 'status', 
+            'category_id', 'is_featured'
+        ];
+        $listingData = array_intersect_key($data, array_flip($listingFields));
+        $listingData['slug'] = $slug;
 
-            // Update property
-            $property->update([
-                'name'            => $propertyName,
-                'address'         => $data['address']         ?? $property->address,
-                'photos'          => $data['photos']          ?? $property->photos,
-                'amenities'       => $data['amenities']       ?? $property->amenities,
-                'description'     => $data['description']     ?? $property->description,
-                'geo_coordinates' => $data['geo_coordinates'] ?? $property->geo_coordinates,
-                'is_project'      => $data['is_project']      ?? $property->is_project,
-                'furnishing_id'   => array_key_exists('furnishing_id', $data)
-                                        ? $data['furnishing_id']
-                                        : $property->furnishing_id,
-            ]);
+        if (isset($data['featured_photo'])) {
+            $listingData['featured_photo'] = is_array($data['featured_photo'])
+                ? $data['featured_photo']
+                : [$data['featured_photo']];
+        }
 
-            // Resolve slug only if name changed
-            $slug = $listing->slug;
-            if (isset($data['name']) && $data['name'] !== $listing->name) {
-                $baseSlug  = Str::slug($data['name']);
-                $slugTaken = Listing::where('slug', $baseSlug)
-                    ->where('id', '!=', $listing->id)
-                    ->exists();
+        $listing->update($listingData);
 
-                $slug = $slugTaken ? "{$baseSlug}-{$listing->id}" : $baseSlug;
-            }
+        // Check if anything actually changed for your response message
+        $wasActuallyUpdated = $listing->wasChanged() || 
+                              $property->wasChanged() || 
+                              $propertyAttribute->wasChanged();
 
-            // Update listing
-            $listing->update([
-                'name'          => $data['name']          ?? $listing->name,
-                'slug'          => $slug,
-                'price'         => $data['price']         ?? $listing->price,
-                'visibility'    => $data['visibility']    ?? $listing->visibility,
-                'status'        => $data['status']        ?? $listing->status,
-                'category_id'   => $data['category_id']  ?? $listing->category_id,
-                'is_featured'   => $data['is_featured']  ?? $listing->is_featured,
-                'featured_photo'=> isset($data['featured_photo'])
-                                    ? (is_array($data['featured_photo'])
-                                        ? $data['featured_photo']
-                                        : [$data['featured_photo']])
-                                    : $listing->featured_photo,
-            ]);
+        $listing->load(['property.propertyAttribute.subtype.type', 'category', 'agent']);
+        
+        // Attach flag for the controller
+        $listing->was_actually_updated = $wasActuallyUpdated;
 
-            $listing->load(['property', 'category', 'agent']);
-
-            return $listing->fresh();
-        });
-    }
+        return $listing;
+    });
+}
 }

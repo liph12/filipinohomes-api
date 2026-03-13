@@ -13,6 +13,12 @@ class PropertyAttribute extends Model
         'floor_area',
         'property_subtype_id',
     ];
+
+    protected $casts = [
+        'lot_area'          => 'decimal:2',
+        'floor_area'         => 'decimal:2',
+    ];
+
     public function subtype()
     {
         return $this->belongsTo(PropertySubtype::class, 'property_subtype_id');
