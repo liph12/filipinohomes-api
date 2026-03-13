@@ -103,7 +103,7 @@
                           font-family: Helvetica;
                           font-weight: bold;
                         ">
-                                                {{ $code }}
+                                                {{ $verification }}
                                             </span>
                                         </div>
                                     </td>

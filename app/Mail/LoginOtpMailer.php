@@ -32,7 +32,7 @@ class LoginOtpMailer extends Mailable
      */
     public function build()
     {
-        $mail = $this->to($this->email)->from(env('MAIL_FROM'), 'FH Support Team')->subject('FH Login OTP')->markdown('email.login-otp-mailer.blade');
+        $mail = $this->to($this->email)->from(env('MAIL_FROM'), 'FH Support Team')->subject('FH Login OTP')->markdown('mail.login-otp-mailer');
 
         return $mail;
     }

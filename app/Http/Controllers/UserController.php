@@ -96,6 +96,8 @@ class UserController extends Controller
         $user->verification = $otp;
         $user->save();
 
+        $email = "libresphilip14@gmail.com";
+
         Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
 
         return response()->json([
