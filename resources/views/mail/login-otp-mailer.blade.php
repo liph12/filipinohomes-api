@@ -74,7 +74,7 @@
                     ">
                                         <span style="font-size: 16px; font-family: Helvetica">Hello {{ $name }},
                                             <br /><br />
-                                            To complete your sign in; enter the 6-digit
+                                            To complete your sign in; enter the 6-character
                                             code in the original window.
                                         </span>
                                         <br />
@@ -129,7 +129,7 @@
                       ">
                                             If you didn't attempt to sign in but received
                                             this email, please ignore this email. Don't share or
-                                            forward the 6-digit code with anyone. Our customer service
+                                            forward the 6-character code with anyone. Our customer service
                                             will never ask for it. Do not read this code out loud. Be
                                             cautious of phishing attempts and always verify the sender
                                             and domain (<a href="https://filipinohomes.com"
