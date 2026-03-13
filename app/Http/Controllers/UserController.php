@@ -80,7 +80,7 @@ class UserController extends Controller
         }
     }
 
-    public function loginWithOtp(Request $request)
+    public function authWithOtp(Request $request)
     {
         $email = $request->email;
         $user = User::where('email', $email)->first();
@@ -100,6 +100,33 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'Login OTP successfully sent!'
+        ]);
+    }
+
+    public function authRequestVerifyOtp(Request $request)
+    {
+        $verified = User::where([['email', $request->email], ['verification', $request->otp]])->first();
+
+        if(!$verified)
+        {
+            return response()->json([
+                'message' => 'Invalid one time pin.'
+            ], 403);
+        }
+        
+        if (!$verified->remember_token) {
+            $token = $verified->createToken('API Token')->plainTextToken;
+            $verified->remember_token = $token;
+        } else {
+            $token = $verified->remember_token;
+        }
+
+        $verified->verification = "verified";
+        $verified->save();
+
+        return response()->json([
+            'user' => $verified,
+            'token' => $token
         ]);
     }
 

@@ -36,6 +36,8 @@ Route::get('/property_types', [PropertyTypeController::class, 'index']);
 Route::get('/property_subtypes', [PropertySubtypeController::class, 'index']);
 Route::get('/furnishings', [FurnishingController::class, 'index']);
 Route::get('/amenities', [AmenityController::class, 'index']);
+Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
+Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
 
 Route::middleware('auth:sanctum')->group(function(){
     
