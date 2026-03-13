@@ -6,6 +6,9 @@ use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
+use App\Mail\LoginOtpMailer;
+use Illuminate\Support\Facades\Mail;
 
 class UserController extends Controller
 {
@@ -77,6 +80,29 @@ class UserController extends Controller
         }
     }
 
+    public function loginWithOtp(Request $request)
+    {
+        $email = $request->email;
+        $user = User::where('email', $email)->first();
+
+        if(!$user)
+        {
+            return response()->json([
+                'message' => 'Email address not found.'
+            ], 403);
+        }
+
+        $otp = Str::upper(Str::random(6));
+        $user->verification = $otp;
+        $user->save();
+
+        Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
+
+        return response()->json([
+            'message' => 'Login OTP successfully sent!'
+        ]);
+    }
+
     public function logout(Request $request)
     {
         $user = $request->user();
@@ -91,5 +117,4 @@ class UserController extends Controller
             'message' => 'Logged out successfully',
         ], 200);
     }
-
 }

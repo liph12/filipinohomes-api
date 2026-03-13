@@ -3,22 +3,37 @@
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Content;
-use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
 class LoginOtpMailer extends Mailable
 {
     use Queueable, SerializesModels;
+    public $email;
+    public $verification;
+    public $name;
 
     /**
      * Create a new message instance.
+     *
+     * @return void
      */
-    public function __construct()
+    public function __construct($email, $verification, $name)
     {
-        //
+        $this->email = $email;
+        $this->verification = $verification;
+        $this->name = $name;
     }
 
+    /**
+     * Build the message. 
+     *
+     * @return $this
+     */
+    public function build()
+    {
+        $mail = $this->to($this->email)->from(env('MAIL_FROM'), 'FH Support Team')->subject('FH Login OTP')->markdown('email.login-otp-mailer.blade');
+
+        return $mail;
+    }
 }

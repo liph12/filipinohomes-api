@@ -22,7 +22,8 @@ class User extends Authenticatable
         'mobile_no',
         'password',
         'avatar',
-        "role_id"
+        "role_id",
+        'verification'
     ];
 
     public function setPasswordAttribute($value)
