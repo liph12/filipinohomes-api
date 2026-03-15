@@ -12,7 +12,7 @@ class PostController extends Controller
             Post::with('category')
                 ->whereNotNull('published_at')
                 ->orderByDesc('published_at')
-                ->paginate(10)
+                ->paginate(7)  
         );
     }
 

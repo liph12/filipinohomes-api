@@ -15,12 +15,12 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->string('status')->default("active");
-            $table->text('address')->nullable();
-            $table->json('photos')->nullable();     // array of image paths
-            $table->json('amenities')->nullable();  // array of amenities
-            $table->text('description')->nullable();
+            $table->text('address');
+            $table->json('photos');     
+            $table->json('amenities')->nullable(); 
+            $table->text('description');
             $table->integer('address_id')->nullable();
-            $table->json('geo_coordinates')->nullable(); 
+            $table->json('geo_coordinates'); 
             $table->boolean('is_project')->default(false);
             $table->foreignId('property_attribute_id')
                 ->constrained('property_attributes')

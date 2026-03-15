@@ -45,7 +45,7 @@ class StoreListingRequest extends FormRequest
         return [
             'property_type_id' => 'required|exists:property_types,id',
             'property_subtype_id' => 'required|exists:property_subtypes,id',
-            'name' => 'required|string|max:255|unique:listings,name',
+            'name' => 'required|string|max:255',
             'address' => 'required|string',
             'price' => 'required|numeric|min:0',
             'bedroom_count' => 'nullable|integer|min:0',
@@ -58,7 +58,7 @@ class StoreListingRequest extends FormRequest
             'photos.*' => 'string|url',
             'amenities' => 'nullable|array',
             'amenities.*' => 'string',
-            'geo_coordinates' => 'nullable|array',
+            'geo_coordinates' => 'nullable|array:lat,lng',
             'is_project' => 'nullable|boolean',
             'project_id' => 'nullable|integer',
             'project' => 'nullable|array',

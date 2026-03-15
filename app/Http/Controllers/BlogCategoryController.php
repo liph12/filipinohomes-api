@@ -24,7 +24,7 @@ public function show($slug)
     $posts = $category->posts()
         ->whereNotNull('published_at')
         ->orderByDesc('published_at')
-        ->paginate(10);
+        ->paginate(9);
 
     return response()->json([
         'category' => $category,

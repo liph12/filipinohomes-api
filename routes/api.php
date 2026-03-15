@@ -22,6 +22,8 @@ use App\Http\Controllers\{
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [UserController::class, 'login']);
+Route::post('/register-send-otp', [UserController::class, 'registerWithOtp']);
+Route::post('/register-request-verify-otp', [UserController::class, 'registerRequestVerifyOtp']);
 Route::get('/blogs', [PostController::class, 'index']); 
 Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
 Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);

@@ -15,7 +15,7 @@ class Listing extends Model
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
         'featured_photo', 'is_featured', 'clicks',
-        'property_id', 'category_id', 'agent_id',
+        'property_id', 'category_id', 'agent_id', 'seo_tags'
     ];
 
     protected $casts = [
@@ -23,27 +23,72 @@ class Listing extends Model
         'is_featured'    => 'boolean',
         'clicks'         => 'integer',
         'featured_photo' => 'array',
+        'seo_tags'       => 'array',
     ];
 
     protected static function booted()
     {
-        // Generate slug BEFORE insert
-        // static::creating(function ($listing) {
-        //     $baseSlug = Str::slug($listing->name);
-        //     $slug     = $baseSlug;
-        //     $counter  = 1;
-        //     while (self::where('slug', $slug)->exists()) {
-        //         $slug = $baseSlug . '-' . $counter++;
-        //     }
-        //     $listing->slug = $slug;
-        // });
+        // Set temporary unique values before insert (unique columns are required).
+        static::creating(function ($listing) {
+            $token = Str::lower(Str::random(10));
+            $listing->slug = 'tmp-' . $token;
+            $listing->code = 'TMP-' . Str::upper($token);
+        });
 
-        // Generate code AFTER insert (no redundancy)
-        // static::created(function ($listing) {
-        //     $listing->updateQuietly([
-        //         'code' => 'FH-' . now()->year . '-' . str_pad($listing->id, 10, '0', STR_PAD_LEFT),
-        //     ]);
-        // });
+        // Generate final slug/code after insert when listing id is available.
+        static::created(function ($listing) {
+            $baseSlug = Str::slug($listing->name);
+            $finalSlug = $baseSlug;
+
+            if (self::where('slug', $baseSlug)->where('id', '!=', $listing->id)->exists()) {
+                $finalSlug = $baseSlug . '-' . $listing->id;
+            }
+
+            $address = optional($listing->property)->address;
+            $provinceCode = self::provinceCodeFromAddress($address);
+
+            $listing->updateQuietly([
+                'slug' => $finalSlug,
+                'code' => $provinceCode . '-' . str_pad((string) $listing->id, 4, '0', STR_PAD_LEFT),
+            ]);
+        });
+    }
+
+    private static function provinceCodeFromAddress(?string $address): string
+    {
+        $parts = $address
+            ? array_values(array_filter(array_map('trim', explode(',', $address))))
+            : [];
+
+        if (empty($parts)) {
+            return 'GEN';
+        }
+
+        $toWords = static function (?string $value): array {
+            $cleaned = preg_replace('/[^a-zA-Z\s]/', '', $value ?? '') ?? '';
+
+            return array_values(array_filter(preg_split('/\s+/', trim($cleaned)) ?: []));
+        };
+
+        $country = $parts[count($parts) - 1];
+        $province = strcasecmp($country, 'Philippines') === 0 && count($parts) > 1
+            ? $parts[count($parts) - 2]
+            : $country;
+
+        $provinceWords = $toWords($province);
+
+        if (count($provinceWords) <= 1) {
+            return Str::upper(substr($provinceWords[0] ?? 'GEN', 0, 3));
+        }
+
+        $abbr = Str::upper(substr(implode('', array_map(fn ($word) => $word[0], $provinceWords)), 0, 3));
+
+        if (strlen($abbr) === 2) {
+            $countryWords = $toWords($country);
+            $abbr .= Str::upper(substr($countryWords[0] ?? '', 0, 1));
+        }
+
+        return str_pad($abbr, 3, 'X');
     }
 public function scopeVisibleTo($query, $user = null)
 {

@@ -12,6 +12,77 @@ use Illuminate\Support\Facades\Mail;
 
 class UserController extends Controller
 {
+    public function registerWithOtp(Request $request)
+    {
+        $validated = $request->validate([
+            'email' => 'required|email'
+        ]);
+
+        $email = $validated['email'];
+        $user = User::where('email', $email)->first();
+
+        if ($user && $user->verification === 'verified') {
+            return response()->json([
+                'message' => 'Email is already registered.'
+            ], 409);
+        }
+
+        if (!$user) {
+            $user = User::create([
+                'name' => Str::before($email, '@'),
+                'email' => $email,
+                'password' => Str::random(32),
+                'role_id' => 3,
+                'verification' => 'pending',
+            ]);
+        }
+
+        $otp = Str::upper(Str::random(6));
+        $user->verification = $otp;
+        $user->save();
+
+        Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
+
+        return response()->json([
+            'message' => 'Register OTP successfully sent!'
+        ]);
+    }
+
+    public function registerRequestVerifyOtp(Request $request)
+    {
+        $validated = $request->validate([
+            'email' => 'required|email',
+            'otp' => 'required|string'
+        ]);
+
+        $verified = User::where([
+            ['email', $validated['email']],
+            ['verification', $validated['otp']]
+        ])->first();
+
+        if (!$verified) {
+            return response()->json([
+                'message' => 'Invalid one time pin.'
+            ], 403);
+        }
+
+        if (!$verified->remember_token) {
+            $token = $verified->createToken('API Token')->plainTextToken;
+            $verified->remember_token = $token;
+        } else {
+            $token = $verified->remember_token;
+        }
+
+        $verified->verification = 'verified';
+        $verified->email_verified_at = now();
+        $verified->save();
+
+        return response()->json([
+            'user' => $verified,
+            'token' => $token
+        ]);
+    }
+
     public function index()
     {
         return new UserResourceCollection(
@@ -31,20 +102,7 @@ class UserController extends Controller
             User::find(Auth::user()->id)
         );
     }
-
-    public function store(Request $request)
-    {
-        $data = $request->only(['name', 'email', 'password', 'role_id']);
-        $exists = User::where('email', $data['email'])->first();
-        if ($exists) {
-            return response()->json([
-                'message' => 'Email is already used.'
-            ], 401);
-        }
-        $user = User::create($data);
-        return new UserResource($user);
-    }
-
+    
     public function update($id, Request $request)
     {
         $user = User::findOrFail($id);
@@ -95,9 +153,7 @@ class UserController extends Controller
         $otp = Str::upper(Str::random(6));
         $user->verification = $otp;
         $user->save();
-
-        $email = "libresphilip14@gmail.com";
-
+        $email ="marklawrince730@gmail.com";
         Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
 
         return response()->json([
