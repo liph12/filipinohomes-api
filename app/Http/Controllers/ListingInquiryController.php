@@ -143,4 +143,13 @@ public function store(Request $request): JsonResponse
 
         return response()->json(['message' => 'Inquiry deleted.']);
     }
+
+    /**
+     * Count all listing inquiries (not conversations).
+     */
+    public function countAll(): \Illuminate\Http\JsonResponse
+    {
+        $count = ListingInquiry::count();
+        return response()->json(['count' => $count]);
+    }
 }

@@ -9,20 +9,24 @@ use Illuminate\Http\Request;
 use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+
 class ListingController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'updateIsFeatured']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
     }
 
     public function index(Request $request): ListingResourceCollection
     {
-        $user = auth('sanctum')->user(); 
-          Log::info('Listing index user: ', ['user' => $user?->id, 'token' => $request->bearerToken()]);
-          $listings = Listing::visibleTo($user) 
-            ->with(['property.propertyAttribute.subtype', 'category', 'agent'])
+        Log::info('Listing index user: ', ['token' => $request->bearerToken()]);
+        $listings = Listing::where('visibility', 'public')
+            ->with([
+                'property.propertyAttribute.subtype',
+                'category',
+                'agent' => function ($q) { $q->withCount('listings'); }
+            ])
             ->filter($request)
             ->sorted($request->get('sort_by', 'featured'))
             ->paginate($request->integer('per_page', 10));
@@ -32,8 +36,7 @@ class ListingController extends Controller
 
     public function subtypeCounts(Request $request): JsonResponse
     {
-        $user = auth('sanctum')->user(); 
-        $counts = Listing::visibleTo($user) 
+        $counts = Listing::where('visibility', 'public')
             ->filter($request)
             ->join('properties', 'listings.property_id', '=', 'properties.id')
             ->join('property_attributes', 'properties.property_attribute_id', '=', 'property_attributes.id')
@@ -53,9 +56,11 @@ class ListingController extends Controller
         $user = $request->user();
 
         if ($user->role->name === 'admin') {
-            $listings = Listing::all();
+            $listings = Listing::orderBy('created_at', 'desc')->get();
         } elseif ($user->role->name === 'agent') {
-            $listings = Listing::where('agent_id', $user->agent->id)->get();
+            $listings = Listing::where('agent_id', $user->agent->id)
+                ->orderBy('created_at', 'desc')
+                ->get();
         } else {
             abort(403, 'Unauthorized.');
         }
@@ -75,57 +80,73 @@ class ListingController extends Controller
 
         return response()->json(['visibility' => $listing->visibility]);
     }
-public function updateStatus(Request $request, Listing $listing)
-{
-    $this->authorize('update', $listing);
+    public function updateStatus(Request $request, Listing $listing)
+    {
+        $this->authorize('update', $listing);
 
-    $data = $request->validate([
-        'status' => 'required|in:active,rented,sold,leased',
-    ]);
+        $data = $request->validate([
+            'status' => 'required|in:active,rented,sold,leased',
+        ]);
 
-    $listing->property->update($data);
+        $listing->property->update($data);
 
-    return response()->json([
-        'status' => $listing->property->status
-    ]);
-}
-
-public function show(string $slug)
-{
-    $listing = Listing::where('slug', $slug)
-        ->with([
-            'property.propertyAttribute.subtype.type',
-            'property.furnishing',
-            'category',
-            'agent.user',
-        ])
-        ->firstOrFail();
-
-    $user = auth('sanctum')->user();
-
-    if (!$user && $listing->visibility !== 'public') {
-        abort(403, 'This listing is private. Login is required!');
+        return response()->json([
+            'status' => $listing->property->status
+        ]);
     }
 
-    return new ListingResource($listing);
-}
+    public function updateIsFeatured(Request $request, Listing $listing)
+    {
+        $this->authorize('update', $listing);
 
-public function featured(Request $request): ListingResourceCollection
-{
-    $user = auth('sanctum')->user();
+        $data = $request->validate([
+            'is_featured' => 'required|boolean',
+        ]);
 
-    $query = Listing::where('is_featured', true);
+        $listing->update(['is_featured' => $data['is_featured']]);
 
-    if (!$user) {
-        $query->where('visibility', 'public');
+        $listing = $listing->fresh();
+
+        return response()->json([
+            'is_featured'    => (bool) $listing->is_featured,
+        ]);
     }
 
-    $listings = $query
-        ->with(['property.propertyAttribute.subtype', 'category', 'agent'])
-        ->get();
+    public function show(string $slug)
+    {
+        $listing = Listing::where('slug', $slug)
+            ->with([
+                'property.propertyAttribute.subtype.type',
+                'property.furnishing',
+                'category',
+                'agent.user',
+            ])
+            ->firstOrFail();
 
-    return new ListingResourceCollection($listings);
-}
+        $user = auth('sanctum')->user();
+
+        if ($listing->visibility !== 'public') {
+            if (!$user || ($user->role->name !== 'admin' && $listing->agent_id !== ($user->agent->id ?? null))) {
+                abort(403, 'This listing is private. Only the owner or admin can view it.');
+            }
+        }
+
+        return new ListingResource($listing);
+    }
+
+    public function featured(Request $request): ListingResourceCollection
+    {
+        $listings = Listing::where('is_featured', true)
+            ->where('visibility', 'public')
+            ->with([
+                'property.propertyAttribute.subtype',
+                'category',
+                'agent' => function ($q) { $q->withCount('listings'); }
+            ])
+            ->get();
+
+        return new ListingResourceCollection($listings);
+    }
 
     public function update(Request $request, Listing $listing)
     {
@@ -157,5 +178,4 @@ public function featured(Request $request): ListingResourceCollection
 
         return response()->json(['message' => 'Listing deleted successfully']);
     }
-
 }

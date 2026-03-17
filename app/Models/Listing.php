@@ -90,16 +90,6 @@ class Listing extends Model
 
         return str_pad($abbr, 3, 'X');
     }
-public function scopeVisibleTo($query, $user = null)
-{
-    // If no user is logged in, show only public listings
-    if (!$user) {
-        return $query->where('listings.visibility', 'public');
-    }
-
-    // If user is logged in, show everything
-    return $query;
-}
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {

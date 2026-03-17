@@ -53,11 +53,12 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('full-listing', FullListingController::class)->only(['store', 'show', 'update', 'destroy'])->parameters(['full-listing' => 'listing']);
     Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
     Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
+    Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::post('/upload', [ImageUploadController::class, 'upload']);
     Route::post('/logout', [UserController::class, 'logout']);
-
+    Route::get('listing-inquiries-count', [ListingInquiryController::class, 'countAll']);
 });

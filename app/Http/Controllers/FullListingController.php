@@ -60,7 +60,7 @@ class FullListingController extends Controller
             $user  = $request->user();
             $agent = $user->agent;
 
-            if ($user->role('agent') && $listing->agent_id !== $agent?->id) {
+            if ($user->role->name === 'agent' && $listing->agent_id !== $agent?->id) {
                 return response()->json(['message' => 'You do not own this listing.'], 403);
             }
 
