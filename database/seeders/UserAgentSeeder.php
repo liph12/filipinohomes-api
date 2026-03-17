@@ -4,8 +4,6 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use App\Models\User;
-use App\Models\Agent;
 use App\Models\Member;
 use Illuminate\Support\Facades\Hash;
 
@@ -18,27 +16,40 @@ class UserAgentSeeder extends Seeder
         DB::disableQueryLog();
 
         Member::chunk(500, function ($members) use ($hashedPassword) {
-            $emails = $members->pluck('emailad');
-            $existing = User::whereIn('email', $emails)->pluck('email')->flip();
+
+            $emails = $members->pluck('emailad')->toArray();
+
+            // Get existing emails in users table
+            $existingEmails = DB::table('users')
+                ->whereIn('email', $emails)
+                ->pluck('email')
+                ->toArray();
+
+            // Flip to make lookup fast
+            $existingEmails = array_flip($existingEmails);
+
+            $userData = [];
+            $agentData = [];
 
             foreach ($members as $m) {
-                if (isset($existing[$m->emailad])) {
+
+                // Skip if email already exists
+                if (isset($existingEmails[$m->emailad])) {
                     continue;
                 }
 
-                $avatar = null;
-
-                if ($m->photo) {
-                    $avatar = str_contains($m->photo, 'https://')
+                $avatar = $m->photo
+                    ? (str_contains($m->photo, 'https://')
                         ? $m->photo
-                        : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/members/' . $m->id . '/photo/' . $m->photo;
-                }
+                        : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/members/' . $m->id . '/photo/' . $m->photo)
+                    : null;
 
                 $mobile = filter_var($m->mobile ?? $m->phone ?? null, FILTER_VALIDATE_EMAIL)
                     ? null
                     : ($m->mobile ?? $m->phone ?? null);
 
-                $user = User::create([
+                // Prepare user insert
+                $userData[] = [
                     'id'                => $m->id,
                     'name'              => implode(' ', array_filter([$m->fn, $m->mn, $m->ln])),
                     'email'             => $m->emailad,
@@ -47,9 +58,12 @@ class UserAgentSeeder extends Seeder
                     'password'          => $hashedPassword,
                     'email_verified_at' => null,
                     'role_id'           => 2,
-                ]);
+                    'created_at'        => now(),
+                    'updated_at'        => now(),
+                ];
 
-                Agent::create([
+                // Prepare agent insert
+                $agentData[] = [
                     'id'           => $m->id,
                     'first_name'   => $m->fn,
                     'middle_name'  => $m->mn ?? null,
@@ -57,13 +71,24 @@ class UserAgentSeeder extends Seeder
                     'mobile_no'    => $mobile ?? null,
                     'whats_app_no' => null,
                     'address'      => $m->address ?? null,
-                    'socials'      => $m->facebook ? ['facebook' => $m->facebook] : null,
+                    'socials'      => $m->facebook ? json_encode(['facebook' => $m->facebook]) : null,
                     'bio'          => $m->aboutme ?? '',
                     'avatar'       => $avatar,
                     'geo_location' => null,
                     'member_since' => $m->datesign ?? null,
-                    'user_id'      => $user->id,
-                ]);
+                    'user_id'      => $m->id,
+                    'created_at'   => now(),
+                    'updated_at'   => now(),
+                ];
+            }
+
+            // Bulk insert users and agents
+            if (!empty($userData)) {
+                DB::table('users')->insert($userData);
+            }
+
+            if (!empty($agentData)) {
+                DB::table('agents')->insert($agentData);
             }
         });
     }
