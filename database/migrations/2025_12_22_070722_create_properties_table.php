@@ -18,7 +18,7 @@ return new class extends Migration
             $table->text('address');
             $table->json('photos');     
             $table->json('amenities')->nullable(); 
-            $table->text('description');
+            $table->text('description')->nullable();
             $table->integer('address_id')->nullable();
             $table->json('geo_coordinates'); 
             $table->boolean('is_project')->default(false);

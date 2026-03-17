@@ -17,13 +17,14 @@ return new class extends Migration
             $table->string('first_name');
             $table->string('middle_name')->nullable();
             $table->string('last_name');
-            $table->string('mobile_no');
+            $table->string('mobile_no')->nullable();
             $table->string('whats_app_no')->nullable();
             $table->text('address')->nullable();
             $table->string('socials')->nullable(); 
             $table->text('bio')->nullable();
             $table->string('avatar')->nullable(); 
             $table->string('geo_location')->nullable(); 
+            $table->date('member_since')->nullable(); 
             $table->foreignId('user_id')
                 ->constrained()
                 ->restrictOnDelete();

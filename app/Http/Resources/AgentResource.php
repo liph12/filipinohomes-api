@@ -27,7 +27,10 @@ class AgentResource extends JsonResource
             'socials'      => $this->socials,
             'bio'          => $this->bio,
             'geo_location' => $this->geo_location,
+            'member_since' => $this->member_since,
+            'listings_count' => $this->listings_count,
             'user'         => new UserResource($user),
+            'listings' => ListingResource::collection($this->whenLoaded('listings')),
         ];
     }
 }

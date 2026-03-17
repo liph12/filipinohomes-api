@@ -40,11 +40,12 @@ Route::get('/furnishings', [FurnishingController::class, 'index']);
 Route::get('/amenities', [AmenityController::class, 'index']);
 Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
 Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
+Route::get('agents', [AgentController::class, 'index']);
+Route::get('agents/{id}', [AgentController::class, 'show']);
 
 Route::middleware('auth:sanctum')->group(function(){
     
     Route::apiResource('users', UserController::class);
-    Route::apiResource('agents', AgentController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
     Route::apiResource('listing-inquiries', ListingInquiryController::class);
@@ -56,6 +57,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
     Route::get('/user/profile', [UserController::class, 'profile']);
+    Route::post('agents', [AgentController::class, 'store']);
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::post('/upload', [ImageUploadController::class, 'upload']);

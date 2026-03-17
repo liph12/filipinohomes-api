@@ -14,9 +14,16 @@ class AgentController extends Controller
     public function index()
     {
         return new AgentResourceCollection(
-            Agent::with('user')->paginate(10)
+            Agent::with('user')->withCount('listings')->paginate(10)
         );
     }
+
+public function show($id)
+{
+    return new AgentResource(
+        Agent::with('user', 'listings')->withCount('listings')->findOrFail($id)
+    );
+}
 
     public function profile()
     {

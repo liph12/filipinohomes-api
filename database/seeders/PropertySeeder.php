@@ -19,7 +19,7 @@ class PropertySeeder extends Seeder
      */
     public function run(): void
     {
-        $listings = Proplisting::whereBetween('date_added', ['2024-01-01', '2026-03-10'])
+        $listings = Proplisting::whereBetween('date_added', ['2024-01-01', '2026-03-17'])
         ->get();
 
         foreach($listings as $l)

@@ -16,6 +16,7 @@ class Agent extends Model
         "bio",
         'avatar',
         'geo_location',
+        'member_since',
         'user_id'
     ];
 
