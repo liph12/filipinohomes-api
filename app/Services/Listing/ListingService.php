@@ -9,7 +9,8 @@ use App\Models\PropertyAttribute;
 use App\Models\PropertySubtype;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 class ListingService
 {
     public function createListing(array $data, Agent $agent): Listing
@@ -39,6 +40,8 @@ class ListingService
                 $data['category_id'] ?? null,
                 $agent->id
             );
+
+            $this->syncSeoTags($listing);
 
             $listing->load(['property', 'category', 'agent']);
 
@@ -117,6 +120,36 @@ class ListingService
             'agent_id' => $agentId,
         ]);
     }
+
+    protected function syncSeoTags(Listing $listing): void
+    {
+        try {
+            $response = Http::get(
+                'https://api.leuteriorealty.com/fh/v2/public/api/generate-description-tags/' . urlencode($listing->name)
+            );
+ 
+            if ($response->failed()) {
+                Log::warning('SEO tag generation failed', [
+                    'listing_id' => $listing->id,
+                    'status'     => $response->status(),
+                ]);
+                return;
+            }
+ 
+            $data = $response->json();
+            $tags = $data['tags'] ?? $data['data']['tags'] ?? [];
+ 
+            if (!empty($tags)) {
+                $listing->update(['seo_tags' => $tags]);
+            }
+        } catch (\Throwable $e) {
+            Log::error('syncSeoTags exception', [
+                'listing_id' => $listing->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+    }
+
 
 public function updateListing(array $data, Listing $listing, Agent $agent): Listing
 {
