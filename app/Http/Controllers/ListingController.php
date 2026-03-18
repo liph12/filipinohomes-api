@@ -57,9 +57,9 @@ class ListingController extends Controller
         $user = $request->user();
 
         if ($user->role->name === 'admin') {
-            $listings = Listing::orderBy('created_at', 'desc')->get();
+            $listings = Listing::orderBy('created_at', 'desc')->paginate($request->query('per_page', 15));
         } elseif ($user->role->name === 'agent') {
-            $listings = Listing::where('agent_id', $user->agent->id)->get();
+            $listings = Listing::where('agent_id', $user->agent->id)->orderBy('created_at', 'desc')->paginate($request->query('per_page', 15));
         } else {
             abort(403, 'Unauthorized.');
         }
@@ -87,13 +87,14 @@ class ListingController extends Controller
             abort(403, 'Unauthorized.');
         }
 
-        $statistics['active'] = $listingsQuery->active()->count();
-        $statistics['total'] = $listingsQuery->count();
-        $statistics['views'] = (int)$listingsQuery->sum('clicks');
-        $statistics['inquiries'] = $listingsQuery->withCount('inQuiries')->get()->sum('in_quiries_count');
-        $statistics['rented'] = $listingsQuery->rented()->count();
-        $statistics['sold'] = $listingsQuery->sold()->count();
-        $statistics['leased'] = $listingsQuery->leased()->count();
+        $statistics['active'] = (clone $listingsQuery)->active()->count();
+        $statistics['total'] = (clone $listingsQuery)->count();
+        $statistics['views'] = (int)(clone $listingsQuery)->sum('clicks');
+        $listingIds = (clone $listingsQuery)->pluck('id');
+        $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn('listing_id', $listingIds)->count();
+        $statistics['rented'] = (clone $listingsQuery)->rented()->count();
+        $statistics['sold'] = (clone $listingsQuery)->sold()->count();
+        $statistics['leased'] = (clone $listingsQuery)->leased()->count();
 
         return response()->json($statistics);
     }
