@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use App\Mail\LoginOtpMailer;
 use Illuminate\Support\Facades\Mail;
+use App\Services\LeuterioreRealty\LrApiService;
+use App\Models\Agent;
+use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller
 {
@@ -140,24 +143,60 @@ class UserController extends Controller
 
     public function authWithOtp(Request $request)
     {
-        $email = $request->email;
+        $validated = $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $email = $validated['email'];
         $user = User::where('email', $email)->first();
 
-        if(!$user)
-        {
-            return response()->json([
-                'message' => 'Email address not found.'
-            ], 403);
+        if (!$user) {
+            $lrService = new LrApiService();
+            $lrData = $lrService->fetchAgentByEmail($email);
+
+            if (!$lrData) {
+                return response()->json([
+                    'message' => 'This email is not registered with Leuterio Realty. Please contact your administrator.',
+                ], 404);
+            }
+
+            if (!$lrService->hasRequiredFireCertificates($lrData)) {
+                return response()->json([
+                    'message' => 'You need to complete at least 3 FIRE training certificates before you can sign in. Please complete your FIRE training first.',
+                ], 403);
+            }
+
+            $nameParts = $lrService->parseName($lrData['name'] ?? $email);
+
+            $user = DB::transaction(function () use ($email, $nameParts, $lrData) {
+                $user = User::create([
+                    'name' => $lrData['name'] ?? Str::before($email, '@'),
+                    'email' => $email,
+                    'password' => Str::random(32),
+                    'role_id' => 2,
+                    'verification' => 'pending',
+                ]);
+
+                Agent::create([
+                    'user_id' => $user->id,
+                    'first_name' => $nameParts['first_name'],
+                    'middle_name' => $nameParts['middle_name'],
+                    'last_name' => $nameParts['last_name'],
+                    'mobile_no' => $lrData['mobile_no'] ?? null,
+                ]);
+
+                return $user;
+            });
         }
 
         $otp = Str::upper(Str::random(6));
         $user->verification = $otp;
         $user->save();
-        $email ="marklawrince730@gmail.com";
+
         Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
 
         return response()->json([
-            'message' => 'Login OTP successfully sent!'
+            'message' => 'Login OTP successfully sent!',
         ]);
     }
 
