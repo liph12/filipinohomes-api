@@ -57,12 +57,39 @@ class ListingController extends Controller
         $user = $request->user();
 
         if ($user->role->name === 'admin') {
-            $listings = Listing::orderBy('created_at', 'desc')->paginate($request->query('per_page', 15));
+            $query = Listing::query();
         } elseif ($user->role->name === 'agent') {
-            $listings = Listing::where('agent_id', $user->agent->id)->orderBy('created_at', 'desc')->paginate($request->query('per_page', 15));
+            $query = Listing::where('agent_id', $user->agent->id);
         } else {
             abort(403, 'Unauthorized.');
         }
+
+        if ($search = $request->get('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%")
+                  ->orWhereHas('property', fn ($sub) => $sub->where('address', 'like', "%{$search}%"));
+            });
+        }
+
+        if ($status = $request->get('status')) {
+            if ($status === 'active') {
+                $query->active();
+            } else {
+                $query->whereHas('property', fn ($q) => $q->where('status', $status));
+            }
+        }
+
+        if ($visibility = $request->get('visibility')) {
+            $query->where('visibility', $visibility);
+        }
+
+        if ($category = $request->get('category')) {
+            $query->whereHas('category', fn ($q) => $q->where('name', $category));
+        }
+
+        $listings = $query->orderBy('created_at', 'desc')
+            ->paginate($request->query('per_page', 15));
 
         return new ListingResourceCollection($listings);
     }
