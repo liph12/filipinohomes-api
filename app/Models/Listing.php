@@ -209,4 +209,37 @@ class Listing extends Model
     public function property()  { return $this->belongsTo(Property::class); }
     public function category()  { return $this->belongsTo(Category::class); }
     public function agent()     { return $this->belongsTo(Agent::class); }
+
+    public function scopeActive($q)
+    {
+        return $q->whereHas('property', function($q) {
+            $q->where('status', 'active');
+        });
+    }
+    
+    public function scopeRented($q)
+    {
+        return $q->whereHas('property', function($q) {
+            $q->where('status', 'rented');
+        });
+    }
+
+    public function scopeSold($q)
+    {
+        return $q->whereHas('property', function($q) {
+            $q->where('status', 'sold');
+        });
+    }
+
+    public function scopeLeased($q)
+    {
+        return $q->whereHas('property', function($q) {
+            $q->where('status', 'leased');
+        });
+    }
+
+    public function inQuiries()
+    {
+        return $this->hasMany(ListingInquiry::class);
+    }
 }

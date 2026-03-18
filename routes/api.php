@@ -57,6 +57,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
     Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
+    Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::post('agents', [AgentController::class, 'store']);
     Route::get('/agent/profile', [AgentController::class, 'profile']);

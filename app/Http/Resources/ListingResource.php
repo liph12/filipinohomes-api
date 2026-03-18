@@ -28,7 +28,6 @@ class ListingResource extends JsonResource
             'property'       => new PropertyResource($this->property),
             'category'       => new CategoryResource($this->category),
             'agent'          => new AgentResource($this->agent)
-
         ];
     }
 }

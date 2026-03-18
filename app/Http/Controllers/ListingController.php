@@ -59,14 +59,43 @@ class ListingController extends Controller
         if ($user->role->name === 'admin') {
             $listings = Listing::orderBy('created_at', 'desc')->get();
         } elseif ($user->role->name === 'agent') {
-            $listings = Listing::where('agent_id', $user->agent->id)
-                ->orderBy('created_at', 'desc')
-                ->get();
+            $listings = Listing::where('agent_id', $user->agent->id)->get();
         } else {
             abort(403, 'Unauthorized.');
         }
 
         return new ListingResourceCollection($listings);
+    }
+
+    public function dashboard(Request $request)
+    {
+        $user = $request->user();
+        $statistics = [
+            'active' => 0,
+            'total' => 0,
+            'rented' => 0,
+            'sold' => 0,
+            'inquiries' => 0,
+            'views' => 0,
+        ];
+
+        if ($user->role->name === 'admin') {
+            $listingsQuery = Listing::withCount('inQuiries');
+        } elseif ($user->role->name === 'agent') {
+            $listingsQuery = Listing::withCount('inQuiries')->where('agent_id', $user->agent->id);
+        } else {
+            abort(403, 'Unauthorized.');
+        }
+
+        $statistics['active'] = $listingsQuery->active()->count();
+        $statistics['total'] = $listingsQuery->count();
+        $statistics['views'] = (int)$listingsQuery->sum('clicks');
+        $statistics['inquiries'] = $listingsQuery->withCount('inQuiries')->get()->sum('in_quiries_count');
+        $statistics['rented'] = $listingsQuery->rented()->count();
+        $statistics['sold'] = $listingsQuery->sold()->count();
+        $statistics['leased'] = $listingsQuery->leased()->count();
+
+        return response()->json($statistics);
     }
 
     public function updateVisibility(Request $request, Listing $listing)
