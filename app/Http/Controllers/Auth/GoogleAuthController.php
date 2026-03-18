@@ -59,22 +59,29 @@ class GoogleAuthController extends Controller
             ], 404);
         }
 
-        if (!$lrService->hasRequiredFireCertificates($lrData)) {
+        if (!$lrService->isAllowedRole($lrData)) {
+            return response()->json([
+                'message' => 'Your role is not authorized to access this platform.',
+            ], 403);
+        }
+
+        if ($lrService->requiresFireCheck($lrData) && !$lrService->hasRequiredFireCertificates($lrData)) {
             return response()->json([
                 'message' => 'You need to complete at least 3 FIRE training certificates before you can sign in. Please complete your FIRE training first.',
             ], 403);
         }
 
+        $fhRoleId = $lrService->mapToFhRoleId($lrData);
         $nameParts = $lrService->parseName($lrData['name'] ?? $googleUser['name']);
 
-        $user = DB::transaction(function () use ($googleUser, $lrData, $nameParts) {
+        $user = DB::transaction(function () use ($googleUser, $lrData, $nameParts, $fhRoleId) {
             $user = User::create([
                 'name' => $lrData['name'] ?? $googleUser['name'],
                 'email' => $googleUser['email'],
                 'google_id' => $googleUser['google_id'],
                 'avatar' => $googleUser['avatar'],
                 'password' => Str::random(32),
-                'role_id' => 2,
+                'role_id' => $fhRoleId,
                 'verification' => 'verified',
             ]);
 

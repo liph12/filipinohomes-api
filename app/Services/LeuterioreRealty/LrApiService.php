@@ -8,6 +8,21 @@ class LrApiService
 {
     private const BASE_URL = 'https://api.leuteriorealty.com/lr/v1/public/api/agent';
 
+    // LR roleId → Filipino Homes role_id
+    // LR 1 = admin → FH 1 (admin)
+    // LR 4 = agent → FH 2 (agent) — requires FIRE check
+    // LR 6 = team leader → FH 2 (agent) — bypasses FIRE check
+    // LR 7 = unit manager → FH 2 (agent) — bypasses FIRE check
+    private const ALLOWED_LR_ROLES = [1, 4, 6, 7];
+    private const FIRE_CHECK_REQUIRED_ROLES = [4];
+
+    private const LR_ROLE_TO_FH_ROLE = [
+        1 => 1, // admin
+        4 => 2, // agent
+        6 => 2, // agent (team leader)
+        7 => 2, // agent (unit manager)
+    ];
+
     public function fetchAgentByEmail(string $email): ?array
     {
         try {
@@ -23,9 +38,24 @@ class LrApiService
         }
     }
 
+    public function isAllowedRole(array $lrData): bool
+    {
+        return in_array($lrData['roleId'] ?? null, self::ALLOWED_LR_ROLES, true);
+    }
+
+    public function requiresFireCheck(array $lrData): bool
+    {
+        return in_array($lrData['roleId'] ?? null, self::FIRE_CHECK_REQUIRED_ROLES, true);
+    }
+
     public function hasRequiredFireCertificates(array $lrData): bool
     {
         return ($lrData['fire_certificates'] ?? 0) >= 3;
+    }
+
+    public function mapToFhRoleId(array $lrData): int
+    {
+        return self::LR_ROLE_TO_FH_ROLE[$lrData['roleId']] ?? 2;
     }
 
     public function parseName(string $fullName): array
