@@ -227,6 +227,44 @@ class UserController extends Controller
         ]);
     }
 
+    public function devLogin(Request $request)
+    {
+        if (app()->environment() !== 'local') {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $email = $validated['email'];
+        $user = User::where('email', $email)->first();
+
+        if (!$user) {
+            $user = User::create([
+                'name' => Str::before($email, '@'),
+                'email' => $email,
+                'password' => Str::random(32),
+                'role_id' => 2,
+                'verification' => 'verified',
+            ]);
+        }
+
+        if (!$user->remember_token) {
+            $token = $user->createToken('API Token')->plainTextToken;
+            $user->remember_token = $token;
+            $user->save();
+        } else {
+            $token = $user->remember_token;
+        }
+
+        return response()->json([
+            'message' => 'Dev login successful.',
+            'token' => $token,
+            'user' => $user,
+        ]);
+    }
+
     public function logout(Request $request)
     {
         $user = $request->user();

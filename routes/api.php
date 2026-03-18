@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [UserController::class, 'login']);
 Route::post('/auth/google', [GoogleAuthController::class, 'authenticate']);
+Route::post('/auth/dev-login', [UserController::class, 'devLogin']);
 Route::get('/blogs', [PostController::class, 'index']); 
 Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
 Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
