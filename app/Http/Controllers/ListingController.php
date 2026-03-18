@@ -64,7 +64,7 @@ class ListingController extends Controller
             abort(403, 'Unauthorized.');
         }
 
-        if ($search = $request->get('search')) {
+        if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('code', 'like', "%{$search}%")
@@ -72,7 +72,7 @@ class ListingController extends Controller
             });
         }
 
-        if ($status = $request->get('status')) {
+        if ($status = $request->input('status')) {
             if ($status === 'active') {
                 $query->active();
             } else {
@@ -80,11 +80,11 @@ class ListingController extends Controller
             }
         }
 
-        if ($visibility = $request->get('visibility')) {
+        if ($visibility = $request->input('visibility')) {
             $query->where('visibility', $visibility);
         }
 
-        if ($category = $request->get('category')) {
+        if ($category = $request->input('category')) {
             $query->whereHas('category', fn ($q) => $q->where('name', $category));
         }
 
