@@ -1,0 +1,113 @@
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Models\Agent;
+use App\Models\User;
+use App\Services\Auth\GoogleTokenService;
+use App\Services\LeuterioreRealty\LrApiService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
+class GoogleAuthController extends Controller
+{
+    public function authenticate(Request $request)
+    {
+        $request->validate([
+            'access_token' => 'required|string',
+        ]);
+
+        $googleService = new GoogleTokenService();
+        $googleUser = $googleService->verify($request->access_token);
+
+        if (!$googleUser) {
+            return response()->json([
+                'message' => 'Invalid Google token. Please try again.',
+            ], 401);
+        }
+
+        $user = User::where('email', $googleUser['email'])
+            ->orWhere('google_id', $googleUser['google_id'])
+            ->first();
+
+        if ($user) {
+            if (!$user->google_id) {
+                $user->google_id = $googleUser['google_id'];
+            }
+            if (!$user->avatar && $googleUser['avatar']) {
+                $user->avatar = $googleUser['avatar'];
+            }
+            $user->save();
+
+            $token = $this->getOrCreateToken($user);
+
+            return response()->json([
+                'message' => 'Login successful.',
+                'token' => $token,
+                'user' => $user,
+            ]);
+        }
+
+        $lrService = new LrApiService();
+        $lrData = $lrService->fetchAgentByEmail($googleUser['email']);
+
+        if (!$lrData) {
+            return response()->json([
+                'message' => 'This email is not registered with Leuterio Realty. Please contact your administrator.',
+            ], 404);
+        }
+
+        if (!$lrService->hasRequiredFireCertificates($lrData)) {
+            return response()->json([
+                'message' => 'You need to complete at least 3 FIRE training certificates before you can sign in. Please complete your FIRE training first.',
+            ], 403);
+        }
+
+        $nameParts = $lrService->parseName($lrData['name'] ?? $googleUser['name']);
+
+        $user = DB::transaction(function () use ($googleUser, $lrData, $nameParts) {
+            $user = User::create([
+                'name' => $lrData['name'] ?? $googleUser['name'],
+                'email' => $googleUser['email'],
+                'google_id' => $googleUser['google_id'],
+                'avatar' => $googleUser['avatar'],
+                'password' => Str::random(32),
+                'role_id' => 2,
+                'verification' => 'verified',
+            ]);
+
+            Agent::create([
+                'user_id' => $user->id,
+                'first_name' => $nameParts['first_name'],
+                'middle_name' => $nameParts['middle_name'],
+                'last_name' => $nameParts['last_name'],
+                'mobile_no' => $lrData['mobile_no'] ?? null,
+            ]);
+
+            return $user;
+        });
+
+        $token = $this->getOrCreateToken($user);
+
+        return response()->json([
+            'message' => 'Account created and login successful.',
+            'token' => $token,
+            'user' => $user,
+        ]);
+    }
+
+    private function getOrCreateToken(User $user): string
+    {
+        if ($user->remember_token) {
+            return $user->remember_token;
+        }
+
+        $token = $user->createToken('API Token')->plainTextToken;
+        $user->remember_token = $token;
+        $user->save();
+
+        return $token;
+    }
+}
