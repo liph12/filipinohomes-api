@@ -12,7 +12,62 @@ class InquiryService
         $this->client = OpenAI::client(env('OPENAI_API_KEY'));
     }
 
-    public function classifyMessage(string $message): string
+    public function replyNormal(string $thread): string
+    {
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-4-turbo',
+            'messages' => [
+                [
+                    'role' => 'user',
+                    'content' => <<<PROMPT
+    You are an assistant for a Filipino real estate website called Filipino Homes. 
+    Reply politely and casually to this message: "{$thread}".
+    Always keep the reply relevant to Filipino Homes and real estate inquiries in the Philippines. 
+    You can greet the user, acknowledge their message, and gently guide them toward property listings if appropriate.
+    Do not talk about unrelated topics.
+    PROMPT
+                ]
+            ],
+        ]);
+    
+        return $response->choices[0]->message->content ?? 
+               "Hello! Welcome to Filipino Homes. How can I help you find your dream property today?";
+    }
+
+    public function replyInquired(string $thread, array $listings): string
+    {
+        // Instruction for the AI
+        $instruction = <<<INSTRUCTION
+    You are a helpful assistant for a Filipino real estate website called Filipino Homes. 
+    The user asked: "{$thread}".
+    
+    You are given a list of property listings from the database. Each listing includes:
+    - property_type
+    - property_subtype (array of objects with name and attributes)
+    - attributes: price_min, price_max, lot_area, floor_area, beds, baths, parking
+    
+    Reply politely and naturally, summarizing up to 5 of the listings for the user. 
+    Include the property type, subtype, price range, floor and lot area, beds, baths, and parking. 
+    Make it readable as a message, not a raw table. 
+    Do not include listings beyond the top 5. 
+    Encourage the user to inquire further or visit the website for more details.
+    INSTRUCTION;
+    
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-4-turbo',
+            'messages' => [
+                [
+                    'role' => 'user',
+                    'content' => $instruction . "\n\nListings:\n" . json_encode($listings, JSON_PRETTY_PRINT)
+                ]
+            ],
+        ]);
+    
+        return $response->choices[0]->message->content ?? 
+               "Hello! I found some listings that might interest you. Please visit Filipino Homes for more details.";
+    }
+
+    public function classifyMessage(string $thread)
     {
         $prompt = <<<PROMPT
     You are a real estate assistant. Determine if the user message is a property inquiry about Filipino homes/real estate listings. 
@@ -21,7 +76,7 @@ class InquiryService
     - "inquired" if it is about property inquiry (buying, selling, renting, searching homes, condos, lots, etc. in the Philippines)
     - "normal" if it is just a casual chat, greetings, or unrelated to Filipino real estate.
     
-    Message: "{$message}"
+    Message: "{$thread}"
     PROMPT;
     
         $response = $this->client->chat()->create([
@@ -43,112 +98,70 @@ class InquiryService
         return $classification;
     }
 
-    public function parsePropertyQuery(string $query, bool $defaultAll = false): array
+    public function parsePropertyQuery(string $thread)
     {
         $response = $this->client->chat()->create([
             'model' => 'gpt-4-turbo',
             'messages' => [
                 [
                     'role' => 'system',
-                    'content' => 'You are a Filipino real estate assistant. Extract structured property search filters. Return lot and floor area in square meters. Price, beds, baths, parking should be reasonable defaults if not specified.'
+                    'content' => 'Extract structured property search filters based on allowed categories and subtypes',
                 ],
                 [
                     'role' => 'user',
-                    'content' => $query
+                    'content' => $thread,
                 ],
             ],
             'functions' => [
                 [
                     'name' => 'extract_property',
-                    'description' => 'Return an array of properties with subtypes and attributes. If the query is generic, include all property types and subtypes with default attributes. If the query is specific, filter only the relevant types/subtypes.',
+                    'description' => 'Extract property search filters. Suggest a reasonable attributes, make it normal. Lot and floor area should be returned in square meters.',
                     'parameters' => [
                         'type' => 'object',
                         'properties' => [
-                            'properties' => [
-                                'type' => 'array',
-                                'items' => [
-                                    'type' => 'object',
-                                    'properties' => [
-                                        'property_type' => [
-                                            'type' => 'string',
-                                            'enum' => ["Condominium", "House", "Land", "Commercial"]
-                                        ],
-                                        'property_subtype' => [
-                                            'type' => 'array',
-                                            'items' => [
-                                                'type' => 'object',
-                                                'properties' => [
-                                                    'name' => [
-                                                        'type' => 'string',
-                                                        'enum' => [
-                                                            "Penthouse","Studio","1 Bedroom","2 Bedrooms","3 Bedrooms",
-                                                            "4 Bedrooms","Loft","Apartment","Townhouse","House and Lot",
-                                                            "Boarding House","Retirement House","Pension House",
-                                                            "Beach House / Resort","Agricultural Lot","Island",
-                                                            "Residential Lot","Commercial Lot","Memorial","Beach Lot",
-                                                            "Industrial Lot","Warehouse","BPO","Office","Building",
-                                                            "Hotel","Space"
-                                                        ]
-                                                    ],
-                                                    'attributes' => [
-                                                        'type' => 'object',
-                                                        'properties' => [
-                                                            'price_min' => ['type' => 'number'],
-                                                            'price_max' => ['type' => 'number'],
-                                                            'lot_area' => ['type' => 'number'],
-                                                            'floor_area' => ['type' => 'number'],
-                                                            'beds' => ['type' => 'number'],
-                                                            'baths' => ['type' => 'number'],
-                                                            'parking' => ['type' => 'number'],
-                                                        ],
-                                                        'required' => ['beds','baths','parking','lot_area','floor_area','price_min','price_max']
-                                                    ]
-                                                ],
-                                                'required' => ['name','attributes']
-                                            ]
-                                        ]
-                                    ],
-                                    'required' => ['property_type','property_subtype']
-                                ]
-                            ]
+                            'property_type' => [
+                                'type' => 'string',
+                                'enum' => ["Condominium", "House", "Land", "Commercial"],
+                            ],
+                            'property_subtype' => [
+                                'type' => 'string',
+                                'enum' => [
+                                    "Penthouse", "Studio", "1 Bedroom", "2 Bedrooms", "3 Bedrooms",
+                                    "4 Bedrooms", "Loft", "Apartment", "Townhouse", "House and Lot",
+                                    "Boarding House", "Retirement House", "Pension House",
+                                    "Beach House / Resort", "Agricultural Lot", "Island",
+                                    "Residential Lot", "Commercial Lot", "Memorial", "Beach Lot",
+                                    "Industrial Lot", "Warehouse", "BPO", "Office", "Building",
+                                    "Hotel", "Space",
+                                ],
+                            ],
+                            'address' => ['type' => 'string'],
+                            'attributes' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'price_min' => ['type' => 'number'],
+                                    'price_max' => ['type' => 'number'],
+                                    'lot_area' => ['type' => 'number'],
+                                    'floor_area' => ['type' => 'number'],
+                                    'beds' => ['type' => 'number'],
+                                    'baths' => ['type' => 'number'],
+                                    'parking' => ['type' => 'number'],
+                                ],
+                                'required' => ['beds', 'baths', 'parking', 'lot_area', 'floor_area', 'price_min', 'price_max'],
+                            ],
                         ],
-                        'required' => ['properties']
-                    ]
-                ]
+                        'required' => ['property_type', 'address', 'attributes'],
+                    ],
+                ],
             ],
-            'function_call' => ['name' => 'extract_property']
+            'function_call' => ['name' => 'extract_property'],
         ]);
-    
+
         $fn = $response->choices[0]->message->functionCall ?? null;
-    
-        if (!$fn) {
-            return [];
-        }
-    
-        $parsed = json_decode($fn->arguments, true);
-    
-        // If defaultAll = true, return everything. Otherwise, filter if suggested
-        if (!$defaultAll && isset($parsed['properties'])) {
-            $queryLower = strtolower($query);
-            $filtered = [];
-    
-            foreach ($parsed['properties'] as $prop) {
-                $matchesType = str_contains(strtolower($prop['property_type']), $queryLower);
-                $matchesSubtype = array_filter($prop['property_subtype'], function ($sub) use ($queryLower) {
-                    return str_contains(strtolower($sub['name']), $queryLower);
-                });
-    
-                if ($matchesType || !empty($matchesSubtype)) {
-                    $filtered[] = [
-                        'property_type' => $prop['property_type'],
-                        'property_subtype' => !empty($matchesSubtype) ? array_values($matchesSubtype) : $prop['property_subtype']
-                    ];
-                }
-            }
-    
-            return $filtered;
-        }
-    
-        return $parsed['properties'] ?? [];
+
+        return [
+            'function' => $fn->name,
+            'arguments' => json_decode($fn->arguments, true),
+        ];
     }
 }
