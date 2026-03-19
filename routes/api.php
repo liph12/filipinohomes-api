@@ -66,6 +66,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/upload', [ImageUploadController::class, 'upload']);
     Route::post('/logout', [UserController::class, 'logout']);
     Route::get('listing-inquiries-count', [ListingInquiryController::class, 'countAll']);
-    Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate']);
+    Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
 
 });
