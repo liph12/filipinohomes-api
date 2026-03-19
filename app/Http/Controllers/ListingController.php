@@ -17,7 +17,7 @@ class ListingController extends Controller
         $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class . ':admin')->only(['updateIsFeatured']);
-    }   
+    }
 
     public function index(Request $request): ListingResourceCollection
     {
@@ -26,7 +26,9 @@ class ListingController extends Controller
             ->with([
                 'property.propertyAttribute.subtype',
                 'category',
-                'agent' => function ($q) { $q->withCount('listings'); }
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                }
             ])
             ->filter($request)
             ->sorted($request->get('sort_by', 'featured'))
@@ -64,64 +66,110 @@ class ListingController extends Controller
             abort(403, 'Unauthorized.');
         }
 
+        // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('code', 'like', "%{$search}%")
-                  ->orWhereHas('property', fn ($sub) => $sub->where('address', 'like', "%{$search}%"));
+                $q->where('listings.name', 'like', "%{$search}%")  // ← prefix with table
+                    ->orWhere('listings.code', 'like', "%{$search}%")  // ← prefix with table
+                    ->orWhereHas('property', fn($sub) => $sub->where('address', 'like', "%{$search}%"));
             });
         }
 
-        if ($status = $request->input('status')) {
-            if ($status === 'active') {
-                $query->active();
-            } else {
-                $query->whereHas('property', fn ($q) => $q->where('status', $status));
-            }
-        }
+        $status     = $request->input('status');
+        $visibility = $request->input('visibility');
+        $category   = $request->input('category');
 
-        if ($visibility = $request->input('visibility')) {
-            $query->where('visibility', $visibility);
-        }
+        // ── Helper to apply a filter to a query clone ─────────────────────────
+        $applyStatus = function ($q) use ($status) {
+            if (!$status) return $q;
+            if ($status === 'active') return $q->active();
+            return $q->whereHas('property', fn($sub) => $sub->where('status', $status));
+        };
 
-        if ($category = $request->input('category')) {
-            $query->whereHas('category', fn ($q) => $q->where('name', $category));
-        }
+        $applyVisibility = function ($q) use ($visibility) {
+            if (!$visibility) return $q;
+            return $q->where('visibility', $visibility);
+        };
+
+        $applyCategory = function ($q) use ($category) {
+            if (!$category) return $q;
+            return $q->whereHas('category', fn($sub) => $sub->where('name', $category));
+        };
+
+        // ── Status counts: respect visibility + category filters, NOT status ──
+        $statusBase = $applyCategory($applyVisibility(clone $query));
+        $statusCounts = [
+            'active' => (clone $statusBase)->active()->count(),
+            'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
+            'sold'   => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'sold'))->count(),
+            'leased' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'leased'))->count(),
+        ];
+
+        // ── Visibility counts: respect status + category filters, NOT visibility ──
+        $visibilityBase = $applyCategory($applyStatus(clone $query));
+        $visibilityCounts = (clone $visibilityBase)
+            ->selectRaw('visibility, COUNT(*) as count')
+            ->groupBy('visibility')
+            ->pluck('count', 'visibility')
+            ->toArray();
+
+        // ── Category counts: respect status + visibility filters, NOT category ──
+        $categoryBase = $applyStatus($applyVisibility(clone $query));
+        $categoryCounts = (clone $categoryBase)
+            ->selectRaw('categories.name as category_name, COUNT(*) as count')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->groupBy('categories.id', 'categories.name')
+            ->pluck('count', 'category_name')
+            ->toArray();
+
+        // ── Apply ALL filters for pagination ─────────────────────────────────
+        $query = $applyStatus($query);
+        $query = $applyVisibility($query);
+        $query = $applyCategory($query);
 
         $listings = $query->orderBy('created_at', 'desc')
-            ->paginate($request->query('per_page', 15));
+            ->paginate($request->query('per_page', 10));
 
-        return new ListingResourceCollection($listings);
+        return (new ListingResourceCollection($listings))->additional([
+            'counts' => [
+                'status'     => $statusCounts,
+                'visibility' => $visibilityCounts,
+                'category'   => $categoryCounts,
+            ],
+        ]);
     }
 
     public function dashboard(Request $request)
     {
         $user = $request->user();
         $statistics = [
-            'active' => 0,
-            'total' => 0,
-            'rented' => 0,
-            'sold' => 0,
+            'active'    => 0,
+            'total'     => 0,
+            'rented'    => 0,
+            'sold'      => 0,
             'inquiries' => 0,
-            'views' => 0,
+            'views'     => 0,
+            'agents'    => 0,
         ];
 
         if ($user->role->name === 'admin') {
             $listingsQuery = Listing::withCount('inQuiries');
+            $statistics['agents'] = \App\Models\Agent::count();
         } elseif ($user->role->name === 'agent') {
             $listingsQuery = Listing::withCount('inQuiries')->where('agent_id', $user->agent->id);
+            $statistics['agents'] = 1;
         } else {
             abort(403, 'Unauthorized.');
         }
 
-        $statistics['active'] = (clone $listingsQuery)->active()->count();
-        $statistics['total'] = (clone $listingsQuery)->count();
-        $statistics['views'] = (int)(clone $listingsQuery)->sum('clicks');
-        $listingIds = (clone $listingsQuery)->pluck('id');
+        $statistics['active']    = (clone $listingsQuery)->active()->count();
+        $statistics['total']     = (clone $listingsQuery)->count();
+        $statistics['views']     = (int)(clone $listingsQuery)->sum('clicks');
+        $listingIds              = (clone $listingsQuery)->pluck('id');
         $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn('listing_id', $listingIds)->count();
-        $statistics['rented'] = (clone $listingsQuery)->rented()->count();
-        $statistics['sold'] = (clone $listingsQuery)->sold()->count();
-        $statistics['leased'] = (clone $listingsQuery)->leased()->count();
+        $statistics['rented']    = (clone $listingsQuery)->rented()->count();
+        $statistics['sold']      = (clone $listingsQuery)->sold()->count();
+        $statistics['leased']    = (clone $listingsQuery)->leased()->count();
 
         return response()->json($statistics);
     }
@@ -199,7 +247,9 @@ class ListingController extends Controller
             ->with([
                 'property.propertyAttribute.subtype',
                 'category',
-                'agent' => function ($q) { $q->withCount('listings'); }
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                }
             ])
             ->get();
 

@@ -89,7 +89,7 @@ class UserController extends Controller
     public function index()
     {
         return new UserResourceCollection(
-            User::get()
+            User::latest()->paginate(10)
         );
     }
 
@@ -99,6 +99,7 @@ class UserController extends Controller
             User::find($id)
         );
     }
+    
     public function profile()
     {
         return new UserResource( 
