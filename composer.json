@@ -14,7 +14,8 @@
         "laravel/framework": "^12.0",
         "laravel/sanctum": "^4.2",
         "laravel/tinker": "^2.10.1",
-        "league/flysystem-aws-s3-v3": "^3.31"
+        "league/flysystem-aws-s3-v3": "^3.31",
+        "openai-php/client": "^0.19.1"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

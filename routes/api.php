@@ -18,7 +18,8 @@ use App\Http\Controllers\{
     BlogCategoryController,
     PostController,
     GenerateDescriptionController,
-    OfficeController
+    OfficeController,
+    OpenAIController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -44,6 +45,7 @@ Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
 Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
 Route::get('agents', [AgentController::class, 'index']);
 Route::get('agents/{id}', [AgentController::class, 'show']);
+Route::post('/openai/classify-message', [OpenAIController::class, 'basicReply']);
 
 Route::middleware('auth:sanctum')->group(function(){
     
@@ -67,5 +69,4 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/logout', [UserController::class, 'logout']);
     Route::get('listing-inquiries-count', [ListingInquiryController::class, 'countAll']);
     Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
-
 });
