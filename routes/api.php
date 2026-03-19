@@ -45,7 +45,9 @@ Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
 Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
 Route::get('agents', [AgentController::class, 'index']);
 Route::get('agents/{id}', [AgentController::class, 'show']);
-Route::post('/openai/classify-message', [OpenAIController::class, 'propertyInquiry']);
+Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
+Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);
+Route::post('/openai/stream-plain-message', [OpenAIController::class, 'streamMessageRequest']);
 
 Route::middleware('auth:sanctum')->group(function(){
     

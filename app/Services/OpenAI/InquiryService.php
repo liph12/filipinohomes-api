@@ -3,6 +3,7 @@
 namespace App\Services\OpenAI;
 
 use OpenAI;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class InquiryService
 {
@@ -12,26 +13,220 @@ class InquiryService
         $this->client = OpenAI::client(env('OPENAI_API_KEY'));
     }
 
-    public function replyNormal(string $thread): string
-    {
-        $response = $this->client->chat()->create([
-            'model' => 'gpt-4-turbo',
-            'messages' => [
-                [
-                    'role' => 'user',
-                    'content' => <<<PROMPT
-    You are an assistant for a Filipino real estate website called Filipino Homes. 
-    Reply politely and casually to this message: "{$thread}".
-    Always keep the reply relevant to Filipino Homes and real estate inquiries in the Philippines. 
-    You can greet the user, acknowledge their message, and gently guide them toward property listings if appropriate.
-    Do not talk about unrelated topics.
-    PROMPT
-                ]
-            ],
-        ]);
+    public function streamMessage(string $message)
+    {    
+        return new StreamedResponse(function () use ($message) {
+            $stream = $this->client->chat()->createStreamed([
+                'model' => 'gpt-4-turbo',
+                'messages' => array_merge(
+                    [
+                        [
+                            'role' => 'system',
+                            'content' => <<<PROMPT
+                            Just return the message from the user "{$message}" as a plain text message, do not modifiy.
+                            PROMPT
+                        ]
+                    ]
+                ),
+            ]);
     
-        return $response->choices[0]->message->content ?? 
-               "Hello! Welcome to Filipino Homes. How can I help you find your dream property today?";
+            foreach ($stream as $chunk) {
+                $text = $chunk->choices[0]->delta->content ?? '';
+                if ($text) {
+                    echo "data: " . json_encode(['text' => $text]) . "\n\n";
+                    ob_flush();
+                    flush();
+                }
+            }
+    
+            echo "data: [DONE]\n\n";
+            ob_flush();
+            flush();
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
+
+    }
+
+    public function replyNormal(array $thread)
+    {    
+        return new StreamedResponse(function () use ($thread) {
+            $stream = $this->client->chat()->createStreamed([
+                'model' => 'gpt-4-turbo',
+                'messages' => array_merge(
+                    [
+                        [
+                            'role' => 'system',
+                            'content' => <<<PROMPT
+        You are a friendly and professional real estate assistant for Filipino Homes.
+        
+        BEHAVIOR RULES:
+        - Always focus on the MOST RECENT user message, while considering previous context.
+        - Maintain a natural, conversational tone (not robotic).
+        - Keep responses concise but helpful.
+        - Always stay within real estate topics in the Philippines.
+        - If the user changes location or preference, adapt immediately.
+        - If the request is vague, ask a short follow-up question.
+        - When appropriate, guide the user toward property listings.
+        
+        DO NOT:
+        - Go off-topic.
+        - Repeat the same phrases.
+        - Over-explain.
+        
+        GOAL:
+        Make the conversation feel like a real property agent helping the user find the right property.
+        PROMPT
+                        ]
+                    ],
+                    $thread
+                ),
+            ]);
+    
+            foreach ($stream as $chunk) {
+                $text = $chunk->choices[0]->delta->content ?? '';
+                if ($text) {
+                    echo "data: " . json_encode(['text' => $text]) . "\n\n";
+                    ob_flush();
+                    flush();
+                }
+            }
+    
+            echo "data: [DONE]\n\n";
+            ob_flush();
+            flush();
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
+    }
+
+    public function replySearchingStream(array $thread)
+    {
+        return new StreamedResponse(function () use ($thread) {
+    
+            $messages = array_merge(
+                [
+                    [
+                        'role' => 'system',
+                        'content' => <<<PROMPT
+                        You are a friendly and professional assistant for Filipino Homes (a real estate platform in the Philippines).
+                        
+                        TASK:
+                        Respond naturally to the user's latest message.
+                        
+                        RULES:
+                        - Focus on the MOST RECENT user intent in the conversation.
+                        - Inform the user that you are currently searching for property listings that match their request.
+                        - Ask them politely to wait while you gather the best options.
+                        - Keep the response short, natural, and conversational.
+                        - Stay strictly within real estate context.
+                        
+                        DO NOT:
+                        - Mention unrelated topics.
+                        - Sound robotic or overly formal.
+                        PROMPT
+                    ],
+                ],
+                $thread // ✅ full conversation thread
+            );
+    
+            $stream = $this->client->chat()->createStreamed([
+                'model' => 'gpt-4-turbo',
+                'messages' => $messages,
+            ]);
+
+            echo "data: " . json_encode([
+                'type' => 'mode',
+                'mode' => 'searching'
+            ]) . "\n\n";
+            ob_flush();
+            flush();
+    
+            foreach ($stream as $chunk) {
+                $text = $chunk->choices[0]->delta->content ?? '';
+    
+                if (!empty($text)) {
+                    echo "data: " . json_encode([
+                        'type' => 'text',
+                        'text' => $text
+                    ]) . "\n\n";
+                    ob_flush();
+                    flush();
+                }
+            }
+    
+            echo "data: [DONE]\n\n";
+            ob_flush();
+            flush();
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
+    }
+    
+    public function replyInquiredStream(string $thread, array $listings)
+    {
+        return new StreamedResponse(function () use ($thread, $listings) {
+            $client = OpenAI::client(env('OPENAI_API_KEY'));
+            $instruction = <<<INSTRUCTION
+            You are a helpful assistant for a Filipino real estate website called Filipino Homes. 
+            The user asked: "{$thread}".
+            You are given a list of property listings from the database. Each listing includes:
+            - property_type
+            - property_subtype (array of objects with name and attributes)
+            - attributes: price_min, price_max, lot_area, floor_area, beds, baths, parking
+            - agent info: name, mobile, email
+            - link
+
+            Analyze all listings and select **the single listing that best matches the user's query**. 
+            Reply politely and naturally, like ChatGPT, summarizing **only the best listing** with:
+            - property type and subtype
+            - price range
+            - floor area and lot area
+            - beds, baths, parking
+            - agent name, mobile, email
+            - link
+
+            Make your reply concise, clear, and user-friendly.
+            Encourage the user to inquire further or visit the website for more details. 
+            Do not include any other listings or irrelevant information.
+            INSTRUCTION;
+
+            $stream = $client->chat()->createStreamed([
+                'model' => 'gpt-4-turbo',
+                'messages' => [
+                    [
+                        'role' => 'user',
+                        'content' => $instruction . "\n\nListings:\n" . json_encode($listings, JSON_PRETTY_PRINT)
+                    ]
+                ],
+            ]);
+
+            foreach ($stream as $chunk) {
+                $text = $chunk->choices[0]->delta->content ?? '';
+                if ($text) {
+                    // Stream chunks for front-end display
+                    echo "data: " . json_encode(['text' => $text]) . "\n\n";
+                    ob_flush();
+                    flush();
+                }
+            }
+
+            echo "data: [DONE]\n\n";
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
     }
 
     public function replyInquired(string $thread, array $listings): string
@@ -67,26 +262,109 @@ class InquiryService
                "Hello! I found some listings that might interest you. Please visit Filipino Homes for more details.";
     }
 
-    public function classifyMessage(string $thread)
+    public function suggestedListing(array $thread, array $listings)
     {
-        $prompt = <<<PROMPT
-    You are a real estate assistant. Determine if the user message is a property inquiry about Filipino homes/real estate listings. 
+        // Prepare system instructions
+        $systemMessage = [
+            'role' => 'system',
+            'content' => <<<SYSTEM
+    You are a helpful, friendly assistant for Filipino Homes. 
+    From the provided property listings, pick the single best listing as 'suggested' and 2-3 alternative options as 'others'. 
+    Return ONLY JSON with IDs and a concise message. 
+    If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
+    RULE: Based on the conversation thread, always focus on the MOST RECENT user intent. 
+    SYSTEM
+        ];
     
-    Return exactly one word:
-    - "inquired" if it is about property inquiry (buying, selling, renting, searching homes, condos, lots, etc. in the Philippines)
-    - "normal" if it is just a casual chat, greetings, or unrelated to Filipino real estate.
-    
-    Message: "{$thread}"
-    PROMPT;
+        // Merge system + conversation thread
+        $messages = array_merge([$systemMessage], $thread);
     
         $response = $this->client->chat()->create([
             'model' => 'gpt-4-turbo',
-            'messages' => [
+            'messages' => $messages,
+            'functions' => [
                 [
-                    'role' => 'user',
-                    'content' => $prompt,
-                ],
+                    'name' => 'pick_listings',
+                    'description' => 'Pick the best property listing and other alternatives',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'message' => [
+                                'type' => 'string',
+                                'description' => 'A short, concise message describing the selected listing(s), or indicating none were found.'
+                            ],
+                            'suggested' => [
+                                'type' => ['integer', 'null'],
+                                'description' => 'ID of the best matching listing, or null if none found'
+                            ],
+                            'others' => [
+                                'type' => ['array', 'null'],
+                                'items' => ['type' => 'integer'],
+                                'description' => 'IDs of alternative listings, or null if none found'
+                            ]
+                        ],
+                        'required' => ['message', 'suggested', 'others']
+                    ]
+                ]
             ],
+            'function_call' => ['name' => 'pick_listings'],
+            // pass listings as context in user message
+            'messages' => array_merge(
+                [$systemMessage],
+                $thread,
+                [
+                    [
+                        'role' => 'user',
+                        'content' => "Here are the available listings:\n" . json_encode($listings, JSON_PRETTY_PRINT)
+                    ]
+                ]
+            ),
+        ]);
+    
+        $fn = $response->choices[0]->message->functionCall ?? null;
+    
+        if ($fn && isset($fn->arguments)) {
+            return json_decode($fn->arguments, true);
+        }
+    
+        return [
+            'message' => 'Sorry, no listings found.',
+            'suggested' => null,
+            'others' => null,
+        ];
+    }
+
+    public function classifyMessage(array $thread)
+    {
+        $prompt = <<<PROMPT
+        You are a real estate assistant for Filipino Homes.
+        
+        TASK:
+        Classify the MOST RECENT user message in the conversation.
+        
+        RULES:
+        - Always focus on the latest user intent, but consider previous context if needed.
+        
+        RETURN EXACTLY ONE WORD ONLY:
+        - "inquired" → if the user is asking about buying, selling, renting, or searching for properties in the Philippines.
+        - "normal" → if it is casual chat, greetings, or unrelated to real estate.
+        
+        DO NOT explain.
+        DO NOT add punctuation.
+        DO NOT return anything else.
+        PROMPT;
+    
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-4-turbo',
+            'messages' => array_merge(
+                [
+                    [
+                        'role' => 'system', // ✅ important fix
+                        'content' => $prompt,
+                    ],
+                ],
+                $thread // ✅ flatten into messages
+            ),
         ]);
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
@@ -98,24 +376,40 @@ class InquiryService
         return $classification;
     }
 
-    public function parsePropertyQuery(string $thread)
+    public function parsePropertyQuery(array $thread)
     {
+        $systemMessage = [
+            'role' => 'system',
+            'content' => <<<SYSTEM
+            You are a Filipino real estate assistant.
+            
+            Your task is to extract structured property search filters from a conversation thread.
+            
+            IMPORTANT RULES:
+            1. ALWAYS focus on the MOST RECENT user intent in the thread.
+            2. If the topic changes (e.g. new location, new property type, or unrelated message), IGNORE previous context.
+            3. Only extract relevant real estate information for Filipino property listings.
+            4. If information is NOT mentioned, return:
+            - empty string "" for property_type or property_subtype
+            - null or 0 for numeric attributes
+            5. Lot and floor area must be in square meters.
+            6. DO NOT include lot_area for:
+            - Condominium
+            - Commercial (unless clearly stated)
+            7. Keep values realistic for Philippine real estate.
+            SYSTEM
+        ];
+    
+        // Merge system message with the conversation thread
+        $messages = array_merge([$systemMessage], $thread);
+    
         $response = $this->client->chat()->create([
             'model' => 'gpt-4-turbo',
-            'messages' => [
-                [
-                    'role' => 'system',
-                    'content' => 'Extract structured property search filters based on allowed categories and subtypes',
-                ],
-                [
-                    'role' => 'user',
-                    'content' => $thread,
-                ],
-            ],
+            'messages' => $messages,
             'functions' => [
                 [
                     'name' => 'extract_property',
-                    'description' => 'Extract property search filters. Suggest a reasonable attributes, make it normal. Lot and floor area should be returned in square meters.',
+                    'description' => 'Extract property search filters based ONLY on the latest relevant intent.',
                     'parameters' => [
                         'type' => 'object',
                         'properties' => [
@@ -135,7 +429,14 @@ class InquiryService
                                     "Hotel", "Space",
                                 ],
                             ],
-                            'address' => ['type' => 'string'],
+                            'category' => [
+                                'type' => 'string',
+                                'description' => 'Property for rent or for sale. Return a For Sale as default, otherwise if Specify (For Sale or For Rent) values.'
+                            ],
+                            'address' => [
+                                'type' => 'string',
+                                'description' => 'City or location in the Philippines. Return empty string if not specified.'
+                            ],
                             'attributes' => [
                                 'type' => 'object',
                                 'properties' => [
@@ -150,15 +451,35 @@ class InquiryService
                                 'required' => ['beds', 'baths', 'parking', 'lot_area', 'floor_area', 'price_min', 'price_max'],
                             ],
                         ],
-                        'required' => ['property_type', 'address', 'attributes'],
+                        'required' => ['property_type', 'category', 'address', 'attributes', 'property_subtype'],
                     ],
                 ],
             ],
             'function_call' => ['name' => 'extract_property'],
         ]);
-
+    
         $fn = $response->choices[0]->message->functionCall ?? null;
-
+    
+        if (!$fn || empty($fn->arguments)) {
+            return [
+                'function' => 'extract_property',
+                'arguments' => [
+                    'property_type' => '',
+                    'property_subtype' => '',
+                    'address' => '',
+                    'attributes' => [
+                        'price_min' => null,
+                        'price_max' => null,
+                        'lot_area' => null,
+                        'floor_area' => null,
+                        'beds' => null,
+                        'baths' => null,
+                        'parking' => null,
+                    ],
+                ],
+            ];
+        }
+    
         return [
             'function' => $fn->name,
             'arguments' => json_decode($fn->arguments, true),
