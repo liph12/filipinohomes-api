@@ -57,6 +57,7 @@ class UpdateListingRequest extends FormRequest
             'is_project'          => 'nullable|boolean',
             'project_id'          => 'nullable|integer',
             'project'             => 'nullable|array',
+            'seo_tags'             => 'nullable|array',
             'project.id'          => 'nullable|integer',
             'project.name'        => 'nullable|string|max:255',
             'furnishing_id'       => 'nullable|exists:furnishings,id',

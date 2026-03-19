@@ -203,8 +203,8 @@ public function updateListing(array $data, Listing $listing, Agent $agent): List
 
         // 5. Update Listing (Only fields present in $data)
         $listingFields = [
-            'name', 'price', 'visibility', 'status', 
-            'category_id', 'is_featured'
+            'name', 'price', 'visibility', 'status',
+            'category_id', 'is_featured', 'seo_tags'
         ];
         $listingData = array_intersect_key($data, array_flip($listingFields));
         $listingData['slug'] = $slug;
@@ -216,6 +216,12 @@ public function updateListing(array $data, Listing $listing, Agent $agent): List
         }
 
         $listing->update($listingData);
+
+        // Auto-generate seo_tags if still missing (e.g. failed during creation)
+        if (empty($listing->seo_tags)) {
+            $this->syncSeoTags($listing);
+            $listing->refresh();
+        }
 
         // Check if anything actually changed for your response message
         $wasActuallyUpdated = $listing->wasChanged() || 
