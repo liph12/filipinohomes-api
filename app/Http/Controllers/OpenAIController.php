@@ -46,6 +46,7 @@ class OpenAIController extends Controller
             'furnishing' => $l['property']['furnishing']['name'] ?? "",
             'category' => $l['category']['name'] ?? "",
             'price' => $l['price'] ?? 0,
+            'views' => $l['clicks'] ?? 0,
             'agent' => $agentName,
             'agentAvatar' => $userData['avatar'],
             'agentMobile' => $userData['mobile_no'],
@@ -70,8 +71,30 @@ class OpenAIController extends Controller
 
         $listings = Listing::whereHas('category', function($q) use($args){
             $q->where('name', $args['category']);
-        })->whereHas('property', function($q) use($args, $address, $attr){                
-            $q->where('address', 'LIKE', '%'.$address.'%')
+        });
+
+        if($attr['price_min'] > 0 || $attr['price_max'] > 0)
+        {
+            if($attr['price_min'] > $attr['price_max'])
+            {
+                $listings = $listings->whereBetween('price', [$attr['price_max'], $attr['price_min']]);
+            }else{
+                $listings = $listings->whereBetween('price', [$attr['price_min'], $attr['price_max']]);
+            }
+        }
+        
+        $listings = $listings->whereHas('property', function($q) use($args, $address, $attr){    
+            $word = strtolower($args['query_word']);
+            $address = strtolower($args['address']);
+            $addr = explode(' ', $address);
+
+            $q->where(function ($q) use ($addr) {
+                foreach ($addr as $w) {
+                    $q->where(function ($sub) use ($w) {
+                        $sub->where('address', 'LIKE', "%{$w}%");
+                    });
+                }
+            })->where('description', 'LIKE', "%{$word}%")
             ->whereHas('propertyAttribute', function($q) use($attr, $args){
                 $q->whereHas('subtype', function($q) use($args){
                     $q->whereHas('type', function($q) use($args){
@@ -107,7 +130,12 @@ class OpenAIController extends Controller
                     $q->where('lot_area', '>=', $attr['lot_area']);
                 }
             });
-        })->limit(3)->get();
+        })->orderBy('clicks', 'DESC')->limit(3)->get();
+
+        // return response()->json([
+        //     'args' => $args,
+        //     'res' => $listings,
+        // ]);
 
         $listingArray = (new ListingResourceCollection($listings))->toArray(request());
         $inquiredListings = [];
@@ -118,7 +146,7 @@ class OpenAIController extends Controller
 
         $suggestedListings = $this->sqService->suggestedListing($thread, $listingArray);
 
-        if(!empty($suggestedListings['suggested']))
+        if(isset($suggestedListings['suggested']) && !empty($suggestedListings['suggested']))
         {
             $suggested = null;
             $others = [];
@@ -130,14 +158,17 @@ class OpenAIController extends Controller
                     $suggested = $this->extractListing($l);
                 }
             }
-    
-            foreach($suggestedListings['others'] as $key)
+
+            if(isset($suggestedListings['others']))
             {
-                foreach($listingArray as $l)
+                foreach($suggestedListings['others'] as $key)
                 {
-                    if($l['id'] === $key)
+                    foreach($listingArray as $l)
                     {
-                        $others[] = $this->extractListing($l);
+                        if($l['id'] === $key)
+                        {
+                            $others[] = $this->extractListing($l);
+                        }
                     }
                 }
             }
@@ -145,7 +176,8 @@ class OpenAIController extends Controller
             return response()->json([
                 'message' => $suggestedListings['message'],
                 'suggested' => $suggested,
-                'others' => $others
+                'others' => $others,
+                'follow_up' => $suggestedListings['follow_up'],
             ]);
         }
 

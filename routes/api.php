@@ -47,7 +47,7 @@ Route::get('agents', [AgentController::class, 'index']);
 Route::get('agents/{id}', [AgentController::class, 'show']);
 Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
 Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);
-Route::post('/openai/stream-plain-message', [OpenAIController::class, 'streamMessageRequest']);
+Route::post('/openai/stream-message', [OpenAIController::class, 'streamMessageRequest']);
 
 Route::middleware('auth:sanctum')->group(function(){
     
