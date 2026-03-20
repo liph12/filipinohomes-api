@@ -14,29 +14,21 @@ class InquiryService
     }
 
     public function streamMessage(string $message)
-    {    
+    {
         return new StreamedResponse(function () use ($message) {
-            $stream = $this->client->chat()->createStreamed([
-                'model' => 'gpt-4-turbo',
-                'messages' => array_merge(
-                    [
-                        [
-                            'role' => 'system',
-                            'content' => <<<PROMPT
-                            Just return the message from the user "{$message}" as a plain text message, do not modifiy.
-                            PROMPT
-                        ]
-                    ]
-                ),
-            ]);
+            // Simulate AI typing by splitting the message into words or characters
+            $words = preg_split('/(\s+)/', $message, -1, PREG_SPLIT_DELIM_CAPTURE);
     
-            foreach ($stream as $chunk) {
-                $text = $chunk->choices[0]->delta->content ?? '';
-                if ($text) {
-                    echo "data: " . json_encode(['text' => $text]) . "\n\n";
-                    ob_flush();
-                    flush();
+            foreach ($words as $word) {
+                if (trim($word) === '') {
+                    echo "data: " . json_encode(['text' => $word]) . "\n\n";
+                } else {
+                    // Wrap word with slight delay to simulate typing
+                    echo "data: " . json_encode(['text' => $word . ' ']) . "\n\n";
                 }
+                ob_flush();
+                flush();
+                usleep(50000); // 50ms delay per word
             }
     
             echo "data: [DONE]\n\n";
@@ -48,7 +40,6 @@ class InquiryService
             'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
-
     }
 
     public function replyNormal(array $thread)
@@ -291,7 +282,11 @@ class InquiryService
                         'properties' => [
                             'message' => [
                                 'type' => 'string',
-                                'description' => 'A short, concise message describing the selected listing(s), or indicating none were found.'
+                                'description' => 'A concise but informative message describing the selected listing. Include key property details such as property type, location, price, and notable features. Also include the assigned agent’s name, email, and mobile number. Keep it natural, helpful, and under 3-4 sentences. If no listings are found, clearly state that and suggest refining the search.'
+                            ],
+                            'follow_up' => [
+                                'type' => 'string',
+                                'description' => 'A context-aware follow-up message. For example, suggesting viewing, contacting the agent, or showing alternatives. Should feel natural and specific to the actual listing. Make it shorter and very precise.'
                             ],
                             'suggested' => [
                                 'type' => ['integer', 'null'],
@@ -303,7 +298,7 @@ class InquiryService
                                 'description' => 'IDs of alternative listings, or null if none found'
                             ]
                         ],
-                        'required' => ['message', 'suggested', 'others']
+                        'required' => ['message', 'suggested', 'others', 'follow_up']
                     ]
                 ]
             ],
@@ -331,6 +326,7 @@ class InquiryService
             'message' => 'Sorry, no listings found.',
             'suggested' => null,
             'others' => null,
+            'follow_up' => 'Please adjust your search query.'
         ];
     }
 
@@ -379,25 +375,33 @@ class InquiryService
     public function parsePropertyQuery(array $thread)
     {
         $systemMessage = [
-            'role' => 'system',
-            'content' => <<<SYSTEM
-            You are a Filipino real estate assistant.
-            
-            Your task is to extract structured property search filters from a conversation thread.
-            
-            IMPORTANT RULES:
-            1. ALWAYS focus on the MOST RECENT user intent in the thread.
-            2. If the topic changes (e.g. new location, new property type, or unrelated message), IGNORE previous context.
-            3. Only extract relevant real estate information for Filipino property listings.
-            4. If information is NOT mentioned, return:
-            - empty string "" for property_type or property_subtype
-            - null or 0 for numeric attributes
-            5. Lot and floor area must be in square meters.
-            6. DO NOT include lot_area for:
-            - Condominium
-            - Commercial (unless clearly stated)
-            7. Keep values realistic for Philippine real estate.
-            SYSTEM
+        'role' => 'system',
+        'content' => <<<SYSTEM
+        You are a Filipino real estate assistant.
+
+        Your task is to extract structured property search filters from a conversation thread.
+
+        IMPORTANT RULES:
+        1. ALWAYS focus on the MOST RECENT user intent in the thread.
+        2. Ignore previous context if the topic changes (new location, type, or unrelated message).
+        3. Only extract relevant real estate information for Filipino property listings.
+        4. If information is NOT mentioned, return:
+        - empty string "" for property_type or property_subtype
+        - null or 0 for numeric attributes
+        5. Lot and floor area must be in square meters.
+        6. Do NOT include lot_area for:
+        - Condominium
+        - Commercial (unless clearly stated)
+        7. Keep values realistic for Philippine real estate.
+
+        ADDITIONAL RULES:
+        8. Generate a **single keyword** (query_word) based ONLY on the latest user intent. Pick the most relevant word: property type, key feature, or location. Output exactly one word.
+        9. Adjust the price range attributes if the user mentions a budget:
+        - price_min = 0
+        - price_max = the user’s stated budget
+        10. Keep other numeric attributes 0 if not specified.
+
+        SYSTEM
         ];
     
         // Merge system message with the conversation thread
@@ -429,6 +433,19 @@ class InquiryService
                                     "Hotel", "Space",
                                 ],
                             ],
+                            'query_word' => [
+                                'type' => 'string',
+                                'description' => <<<DESC
+                                Generate a single, keyword-rich string (5–12 words) based on the user’s latest intent.
+                                Focus only on:
+                                - Property type (condo, studio, house)
+                                - Key location (city, barangay, subdivision)
+                                - Essential features (furnished, parking, near beach)
+                                Do NOT include vague words like "alternative" or full sentences.
+                                The result should be concise, relevant, and directly usable for searching property listings.
+                                - USE ONE WORD ONLY, AND SELECT A REASONABLE CHOICE.
+                                DESC
+                            ],
                             'category' => [
                                 'type' => 'string',
                                 'description' => 'Property for rent or for sale. Return a For Sale as default, otherwise if Specify (For Sale or For Rent) values.'
@@ -451,7 +468,7 @@ class InquiryService
                                 'required' => ['beds', 'baths', 'parking', 'lot_area', 'floor_area', 'price_min', 'price_max'],
                             ],
                         ],
-                        'required' => ['property_type', 'category', 'address', 'attributes', 'property_subtype'],
+                        'required' => ['property_type', 'category', 'address', 'query_word', 'attributes', 'property_subtype'],
                     ],
                 ],
             ],
