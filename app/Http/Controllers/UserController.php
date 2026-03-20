@@ -86,14 +86,14 @@ class UserController extends Controller
         ]);
     }
 
-public function index()
-{
-    return new UserResourceCollection(
-        User::latest()
-            ->where('created_at', '>=', now()->subDays(10))
-            ->paginate(10)
-    );
-}
+    public function index()
+    {
+        return new UserResourceCollection(
+            User::latest()
+                ->where('created_at', '>=', now()->subDays(10))
+                ->paginate(10)
+        );
+    }
 
     public function show($id)
     {
