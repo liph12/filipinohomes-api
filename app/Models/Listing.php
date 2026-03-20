@@ -7,7 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Auth;
 class Listing extends Model
 {
     use HasFactory;
@@ -15,7 +16,7 @@ class Listing extends Model
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
         'featured_photo', 'is_featured', 'clicks',
-        'property_id', 'category_id', 'agent_id', 'seo_tags'
+        'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at'
     ];
 
     protected $casts = [
@@ -51,6 +52,26 @@ class Listing extends Model
                 'slug' => $finalSlug,
                 'code' => $provinceCode . '-' . str_pad((string) $listing->id, 4, '0', STR_PAD_LEFT),
             ]);
+        });
+
+        static::creating(function ($model) {
+            if (Auth::check()) {
+                $model->created_by = Auth::id();
+                $model->updated_by = Auth::id();
+            }
+        });
+
+        static::updating(function ($model) {
+            if (Auth::check()) {
+                $model->updated_by = Auth::id();
+            }
+        });
+
+        static::deleting(function ($model) {
+            if ($model->usesSoftDeletes() && Auth::check()) {
+                $model->deleted_by = Auth::id();
+                $model->save(); 
+            }
         });
     }
 
@@ -241,5 +262,20 @@ class Listing extends Model
     public function inQuiries()
     {
         return $this->hasMany(ListingInquiry::class);
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function deleter()
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
     }
 }

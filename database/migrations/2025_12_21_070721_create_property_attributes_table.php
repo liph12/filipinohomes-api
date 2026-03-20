@@ -21,7 +21,11 @@ return new class extends Migration
             $table->foreignId('property_subtype_id')
                 ->constrained('property_subtypes')
                 ->restrictOnDelete();
+            $table->foreignId('created_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('updated_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('deleted_by')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamps();
+            $table->softDeletes();
         });
     }
 

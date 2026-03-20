@@ -17,7 +17,6 @@ return new class extends Migration
             $table->foreignId('property_type_id')
                 ->constrained('property_types')
                 ->restrictOnDelete();
-            $table->timestamps();
         });
     }
 

@@ -23,8 +23,6 @@ class PropertyTypeSeeder extends Seeder
                 ['id' => $id], 
                 [
                     'name' => $name,
-                    'created_at' => now(),
-                    'updated_at' => now(),
                 ]
             );
         }

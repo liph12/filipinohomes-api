@@ -83,13 +83,6 @@ class AmenitiesSeeder extends Seeder
             ['id' => 67, 'name' => 'Courtyard', 'slug' => 'courtyard'],
         ];
 
-        $timestamp = Carbon::now();
-
-        foreach ($amenities as &$amenity) {
-            $amenity['created_at'] = $timestamp;
-            $amenity['updated_at'] = $timestamp;
-        }
-
         DB::table('amenities')->insert($amenities);
     }
 }

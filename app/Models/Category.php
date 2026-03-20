@@ -7,7 +7,29 @@ class Category extends Model
     use HasFactory;
     protected $fillable = [
         'name',
-        'status' => 'active',
     ];
 
+    public function delete()
+    {
+        return false;
+    }
+
+    public function forceDelete()
+    {
+        return false;
+    }
+
+    public function save(array $options = [])
+    {
+        if ($this->exists) {
+            return false;
+        }
+
+        return parent::save($options); 
+    }
+
+    public function update(array $attributes = [], array $options = [])
+    {
+        return false; 
+    }
 }

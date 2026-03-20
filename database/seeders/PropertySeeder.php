@@ -11,15 +11,32 @@ use App\Models\Furnishing;
 use App\Models\Listing;
 use Illuminate\Support\Str;
 use App\Models\Agent;
-
+use Carbon\Carbon;
 class PropertySeeder extends Seeder
 {
     /**
      * Run the database seeds.
      */
+
+    private function parseDate($date): ?Carbon
+{
+    if (!$date) return null;
+
+    $formats = ['Y-m-d H:i:s', 'Y-m-d', 'm-d-Y', 'm/d/Y H:i', 'm/d/Y'];
+
+    foreach ($formats as $format) {
+        try {
+            return Carbon::createFromFormat($format, $date);
+        } catch (\Exception $e) {
+            continue;
+        }
+    }
+
+    return Carbon::parse($date);
+}
     public function run(): void
     {
-        $listings = Proplisting::whereBetween('date_added', ['2024-01-01', '2026-03-18'])
+        $listings = Proplisting::whereBetween('date_added', ['2024-01-01', '2026-03-19'])
         ->get();
 
         foreach($listings as $l)
@@ -98,7 +115,9 @@ class PropertySeeder extends Seeder
                     'clicks' => $l->views === null ? 0 : $l->views,
                     'property_id' => $property->id,
                     'category_id' => $l->announceas,
-                    'agent_id' => $agent->id
+                    'agent_id' => $agent->id,
+                    'created_at' => $this->parseDate($l->date_added),
+                    'updated_at' => $this->parseDate($l->date_updated),
                 ]);
             }
         }

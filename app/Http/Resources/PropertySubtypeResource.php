@@ -17,7 +17,6 @@ class PropertySubtypeResource extends JsonResource
         return [
             'id'     => $this->id,
             'name'   => $this->name,
-            'status' => $this->status,
             'type'   => new PropertyTypeResource($this->type)
         ];
     }

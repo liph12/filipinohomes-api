@@ -18,12 +18,16 @@ class AgentController extends Controller
         );
     }
 
-public function show($id)
-{
-    return new AgentResource(
-        Agent::with('user', 'listings')->withCount('listings')->findOrFail($id)
-    );
-}
+    public function show($id)
+    {
+        $agent = Agent::with('user')
+            ->withCount('listings')
+            ->findOrFail($id);
+ 
+        $agent->setRelation('listings', $agent->listings()->paginate(10));
+ 
+        return new AgentResource($agent);
+    }
 
     public function profile()
     {

@@ -3,6 +3,7 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Http\Resources\AgentListingResource;
 
 class AgentResource extends JsonResource
 {
@@ -30,7 +31,29 @@ class AgentResource extends JsonResource
             'member_since' => $this->member_since,
             'listings_count' => $this->listings_count,
             'user'         => new UserResource($user),
-            'listings' => ListingResource::collection($this->whenLoaded('listings')),
-        ];
+            'listings' => AgentListingResource::collection($this->whenLoaded('listings')),
+            'listings_pagination' => $this->when(
+                $this->relationLoaded('listings') && $this->listings instanceof \Illuminate\Pagination\LengthAwarePaginator,
+                function () {
+                    $paginator = $this->listings;
+                    return [
+                        'links' => [
+                            'first' => $paginator->url(1),
+                            'last'  => $paginator->url($paginator->lastPage()),
+                            'prev'  => $paginator->previousPageUrl(),
+                            'next'  => $paginator->nextPageUrl(),
+                        ],
+                        'meta' => [
+                            'current_page' => $paginator->currentPage(),
+                            'from'         => $paginator->firstItem(),
+                            'last_page'    => $paginator->lastPage(),
+                            'per_page'     => $paginator->perPage(),
+                            'to'           => $paginator->lastItem(),
+                            'total'        => $paginator->total(),
+                        ],
+                    ];
+                }
+            ),
+            ];
     }
 }
