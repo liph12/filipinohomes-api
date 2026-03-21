@@ -9,20 +9,20 @@ return new class extends Migration
     /**
      * Run the migrations.
      */
-    public function up(): void
-    {
-        Schema::table('property_attributes', function (Blueprint $table) {
-            $table->softDeletes();
-        });
-    }
+    // public function up(): void
+    // {
+    //     Schema::table('property_attributes', function (Blueprint $table) {
+    //         $table->softDeletes();
+    //     });
+    // }
 
-    /**
-     * Reverse the migrations.
-     */
-    public function down(): void
-    {
-        Schema::table('property_attributes', function (Blueprint $table) {
-            $table->dropSoftDeletes();
-        });
-    }
+    // /**
+    //  * Reverse the migrations.
+    //  */
+    // public function down(): void
+    // {
+    //     Schema::table('property_attributes', function (Blueprint $table) {
+    //         $table->dropSoftDeletes();
+    //     });
+    // }
 };

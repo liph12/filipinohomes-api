@@ -6,6 +6,7 @@ use App\Http\Resources\ListingResourceCollection;
 use Illuminate\Http\Request;
 use App\Services\OpenAI\InquiryService;
 use App\Models\Listing;
+use App\Models\Agent;
 
 class OpenAIController extends Controller
 {
@@ -59,6 +60,14 @@ class OpenAIController extends Controller
         $message = $request->message;
 
         return $this->sqService->streamMessage($message);
+    }
+
+    public function searchAgents(Request $request)
+    {
+        $address = $request->address;
+        $agents = Agent::withCount('listings')->where([
+            ['address', 'LIKE', '%'.$address.'%']
+        ])->orderBy('listings_count','DESC')->limit(5)->get();
     }
 
     public function searchListings(Request $request)

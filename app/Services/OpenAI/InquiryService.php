@@ -53,6 +53,8 @@ class InquiryService
                             'role' => 'system',
                             'content' => <<<PROMPT
         You are a friendly and professional real estate assistant for Filipino Homes.
+        Scope is in the Philippines ONLY.
+        Reply based on the language. Like Cebuano, Tagalog, English or Related to Filipino Language.
         
         BEHAVIOR RULES:
         - Always focus on the MOST RECENT user message, while considering previous context.
@@ -110,6 +112,7 @@ class InquiryService
                         
                         TASK:
                         Respond naturally to the user's latest message.
+                        Reply based on the language. Like Cebuano, Tagalog, English or Related to Filipino Language.
                         
                         RULES:
                         - Focus on the MOST RECENT user intent in the conversation.
@@ -264,6 +267,7 @@ class InquiryService
     Return ONLY JSON with IDs and a concise message. 
     If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
     RULE: Based on the conversation thread, always focus on the MOST RECENT user intent. 
+    Reply based on the language. Like Cebuano, Tagalog, English or Related to Filipino Language.
     SYSTEM
         ];
     
@@ -282,11 +286,18 @@ class InquiryService
                         'properties' => [
                             'message' => [
                                 'type' => 'string',
-                                'description' => 'A concise but informative message describing the selected listing. Include key property details such as property type, location, price, and notable features. Also include the assigned agent’s name, email, and mobile number. Keep it natural, helpful, and under 3-4 sentences. If no listings are found, clearly state that and suggest refining the search.'
+                                'description' => 'A concise but informative message describing the selected listing. 
+                                Include key property details such as property type, location, price, and notable features. 
+                                Also include the assigned agent’s name, email, and mobile number. Keep it natural, helpful, and under 3-4 sentences. 
+                                If no listings are found, clearly state that and suggest refining the search.
+                                Reply based on the language. Like Cebuano, Tagalog, English or Related to Filipino Language.'
                             ],
                             'follow_up' => [
                                 'type' => 'string',
-                                'description' => 'A context-aware follow-up message. For example, suggesting viewing, contacting the agent, or showing alternatives. Should feel natural and specific to the actual listing. Make it shorter and very precise.'
+                                'description' => 'A context-aware follow-up message. 
+                                For example, suggesting viewing, contacting the agent, or showing alternatives. 
+                                Should feel natural and specific to the actual listing. Make it shorter and very precise.
+                                Reply based on the language. Like Cebuano, Tagalog, English or Related to Filipino Language.'
                             ],
                             'suggested' => [
                                 'type' => ['integer', 'null'],
@@ -340,10 +351,12 @@ class InquiryService
         
         RULES:
         - Always focus on the latest user intent, but consider previous context if needed.
+        - Scope is in the Philippines ONLY.
+        - Focus only for Filipino Homes company.
         
         RETURN EXACTLY ONE WORD ONLY:
         - "inquired" → if the user is asking about buying, selling, renting, or searching for properties in the Philippines.
-        - "normal" → if it is casual chat, greetings, or unrelated to real estate.
+        - "normal" → if it is casual chat, greetings, or related to real estate.
         
         DO NOT explain.
         DO NOT add punctuation.
@@ -501,5 +514,10 @@ class InquiryService
             'function' => $fn->name,
             'arguments' => json_decode($fn->arguments, true),
         ];
+    }
+
+    public function parseAgentQuery(array $thread)
+    {
+        // parse [ address,  ] 
     }
 }
