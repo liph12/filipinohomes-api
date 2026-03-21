@@ -25,7 +25,10 @@ class OpenAIController extends Controller
 
         if(!$isNormal)
         {
-            return $this->sqService->replySearchingStream($thread);
+            if($classification === 'listing')
+                return $this->sqService->replySearchingStream($thread);
+            if($classification === 'agent')
+                return $this->sqService->replySearchingAgentStream($thread);
         }
 
         return $this->sqService->replyNormal($thread);
@@ -59,10 +62,42 @@ class OpenAIController extends Controller
             'category' => $l->category->name ?? "",
             'price' => $l->price ?? 0,
             'views' => $l->clicks ?? 0,
-            'agent' => $agentName,
-            'agentAvatar' => $userData->avatar ?? null,
-            'agentMobile' => $userData->mobile_no ?? null,
-            'agentEmail' => $userData->email ?? null
+            'agent' => [
+                'name' => $agentName,
+                'avatar' => $userData->avatar ?? null,
+                'mobile' => $userData->mobile_no ?? null,
+                'email' => $userData->email ?? null,
+                'address' => $l->agent->address ?? null,
+            ]
+        ];
+    }
+
+    public function extractAgent($a)
+    {
+        $agentName = $a->first_name . " " . $a->last_name;
+        $listings = $a->listings;
+        $topListings = [];
+
+        foreach($listings as $l)
+        {
+            $listing = $this->extractListing($l);
+            $topListings[] = [
+                'type' => $listing['propertyType'],
+                'subType' => $listing['propertySubType'],
+                'views' => $listing['views'],
+                'category' => $listing['category']
+            ];
+        }
+        
+        return [
+            'id' => $a->id,
+            'name' => $agentName,
+            'avatar' => $a->user->avatar,
+            'mobile' => $a->user->mobile_no,
+            'email' => $a->user->email,
+            'address' => $a->address,
+            'listings_count' => $a->listings_count,
+            'top_listings' => $topListings
         ];
     }
 
@@ -75,10 +110,81 @@ class OpenAIController extends Controller
 
     public function searchAgents(Request $request)
     {
-        $address = $request->address;
-        $agents = Agent::withCount('listings')->where([
-            ['address', 'LIKE', '%'.$address.'%']
-        ])->orderBy('listings_count','DESC')->limit(5)->get();
+        $thread = $request->messages;
+        $params = $this->sqService->parseAgentQuery($thread);
+        $args = $params['arguments'];
+        $inquiredAgents = [];
+
+        $agents = Agent::withCount('listings')->where(function ($q) use ($args) {
+            $extName = explode(' ', $args['name']);
+            $extAddress = explode(' ', $args['address']);
+
+            foreach ($extName as $w) {
+                $q->where(function ($sub) use ($w) {
+                    $sub->where('first_name', 'LIKE', "%{$w}%")
+                    ->orWhere('middle_name', 'LIKE', "%{$w}%")
+                    ->orWhere('last_name', 'LIKE', "%{$w}%");
+                });
+            }
+            foreach ($extAddress as $w) {
+                $q->where(function ($sub) use ($w) {
+                    $sub->where('address', 'LIKE', "%{$w}%");
+                });
+            }
+            $q->with(['user' => function($q) use($args){
+                $q->where('email', 'LIKE', "%{$args['email']}%");
+            }]);
+        })->having('listings_count', '>=', $args['listings_count'])
+        ->with(['listings' => function($q){
+            $q->with(['property' => function($q){
+                $q->with(['propertyAttribute.subtype.type', 'furnishing']);
+            }, 'category'])->orderBy('clicks', 'DESC')->limit(5);
+        }])
+        ->orderBy('listings_count','DESC')->limit(10)->get();
+
+        foreach($agents as $a)
+        {
+            $inquiredAgents[] = $this->extractAgent($a);
+        }
+
+        $suggestedAgents = $this->sqService->suggestedAgents($thread, $inquiredAgents);
+
+        if(isset($suggestedAgents['suggested']) && !empty($suggestedAgents['suggested']))
+        {
+            $suggested = null;
+            $others = [];
+
+            foreach($inquiredAgents as $l)
+            {
+                if($l['id'] === $suggestedAgents['suggested'])
+                {
+                    $suggested = $l;
+                }
+            }
+
+            if(isset($suggestedAgents['others']))
+            {
+                foreach($suggestedAgents['others'] as $key)
+                {
+                    foreach($inquiredAgents as $l)
+                    {
+                        if($l['id'] === $key)
+                        {
+                            $others[] = $l;
+                        }
+                    }
+                }
+            }
+    
+            return response()->json([
+                'message' => $suggestedAgents['message'],
+                'suggested' => $suggested,
+                'others' => $others,
+                'follow_up' => $suggestedAgents['follow_up'],
+            ]);
+        }
+
+        return response()->json($suggestedAgents);
     }
 
     public function searchListings(Request $request)
@@ -91,7 +197,10 @@ class OpenAIController extends Controller
         $inquiredListings = [];
 
         $listings = Listing::whereHas('category', function($q) use($args){
-            $q->where('name', $args['category']);
+            if($args['category'] !== "")
+            {
+                $q->where('name', $args['category']);
+            }
         });
 
         if($attr['price_min'] > 0 || $attr['price_max'] > 0)
@@ -104,9 +213,22 @@ class OpenAIController extends Controller
             }
         }
         
-        $listings = $listings->whereHas('property', function($q) use($args, $address, $attr){    
-            $word = strtolower($args['query_word']);
-            $address = strtolower($args['address']);
+        $listings = $listings->whereHas('agent', function($q) use($args){
+            $agent = $args['agent_name'];
+            $queries = explode(' ', $agent);
+
+            $q->withCount('listings')->where(function ($q) use ($queries) {
+                foreach ($queries as $w) {
+                    $q->where(function ($sub) use ($w) {
+                        $sub->where('first_name', 'LIKE', "%{$w}%")
+                        ->orWhere('middle_name', 'LIKE', "%{$w}%")
+                        ->orWhere('last_name', 'LIKE', "%{$w}%");
+                    });
+                }
+            })->having('listings_count', '>=', $args['listings_count']);
+        })->whereHas('property', function($q) use($args, $address, $attr){    
+            $words = strtolower($args['query_words']);
+            $queries = explode(' ', $words);
             $addr = explode(' ', $address);
 
             $q->where(function ($q) use ($addr) {
@@ -115,7 +237,13 @@ class OpenAIController extends Controller
                         $sub->where('address', 'LIKE', "%{$w}%");
                     });
                 }
-            })->where('description', 'LIKE', "%{$word}%")
+            })->where(function ($q) use ($queries) {
+                foreach ($queries as $w) {
+                    $q->where(function ($sub) use ($w) {
+                        $sub->where('description', 'LIKE', "%{$w}%");
+                    });
+                }
+            })
             ->whereHas('propertyAttribute', function($q) use($attr, $args){
                 $q->whereHas('subtype', function($q) use($args){
                     $q->whereHas('type', function($q) use($args){
@@ -153,7 +281,7 @@ class OpenAIController extends Controller
             });
         })->with(['property' => function($q){
             $q->with(['propertyAttribute.subtype.type', 'furnishing']);
-        }, 'category'])->orderBy('clicks', 'DESC')->limit(3)->get();
+        }, 'category'])->orderBy('clicks', 'DESC')->limit(5)->get();
         
         foreach ($listings as $l) {            
             $inquiredListings[] = $this->extractListing($l);
@@ -164,7 +292,7 @@ class OpenAIController extends Controller
         //     'res' => $inquiredListings,
         // ]);
 
-        $suggestedListings = $this->sqService->suggestedListing($thread, $inquiredListings);
+        $suggestedListings = $this->sqService->suggestedListings($thread, $inquiredListings);
 
         if(isset($suggestedListings['suggested']) && !empty($suggestedListings['suggested']))
         {

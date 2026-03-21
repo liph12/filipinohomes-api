@@ -62,6 +62,7 @@ class InquiryService
                             - Ask a short follow-up if the request is vague.
                             - Guide the user toward relevant property listings.
                             - Do not provide information, advice, or services outside Filipino Homes real estate.
+                            - If a mention name you can keep track that this is a real estate agent. Ask also for the details.
 
                             STRICT RULES:
                             - If the user asks about anything outside real estate (e.g., resumes, cooking, travel).
@@ -86,6 +87,75 @@ class InquiryService
                 }
             }
     
+            echo "data: [DONE]\n\n";
+            ob_flush();
+            flush();
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
+    }
+
+    public function replySearchingAgentStream(array $thread)
+    {
+        return new StreamedResponse(function () use ($thread) {
+
+            $messages = array_merge(
+                [
+                    [
+                        'role' => 'system',
+                        'content' => <<<PROMPT
+                        You are a friendly and professional assistant for Filipino Homes (a real estate platform in the Philippines).
+
+                        TASK:
+                        Respond naturally to the user's latest message.
+
+                        RULES:
+                        - Focus on the MOST RECENT user intent in the conversation.
+                        - Inform the user that you are currently searching for agents that match their request.
+                        - Ask them politely to wait while you find the best agent(s).
+                        - Keep the response short, natural, and conversational.
+                        - Stay strictly within real estate context.
+
+                        DO NOT:
+                        - Mention unrelated topics.
+                        - Sound robotic or overly formal.
+                        PROMPT
+                    ],
+                ],
+                $thread // ✅ full conversation thread
+            );
+
+            $stream = $this->client->chat()->createStreamed([
+                'model' => 'gpt-5.4-mini',
+                'messages' => $messages,
+            ]);
+
+            // Initial message indicating agent search mode
+            echo "data: " . json_encode([
+                'type' => 'mode',
+                'mode' => 'agent'
+            ]) . "\n\n";
+            ob_flush();
+            flush();
+
+            // Stream the assistant's response chunk by chunk
+            foreach ($stream as $chunk) {
+                $text = $chunk->choices[0]->delta->content ?? '';
+
+                if (!empty($text)) {
+                    echo "data: " . json_encode([
+                        'type' => 'text',
+                        'text' => $text
+                    ]) . "\n\n";
+                    ob_flush();
+                    flush();
+                }
+            }
+
+            // Signal stream completion
             echo "data: [DONE]\n\n";
             ob_flush();
             flush();
@@ -134,7 +204,7 @@ class InquiryService
 
             echo "data: " . json_encode([
                 'type' => 'mode',
-                'mode' => 'searching'
+                'mode' => 'listing'
             ]) . "\n\n";
             ob_flush();
             flush();
@@ -163,13 +233,13 @@ class InquiryService
         ]);
     }
 
-    public function suggestedListing(array $thread, array $listings)
+    public function suggestedListings(array $thread, array $listings)
     {
         $systemMessage = [
             'role' => 'system',
             'content' => <<<SYSTEM
             You are a helpful, friendly assistant for Filipino Homes. 
-            From the provided property listings, pick the single best listing as 'suggested' and 2-3 alternatives as 'others'. 
+            From the provided property listings, pick the single best listing as 'suggested' and 2-5 alternatives as 'others'. 
             Return ONLY JSON with IDs and a concise message. 
             If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
 
@@ -194,10 +264,22 @@ class InquiryService
                         'properties' => [
                             'message' => [
                                 'type' => 'string',
-                                'description' => 'A concise but informative message describing the selected listing. 
-                                Include key property details such as property type, location, price, and notable features. 
-                                Also include the assigned agent’s name, email, and mobile number. Keep it natural, helpful, and under 3-4 sentences. 
-                                If no listings are found, clearly state that and suggest refining the search.'
+                                'description' => <<<DESC
+                                A concise but informative message describing the selected listing. 
+                                Include key property details: property type, location, price, notable features, and assigned agent’s name, email, and mobile number. 
+                                Keep tone natural, helpful, and conversational. 
+                                Use under 3-4 sentences for normal messages. 
+                                
+                                Formatting rules:
+                                - If helpful, structure the message with short headers or bullet points.
+                                - Bold key details using Markdown-style double asterisks (**).
+                                - Example:
+                                  **Property Details**
+                                  - **Location:** Lahug, Cebu City
+                                  - **Price:** ₱20,000/month
+                                  - **Agent:** Juan Dela Cruz, juan@example.com, 09171234567
+                                - If no listings are found, clearly state that and suggest refining the search.
+                                DESC
                             ],
                             'follow_up' => [
                                 'type' => 'string',
@@ -247,6 +329,97 @@ class InquiryService
         ];
     }
 
+    public function suggestedAgents(array $thread, array $agents)
+    {
+        $systemMessage = [
+            'role' => 'system',
+            'content' => <<<SYSTEM
+            You are a helpful, friendly assistant for Filipino Homes. 
+            From the provided agents, pick the single best agent as 'suggested' and 2-5 alternatives as 'others'. 
+            Return ONLY JSON with IDs and a concise message. 
+            If no agents match, indicate it in the message and leave 'suggested' and 'others' empty.
+
+            RULES:
+            - Always focus ONLY on the MOST RECENT user intent.
+            - Ignore previous messages if they conflict with the latest message.
+            SYSTEM
+        ];
+
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'functions' => [
+                [
+                    'name' => 'pick_agents',
+                    'description' => 'Pick the best agent and other alternatives',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'message' => [
+                                'type' => 'string',
+                                'description' => <<<DESC
+                                A concise but informative message describing the selected agent. 
+                                Include key details: name, location/address, number of listings, and contact info (email + mobile). 
+                                Keep tone natural, helpful, and conversational. 
+                                Use under 3-4 sentences for normal messages. 
+
+                                Formatting rules:
+                                - If helpful, structure the message with short headers or bullet points.
+                                - Bold key details using Markdown-style double asterisks (**).
+                                - Example:
+                                **Agent Details**
+                                - **Name:** Juan Dela Cruz
+                                - **Location:** Cebu City
+                                - **Listings:** 12 properties
+                                - **Contact:** juan@example.com, 09171234567
+                                - If no agents are found, clearly state that and suggest refining the search.
+                                - Details of top listings.
+                                DESC
+                            ],
+                            'follow_up' => [
+                                'type' => 'string',
+                                'description' => 'A short, context-aware follow-up message (e.g., suggest contacting the agent or viewing listings). Keep it very concise.'
+                            ],
+                            'suggested' => [
+                                'type' => ['integer', 'null'],
+                                'description' => 'ID of the best matching agent, or null if none found'
+                            ],
+                            'others' => [
+                                'type' => ['array', 'null'],
+                                'items' => ['type' => 'integer'],
+                                'description' => 'IDs of alternative agents, or null if none found'
+                            ]
+                        ],
+                        'required' => ['message', 'suggested', 'others', 'follow_up']
+                    ]
+                ]
+            ],
+            'function_call' => ['name' => 'pick_agents'],
+            'messages' => array_merge(
+                [$systemMessage],
+                $thread,
+                [
+                    [
+                        'role' => 'user',
+                        'content' => "Here are the available agents:\n" . json_encode($agents, JSON_PRETTY_PRINT)
+                    ]
+                ]
+            ),
+        ]);
+
+        $fn = $response->choices[0]->message->functionCall ?? null;
+
+        if ($fn && isset($fn->arguments)) {
+            return json_decode($fn->arguments, true);
+        }
+
+        return [
+            'message' => 'Sorry, no agents found.',
+            'suggested' => null,
+            'others' => null,
+            'follow_up' => 'Try refining your search or specify location or expertise.'
+        ];
+    }
+
     public function classifyMessage(array $thread)
     {
         $prompt = <<<PROMPT
@@ -260,16 +433,19 @@ class InquiryService
         - Ignore messages unrelated to Filipino Homes real estate
         
         INTENT:
-        - inquired → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
+        - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
+        - agent → user shows intent to find, search, contact, or inquire about a real estate agent (explicit or implied)
         - normal → greetings, small talk, or anything NOT related to Filipino Homes real estate
         
         RULES:
         - Be strict
         - If unsure or off-topic, return: normal
+        - If the user asks for a person (agent, broker, realtor), classify as: agent
+        - If the user asks for property (house, condo, lot, rent, price, location), classify as: listing
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: inquired OR normal
+        - Return EXACTLY one word: listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -290,7 +466,7 @@ class InquiryService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'inquired'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent'])) {
             return 'normal';
         }
     
@@ -302,7 +478,7 @@ class InquiryService
         $systemMessage = [
         'role' => 'system',
         'content' => <<<SYSTEM
-        You are a Filipino real estate assistant.
+        You are a Filipino real estate assistant for Filipino Homes.
 
         Your task is to extract structured property search filters from a conversation thread.
 
@@ -320,7 +496,7 @@ class InquiryService
         7. Keep values realistic for Philippine real estate.
 
         ADDITIONAL RULES:
-        8. Generate a **single keyword** (query_word) based ONLY on the latest user intent. Pick the most relevant word: property type, key feature, or location. Output exactly one word.
+        8. Generate a keyword (query_words) based ONLY on the latest user intent. Pick the most relevant word: property type or key feature. DO NOT USE THE LOCATION.
         9. Adjust the price range attributes if the user mentions a budget:
         - price_min = 0
         - price_max = the user’s stated budget
@@ -345,39 +521,54 @@ class InquiryService
                             'property_type' => [
                                 'type' => 'string',
                                 'enum' => ["Condominium", "House", "Land", "Commercial"],
+                                'description' => 'The main property type category. Return an empty string "" if not MENTIONED.',
                             ],
                             'property_subtype' => [
                                 'type' => 'string',
+                                'description' => 'The subtype must correspond to the selected property_type. ' .
+                                    'Condominium subtypes: Penthouse, Studio, 1 Bedroom, 2 Bedrooms, 3 Bedrooms, 4 Bedrooms, Loft. ' .
+                                    'House subtypes: Apartment, Townhouse, House and Lot, Boarding House, Retirement House, Pension House, Beach House / Resort. ' .
+                                    'Land subtypes: Agricultural Lot, Island, Residential Lot, Commercial Lot, Memorial, Beach Lot, Industrial Lot. ' .
+                                    'Commercial subtypes: Warehouse, BPO, Office, Building, Hotel, Space.
+                                    Return an empty string "" if not MENTIONED.',
                                 'enum' => [
-                                    "Penthouse", "Studio", "1 Bedroom", "2 Bedrooms", "3 Bedrooms",
-                                    "4 Bedrooms", "Loft", "Apartment", "Townhouse", "House and Lot",
-                                    "Boarding House", "Retirement House", "Pension House",
-                                    "Beach House / Resort", "Agricultural Lot", "Island",
-                                    "Residential Lot", "Commercial Lot", "Memorial", "Beach Lot",
-                                    "Industrial Lot", "Warehouse", "BPO", "Office", "Building",
-                                    "Hotel", "Space",
+                                    // Condominium
+                                    "Penthouse", "Studio", "1 Bedroom", "2 Bedrooms", "3 Bedrooms", "4 Bedrooms", "Loft",
+                                    // House
+                                    "Apartment", "Townhouse", "House and Lot", "Boarding House", "Retirement House", "Pension House", "Beach House / Resort",
+                                    // Land
+                                    "Agricultural Lot", "Island", "Residential Lot", "Commercial Lot", "Memorial", "Beach Lot", "Industrial Lot",
+                                    // Commercial
+                                    "Warehouse", "BPO", "Office", "Building", "Hotel", "Space",
                                 ],
                             ],
-                            'query_word' => [
+                            'query_words' => [
                                 'type' => 'string',
                                 'description' => <<<DESC
-                                Generate a single, keyword-rich string (5–12 words) based on the user’s latest intent.
                                 Focus only on:
                                 - Property type (condo, studio, house)
-                                - Key location (city, barangay, subdivision)
                                 - Essential features (furnished, parking, near beach)
                                 Do NOT include vague words like "alternative" or full sentences.
                                 The result should be concise, relevant, and directly usable for searching property listings.
-                                - USE ONE WORD ONLY, AND SELECT A REASONABLE CHOICE.
+                                Select a reasonable choice.
+                                Return an empty string "" if not MENTIONED.
                                 DESC
                             ],
                             'category' => [
                                 'type' => 'string',
-                                'description' => 'Property for rent or for sale. Return a For Sale as default, otherwise if Specify (For Sale or For Rent) values.'
+                                'description' => 'Property for rent or for sale. Return an empty "" as default, otherwise if Specify (For Sale or For Rent) values.'
                             ],
                             'address' => [
                                 'type' => 'string',
                                 'description' => 'City or location in the Philippines. Return empty string if not specified.'
+                            ],
+                            'agent_name' => [
+                                'type' => 'string',
+                                'description' => 'Name of the agent associated with this property request. Leave it blank if not specified.',
+                            ],
+                            'listings_count' => [
+                                'type' => 'number',
+                                'description' => 'Desired list of listings of an agent from a user request. Return 0 if not mentioned.',
                             ],
                             'attributes' => [
                                 'type' => 'object',
@@ -393,7 +584,7 @@ class InquiryService
                                 'required' => ['beds', 'baths', 'parking', 'lot_area', 'floor_area', 'price_min', 'price_max'],
                             ],
                         ],
-                        'required' => ['property_type', 'category', 'address', 'query_word', 'attributes', 'property_subtype'],
+                        'required' => ['property_type', 'category', 'address', 'query_words', 'attributes', 'property_subtype', 'agent_name', 'listings_count'],
                     ],
                 ],
             ],
@@ -409,6 +600,7 @@ class InquiryService
                     'property_type' => '',
                     'property_subtype' => '',
                     'address' => '',
+                    'agent_name' => '',
                     'attributes' => [
                         'price_min' => null,
                         'price_max' => null,
@@ -430,6 +622,77 @@ class InquiryService
 
     public function parseAgentQuery(array $thread)
     {
-        // parse [ address,  ] 
+        $systemMessage = [
+            'role' => 'system',
+            'content' => <<<SYSTEM
+            You are a Filipino real estate assistant for Filipino Homes.
+    
+            Your task is to extract structured agent search filters from a conversation thread.
+    
+            IMPORTANT RULES:
+            1. ALWAYS focus on the MOST RECENT user intent in the thread.
+            2. Ignore previous context if the topic changes or unrelated message.
+            3. Only extract relevant real estate information for Filipino Homes agent.
+            4. If information is NOT mentioned, return:
+               - empty string "" for name, email or address
+               - 0 for listings_count
+            SYSTEM
+        ];
+    
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => array_merge([$systemMessage], $thread),
+            'functions' => [
+                [
+                    'name' => 'extract_agent',
+                    'description' => 'Extract agent search filters based ONLY on the latest relevant intent.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'name' => [
+                                'type' => 'string',
+                            ],
+                            'email' => [
+                                'type' => 'string',
+                            ],
+                            'listings_count' => [
+                                'type' => 'integer',
+                            ],
+                            'address' => [
+                                'type' => 'string',
+                            ],
+                        ],
+                        'required' => ['name', 'email', 'listings_count', 'address']
+                    ]
+                ]
+            ],
+            'function_call' => ['name' => 'extract_agent'],
+        ]);
+    
+        $fn = $response->choices[0]->message->functionCall ?? null;
+    
+        if (!$fn || empty($fn->arguments)) {
+            return [
+                'function' => 'extract_agent',
+                'arguments' => [
+                    'name' => '',
+                    'address' => '',
+                    'email' => '',
+                    'listings_count' => 0
+                ],
+            ];
+        }
+    
+        $decoded = json_decode($fn->arguments, true);
+    
+        return [
+            'function' => $fn->name ?? 'extract_agent',
+            'arguments' => [
+                'name' => $decoded['name'] ?? '',
+                'address' => $decoded['address'] ?? '',
+                'email' => $decoded['email'] ?? '',
+                'listings_count' => $decoded['listings_count'] ?? 0,
+            ],
+        ];
     }
 }
