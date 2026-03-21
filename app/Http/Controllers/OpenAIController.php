@@ -33,25 +33,36 @@ class OpenAIController extends Controller
 
     private function extractListing($l)
     {
-        $agentName = $l['agent']['first_name']." ".$l['agent']['last_name'];
-        $userData = $l['agent']['user'];
-
+        $agentName = $l->agent->first_name . " " . $l->agent->last_name;
+        $userData = $l->agent->user;
+        $attributes = $l->property->propertyAttribute;
+        $subType = $attributes->subtype;
+        
         return [
-            'id' => $l['id'],
-            'name' => $l['name'],
-            'photo' => $l['featured_photo'],
-            'link' => "https://filipinohomes.com/listings/" . $l['slug'],
-            'propertyName' => $l['property']['name'] ?? "",
-            'address' => $l['property']['address'] ?? "",
-            'description' => $l['property']['description'] ?? "",
-            'furnishing' => $l['property']['furnishing']['name'] ?? "",
-            'category' => $l['category']['name'] ?? "",
-            'price' => $l['price'] ?? 0,
-            'views' => $l['clicks'] ?? 0,
+            'id' => $l->id,
+            'name' => $l->name,
+            'photo' => $l->featured_photo,
+            'link' => "https://filipinohomes.com/listings/" . $l->slug,
+            'propertyName' => $l->property->name ?? "",
+            'propertyType' => $subType->type->name,
+            'propertySubType' => $subType->name,
+            'propertyAttributes' => [
+                'beds' => $attributes->bedroom_count,
+                'baths' => $attributes->bathroom_count,
+                'garage' => $attributes->garage_count,
+                'floorArea' => (float)$attributes->floor_area ?? 0,
+                'lotArea' => (float)$attributes->lot_area ?? 0,
+            ],
+            'address' => $l->property->address ?? "",
+            'description' => $l->property->description ?? "",
+            'furnishing' => $l->property->furnishing->name ?? "",
+            'category' => $l->category->name ?? "",
+            'price' => $l->price ?? 0,
+            'views' => $l->clicks ?? 0,
             'agent' => $agentName,
-            'agentAvatar' => $userData['avatar'],
-            'agentMobile' => $userData['mobile_no'],
-            'agentEmail' => $userData['email']
+            'agentAvatar' => $userData->avatar ?? null,
+            'agentMobile' => $userData->mobile_no ?? null,
+            'agentEmail' => $userData->email ?? null
         ];
     }
 
@@ -77,6 +88,7 @@ class OpenAIController extends Controller
         $args = $params['arguments'];
         $address = $args['address'];
         $attr = $args['attributes'];
+        $inquiredListings = [];
 
         $listings = Listing::whereHas('category', function($q) use($args){
             $q->where('name', $args['category']);
@@ -139,32 +151,31 @@ class OpenAIController extends Controller
                     $q->where('lot_area', '>=', $attr['lot_area']);
                 }
             });
-        })->orderBy('clicks', 'DESC')->limit(3)->get();
-
-        // return response()->json([
-        //     'args' => $args,
-        //     'res' => $listings,
-        // ]);
-
-        $listingArray = (new ListingResourceCollection($listings))->toArray(request());
-        $inquiredListings = [];
+        })->with(['property' => function($q){
+            $q->with(['propertyAttribute.subtype.type', 'furnishing']);
+        }, 'category'])->orderBy('clicks', 'DESC')->limit(3)->get();
         
-        foreach ($listingArray as $l) {            
+        foreach ($listings as $l) {            
             $inquiredListings[] = $this->extractListing($l);
         }
 
-        $suggestedListings = $this->sqService->suggestedListing($thread, $listingArray);
+        // return response()->json([
+        //     'args' => $args,
+        //     'res' => $inquiredListings,
+        // ]);
+
+        $suggestedListings = $this->sqService->suggestedListing($thread, $inquiredListings);
 
         if(isset($suggestedListings['suggested']) && !empty($suggestedListings['suggested']))
         {
             $suggested = null;
             $others = [];
 
-            foreach($listingArray as $l)
+            foreach($inquiredListings as $l)
             {
                 if($l['id'] === $suggestedListings['suggested'])
                 {
-                    $suggested = $this->extractListing($l);
+                    $suggested = $l;
                 }
             }
 
@@ -172,11 +183,11 @@ class OpenAIController extends Controller
             {
                 foreach($suggestedListings['others'] as $key)
                 {
-                    foreach($listingArray as $l)
+                    foreach($inquiredListings as $l)
                     {
                         if($l['id'] === $key)
                         {
-                            $others[] = $this->extractListing($l);
+                            $others[] = $l;
                         }
                     }
                 }

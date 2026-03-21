@@ -13,6 +13,7 @@ class PropertyResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $attributes = new PropertyAttributesResource($this->propertyAttribute);
          return [
             'id'                    => $this->id,
             'name'                  => $this->name,
@@ -24,7 +25,7 @@ class PropertyResource extends JsonResource
             'description'           => $this->description,
             'geo_coordinates'       => $this->geo_coordinates,
             'is_project'            => $this->is_project,
-            'property'              => new PropertyAttributesResource($this->propertyAttribute),
+            'property'              => $attributes,
             'furnishing'            => new FurnishingResource($this->furnishing),
         ];
     }
