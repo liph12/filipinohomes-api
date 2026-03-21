@@ -46,36 +46,30 @@ class InquiryService
     {    
         return new StreamedResponse(function () use ($thread) {
             $stream = $this->client->chat()->createStreamed([
-                'model' => 'gpt-4-turbo',
+                'model' => 'gpt-5.4-mini',
                 'messages' => array_merge(
                     [
                         [
                             'role' => 'system',
                             'content' => <<<PROMPT
-                            You are a friendly and professional real estate assistant for Filipino Homes.
-                            Scope is in the Philippines ONLY.
-                            
-                            LANGUAGE & TONE:
-                            - Respond in the same language as the user (Bisaya, Tagalog, English, or other Filipino languages).
-                            - Keep the tone casual, natural, and conversational.
-                            
-                            BEHAVIOR RULES:
-                            - Always focus on the MOST RECENT user message, while considering previous context.
-                            - Maintain a natural, conversational tone (not robotic).
-                            - Keep responses concise but helpful.
-                            - Always stay within real estate topics in the Philippines.
-                            - If the user changes location or preference, adapt immediately.
-                            - If the request is vague, ask a short follow-up question.
-                            - When appropriate, guide the user toward property listings.
-                            - Limit your task, you should not create something to user, you should only guide them.
+                            You are a friendly, professional real estate assistant for Filipino Homes (Philippines only).
 
-                            DO NOT:
-                            - Go off-topic.
-                            - Repeat the same phrases.
-                            - Over-explain.
-                            
+                            BEHAVIOR:
+                            - Focus only on the MOST RECENT user message; use previous context only if needed.
+                            - Stay strictly within Philippine real estate topics related to Filipino Homes listings.
+                            - Keep responses concise, helpful, and human-like.
+                            - Adapt immediately if the user changes location or preference.
+                            - Ask a short follow-up if the request is vague.
+                            - Guide the user toward relevant property listings.
+                            - Do not provide information, advice, or services outside Filipino Homes real estate.
+
+                            STRICT RULES:
+                            - If the user asks about anything outside real estate (e.g., resumes, cooking, travel).
+                            - Do not attempt to answer unrelated questions under any circumstance.
+
                             GOAL:
-                            Make the conversation feel like a real property agent helping the user find the right property.
+                            - Make the conversation feel like a real property agent helping the user find the right property.
+                            - Only handle Filipino Homes real estate inquiries.
                             PROMPT
                         ]
                     ],
@@ -116,11 +110,7 @@ class InquiryService
                         
                         TASK:
                         Respond naturally to the user's latest message.
-
-                        LANGUAGE & TONE:
-                        - Respond in the same language as the user (Bisaya, Tagalog, English, or other Filipino languages).
-                        - Keep the tone casual, natural, and conversational.
-                        
+                                    
                         RULES:
                         - Focus on the MOST RECENT user intent in the conversation.
                         - Inform the user that you are currently searching for property listings that match their request.
@@ -138,7 +128,7 @@ class InquiryService
             );
     
             $stream = $this->client->chat()->createStreamed([
-                'model' => 'gpt-4-turbo',
+                'model' => 'gpt-5.4-mini',
                 'messages' => $messages,
             ]);
 
@@ -175,28 +165,25 @@ class InquiryService
 
     public function suggestedListing(array $thread, array $listings)
     {
-        // Prepare system instructions
         $systemMessage = [
             'role' => 'system',
             'content' => <<<SYSTEM
-    You are a helpful, friendly assistant for Filipino Homes. 
-    From the provided property listings, pick the single best listing as 'suggested' and 2-3 alternative options as 'others'. 
-    Return ONLY JSON with IDs and a concise message. 
-    If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
-    RULE: 
-    Based on the conversation thread, always focus on the MOST RECENT user intent. 
-    
-    LANGUAGE & TONE:
-    - Respond in the same language as the user (Bisaya, Tagalog, English, or other Filipino languages).
-    - Keep the tone casual, natural, and conversational.
-    SYSTEM
+            You are a helpful, friendly assistant for Filipino Homes. 
+            From the provided property listings, pick the single best listing as 'suggested' and 2-3 alternatives as 'others'. 
+            Return ONLY JSON with IDs and a concise message. 
+            If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
+
+            RULES:
+            - Always focus ONLY on the MOST RECENT user intent.
+            - Ignore previous messages if they conflict with the latest message.
+            SYSTEM
         ];
     
         // Merge system + conversation thread
         $messages = array_merge([$systemMessage], $thread);
     
         $response = $this->client->chat()->create([
-            'model' => 'gpt-4-turbo',
+            'model' => 'gpt-5.4-mini',
             'messages' => $messages,
             'functions' => [
                 [
@@ -210,21 +197,13 @@ class InquiryService
                                 'description' => 'A concise but informative message describing the selected listing. 
                                 Include key property details such as property type, location, price, and notable features. 
                                 Also include the assigned agent’s name, email, and mobile number. Keep it natural, helpful, and under 3-4 sentences. 
-                                If no listings are found, clearly state that and suggest refining the search.
-
-                                LANGUAGE & TONE:
-                                - Respond in the same language as the user (Bisaya, Tagalog, English, or other Filipino languages).
-                                - Keep the tone casual, natural, and conversational.'
+                                If no listings are found, clearly state that and suggest refining the search.'
                             ],
                             'follow_up' => [
                                 'type' => 'string',
                                 'description' => 'A context-aware follow-up message. 
                                 For example, suggesting viewing, contacting the agent, or showing alternatives. 
-                                Should feel natural and specific to the actual listing. Make it shorter and very precise.
-
-                                LANGUAGE & TONE:
-                                - Respond in the same language as the user (Bisaya, Tagalog, English, or other Filipino languages).
-                                - Keep the tone casual, natural, and conversational.'
+                                Should feel natural and specific to the actual listing. Make it shorter and very precise.'
                             ],
                             'suggested' => [
                                 'type' => ['integer', 'null'],
@@ -271,37 +250,33 @@ class InquiryService
     public function classifyMessage(array $thread)
     {
         $prompt = <<<PROMPT
-        You are a real estate intent classifier for Filipino Homes.
+        You are a real estate intent classifier for Filipino Homes (Philippines only).
         
         TASK:
-        Classify the MOST RECENT user message based on intent.
+        Classify the MOST RECENT user message.
         
-        SCOPE:
-        - Only consider real estate context within the Philippines.
-        - Focus only on conversations related to Filipino Homes.
+        CONTEXT:
+        - Consider previous messages only if needed
+        - Ignore messages unrelated to Filipino Homes real estate
         
-        LANGUAGE:
-        - The user may use Bisaya, Tagalog, English, or other Filipino languages.
-        - Classify based on meaning, not the language used.
+        INTENT:
+        - inquired → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
+        - normal → greetings, small talk, or anything NOT related to Filipino Homes real estate
         
         RULES:
-        - Prioritize the latest user message, but use previous context if needed for clarity.
-        - Be strict in identifying intent.
+        - Be strict
+        - If unsure or off-topic, return: normal
+        - Ignore emojis, filler words, repeated characters
         
-        CLASSIFICATION:
-        - inquired → if the user shows intent to buy, sell, rent, inquire about, or search for a property (explicit or implied intent).
-        - normal → if the message is casual (greetings, small talk), general questions, or not expressing property intent.
-        
-        OUTPUT FORMAT:
-        - Return EXACTLY one word only: inquired OR normal
+        OUTPUT:
+        - Return EXACTLY one word: inquired OR normal
         - No explanation
         - No punctuation
         - No extra text
-        
         PROMPT;
     
         $response = $this->client->chat()->create([
-            'model' => 'gpt-4-turbo',
+            'model' => 'gpt-5.4-mini',
             'messages' => array_merge(
                 [
                     [
@@ -358,7 +333,7 @@ class InquiryService
         $messages = array_merge([$systemMessage], $thread);
     
         $response = $this->client->chat()->create([
-            'model' => 'gpt-4-turbo',
+            'model' => 'gpt-5.4-mini',
             'messages' => $messages,
             'functions' => [
                 [
