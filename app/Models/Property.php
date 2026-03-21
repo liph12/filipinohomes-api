@@ -8,6 +8,7 @@ class Property extends Model
 {
     use HasFactory;
     use SoftDeletes;
+    
     protected $fillable = [
         'name',
         'address',
@@ -20,6 +21,8 @@ class Property extends Model
         'is_project',
         'property_attribute_id',
         'furnishing_id',
+        'updated_at',
+        'created_at'
     ];
 
     protected $casts = [

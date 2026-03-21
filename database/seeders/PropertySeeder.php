@@ -18,22 +18,35 @@ class PropertySeeder extends Seeder
      * Run the database seeds.
      */
 
-    private function parseDate($date): ?Carbon
-{
-    if (!$date) return null;
+    private function parseDateOrNow($date)
+    {
+        if (empty($date)) {
+            return Carbon::now();
+        }
 
-    $formats = ['Y-m-d H:i:s', 'Y-m-d', 'm-d-Y', 'm/d/Y H:i', 'm/d/Y'];
+        $formats = [
+            'm-d-Y',
+            'Y-m-d',
+            'm/d/Y',
+            'd-m-Y',
+            'Y-m-d H:i:s',
+        ];
 
-    foreach ($formats as $format) {
+        foreach ($formats as $format) {
+            try {
+                return Carbon::createFromFormat($format, $date);
+            } catch (\Exception $e) {
+                // try next format
+            }
+        }
+
         try {
-            return Carbon::createFromFormat($format, $date);
+            return Carbon::parse($date);
         } catch (\Exception $e) {
-            continue;
+            return Carbon::now();
         }
     }
 
-    return Carbon::parse($date);
-}
     public function run(): void
     {
         $listings = Proplisting::whereBetween('date_added', ['2024-01-01', '2026-03-19'])
@@ -116,8 +129,8 @@ class PropertySeeder extends Seeder
                     'property_id' => $property->id,
                     'category_id' => $l->announceas,
                     'agent_id' => $agent->id,
-                    'created_at' => $this->parseDate($l->date_added),
-                    'updated_at' => $this->parseDate($l->date_updated),
+                    'created_at' => date('Y-m-d H:i:s', strtotime($l->date_added)),
+                    'updated_at' => $this->parseDateOrNow($l->date_updated),
                 ]);
             }
         }
