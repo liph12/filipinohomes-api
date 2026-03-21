@@ -67,6 +67,8 @@ class StoreListingRequest extends FormRequest
             'furnishing_id' => 'nullable|exists:furnishings,id',
             'category_id' => 'required|exists:categories,id',
             'visibility' => 'in:public,private',
+            'seo_tags'   => 'nullable|array',
+            'seo_tags.*' => 'string|max:100',
             'status' => 'in:active,rented,sold,leased',
             'featured_photo' => ['nullable', function ($attribute, $value, $fail) {
                 if (is_string($value)) {
