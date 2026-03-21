@@ -50,7 +50,7 @@ Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings
 Route::post('/openai/stream-message', [OpenAIController::class, 'streamMessageRequest']);
 
 Route::middleware('auth:sanctum')->group(function(){
-    
+    Route::get('/authenticate', [UserController::class, 'authenticate']);
     Route::apiResource('users', UserController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);

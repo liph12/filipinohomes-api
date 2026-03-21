@@ -289,4 +289,10 @@ class UserController extends Controller
             'message' => 'Logged out successfully',
         ], 200);
     }
+
+    public function authenticate()
+    {
+        $user = Auth::user();
+        return response()->json(new UserResource($user));
+    }
 }
