@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Auth;
 class Property extends Model
 {
     use HasFactory;
+    use SoftDeletes;
     protected $fillable = [
         'name',
         'address',
@@ -54,9 +55,10 @@ class Property extends Model
         });
 
         static::deleting(function ($model) {
-            if ($model->usesSoftDeletes() && Auth::check()) {
+            $usesSoftDeletes = in_array(SoftDeletes::class, class_uses($model) ?: []);
+            if ($usesSoftDeletes && Auth::check()) {
                 $model->deleted_by = Auth::id();
-                $model->save(); 
+                $model->save();
             }
         });
     }

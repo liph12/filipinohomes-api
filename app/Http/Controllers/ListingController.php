@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class ListingController extends Controller
 {
@@ -58,13 +59,86 @@ class ListingController extends Controller
     {
         $user = $request->user();
 
-        if ($user->role->name === 'admin') {
-            $query = Listing::query();
-        } elseif ($user->role->name === 'agent') {
-            $query = Listing::where('agent_id', $user->agent->id);
-        } else {
-            abort(403, 'Unauthorized.');
+        $query = Listing::where('agent_id', $user->agent->id);
+
+        // ── Search (applied to everything) ───────────────────────────────────
+        if ($search = $request->input('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('listings.name', 'like', "%{$search}%")  // ← prefix with table
+                    ->orWhere('listings.code', 'like', "%{$search}%")  // ← prefix with table
+                    ->orWhereHas('property', fn($sub) => $sub->where('address', 'like', "%{$search}%"));
+            });
         }
+
+        $status     = $request->input('status');
+        $visibility = $request->input('visibility');
+        $category   = $request->input('category');
+
+        // ── Helper to apply a filter to a query clone ─────────────────────────
+        $applyStatus = function ($q) use ($status) {
+            if (!$status) return $q;
+            if ($status === 'active') return $q->active();
+            return $q->whereHas('property', fn($sub) => $sub->where('status', $status));
+        };
+
+        $applyVisibility = function ($q) use ($visibility) {
+            if (!$visibility) return $q;
+            return $q->where('visibility', $visibility);
+        };
+
+        $applyCategory = function ($q) use ($category) {
+            if (!$category) return $q;
+            return $q->whereHas('category', fn($sub) => $sub->where('name', $category));
+        };
+
+        // ── Status counts: respect visibility + category filters, NOT status ──
+        $statusBase = $applyCategory($applyVisibility(clone $query));
+        $statusCounts = [
+            'active' => (clone $statusBase)->active()->count(),
+            'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
+            'sold'   => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'sold'))->count(),
+            'leased' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'leased'))->count(),
+        ];
+
+        // ── Visibility counts: respect status + category filters, NOT visibility ──
+        $visibilityBase = $applyCategory($applyStatus(clone $query));
+        $visibilityCounts = (clone $visibilityBase)
+            ->selectRaw('visibility, COUNT(*) as count')
+            ->groupBy('visibility')
+            ->pluck('count', 'visibility')
+            ->toArray();
+
+        // ── Category counts: respect status + visibility filters, NOT category ──
+        $categoryBase = $applyStatus($applyVisibility(clone $query));
+        $categoryCounts = (clone $categoryBase)
+            ->selectRaw('categories.name as category_name, COUNT(*) as count')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->groupBy('categories.id', 'categories.name')
+            ->pluck('count', 'category_name')
+            ->toArray();
+
+        // ── Apply ALL filters for pagination ─────────────────────────────────
+        $query = $applyStatus($query);
+        $query = $applyVisibility($query);
+        $query = $applyCategory($query);
+
+        $listings = $query->orderBy('created_at', 'desc')
+            ->paginate($request->query('per_page', 10));
+
+        return (new ListingResourceCollection($listings))->additional([
+            'counts' => [
+                'status'     => $statusCounts,
+                'visibility' => $visibilityCounts,
+                'category'   => $categoryCounts,
+            ],
+        ]);
+    }
+
+    public function allListings (Request $request)
+    {
+        $user = $request->user();
+        if ($user->role->name !== 'admin') abort(403);
+        $query = Listing::query(); 
 
         // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
@@ -281,9 +355,25 @@ class ListingController extends Controller
     public function destroy(Listing $listing)
     {
         $this->authorize('delete', $listing);
+        DB::transaction(function () use ($listing) {
+            // Delete listing first (soft-delete if model uses SoftDeletes)
+            if ($listing->exists) {
+                $listing->delete();
+            }
 
-        $listing->delete();
+            // Then delete the related property (if any)
+            $property = $listing->property;
+            if ($property && $property->exists) {
+                $property->delete();
+            }
 
-        return response()->json(['message' => 'Listing deleted successfully']);
+            // Finally delete the related property attribute (if any)
+            $propertyAttribute = $property->propertyAttribute ?? null;
+            if ($propertyAttribute && $propertyAttribute->exists) {
+                $propertyAttribute->delete();
+            }
+        });
+
+        return response()->json(['message' => 'Listing and related rows soft-deleted: listings, properties, property_attributes']);
     }
 }
