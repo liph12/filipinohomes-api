@@ -9,9 +9,11 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
+use App\Models\Province;
 class Listing extends Model
 {
     use HasFactory;
+    use SoftDeletes;
 
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
@@ -29,19 +31,17 @@ class Listing extends Model
 
     protected static function booted()
     {
-        // Set temporary unique values before insert (unique columns are required).
         static::creating(function ($listing) {
             $token = Str::lower(Str::random(10));
             $listing->slug = 'tmp-' . $token;
             $listing->code = 'TMP-' . Str::upper($token);
         });
 
-        // Generate final slug/code after insert when listing id is available.
         static::created(function ($listing) {
             $baseSlug = Str::slug($listing->name);
             $finalSlug = $baseSlug;
 
-            if (self::where('slug', $baseSlug)->where('id', '!=', $listing->id)->exists()) {
+            if (self::withTrashed()->where('slug', $baseSlug)->where('id', '!=', $listing->id)->exists()) {
                 $finalSlug = $baseSlug . '-' . $listing->id;
             }
 
@@ -68,9 +68,10 @@ class Listing extends Model
         });
 
         static::deleting(function ($model) {
-            if ($model->usesSoftDeletes() && Auth::check()) {
+            $usesSoftDeletes = in_array(SoftDeletes::class, class_uses($model) ?: []);
+            if ($usesSoftDeletes && Auth::check()) {
                 $model->deleted_by = Auth::id();
-                $model->save(); 
+                $model->save();
             }
         });
     }
@@ -80,36 +81,31 @@ class Listing extends Model
         $parts = $address
             ? array_values(array_filter(array_map('trim', explode(',', $address))))
             : [];
-
         if (empty($parts)) {
-            return 'GEN';
+            return 'BLK';
         }
-
-        $toWords = static function (?string $value): array {
-            $cleaned = preg_replace('/[^a-zA-Z\s]/', '', $value ?? '') ?? '';
-
-            return array_values(array_filter(preg_split('/\s+/', trim($cleaned)) ?: []));
-        };
 
         $country = $parts[count($parts) - 1];
-        $province = strcasecmp($country, 'Philippines') === 0 && count($parts) > 1
-            ? $parts[count($parts) - 2]
+        $province = strcasecmp($country, 'Philippines') === 0 && count($parts) > 2
+            ? $parts[count($parts) - 3]
             : $country;
 
-        $provinceWords = $toWords($province);
+        try {
+            $provinceName = trim($province);
+            if ($provinceName !== '') {
+                $provinceModel = Province::whereRaw('LOWER(name) = ?', [strtolower($provinceName)])->first();
+                if (! $provinceModel) {
+                    $provinceModel = Province::where('name', 'like', "%{$provinceName}%")->first();
+                }
 
-        if (count($provinceWords) <= 1) {
-            return Str::upper(substr($provinceWords[0] ?? 'GEN', 0, 3));
+                if ($provinceModel && ! empty($provinceModel->code)) {
+                    return Str::upper(substr($provinceModel->code, 0, 3));
+                }
+            }
+        } catch (\Throwable $e) {
         }
 
-        $abbr = Str::upper(substr(implode('', array_map(fn ($word) => $word[0], $provinceWords)), 0, 3));
-
-        if (strlen($abbr) === 2) {
-            $countryWords = $toWords($country);
-            $abbr .= Str::upper(substr($countryWords[0] ?? '', 0, 1));
-        }
-
-        return str_pad($abbr, 3, 'X');
+        return 'NON';
     }
 
     public function scopeFilter(Builder $query, Request $request): Builder

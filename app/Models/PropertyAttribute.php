@@ -44,9 +44,10 @@ class PropertyAttribute extends Model
         });
 
         static::deleting(function ($model) {
-            if ($model->usesSoftDeletes() && Auth::check()) {
+            $usesSoftDeletes = in_array(SoftDeletes::class, class_uses($model) ?: []);
+            if ($usesSoftDeletes && Auth::check()) {
                 $model->deleted_by = Auth::id();
-                $model->save(); 
+                $model->save();
             }
         });
     }

@@ -19,6 +19,8 @@ use App\Http\Controllers\{
     PostController,
     GenerateDescriptionController,
     OfficeController,
+    ProvinceController,
+    CityController,
     OpenAIController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -49,7 +51,9 @@ Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
 Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);
 Route::post('/openai/search-agents', [OpenAIController::class, 'searchAgents']);
 Route::post('/openai/stream-message', [OpenAIController::class, 'streamMessageRequest']);
-
+Route::get('/provinces', [ProvinceController::class, 'index']);
+Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']);
+Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
     Route::apiResource('users', UserController::class);
@@ -63,6 +67,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
     Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
     Route::get('/my-listings', [ListingController::class, 'myListings']);
+    Route::get('/all-listings', [ListingController::class, 'allListings']);
     Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::post('agents', [AgentController::class, 'store']);

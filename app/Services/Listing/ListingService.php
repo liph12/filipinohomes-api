@@ -93,6 +93,7 @@ class ListingService
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
             'furnishing_id'        => $furnishingId,
+            'address_id'           => $data['address_id'] ?? null,
         ]);
     }
 
@@ -178,7 +179,7 @@ class ListingService
 
             $propertyFields = [
                 'address', 'photos', 'amenities', 'description',
-                'geo_coordinates', 'is_project', 'furnishing_id'
+                'geo_coordinates', 'is_project', 'furnishing_id','address_id'
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;

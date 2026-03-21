@@ -61,6 +61,7 @@ class StoreListingRequest extends FormRequest
             'geo_coordinates' => 'nullable|array:lat,lng',
             'is_project' => 'nullable|boolean',
             'project_id' => 'nullable|integer',
+            'address_id' =>  'nullable|exists:barangays,id',
             'project' => 'nullable|array',
             'project.id' => 'nullable|integer',
             'project.name' => 'nullable|string|max:255',

@@ -50,6 +50,7 @@ class UpdateListingRequest extends FormRequest
             'floor_area'          => 'nullable|numeric|min:0',
             'description'         => 'nullable|string',
             'photos'              => 'nullable|array',
+            'address_id'          => 'nullable|integer',
             'photos.*'            => 'string|url',
             'amenities'           => 'nullable|array',
             'amenities.*'         => 'string',
