@@ -14,6 +14,7 @@ class Property extends Model
         'photos',
         'amenities',
         'description',
+        'address_id',
         'geo_coordinates',
         'is_project',
         'property_attribute_id',
