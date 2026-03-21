@@ -242,6 +242,7 @@ class InquiryService
             From the provided property listings, pick the single best listing as 'suggested' and 2-5 alternatives as 'others'. 
             Return ONLY JSON with IDs and a concise message. 
             If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
+            Include the date if necessary or if the user specify the date.
 
             RULES:
             - Always focus ONLY on the MOST RECENT user intent.
@@ -501,7 +502,13 @@ class InquiryService
         - price_min = 0
         - price_max = the user’s stated budget
         10. Keep other numeric attributes 0 if not specified.
-
+        11. Extract date range if mentioned:
+        - date_from and date_to must be formatted as Y-m-d
+        - If user says:
+        • "latest", "recent", "new" → prioritize newer listings → set date_from to a recent date (e.g. last 7–30 days), date_to = today
+        • "old", "earliest" → prioritize older listings → set date_to to an older date (e.g. 1–2 years ago), date_from = ""
+        • specific dates → convert to Y-m-d
+        - If no date mentioned → return empty string ""
         SYSTEM
         ];
     
@@ -570,6 +577,14 @@ class InquiryService
                                 'type' => 'number',
                                 'description' => 'Desired list of listings of an agent from a user request. Return 0 if not mentioned.',
                             ],
+                            'date_from' => [
+                                'type' => 'string',
+                                'description' => 'Start date in Y-m-d format. Return empty string "" if not mentioned.',
+                            ],
+                            'date_to' => [
+                                'type' => 'string',
+                                'description' => 'End date in Y-m-d format. Return empty string "" if not mentioned.',
+                            ],
                             'attributes' => [
                                 'type' => 'object',
                                 'properties' => [
@@ -584,7 +599,18 @@ class InquiryService
                                 'required' => ['beds', 'baths', 'parking', 'lot_area', 'floor_area', 'price_min', 'price_max'],
                             ],
                         ],
-                        'required' => ['property_type', 'category', 'address', 'query_words', 'attributes', 'property_subtype', 'agent_name', 'listings_count'],
+                        'required' => [
+                            'property_type', 
+                            'category', 
+                            'address', 
+                            'query_words', 
+                            'attributes', 
+                            'property_subtype', 
+                            'agent_name', 
+                            'listings_count',
+                            'date_from',
+                            'date_to'
+                        ],
                     ],
                 ],
             ],
@@ -601,6 +627,8 @@ class InquiryService
                     'property_subtype' => '',
                     'address' => '',
                     'agent_name' => '',
+                    'date_from' => '',
+                    'date_to' => '',
                     'attributes' => [
                         'price_min' => null,
                         'price_max' => null,

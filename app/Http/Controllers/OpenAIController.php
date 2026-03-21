@@ -62,6 +62,7 @@ class OpenAIController extends Controller
             'category' => $l->category->name ?? "",
             'price' => $l->price ?? 0,
             'views' => $l->clicks ?? 0,
+            'listedAt' => date('M d, Y', strtotime($l->created_at)),
             'agent' => [
                 'name' => $agentName,
                 'avatar' => $userData->avatar ?? null,
@@ -202,6 +203,11 @@ class OpenAIController extends Controller
                 $q->where('name', $args['category']);
             }
         });
+
+        if($args['date_from'] !== "" && $args["date_to"] !== "")
+        {
+            $listings = $listings->whereBetween('created_at', [$args['date_from'], $args['date_to']]);
+        }
 
         if($attr['price_min'] > 0 || $attr['price_max'] > 0)
         {
