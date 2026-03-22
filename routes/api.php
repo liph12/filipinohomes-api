@@ -78,4 +78,5 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/logout', [UserController::class, 'logout']);
     Route::get('listing-inquiries-count', [ListingInquiryController::class, 'countAll']);
     Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
+    Route::post('/agent/profile', [AgentController::class, 'store']);
 });

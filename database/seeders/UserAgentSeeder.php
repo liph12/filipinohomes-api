@@ -57,8 +57,8 @@ class UserAgentSeeder extends Seeder
                     'avatar'            => $avatar,
                     'password'          => $hashedPassword,
                     'email_verified_at' => null,
-                    'role_id'           => 2,
-                    'created_at'        => now(),
+                    'role_id'           => $m->emailad === 'itadmin@filipinohomes.com' ? 1 : 2,
+                    'created_at'   => $m->datesign ?? now(),
                     'updated_at'        => now(),
                 ];
 
@@ -71,13 +71,18 @@ class UserAgentSeeder extends Seeder
                     'mobile_no'    => $mobile ?? null,
                     'whats_app_no' => null,
                     'address'      => $m->address ?? null,
-                    'socials'      => $m->facebook ? json_encode(['facebook' => $m->facebook]) : null,
+                    'socials' => json_encode([
+                        'facebook'  => $m->facebook  ?? null,
+                        'instagram' => $m->instagram ?? null,
+                        'twitter'   => $m->twitter   ?? null,
+                        'linkedin'  => $m->linkedin  ?? null,
+                    ]),
                     'bio'          => $m->aboutme ?? '',
                     'avatar'       => $avatar,
                     'geo_location' => null,
                     'member_since' => $m->datesign ?? null,
                     'user_id'      => $m->id,
-                    'created_at'   => now(),
+                    'created_at'   => $m->datesign ?? now(),
                     'updated_at'   => now(),
                 ];
             }
