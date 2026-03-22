@@ -17,20 +17,94 @@ class OpenAIController extends Controller
         $this->sqService = $s;
     }
 
+    public function getDailyLimit(Request $request)
+    {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $ip = $request->ip();
+        $identifier = $deviceId . '|' . $ip;
+
+        $dailyKey = 'daily_requests_' . $identifier;
+        $dailyLimit = 100; // same as your daily limit
+
+        $currentCount = cache()->get($dailyKey, 0);
+        $remaining = max($dailyLimit - $currentCount, 0);
+
+        return response()->json([
+            'daily_limit' => $dailyLimit,
+            'used' => $currentCount,
+            'remaining' => $remaining,
+        ]);
+    }
+
     public function streamChat(Request $request)
     {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $ip = $request->ip();
+    
+        $identifier = $deviceId . '|' . $ip;
+    
+        $attemptsKey = 'spam_attempts_' . $identifier;
+        $blockedKey = 'blocked_' . $identifier;
+        $cooldownKey = 'cooldown_' . $identifier;
+        $dailyKey = 'daily_requests_' . $identifier;
+        $dailyLimit = 100;
+
+        if (cache()->has($blockedKey)) {
+            return response()->json([
+                'error' => 'You are temporarily blocked'
+            ], 403);
+        }
+
+
+        if (!cache()->has($dailyKey)) {
+            cache()->put($dailyKey, 0, now()->endOfDay());
+        }
+
+        $dailyCount = cache()->increment($dailyKey);
+
+        if ($dailyCount > $dailyLimit) {
+            return response()->json([
+                'error' => 'Daily limit reached. Please try again tomorrow.'
+            ], 429);
+        }
+
+        if (cache()->has($cooldownKey)) {
+
+            $attempts = cache()->increment($attemptsKey);
+
+            if ($attempts === 1) {
+                cache()->put($attemptsKey, 1, now()->addMinutes(10));
+            }
+    
+            if ($attempts > 5) {
+                cache()->put($blockedKey, true, now()->addMinutes(10));
+    
+                return response()->json([
+                    'error' => 'You are temporarily blocked'
+                ], 403);
+            }
+    
+            return response()->json([
+                'error' => 'Too fast. Please slow down.'
+            ], 429);
+        }
+    
+        cache()->put($cooldownKey, true, now()->addSeconds(3));
+    
         $thread = $request->messages;
         $classification = $this->sqService->classifyMessage($thread);
         $isNormal = $classification === "normal";
-
-        if(!$isNormal)
-        {
-            if($classification === 'listing')
+    
+        if (!$isNormal) {
+            if ($classification === 'listing') {
                 return $this->sqService->replySearchingStream($thread);
-            if($classification === 'agent')
+            }
+    
+            if ($classification === 'agent') {
                 return $this->sqService->replySearchingAgentStream($thread);
+            }
         }
-
+    
         return $this->sqService->replyNormal($thread);
     }
 
