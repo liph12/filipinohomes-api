@@ -5,7 +5,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use Illuminate\Support\Facades\Hash;
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
@@ -24,13 +23,10 @@ class User extends Authenticatable
         'password',
         'avatar',
         "role_id",
-        'verification'
+        'verification',
+        'active_at',
     ];
 
-    public function setPasswordAttribute($value)
-    {
-        $this->attributes['password'] = Hash::make($value);
-    }
     /**
      * The attributes that should be hidden for serialization.
      *
@@ -51,6 +47,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'avatar' => 'string',
+            'active_at' => 'datetime',
         ];
     }
 
@@ -62,5 +59,17 @@ class User extends Authenticatable
     public function agent()
     {
         return $this->hasOne(Agent::class, 'user_id');
+    }
+
+    public function chats()
+    {
+        return $this->hasMany(Chat::class);
+    }
+
+    public function conversations()
+    {
+        return $this->belongsToMany(Conversation::class, 'conversation_users')
+            ->withPivot('last_read_at')
+            ->withTimestamps();
     }
 }

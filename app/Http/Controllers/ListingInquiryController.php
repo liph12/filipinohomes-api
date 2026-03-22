@@ -22,7 +22,7 @@ class ListingInquiryController extends Controller
         $query = ListingInquiry::with([
             'listing:id,name,slug,featured_photo,price',
             'client:id,name,email',
-            'agent:id,first_name,last_name,mobile_no',
+            'agent:id,user_id,first_name,last_name,mobile_no',
             'latestMessage',
         ]);
 

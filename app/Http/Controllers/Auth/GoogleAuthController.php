@@ -54,47 +54,53 @@ class GoogleAuthController extends Controller
         $lrData = $lrService->fetchAgentByEmail($googleUser['email']);
 
         if (!$lrData) {
-            return response()->json([
-                'message' => 'This email is not registered with Leuterio Realty. Please contact your administrator.',
-            ], 404);
-        }
-
-        if (!$lrService->isAllowedRole($lrData)) {
-            return response()->json([
-                'message' => 'Your role is not authorized to access this platform.',
-            ], 403);
-        }
-
-        if ($lrService->requiresFireCheck($lrData) && !$lrService->hasRequiredFireCertificates($lrData)) {
-            return response()->json([
-                'message' => 'You need to complete at least 3 FIRE training certificates before you can sign in. Please complete your FIRE training first.',
-            ], 403);
-        }
-
-        $fhRoleId = $lrService->mapToFhRoleId($lrData);
-        $nameParts = $lrService->parseName($lrData['name'] ?? $googleUser['name']);
-
-        $user = DB::transaction(function () use ($googleUser, $lrData, $nameParts, $fhRoleId) {
             $user = User::create([
-                'name' => $lrData['name'] ?? $googleUser['name'],
+                'name' => $googleUser['name'],
                 'email' => $googleUser['email'],
                 'google_id' => $googleUser['google_id'],
                 'avatar' => $googleUser['avatar'],
                 'password' => Str::random(32),
-                'role_id' => $fhRoleId,
+                'role_id' => 3,
                 'verification' => 'verified',
             ]);
+        } else {
+            if (!$lrService->isAllowedRole($lrData)) {
+                return response()->json([
+                    'message' => 'Your role is not authorized to access this platform.',
+                ], 403);
+            }
 
-            Agent::create([
-                'user_id' => $user->id,
-                'first_name' => $nameParts['first_name'],
-                'middle_name' => $nameParts['middle_name'],
-                'last_name' => $nameParts['last_name'],
-                'mobile_no' => $lrData['mobile_no'] ?? null,
-            ]);
+            if ($lrService->requiresFireCheck($lrData) && !$lrService->hasRequiredFireCertificates($lrData)) {
+                return response()->json([
+                    'message' => 'You need to complete at least 3 FIRE training certificates before you can sign in. Please complete your FIRE training first.',
+                ], 403);
+            }
 
-            return $user;
-        });
+            $fhRoleId = $lrService->mapToFhRoleId($lrData);
+            $nameParts = $lrService->parseName($lrData['name'] ?? $googleUser['name']);
+
+            $user = DB::transaction(function () use ($googleUser, $lrData, $nameParts, $fhRoleId) {
+                $user = User::create([
+                    'name' => $lrData['name'] ?? $googleUser['name'],
+                    'email' => $googleUser['email'],
+                    'google_id' => $googleUser['google_id'],
+                    'avatar' => $googleUser['avatar'],
+                    'password' => Str::random(32),
+                    'role_id' => $fhRoleId,
+                    'verification' => 'verified',
+                ]);
+
+                Agent::create([
+                    'user_id' => $user->id,
+                    'first_name' => $nameParts['first_name'],
+                    'middle_name' => $nameParts['middle_name'],
+                    'last_name' => $nameParts['last_name'],
+                    'mobile_no' => $lrData['mobile_no'] ?? null,
+                ]);
+
+                return $user;
+            });
+        }
 
         $token = $this->getOrCreateToken($user);
 
