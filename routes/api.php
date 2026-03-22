@@ -8,8 +8,6 @@ use App\Http\Controllers\{
     PropertyAttributesController,
     PropertyController,
     ListingController,
-    ListingConversationController,
-    ListingInquiryController,
     FullListingController,
     PropertySubtypeController,
     ProjectController,
@@ -21,7 +19,10 @@ use App\Http\Controllers\{
     OfficeController,
     ProvinceController,
     CityController,
-    OpenAIController
+    OpenAIController,
+    ChatController,
+    ConversationController,
+    MessageController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -60,9 +61,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('users', UserController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
-    Route::apiResource('listing-inquiries', ListingInquiryController::class);
     Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
-    Route::apiResource('listing-conversations', ListingConversationController::class)->only(['index', 'store']);
     Route::apiResource('full-listing', FullListingController::class)->only(['store', 'show', 'update', 'destroy'])->parameters(['full-listing' => 'listing']);
     Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
     Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
@@ -76,7 +75,11 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::post('/upload', [ImageUploadController::class, 'upload']);
     Route::post('/logout', [UserController::class, 'logout']);
-    Route::get('listing-inquiries-count', [ListingInquiryController::class, 'countAll']);
     Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
     Route::post('/agent/profile', [AgentController::class, 'store']);
+    
+    Route::apiResource('chats', ChatController::class)->only(['index', 'store', 'show']);
+    Route::apiResource('conversations', ConversationController::class)->only(['index', 'show']);
+    Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
+    Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
 });
