@@ -104,10 +104,24 @@ public function run(): void
                 // Photos
                 $photosUpdated = [];
                 foreach (json_decode($l->gallery) ?? [] as $p) {
+                    if (empty($p)) continue;
                     $photosUpdated[] = str_contains($p, 'https://')
                         ? $p
                         : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/' . $p;
                 }
+
+                $featuredPhoto = $l->featured_photo
+                    ? [str_contains($l->featured_photo, 'https://')
+                        ? $l->featured_photo
+                        : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/' . $l->featured_photo]
+                    : [];
+
+                // If featured_photo is empty but gallery has photos, use the first gallery photo
+                if (empty($featuredPhoto) && !empty($photosUpdated)) {
+                    $featuredPhoto = [$photosUpdated[0]];
+                }
+
+                if (empty($photosUpdated) && empty($featuredPhoto)) continue;
 
                 $createdAt = date('Y-m-d H:i:s', strtotime($l->date_added));
                 $updatedAt = $this->parseDateOrNow($l->date_updated);
@@ -146,11 +160,7 @@ public function run(): void
                     'name'           => $l->property_title,
                     'slug'           => $candidate,
                     'price'          => $price,
-                    'featured_photo' => json_encode([
-                        str_contains($l->featured_photo, 'https://')
-                            ? $l->featured_photo
-                            : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/' . $l->featured_photo
-                    ]),
+                    'featured_photo' => json_encode($featuredPhoto),
                     'visibility'     => $l->listing_status,
                     'is_featured'    => 0,
                     'clicks'         => $l->views ?? 0,
