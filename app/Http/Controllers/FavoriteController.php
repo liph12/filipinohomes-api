@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Favorite;
 use Illuminate\Support\Facades\Auth;
-
+use App\Http\Resources\ListingResourceCollection;
 class FavoriteController extends Controller
 {
     public function toggle($listingId)
@@ -44,10 +44,35 @@ class FavoriteController extends Controller
         ]);
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        return response()->json(
-            Favorite::where('user_id', Auth::id())->with('listing')->get()
+        $perPage = 10;
+        $page    = $request->integer('page', 1);
+
+        $favorites = Favorite::where('user_id', Auth::id())
+            ->with([
+                'listing' => function ($q) {
+                    $q->with([
+                        'property.propertyAttribute.subtype',
+                        'category',
+                        'agent' => function ($q) {
+                            $q->withCount('listings');
+                        }
+                    ]);
+                }
+            ])
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        $listings = $favorites->pluck('listing')->filter()->values();
+
+        return new ListingResourceCollection(
+            new \Illuminate\Pagination\LengthAwarePaginator(
+                $listings,
+                $favorites->total(),
+                $perPage,
+                $page,
+                ['path' => $request->url()]
+            )
         );
     }
 }
