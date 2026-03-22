@@ -659,11 +659,10 @@ class InquiryService
     
             IMPORTANT RULES:
             1. ALWAYS focus on the MOST RECENT user intent in the thread.
-            2. Ignore previous context if the topic changes or unrelated message.
-            3. Only extract relevant real estate information for Filipino Homes agent.
-            4. If information is NOT mentioned, return:
-               - empty string "" for name, email or address
-               - 0 for listings_count
+            2. Ignore previous context if the topic changes or the latest message is unrelated.
+            3. Only extract relevant real estate information for Filipino Homes agents.
+            4. The "property_keyword" field must reflect a real estate type, e.g., "condo", "house", "land", "townhouse", "apartment".
+            5. Provide empty strings or 0 if information is missing, but never return null.
             SYSTEM
         ];
     
@@ -679,18 +678,50 @@ class InquiryService
                         'properties' => [
                             'name' => [
                                 'type' => 'string',
+                                'description' => 'Full name of the agent.'
                             ],
                             'email' => [
                                 'type' => 'string',
+                                'description' => 'Agent email address.'
                             ],
                             'listings_count' => [
                                 'type' => 'integer',
+                                'description' => 'Number of listings the agent currently has, based on what the user mentions or implies in the conversation. Return 0 if unknown.'
                             ],
-                            'address' => [
+                            'agent_address' => [
                                 'type' => 'string',
+                                'description' => 'Any address mentioned by the user in the conversation thread related to the agent, such as a location the agent serves. Return an empty string if none is mentioned.'
+                            ],
+                            'listing_address' => [
+                                'type' => 'string',
+                                'description' => 'Any location or address mentioned by the user in the conversation thread related to the property or listing they are searching for. Return an empty string if none is mentioned.'
+                            ],
+                            'property_type' => [
+                                'type' => 'string',
+                                'enum' => ["Condominium", "House", "Land", "Commercial"],
+                                'description' => 'The main property type category. Return an empty string "" if not MENTIONED.',
+                            ],
+                            'property_subtype' => [
+                                'type' => 'string',
+                                'description' => 'The subtype must correspond to the selected property_type. ' .
+                                    'Condominium subtypes: Penthouse, Studio, 1 Bedroom, 2 Bedrooms, 3 Bedrooms, 4 Bedrooms, Loft. ' .
+                                    'House subtypes: Apartment, Townhouse, House and Lot, Boarding House, Retirement House, Pension House, Beach House / Resort. ' .
+                                    'Land subtypes: Agricultural Lot, Island, Residential Lot, Commercial Lot, Memorial, Beach Lot, Industrial Lot. ' .
+                                    'Commercial subtypes: Warehouse, BPO, Office, Building, Hotel, Space.
+                                    Return an empty string "" if not MENTIONED.',
+                                'enum' => [
+                                    // Condominium
+                                    "Penthouse", "Studio", "1 Bedroom", "2 Bedrooms", "3 Bedrooms", "4 Bedrooms", "Loft",
+                                    // House
+                                    "Apartment", "Townhouse", "House and Lot", "Boarding House", "Retirement House", "Pension House", "Beach House / Resort",
+                                    // Land
+                                    "Agricultural Lot", "Island", "Residential Lot", "Commercial Lot", "Memorial", "Beach Lot", "Industrial Lot",
+                                    // Commercial
+                                    "Warehouse", "BPO", "Office", "Building", "Hotel", "Space",
+                                ],
                             ],
                         ],
-                        'required' => ['name', 'email', 'listings_count', 'address']
+                        'required' => ['name', 'email', 'listings_count', 'agent_address', 'listing_address', 'property_type', 'property_subtype']
                     ]
                 ]
             ],
@@ -704,9 +735,12 @@ class InquiryService
                 'function' => 'extract_agent',
                 'arguments' => [
                     'name' => '',
-                    'address' => '',
+                    'agent_address' => '',
                     'email' => '',
-                    'listings_count' => 0
+                    'listings_count' => 0,
+                    'listing_address' => '',
+                    'property_type' => '',
+                    'property_subtype' => ''
                 ],
             ];
         }
@@ -717,9 +751,12 @@ class InquiryService
             'function' => $fn->name ?? 'extract_agent',
             'arguments' => [
                 'name' => $decoded['name'] ?? '',
-                'address' => $decoded['address'] ?? '',
+                'agent_address' => $decoded['agent_address'] ?? '',
                 'email' => $decoded['email'] ?? '',
                 'listings_count' => $decoded['listings_count'] ?? 0,
+                'listing_address' => $decoded['listing_address'] ?? '',
+                'property_type' => $decoded['property_type'] ?? '',
+                'property_subtype' => $decoded['property_subtype'] ?? ''
             ],
         ];
     }

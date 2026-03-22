@@ -30,7 +30,7 @@ class OpenAIController extends Controller
         $remaining = max($dailyLimit - $currentCount, 0);
 
         return response()->json([
-            'daily_limit' => $dailyLimit,
+            'limit' => $dailyLimit,
             'used' => $currentCount,
             'remaining' => $remaining,
         ]);
@@ -190,9 +190,15 @@ class OpenAIController extends Controller
         $args = $params['arguments'];
         $inquiredAgents = [];
 
-        $agents = Agent::withCount('listings')->where(function ($q) use ($args) {
+        $agents = Agent::withCount('listings')
+        ->with(['listings' => function($q) {
+            $q->with('property.propertyAttribute.subtype.type')
+              ->orderBy('clicks', 'DESC')
+              ->limit(10);
+        }])
+        ->where(function ($q) use ($args) {
             $extName = explode(' ', $args['name']);
-            $extAddress = explode(' ', $args['address']);
+            $extAddr = explode(' ', $args['agent_address']);
 
             foreach ($extName as $w) {
                 $q->where(function ($sub) use ($w) {
@@ -201,7 +207,7 @@ class OpenAIController extends Controller
                     ->orWhere('last_name', 'LIKE', "%{$w}%");
                 });
             }
-            foreach ($extAddress as $w) {
+            foreach ($extAddr as $w) {
                 $q->where(function ($sub) use ($w) {
                     $sub->where('address', 'LIKE', "%{$w}%");
                 });
@@ -209,18 +215,21 @@ class OpenAIController extends Controller
             $q->with(['user' => function($q) use($args){
                 $q->where('email', 'LIKE', "%{$args['email']}%");
             }]);
-        })->having('listings_count', '>=', $args['listings_count'])
-        ->with(['listings' => function($q){
-            $q->with(['property' => function($q){
-                $q->with(['propertyAttribute.subtype.type', 'furnishing']);
-            }, 'category'])->orderBy('clicks', 'DESC')->limit(5);
-        }])
-        ->orderBy('listings_count','DESC')->limit(10)->get();
+        })
+        ->having('listings_count', '>=', $args['listings_count'])
+        ->orderBy('listings_count','DESC')
+        ->limit(10)
+        ->get();
 
         foreach($agents as $a)
         {
             $inquiredAgents[] = $this->extractAgent($a);
         }
+
+        // return response()->json([
+        //     'args' => $args,
+        //     'res' => $inquiredAgents,
+        // ]);
 
         $suggestedAgents = $this->sqService->suggestedAgents($thread, $inquiredAgents);
 
@@ -359,9 +368,7 @@ class OpenAIController extends Controller
                     $q->where('lot_area', '>=', $attr['lot_area']);
                 }
             });
-        })->with(['property' => function($q){
-            $q->with(['propertyAttribute.subtype.type', 'furnishing']);
-        }, 'category'])->orderBy('clicks', 'DESC')->limit(5)->get();
+        })->with(['property.propertyAttribute.subtype.type', 'category'])->orderBy('clicks', 'DESC')->limit(5)->get();
         
         foreach ($listings as $l) {            
             $inquiredListings[] = $this->extractListing($l);
