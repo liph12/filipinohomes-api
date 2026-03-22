@@ -21,6 +21,7 @@ return new class extends Migration
             $table->string('visibility')->default("private");
             $table->boolean('is_featured')->default(false);
             $table->unsignedBigInteger('clicks')->default(0);
+            $table->unsignedBigInteger('impressions')->default(0);
             $table->json('seo_tags')->nullable();
             $table->foreignId('property_id')
                 ->constrained('properties')

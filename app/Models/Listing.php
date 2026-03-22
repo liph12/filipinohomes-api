@@ -17,7 +17,7 @@ class Listing extends Model
 
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
-        'featured_photo', 'is_featured', 'clicks',
+        'featured_photo', 'is_featured', 'clicks','impressions',
         'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at'
     ];
 
@@ -273,5 +273,10 @@ class Listing extends Model
     public function deleter()
     {
         return $this->belongsTo(User::class, 'deleted_by');
+    }
+
+    public function favoritedBy()
+    {
+        return $this->hasMany(Favorite::class);
     }
 }

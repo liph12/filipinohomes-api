@@ -22,6 +22,7 @@ use App\Http\Controllers\{
     OpenAIController,
     ChatController,
     ConversationController,
+    FavoriteController,
     MessageController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -77,6 +78,9 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/logout', [UserController::class, 'logout']);
     Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
     Route::post('/agent/profile', [AgentController::class, 'store']);
+    Route::post('/favorites/sync', [FavoriteController::class, 'sync']);
+    Route::post('/favorites/{listingId}', [FavoriteController::class, 'toggle']);
+    Route::get('/favorites', [FavoriteController::class, 'index']);
     
     Route::apiResource('chats', ChatController::class)->only(['index', 'store', 'show']);
     Route::apiResource('conversations', ConversationController::class)->only(['index', 'show']);
