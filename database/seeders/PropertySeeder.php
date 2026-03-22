@@ -12,6 +12,7 @@ use App\Models\Listing;
 use Illuminate\Support\Str;
 use App\Models\Agent;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 class PropertySeeder extends Seeder
 {
     /**
@@ -47,92 +48,123 @@ class PropertySeeder extends Seeder
         }
     }
 
-    public function run(): void
-    {
-        $listings = Proplisting::whereBetween('date_added', ['2024-01-01', '2026-03-19'])
-        ->get();
+public function run(): void
+{
+    DB::disableQueryLog();
 
-        foreach($listings as $l)
-        {
-            $agent = Agent::where('user_id',$l->user_id)->first();
-            $slug = Str::slug($l->property_title);
-            $isExists = Listing::where('slug', $slug)->exists();
-            $furnishing = Furnishing::where('name', $l->furnishing)->first();
-            $binAmenities = $l->indoor."-".$l->outdoor;
-            $binAmenitiesArray = explode("-", $binAmenities);
-            $price = (float) str_replace(',', '', $l->announceas == 2 ? $l->rental_rate : $l->propertycost);
-            $amenitiesArray = [];
+    // Pre-load all lookups ONCE
+    $allAgents     = Agent::pluck('id', 'user_id');        // user_id => agent id
+    $allFurnishing = Furnishing::pluck('id', 'name');      // name => furnishing id
+    $allAmenities  = Amenity::orderBy('id')->pluck('name'); // index-based
+    $usedSlugs     = Listing::pluck('slug')->flip();        // slug => true
+    $usedCodes     = Listing::pluck('code')->flip();        // code => true
 
-            for($i = 0; $i < count($binAmenitiesArray); $i ++)
-            {
-                $index = $i + 1;
+    $startDate = '2024-01-01';
+    $endDate   = Carbon::now()->toDateString();
 
-                if($binAmenitiesArray[$i] == '1')
-                {
-                    $amenitiesArray[] = Amenity::find($index)->name;
+    Proplisting::whereBetween('date_added', [$startDate, $endDate])
+        ->chunk(500, function ($listings) use ($allAgents, $allFurnishing, $allAmenities, &$usedSlugs, &$usedCodes) {
+
+            $attributeData = [];
+            $propertyData  = [];
+            $listingData   = [];
+
+            foreach ($listings as $l) {
+
+                $agentId = $allAgents[$l->user_id] ?? null;
+                if (!$agentId) continue;
+
+                // Slug — no DB query
+                $baseSlug  = Str::slug($l->property_title);
+                $candidate = empty($baseSlug) ? 'NON-' . $l->id : $baseSlug;
+                if (isset($usedSlugs[$candidate])) {
+                    $candidate = $baseSlug . '-' . $l->id;
                 }
-            }
+                $usedSlugs[$candidate] = true;
 
-            if($isExists)
-            {
-                $slug = $slug."-".$l->id;
-            }
+                // Code — no DB query
+                $code = empty(trim($l->propcode ?? '')) ? 'NON' : $l->propcode;
+                if (isset($usedCodes[$code])) {
+                    $code = 'NON-' . $l->id;
+                }
+                $usedCodes[$code] = true;
 
-            if($agent)
-            {
-                $photosUpdated = [];
-                $photos = json_decode($l->gallery) ?? [];
+                // Furnishing — no DB query
+                $furnishingId = $allFurnishing[$l->furnishing] ?? 3;
 
-                if(count($photos) > 0)
-                {
-                    foreach($photos as $p)
-                    {
-                        $hasDomain = str_contains($p, "https://");
-                        $photosUpdated[] = $hasDomain ? $p : "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$p;
+                // Amenities — no DB query
+                $binAmenitiesArray = explode('-', $l->indoor . '-' . $l->outdoor);
+                $amenitiesArray    = [];
+                foreach ($binAmenitiesArray as $i => $bit) {
+                    if ($bit === '1' && isset($allAmenities[$i])) {
+                        $amenitiesArray[] = $allAmenities[$i];
                     }
                 }
 
-                $attribute = PropertyAttribute::create([
-                    'bedroom_count' => ($l->bedroom === null || $l->bedroom === '' || $l->bedroom < 0) ? 0 : (float) str_replace(',', '',$l->bedroom),
-                    'bathroom_count' => ($l->bathroom === null || $l->bathroom === '' || $l->bathroom < 0) ? 0 : (float) str_replace(',', '',$l->bathroom),
-                    'garage_count' => $l->carpark === 'Yes' ? 1 : 0,
-                    'lot_area' => ($l->lot_area === null || $l->lot_area === '' || $l->lot_area < 0) ? 0 : (float) str_replace(',', '',$l->lot_area),
-                    'floor_area' => ($l->floor_area === null || $l->floor_area === '' || $l->floor_area < 0) ? 0 :  (float) str_replace(',', '',$l->floor_area),
-                    'property_subtype_id' => $l->property_type_id
-                ]);
-    
-                $property = Property::create([
-                    'name' => $l->condo_name === null ? $l->property_title : $l->condo_name,
-                    'address' => $l->mapaddress,
-                    'photos' => $photosUpdated,
-                    'amenities' => $amenitiesArray,
-                    'description' => $l->description,
-                    'address_id' => $l->brgy_id,
-                    'geo_coordinates' => [
-                        'lat' => (float) $l->latitude,
-                        'lng' => (float) $l->longitude
-                    ],
-                    'is_project' => $l->condo_name !== null,
-                    'property_attribute_id' => $attribute->id,
-                    'furnishing_id' => $furnishing->id ?? 3,
-                ]);
-    
-                Listing::create([
-                    'code' => $l->propcode,
-                    'name' => $l->property_title,
-                    'slug' => $slug,
-                    'price' => $price,
-                    'featured_photo' => [!str_contains($l->featured_photo, "https://") ? "https://s3-ap-southeast-1.amazonaws.com/filipinohomes/".$l->featured_photo : $l->featured_photo],
-                    'visibility' => $l->listing_status,
-                    'is_featured' => false,
-                    'clicks' => $l->views === null ? 0 : $l->views,
-                    'property_id' => $property->id,
-                    'category_id' => $l->announceas,
-                    'agent_id' => $agent->id,
-                    'created_at' => date('Y-m-d H:i:s', strtotime($l->date_added)),
-                    'updated_at' => $this->parseDateOrNow($l->date_updated),
-                ]);
+                // Photos
+                $photosUpdated = [];
+                foreach (json_decode($l->gallery) ?? [] as $p) {
+                    $photosUpdated[] = str_contains($p, 'https://')
+                        ? $p
+                        : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/' . $p;
+                }
+
+                $createdAt = date('Y-m-d H:i:s', strtotime($l->date_added));
+                $updatedAt = $this->parseDateOrNow($l->date_updated);
+                $price     = (float) str_replace(',', '', $l->announceas == 2 ? $l->rental_rate : $l->propertycost);
+
+                $attributeData[] = [
+                    'id'                  => $l->id,
+                    'bedroom_count'       => max(0, (float) str_replace(',', '', $l->bedroom  ?? 0)),
+                    'bathroom_count'      => max(0, (float) str_replace(',', '', $l->bathroom ?? 0)),
+                    'garage_count'        => $l->carpark === 'Yes' ? 1 : 0,
+                    'lot_area'            => max(0, (float) str_replace(',', '', $l->lot_area   ?? 0)),
+                    'floor_area'          => max(0, (float) str_replace(',', '', $l->floor_area ?? 0)),
+                    'property_subtype_id' => $l->property_type_id,
+                    'created_at'          => $createdAt,
+                    'updated_at'          => $updatedAt,
+                ];
+
+                $propertyData[] = [
+                    'id'                   => $l->id,
+                    'name'                 => $l->condo_name ?? $l->property_title,
+                    'address'              => $l->mapaddress,
+                    'photos'               => json_encode($photosUpdated),
+                    'amenities'            => json_encode($amenitiesArray),
+                    'description'          => $l->description,
+                    'address_id'           => $l->brgy_id,
+                    'geo_coordinates'      => json_encode(['lat' => (float) $l->latitude, 'lng' => (float) $l->longitude]),
+                    'is_project'           => $l->condo_name !== null ? 1 : 0,
+                    'property_attribute_id'=> $l->id,
+                    'furnishing_id'        => $furnishingId,
+                    'created_at'           => $createdAt,
+                    'updated_at'           => $updatedAt,
+                ];
+
+                $listingData[] = [
+                    'code'           => $code,
+                    'name'           => $l->property_title,
+                    'slug'           => $candidate,
+                    'price'          => $price,
+                    'featured_photo' => json_encode([
+                        str_contains($l->featured_photo, 'https://')
+                            ? $l->featured_photo
+                            : 'https://s3-ap-southeast-1.amazonaws.com/filipinohomes/' . $l->featured_photo
+                    ]),
+                    'visibility'     => $l->listing_status,
+                    'is_featured'    => 0,
+                    'clicks'         => $l->views ?? 0,
+                    'property_id'    => $l->id,
+                    'category_id'    => $l->announceas,
+                    'agent_id'       => $agentId,
+                    'created_at'     => $createdAt,
+                    'updated_at'     => $updatedAt,
+                ];
             }
-        }
-    }
+
+            if (!empty($attributeData)) DB::table('property_attributes')->insertOrIgnore($attributeData);
+            if (!empty($propertyData))  DB::table('properties')->insertOrIgnore($propertyData);
+            if (!empty($listingData))   DB::table('listings')->insertOrIgnore($listingData);
+        });
+}
 }
