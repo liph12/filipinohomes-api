@@ -14,7 +14,7 @@ class ChatResource extends JsonResource
             'type' => $this->type,
             'type_id' => $this->type_id,
             'user' => new UserResource($this->whenLoaded('user')),
-            'listing' => $this->when($this->type === 'listing' && $this->relationLoaded('listing'), function () {
+            'listing' => $this->when($this->type === 'listing' && $this->relationLoaded('listing') && $this->listing !== null, function () {
                 return [
                     'id' => $this->listing->id,
                     'name' => $this->listing->name,
