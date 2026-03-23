@@ -140,7 +140,11 @@ class CacheService extends DataLayerService
         $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId.'|'.$request->ip();
     
         $today = now()->format('Y-m-d');
+        $yesterday = now()->subDay()->format('Y-m-d');
         $sessionKey = 'chat_session_'.$identifier.'_'.$today;
+        $sessionKeyYesterday = 'chat_session_'.$identifier.'_'.$yesterday;
+
+        cache()->forget($sessionKeyYesterday);
     
         $chatData = cache()->get($sessionKey, [
             'messages' => [],

@@ -14,7 +14,7 @@ class AgentController extends Controller
     public function index()
     {
         return new AgentResourceCollection(
-            Agent::with('user')->withCount('listings')->orderByDesc('listings_count')->paginate(10)
+            Agent::with('user')->withCount('listings')->orderByDesc('listings_count')->paginate(12)
         );
     }
 
