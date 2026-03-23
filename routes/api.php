@@ -24,6 +24,7 @@ use App\Http\Controllers\{
     ConversationController,
     FavoriteController,
     MessageController,
+    MaintenanceController,
     ReactionController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -60,6 +61,8 @@ Route::get('/openai/cached-messages', [OpenAIController::class, 'getCachedMessag
 Route::get('/provinces', [ProvinceController::class, 'index']);
 Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']);
 Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
+Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
+
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
     Route::apiResource('users', UserController::class);
@@ -84,6 +87,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/favorites/sync', [FavoriteController::class, 'sync']);
     Route::post('/favorites/{listingId}', [FavoriteController::class, 'toggle']);
     Route::get('/favorites', [FavoriteController::class, 'index']);
+    Route::post('/admin/maintenance-toggle', [MaintenanceController::class, 'toggle']);
     
     Route::apiResource('chats', ChatController::class)->only(['index', 'store', 'show']);
     Route::apiResource('conversations', ConversationController::class)->only(['index', 'show']);
