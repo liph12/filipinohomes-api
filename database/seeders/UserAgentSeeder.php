@@ -9,6 +9,26 @@ use Illuminate\Support\Facades\Hash;
 
 class UserAgentSeeder extends Seeder
 {
+    private function isAdmin($email)
+    {
+        $isAdmin = false;
+        $admins = [
+            'itadmin@filipinohomes.com',
+            'mindworth@gmail.com',
+            'libresphilip14@gmail.com'
+        ];
+
+        foreach($admins as $a)
+        {
+            if($a === $email)
+            {
+                $isAdmin = true;
+            }
+        }
+
+        return $isAdmin;
+    }
+
     public function run(): void
     {
         $hashedPassword = Hash::make('1');
@@ -57,7 +77,7 @@ class UserAgentSeeder extends Seeder
                     'avatar'            => $avatar,
                     'password'          => $hashedPassword,
                     'email_verified_at' => null,
-                    'role_id'           => $m->emailad === 'itadmin@filipinohomes.com' ? 1 : 2,
+                    'role_id'           => $this->isAdmin($m->emailad) ? 1 : 2,
                     'created_at'   => $m->datesign ?? now(),
                     'updated_at'        => now(),
                 ];

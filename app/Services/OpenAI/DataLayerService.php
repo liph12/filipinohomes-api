@@ -23,7 +23,7 @@ class DataLayerService
             'id' => $l->id,
             'name' => $l->name,
             'photo' => $l->featured_photo,
-            'link' => "/listings/" . $l->slug,
+            'slug' => $l->slug,
             'propertyName' => $l->property->name ?? "",
             'propertyType' => $subType->type->name,
             'propertySubType' => $subType->name,
