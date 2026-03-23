@@ -110,28 +110,38 @@ class Listing extends Model
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        if ($search = $request->get('search')) {
-            $query->where(function (Builder $q) use ($search) {
-                $q->where('listings.name', 'like', "%{$search}%")
-                  ->orWhereHas('property', fn ($sub) => $sub->where('address', 'like', "%{$search}%"));
+        if ($search = $request->input('search')) {
+            $terms = collect(preg_split('/\s+/', trim($search)))
+                ->filter()
+                ->values();
+        
+            $query->where(function (Builder $q) use ($terms) {
+                foreach ($terms as $term) {
+                    $q->where(function (Builder $subQ) use ($term) {
+                        $subQ->where('listings.name', 'like', "%{$term}%")
+                             ->orWhereHas('property', function ($propQ) use ($term) {
+                                 $propQ->where('address', 'like', "%{$term}%");
+                             });
+                    });
+                }
             });
         }
 
-        if ($categories = $request->get('categories')) {
+        if ($categories = $request->input('categories')) {
             $cats = is_array($categories) ? $categories : explode(',', $categories);
             $query->whereHas('category', fn ($q) => $q->whereIn('name', $cats));
         }
 
-        if ($subtypes = $request->get('subtypes')) {
+        if ($subtypes = $request->input('subtypes')) {
             $ids = is_array($subtypes) ? $subtypes : explode(',', $subtypes);
             $query->whereHas('property.propertyAttribute.subtype', fn ($q) => $q->whereIn('id', $ids));
         }
 
-        if ($priceMin = $request->get('price_min')) {
+        if ($priceMin = $request->input('price_min')) {
             $query->where('listings.price', '>=', $priceMin);
         }
 
-        if ($priceMax = $request->get('price_max')) {
+        if ($priceMax = $request->input('price_max')) {
             $query->where('listings.price', '<=', $priceMax);
         }
 
@@ -154,8 +164,8 @@ class Listing extends Model
         }
 
         if ($request->filled('beds')) {
-            $beds          = (int) $request->get('beds');
-            $bedsCondition = $request->get('beds_condition', 'equal');
+            $beds          = (int) $request->input('beds');
+            $bedsCondition = $request->input('beds_condition', 'equal');
             $query->whereHas('property.propertyAttribute', fn ($q) =>
                 $q->where('bedroom_count', match ($bedsCondition) {
                     'plus'  => '>=',
@@ -166,8 +176,8 @@ class Listing extends Model
         }
 
         if ($request->filled('baths')) {
-            $baths          = (int) $request->get('baths');
-            $bathsCondition = $request->get('baths_condition', 'equal');
+            $baths          = (int) $request->input('baths');
+            $bathsCondition = $request->input('baths_condition', 'equal');
             $query->whereHas('property.propertyAttribute', fn ($q) =>
                 $q->where('bathroom_count', match ($bathsCondition) {
                     'plus'  => '>=',
@@ -177,12 +187,12 @@ class Listing extends Model
             );
         }
 
-        if ($furnishings = $request->get('furnishings')) {
+        if ($furnishings = $request->input('furnishings')) {
             $ids = is_array($furnishings) ? $furnishings : explode(',', $furnishings);
             $query->whereHas('property', fn ($q) => $q->whereIn('furnishing_id', $ids));
         }
 
-        if ($amenities = $request->get('amenities')) {
+        if ($amenities = $request->input('amenities')) {
             $names = is_array($amenities) ? $amenities : explode(',', $amenities);
             $query->whereHas('property', function (Builder $q) use ($names) {
                 foreach ($names as $name) {
@@ -226,6 +236,11 @@ class Listing extends Model
     public function property()  { return $this->belongsTo(Property::class); }
     public function category()  { return $this->belongsTo(Category::class); }
     public function agent()     { return $this->belongsTo(Agent::class); }
+    
+    public function scopePublic($q)
+    {
+        return $q->where('visibility', 'public');
+    }
 
     public function scopeActive($q)
     {

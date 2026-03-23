@@ -137,7 +137,7 @@ class CacheService extends DataLayerService
     {
         $deviceId = $request->input('device_id') ?? 'unknown';
         $user = Auth::guard('sanctum')->user();
-        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId.'|'.$request->ip();
+        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId;
     
         $today = now()->format('Y-m-d');
         $yesterday = now()->subDay()->format('Y-m-d');
@@ -201,11 +201,23 @@ class CacheService extends DataLayerService
         return $messages;
     }
 
+    public function clearMessages(Request $request)
+    {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $user = Auth::guard('sanctum')->user();
+        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId;
+    
+        $today = now()->format('Y-m-d');
+        $sessionKey = 'chat_session_'.$identifier.'_'.$today;
+
+        cache()->forget($sessionKey);
+    }
+
     public function appendMessages(Request $request, $newMessages)
     {
         $deviceId = $request->input('device_id') ?? 'unknown';
         $user = Auth::guard('sanctum')->user();
-        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId.'|'.$request->ip();
+        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId;
     
         $today = now()->format('Y-m-d');
         $sessionKey = 'chat_session_'.$identifier.'_'.$today;

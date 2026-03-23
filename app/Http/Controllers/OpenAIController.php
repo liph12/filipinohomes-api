@@ -6,18 +6,21 @@ use Illuminate\Http\Request;
 use App\Services\OpenAI\CommandService;
 use App\Services\OpenAI\CacheService;
 use App\Services\OpenAI\DataLayerService;
+use App\Services\OpenAI\ListingCommandService;
 
 class OpenAIController extends Controller
 {
     private $sqService;
     private $cacheService;
     private $dataService;
+    private $listingService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l)
     {
         $this->sqService = $s;
         $this->cacheService = $c;
         $this->dataService = $d;
+        $this->listingService = $l;
     }
 
     public function getDailyLimit(Request $request)
@@ -32,6 +35,13 @@ class OpenAIController extends Controller
         $cachedMessages = $this->cacheService->getDailyMessages($request);
 
         return response()->json($cachedMessages);
+    }
+
+    public function clearCachedMessages(Request $request)
+    {
+        $this->cacheService->clearMessages($request);
+
+        return response()->json(['message' => 'Messaged cleared!']);
     }
 
     public function streamChat(Request $request)
@@ -170,5 +180,12 @@ class OpenAIController extends Controller
         }
 
         return response()->json($suggestedListings);
+    }
+
+    public function parseListingQuery(Request $request)
+    {
+        $data = $this->listingService->parseListingQuery($request->q ?? "");
+
+        return response()->json($data);
     }
 }

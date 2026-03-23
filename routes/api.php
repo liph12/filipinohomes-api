@@ -57,6 +57,8 @@ Route::post('/openai/search-agents', [OpenAIController::class, 'searchAgents']);
 Route::post('/openai/stream-message', [OpenAIController::class, 'streamMessageRequest']);
 Route::get('/openai/daily-limit', [OpenAIController::class, 'getDailyLimit']);
 Route::get('/openai/cached-messages', [OpenAIController::class, 'getCachedMessages']);
+Route::post('/openai/clear-cached-messages', [OpenAIController::class, 'clearCachedMessages']);
+Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
 Route::get('/provinces', [ProvinceController::class, 'index']);
 Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']);
 Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
