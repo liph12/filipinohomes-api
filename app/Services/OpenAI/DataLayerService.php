@@ -88,7 +88,7 @@ class DataLayerService
         $words = strtolower($args['query_words']);
         $array_words = explode(' ', $words);
 
-        $listings = Listing::whereHas('category', function($q) use($args){
+        $listings = Listing::public()->whereHas('category', function($q) use($args){
             if($args['category'] !== "")
             {
                 $q->where('name', $args['category']);
@@ -195,7 +195,7 @@ class DataLayerService
         $inquiredAgents = [];
         $agents = Agent::withCount('listings')
         ->with(['listings' => function($q) {
-            $q->with('property.propertyAttribute.subtype.type')
+            $q->public()->with('property.propertyAttribute.subtype.type')
               ->orderBy('clicks', 'DESC')
               ->limit(10);
         }])

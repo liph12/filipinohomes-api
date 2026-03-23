@@ -362,38 +362,42 @@ class CommandService extends CacheService
             $res = json_decode($fn->arguments, true);
             $others = [];
 
-            foreach($res['others'] as $o)
+            if(isset($res['others']))
             {
-                $others[] = [
-                    'id' => $o
+                foreach($res['others'] as $o)
+                {
+                    $others[] = [
+                        'id' => $o
+                    ];
+                }
+    
+                $messages = [
+                    [
+                        'id' => Str::uuid(),
+                        'role' => 'assistant',
+                        'content' => $res['message']
+                    ],
+                    [
+                        'id' => Str::uuid(),
+                        'role' => 'assistant',
+                        'content' => null,
+                        'metaData' => [
+                            'listing' => [
+                                'suggested' => [
+                                    'id' => $res['suggested']
+                                ],
+                                'others' => $others
+                            ]
+                        ]
+                    ],
+                    [
+                        'id' => Str::uuid(),
+                        'role' => 'assistant',
+                        'content' => $res['follow_up']
+                    ],
                 ];
             }
 
-            $messages = [
-                [
-                    'id' => Str::uuid(),
-                    'role' => 'assistant',
-                    'content' => $res['message']
-                ],
-                [
-                    'id' => Str::uuid(),
-                    'role' => 'assistant',
-                    'content' => null,
-                    'metaData' => [
-                        'listing' => [
-                            'suggested' => [
-                                'id' => $res['suggested']
-                            ],
-                            'others' => $others
-                        ]
-                    ]
-                ],
-                [
-                    'id' => Str::uuid(),
-                    'role' => 'assistant',
-                    'content' => $res['follow_up']
-                ],
-            ];
             $this->appendMessages($req, $messages);
 
             return $res;
@@ -880,5 +884,22 @@ class CommandService extends CacheService
                 'property_subtype' => $decoded['property_subtype'] ?? ''
             ],
         ];
+    }
+
+    public function parseListingQuery($query)
+    {
+        $prompt = "";
+
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => array_merge(
+                [
+                    [
+                        'role' => 'system',
+                        'content' => $prompt,
+                    ],
+                ],
+            ),
+        ]);
     }
 }
