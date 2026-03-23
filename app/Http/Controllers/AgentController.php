@@ -11,10 +11,27 @@ use Illuminate\Http\Request;
 
 class AgentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $query = Agent::with('user')->withCount('listings');
+
+        if ($search = $request->query('search')) {
+            $term = '%' . $search . '%';
+
+            $query->where(function ($q) use ($term) {
+                $q->where('first_name', 'LIKE', $term)
+                  ->orWhere('last_name', 'LIKE', $term)
+                  ->orWhere('address', 'LIKE', $term)
+                  ->orWhere('mobile_no', 'LIKE', $term)
+                  ->orWhereHas('user', function ($uq) use ($term) {
+                      $uq->where('email', 'LIKE', $term)
+                         ->orWhere('name', 'LIKE', $term);
+                  });
+            });
+        }
+
         return new AgentResourceCollection(
-            Agent::with('user')->withCount('listings')->orderByDesc('listings_count')->paginate(12)
+            $query->orderByDesc('listings_count')->paginate(12)
         );
     }
 

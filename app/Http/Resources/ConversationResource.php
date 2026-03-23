@@ -13,7 +13,10 @@ class ConversationResource extends JsonResource
         $authUserId = Auth::id();
         $unreadCount = 0;
 
-        if ($this->relationLoaded('users') && $authUserId) {
+        // Use precomputed unread_count if available (set by controller)
+        if ($this->resource->getAttribute('computed_unread_count') !== null) {
+            $unreadCount = (int) $this->resource->getAttribute('computed_unread_count');
+        } elseif ($this->relationLoaded('users') && $authUserId) {
             $pivot = $this->users->firstWhere('id', $authUserId)?->pivot;
             $lastReadAt = $pivot?->last_read_at;
 
