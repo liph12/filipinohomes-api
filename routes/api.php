@@ -23,7 +23,8 @@ use App\Http\Controllers\{
     ChatController,
     ConversationController,
     FavoriteController,
-    MessageController
+    MessageController,
+    ReactionController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -88,4 +89,5 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('conversations', ConversationController::class)->only(['index', 'show']);
     Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
     Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
+    Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
 });

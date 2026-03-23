@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Message extends Model
 {
 
-    protected $fillable = ['conversation_id', 'user_id', 'type', 'body', 'read_at', 'status'];
+    protected $fillable = ['conversation_id', 'user_id', 'reply_to_id', 'type', 'body', 'read_at', 'status'];
 
     protected function casts(): array
     {
@@ -24,5 +24,15 @@ class Message extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function replyTo()
+    {
+        return $this->belongsTo(Message::class, 'reply_to_id');
+    }
+
+    public function reactions()
+    {
+        return $this->hasMany(MessageReaction::class);
     }
 }

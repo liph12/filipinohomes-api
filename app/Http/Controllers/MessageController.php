@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
 
 class MessageController extends Controller
 {
@@ -24,7 +25,7 @@ class MessageController extends Controller
         }
 
         $messages = Message::where('conversation_id', $validated['conversation_id'])
-            ->with('user')
+            ->with(['user', 'replyTo.user', 'reactions.user'])
             ->orderBy('created_at')
             ->paginate(50);
 
@@ -37,6 +38,7 @@ class MessageController extends Controller
             'conversation_id' => 'required|exists:conversations,id',
             'body' => 'required|string|max:5000',
             'type' => 'sometimes|in:text,file,image,emoji',
+            'reply_to_id' => 'sometimes|nullable|exists:messages,id',
         ]);
 
         $conversation = Conversation::findOrFail($validated['conversation_id']);
@@ -46,14 +48,22 @@ class MessageController extends Controller
             abort(403, 'You are not a participant in this conversation.');
         }
 
+        if (!empty($validated['reply_to_id'])) {
+            $replyMsg = Message::find($validated['reply_to_id']);
+            if (!$replyMsg || $replyMsg->conversation_id !== $conversation->id) {
+                abort(422, 'Reply message must belong to the same conversation.');
+            }
+        }
+
         $message = Message::create([
             'conversation_id' => $validated['conversation_id'],
             'user_id' => Auth::id(),
             'body' => $validated['body'],
             'type' => $validated['type'] ?? 'text',
+            'reply_to_id' => $validated['reply_to_id'] ?? null,
         ]);
 
-        $message->load('user');
+        $message->load(['user', 'replyTo.user', 'reactions.user']);
 
         return new MessageResource($message);
     }
@@ -61,6 +71,11 @@ class MessageController extends Controller
     public function update(Request $request, Message $message)
     {
         $this->authorize('update', $message);
+
+        $isAdmin = Auth::user()->role?->name === 'admin';
+        if (!$isAdmin && $message->created_at->addMinutes(15)->isPast()) {
+            abort(403, 'Messages can only be edited within 15 minutes of sending.');
+        }
 
         $validated = $request->validate([
             'body' => 'required|string|max:5000',
@@ -71,7 +86,7 @@ class MessageController extends Controller
             'status' => 'updated',
         ]);
 
-        $message->load('user');
+        $message->load(['user', 'replyTo.user', 'reactions.user']);
 
         return new MessageResource($message);
     }
