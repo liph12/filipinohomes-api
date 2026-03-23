@@ -61,8 +61,15 @@ class ListingCommandService
 
     public function parseListingQuery(string $query): ?array
     {
-        $prompt = "Extract structured real estate filters. Always use function call.";
-
+        $prompt = <<<PROMPT
+    Extract structured real estate filters from the user query.
+    Use the taxonomy provided. 
+    Rules:
+    1. Always return a function call with structured data.
+    2. Include 'categories', 'types', 'subtypes', and 'furnishings'.
+    3. If the query mentions a type but no subtype, return all subtypes associated with that type.
+    PROMPT;
+    
         $response = $this->client->chat()->create([
             'model' => 'gpt-5.4-mini',
             'messages' => [
@@ -78,13 +85,24 @@ class ListingCommandService
             'functions' => [$this->getToolDefinition()],
             'function_call' => ['name' => 'parse_listing_query'],
         ]);
-
-        return $this->extractToolResponse($response);
-
-        return $data ? $this->normalize($data) : null;
+    
+        $data = $this->extractToolResponse($response);
+    
+        if ($data) {
+            // Ensure subtypes exist for mentioned types if missing
+            if (!empty($data['types']) && empty($data['subtypes'])) {
+                $selectedTypeIds = array_map(fn($t) => $t['id'], $data['types']);
+                $data['subtypes'] = array_values(array_filter($this->taxonomy['subtypes'], function($subtype) use ($selectedTypeIds) {
+                    return in_array($subtype['type']['id'], $selectedTypeIds);
+                }));
+            }
+    
+            return $this->normalize($data);
+        }
+    
+        return null;
     }
 
-    // ✅ TOOL DEFINITION (reusable)
     protected function getToolDefinition(): array
     {
         return  [
@@ -112,7 +130,6 @@ class ListingCommandService
                         ],
                         'required' => ['value', 'condition']
                     ],
-
                     'baths' => [
                         'type' => 'object',
                         'properties' => [
