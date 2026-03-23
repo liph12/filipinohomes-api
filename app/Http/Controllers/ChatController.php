@@ -32,6 +32,24 @@ class ChatController extends Controller
 
         $chats = $query->latest()->paginate(20);
 
+        // Compute unread counts for each conversation
+        foreach ($chats as $chat) {
+            if ($chat->relationLoaded('activeConversation') && $chat->activeConversation) {
+                $conv = $chat->activeConversation;
+                $pivot = $conv->users->firstWhere('id', $user->id)?->pivot;
+                $lastReadAt = $pivot?->last_read_at;
+
+                $unreadQuery = $conv->messages()
+                    ->where('user_id', '!=', $user->id);
+
+                if ($lastReadAt) {
+                    $unreadQuery->where('created_at', '>', $lastReadAt);
+                }
+
+                $conv->setAttribute('computed_unread_count', $unreadQuery->count());
+            }
+        }
+
         return ChatResource::collection($chats);
     }
 

@@ -46,11 +46,21 @@ class ConversationController extends Controller
         $this->authorize('view', $conversation);
 
         $user = Auth::user();
+        $now = now();
 
         $conversation->users()->updateExistingPivot($user->id, [
-            'last_read_at' => now(),
+            'last_read_at' => $now,
         ]);
 
-        return response()->json(['message' => 'Marked as read.']);
+        // Mark individual messages as read
+        $conversation->messages()
+            ->where('user_id', '!=', $user->id)
+            ->whereNull('read_at')
+            ->update(['read_at' => $now]);
+
+        return response()->json([
+            'message' => 'Marked as read.',
+            'read_at' => $now->toISOString(),
+        ]);
     }
 }
