@@ -598,12 +598,8 @@ class CommandService extends CacheService
         Your task is to extract structured property search filters from a conversation thread.
 
         IMPORTANT RULES:
-        1. ALWAYS prioritize the MOST RECENT user intent.
-
-        2. HOWEVER, preserve relevant context from earlier messages IF:
-        - The user is continuing the same search
-        - The new message is a refinement (e.g. "for rent", "2BR", "cheapest")
-
+        1. ALWAYS use the MOST RECENT user message as the main source of intent.
+        2. Include context from earlier messages ONLY IF it directly refines or narrows the latest message. Ignore any unrelated topics from previous messages.
         3. Only ignore previous context if the user clearly changes:
         - property name
         - location
@@ -783,8 +779,8 @@ class CommandService extends CacheService
             Your task is to extract structured agent search filters from a conversation thread.
     
             IMPORTANT RULES:
-            1. ALWAYS focus on the MOST RECENT user intent in the thread.
-            2. Ignore previous context if the topic changes or the latest message is unrelated.
+            1. ALWAYS use the MOST RECENT user message as the main source of intent.
+            2. Include context from earlier messages ONLY IF it directly refines or narrows the latest message. Ignore any unrelated topics from previous messages.
             3. Only extract relevant real estate information for Filipino Homes agents.
             4. The "property_keyword" field must reflect a real estate type, e.g., "condo", "house", "land", "townhouse", "apartment".
             5. Provide empty strings or 0 if information is missing, but never return null.
