@@ -34,36 +34,31 @@ class OpenAIController extends Controller
         return response()->json($cachedMessages);
     }
 
-    public function appendMessagesToCache(Request $request)
-    {
-        $cached = $this->cacheService->appendMessages($request);
-
-        return response()->json($cached);
-    }
-
     public function streamChat(Request $request)
     {
         $thread = $request->messages;
+        $newMessages = $request->input('messages', []);
         $limitResponse = $this->cacheService->updateDailyLimit($request);
 
         if ($limitResponse->getStatusCode() !== 200) {
             return $limitResponse;
         }
 
+        $this->cacheService->appendMessages($request, $newMessages);
         $classification = $this->sqService->classifyMessage($thread);
         $isNormal = $classification === "normal";
     
         if (!$isNormal) {
             if ($classification === 'listing') {
-                return $this->sqService->replySearchingStream($thread);
+                return $this->sqService->replySearchingStream($thread, $request);
             }
     
             if ($classification === 'agent') {
-                return $this->sqService->replySearchingAgentStream($thread);
+                return $this->sqService->replySearchingAgentStream($thread, $request);
             }
         }
     
-        return $this->sqService->replyNormal($thread);
+        return $this->sqService->replyNormal($thread, $request);
     }
 
     public function streamMessageRequest(Request $request)
@@ -85,7 +80,7 @@ class OpenAIController extends Controller
         //     'res' => $inquiredAgents,
         // ]);
 
-        $suggestedAgents = $this->sqService->suggestedAgents($thread, $inquiredAgents);
+        $suggestedAgents = $this->sqService->suggestedAgents($thread, $inquiredAgents, $request);
 
         if(isset($suggestedAgents['suggested']) && !empty($suggestedAgents['suggested']))
         {
@@ -137,7 +132,7 @@ class OpenAIController extends Controller
         //     'res' => $inquiredListings,
         // ]);
 
-        $suggestedListings = $this->sqService->suggestedListings($thread, $inquiredListings);
+        $suggestedListings = $this->sqService->suggestedListings($thread, $inquiredListings, $request);
 
         if(isset($suggestedListings['suggested']) && !empty($suggestedListings['suggested']))
         {

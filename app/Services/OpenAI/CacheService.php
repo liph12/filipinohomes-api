@@ -5,6 +5,7 @@ namespace App\Services\OpenAI;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 use App\Services\OpenAI\DataLayerService;
+use Illuminate\Support\Str;
 
 class CacheService extends DataLayerService
 {
@@ -196,7 +197,7 @@ class CacheService extends DataLayerService
         return $messages;
     }
 
-    public function appendMessages(Request $request)
+    public function appendMessages(Request $request, $newMessages)
     {
         $deviceId = $request->input('device_id') ?? 'unknown';
         $user = Auth::guard('sanctum')->user();
@@ -212,10 +213,14 @@ class CacheService extends DataLayerService
             'agents' => [],   // store full agent objects
         ]);
         $existingMessageIds = collect($chatData['messages'])->pluck('id')->toArray();
-    
-        $newMessages = $request->input('messages', []); // array of Message objects
+         // array of Message objects
     
         foreach ($newMessages as $msg) {
+
+            if (!isset($msg['id'])) {
+                $msg['id'] = (string) Str::uuid();
+            }
+
             if (!isset($msg['id']) || in_array($msg['id'], $existingMessageIds)) {
                 continue; // skip invalid or duplicate
             }
@@ -259,7 +264,11 @@ class CacheService extends DataLayerService
                     );
                 }
     
-                $agents = \App\Models\Agent::whereIn('id', $agentIds)->get();
+                $agents = \App\Models\Agent::withCount('listings')->with(['listings' => function($q) {
+                    $q->with('property.propertyAttribute.subtype.type')
+                      ->orderBy('clicks', 'DESC')
+                      ->limit(10);
+                }])->whereIn('id', $agentIds)->get();
     
                 $existingAgentIds = collect($chatData['agents'])->pluck('id')->toArray();
                 foreach ($agents as $a) {
