@@ -1,0 +1,286 @@
+<?php
+
+namespace App\Services\OpenAI;
+
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\Request;
+use App\Services\OpenAI\DataLayerService;
+
+class CacheService extends DataLayerService
+{
+    public function __construct()
+    {
+        // to do
+    }
+    
+    public function updateDailyLimit(Request $request)
+    {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $ip = $request->ip();
+    
+        $guestIdentifier = 'guest_' . $deviceId . '|' . $ip;
+        $user = Auth::guard('sanctum')->user();
+        $guestLimit = config('openai.guest_limit');
+        $authLimit = config('openai.auth_limit');
+    
+        if ($user) {
+            $identifier = 'user_' . $user->id;
+            $dailyLimit = $authLimit;
+    
+            $userKey = 'daily_requests_' . $identifier;
+            $guestKey = 'daily_requests_' . $guestIdentifier;
+    
+            if (!cache()->has($userKey) && cache()->has($guestKey)) {
+                $guestCount = cache()->get($guestKey, 0);
+                cache()->put($userKey, $guestCount, now()->endOfDay());
+                cache()->forget($guestKey);
+            }
+    
+            $dailyKey = $userKey;
+        } else {
+            $identifier = $guestIdentifier;
+            $dailyLimit = $guestLimit;
+            $dailyKey = 'daily_requests_' . $identifier;
+        }
+    
+        $blockedKey = 'blocked_' . $identifier;
+        $cooldownKey = 'cooldown_' . $identifier;
+        $attemptsKey = 'spam_attempts_' . $identifier;
+    
+        if (cache()->has($blockedKey)) {
+            return response()->json([
+                'status' => 'blocked',
+                'message' => 'You are temporarily blocked due to spam.',
+            ], 403);
+        }
+    
+        if (!cache()->has($dailyKey)) {
+            cache()->put($dailyKey, 0, now()->endOfDay());
+        }
+    
+        $dailyCount = cache()->increment($dailyKey);
+    
+        if ($dailyCount > $dailyLimit) {
+            return response()->json([
+                'status' => 'limit_exceeded',
+                'message' => 'Daily request limit reached.',
+                'limit' => $dailyLimit,
+                'used' => $dailyCount,
+            ], 429);
+        }
+    
+        if (cache()->has($cooldownKey)) {
+            $attempts = cache()->increment($attemptsKey);
+    
+            if ($attempts === 1) {
+                cache()->put($attemptsKey, 1, now()->addMinutes(10));
+            }
+    
+            if ($attempts > 5) {
+                cache()->put($blockedKey, true, now()->addMinutes(10));
+    
+                return response()->json([
+                    'status' => 'blocked',
+                    'message' => 'Too many rapid requests. You are temporarily blocked.',
+                ], 403);
+            }
+    
+            return response()->json([
+                'status' => 'cooldown',
+                'message' => 'You are sending requests too fast.',
+                'retry_after_seconds' => 3,
+                'attempts' => $attempts,
+            ], 429);
+        }
+    
+        cache()->put($cooldownKey, true, now()->addSeconds(3));
+    
+        return response()->json([
+            'status' => 'ok',
+            'message' => 'Request allowed.',
+            'limit' => $dailyLimit,
+            'used' => $dailyCount,
+            'remaining' => max(0, $dailyLimit - $dailyCount),
+        ], 200);
+    }
+
+    public function dailyLimit(Request $request)
+    {
+        $guestLimit = config('openai.guest_limit');
+        $authLimit = config('openai.auth_limit');
+        $user = Auth::guard('sanctum')->user();
+    
+        if ($user) {
+            $identifier = 'user_' . $user->id;
+            $dailyLimit = $authLimit;
+        } else {
+            $deviceId = $request->input('device_id') ?? 'unknown';
+            $ip = $request->ip();
+            $identifier = 'guest_' . $deviceId . '|' . $ip;
+            $dailyLimit = $guestLimit;
+        }
+    
+        $dailyKey = 'daily_requests_' . $identifier;
+    
+        $currentCount = cache()->get($dailyKey, 0);
+        $remaining = max($dailyLimit - $currentCount, 0);
+    
+        return [
+            'limit' => $dailyLimit,
+            'used' => $currentCount > $dailyLimit ? $dailyLimit : $currentCount,
+            'remaining' => $remaining,
+        ];
+    }
+
+    public function getDailyMessages(Request $request)
+    {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $user = Auth::guard('sanctum')->user();
+        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId.'|'.$request->ip();
+    
+        $today = now()->format('Y-m-d');
+        $sessionKey = 'chat_session_'.$identifier.'_'.$today;
+    
+        $chatData = cache()->get($sessionKey, [
+            'messages' => [],
+            'listings' => [],
+            'agents' => [],
+        ]);
+    
+        $listingMap = collect($chatData['listings'])->keyBy('id');
+        $agentMap = collect($chatData['agents'])->keyBy('id');
+    
+        $messages = collect($chatData['messages'])->map(function ($msg) use ($listingMap, $agentMap) {
+    
+            // Hydrate listings
+            if (isset($msg['metaData']['listing'])) {
+                $listingMeta = $msg['metaData']['listing'];
+    
+                $msg['metaData']['listing'] = [
+                    'suggested' => isset($listingMeta['suggested']['id'])
+                        ? $listingMap->get($listingMeta['suggested']['id'])
+                        : null,
+    
+                    'others' => isset($listingMeta['others'])
+                        ? collect($listingMeta['others'])
+                            ->map(fn ($l) => $listingMap->get($l['id']))
+                            ->filter()
+                            ->values()
+                            ->toArray()
+                        : [],
+                ];
+            }
+    
+            // Hydrate agents
+            if (isset($msg['metaData']['agent'])) {
+                $agentMeta = $msg['metaData']['agent'];
+    
+                $msg['metaData']['agent'] = [
+                    'suggested' => isset($agentMeta['suggested']['id'])
+                        ? $agentMap->get($agentMeta['suggested']['id'])
+                        : null,
+    
+                    'others' => isset($agentMeta['others'])
+                        ? collect($agentMeta['others'])
+                            ->map(fn ($a) => $agentMap->get($a['id']))
+                            ->filter()
+                            ->values()
+                            ->toArray()
+                        : [],
+                ];
+            }
+    
+            return $msg;
+        })->toArray();
+    
+        return $messages;
+    }
+
+    public function appendMessages(Request $request)
+    {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $user = Auth::guard('sanctum')->user();
+        $identifier = $user ? 'user_'.$user->id : 'guest_'.$deviceId.'|'.$request->ip();
+    
+        $today = now()->format('Y-m-d');
+        $sessionKey = 'chat_session_'.$identifier.'_'.$today;
+    
+        // Get existing daily chat
+        $chatData = cache()->get($sessionKey, [
+            'messages' => [],
+            'listings' => [], // store full listing objects
+            'agents' => [],   // store full agent objects
+        ]);
+        $existingMessageIds = collect($chatData['messages'])->pluck('id')->toArray();
+    
+        $newMessages = $request->input('messages', []); // array of Message objects
+    
+        foreach ($newMessages as $msg) {
+            if (!isset($msg['id']) || in_array($msg['id'], $existingMessageIds)) {
+                continue; // skip invalid or duplicate
+            }
+    
+            // Fetch full listings if metaData has IDs
+            if (isset($msg['metaData']['listing'])) {
+                $listingIds = [];
+    
+                if (isset($msg['metaData']['listing']['suggested']['id'])) {
+                    $listingIds[] = $msg['metaData']['listing']['suggested']['id'];
+                }
+                if (isset($msg['metaData']['listing']['others'])) {
+                    $listingIds = array_merge(
+                        $listingIds,
+                        array_column($msg['metaData']['listing']['others'], 'id')
+                    );
+                }
+    
+                // Get listings from DB
+                $listings = \App\Models\Listing::whereIn('id', $listingIds)->get();
+    
+                // Merge new listings into cache, avoid duplicates
+                $existingListingIds = collect($chatData['listings'])->pluck('id')->toArray();
+                foreach ($listings as $l) {
+                    if (!in_array($l->id, $existingListingIds)) {
+                        $chatData['listings'][] = $this->extractListing($l);
+                    }
+                }
+            }
+    
+            if (isset($msg['metaData']['agent'])) {
+                $agentIds = [];
+    
+                if (isset($msg['metaData']['agent']['suggested']['id'])) {
+                    $agentIds[] = $msg['metaData']['agent']['suggested']['id'];
+                }
+                if (isset($msg['metaData']['agent']['others'])) {
+                    $agentIds = array_merge(
+                        $agentIds,
+                        array_column($msg['metaData']['agent']['others'], 'id')
+                    );
+                }
+    
+                $agents = \App\Models\Agent::whereIn('id', $agentIds)->get();
+    
+                $existingAgentIds = collect($chatData['agents'])->pluck('id')->toArray();
+                foreach ($agents as $a) {
+                    if (!in_array($a->id, $existingAgentIds)) {
+                        $chatData['agents'][] = $this->extractAgent($a);
+                    }
+                }
+            }
+    
+            $chatData['messages'][] = $msg;
+        }
+    
+        $chatData['messages'] = array_slice($chatData['messages'], -100);
+    
+        cache()->put($sessionKey, $chatData, now()->endOfDay());
+    
+        return [
+            'success' => true,
+            'totalMessages' => count($chatData['messages']),
+            'totalListings' => count($chatData['listings']),
+            'totalAgents' => count($chatData['agents']),
+        ];
+    }
+}

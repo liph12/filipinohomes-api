@@ -5,7 +5,7 @@ namespace App\Services\OpenAI;
 use OpenAI;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-class InquiryService
+class CommandService
 {
     private $client;
     public function __construct()
@@ -16,19 +16,17 @@ class InquiryService
     public function streamMessage(string $message)
     {
         return new StreamedResponse(function () use ($message) {
-            // Simulate AI typing by splitting the message into words or characters
             $words = preg_split('/(\s+)/', $message, -1, PREG_SPLIT_DELIM_CAPTURE);
     
             foreach ($words as $word) {
                 if (trim($word) === '') {
                     echo "data: " . json_encode(['text' => $word]) . "\n\n";
                 } else {
-                    // Wrap word with slight delay to simulate typing
                     echo "data: " . json_encode(['text' => $word . ' ']) . "\n\n";
                 }
                 ob_flush();
                 flush();
-                usleep(50000); // 50ms delay per word
+                usleep(30000);
             }
     
             echo "data: [DONE]\n\n";
@@ -125,7 +123,7 @@ class InquiryService
                         PROMPT
                     ],
                 ],
-                $thread // ✅ full conversation thread
+                $thread
             );
 
             $stream = $this->client->chat()->createStreamed([
@@ -484,8 +482,17 @@ class InquiryService
         Your task is to extract structured property search filters from a conversation thread.
 
         IMPORTANT RULES:
-        1. ALWAYS focus on the MOST RECENT user intent in the thread.
-        2. Ignore previous context if the topic changes (new location, type, or unrelated message).
+        1. ALWAYS prioritize the MOST RECENT user intent.
+
+        2. HOWEVER, preserve relevant context from earlier messages IF:
+        - The user is continuing the same search
+        - The new message is a refinement (e.g. "for rent", "2BR", "cheapest")
+
+        3. Only ignore previous context if the user clearly changes:
+        - property name
+        - location
+        - property type
+        - or asks a completely different question
         3. Only extract relevant real estate information for Filipino property listings.
         4. If information is NOT mentioned, return:
         - empty string "" for property_type or property_subtype
@@ -505,7 +512,7 @@ class InquiryService
         11. Extract date range if mentioned:
         - date_from and date_to must be formatted as Y-m-d
         - If user says:
-        • "latest", "recent", "new" → prioritize newer listings → set date_from to a recent date (e.g. last 7–30 days), date_to = today
+        • "latest", "recent", "new" → prioritize newer listings → set date_from to a recent date (e.g. last 60 days), date_to = today
         • "old", "earliest" → prioritize older listings → set date_to to an older date (e.g. 1–2 years ago), date_from = ""
         • specific dates → convert to Y-m-d
         - If no date mentioned → return empty string ""
@@ -553,6 +560,8 @@ class InquiryService
                                 'type' => 'string',
                                 'description' => <<<DESC
                                 Focus only on:
+                                - Name of the property or a listing
+                                - Property title
                                 - Property type (condo, studio, house)
                                 - Essential features (furnished, parking, near beach)
                                 Do NOT include vague words like "alternative" or full sentences.
