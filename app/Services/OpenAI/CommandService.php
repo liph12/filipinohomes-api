@@ -4,8 +4,9 @@ namespace App\Services\OpenAI;
 
 use OpenAI;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Support\Str;
 
-class CommandService
+class CommandService extends CacheService
 {
     private $client;
     public function __construct()
@@ -40,9 +41,12 @@ class CommandService
         ]);
     }
 
-    public function replyNormal(array $thread)
+    public function replyNormal(array $thread, $req)
     {    
-        return new StreamedResponse(function () use ($thread) {
+        return new StreamedResponse(function () use ($thread, $req) {
+
+            $fullText = '';
+            
             $stream = $this->client->chat()->createStreamed([
                 'model' => 'gpt-5.4-mini',
                 'messages' => array_merge(
@@ -79,11 +83,22 @@ class CommandService
             foreach ($stream as $chunk) {
                 $text = $chunk->choices[0]->delta->content ?? '';
                 if ($text) {
+
+                    $fullText .= $text;
+                    
                     echo "data: " . json_encode(['text' => $text]) . "\n\n";
                     ob_flush();
                     flush();
                 }
             }
+            $uuid = Str::uuid();
+            $this->appendMessages($req, [
+                [
+                    'id' => $uuid,
+                    'role' => 'assistant',
+                    'content' => $fullText
+                ]
+            ]);
     
             echo "data: [DONE]\n\n";
             ob_flush();
@@ -96,9 +111,11 @@ class CommandService
         ]);
     }
 
-    public function replySearchingAgentStream(array $thread)
+    public function replySearchingAgentStream(array $thread, $req)
     {
-        return new StreamedResponse(function () use ($thread) {
+        return new StreamedResponse(function () use ($thread, $req) {
+
+            $fullText = '';
 
             $messages = array_merge(
                 [
@@ -144,6 +161,9 @@ class CommandService
                 $text = $chunk->choices[0]->delta->content ?? '';
 
                 if (!empty($text)) {
+
+                    $fullText .= $text;
+
                     echo "data: " . json_encode([
                         'type' => 'text',
                         'text' => $text
@@ -152,6 +172,15 @@ class CommandService
                     flush();
                 }
             }
+
+            $uuid = Str::uuid();
+            $this->appendMessages($req, [
+                [
+                    'id' => $uuid,
+                    'role' => 'assistant',
+                    'content' => $fullText
+                ]
+            ]);
 
             // Signal stream completion
             echo "data: [DONE]\n\n";
@@ -165,9 +194,11 @@ class CommandService
         ]);
     }
 
-    public function replySearchingStream(array $thread)
+    public function replySearchingStream(array $thread, $req)
     {
-        return new StreamedResponse(function () use ($thread) {
+        return new StreamedResponse(function () use ($thread, $req) {
+
+            $fullText = '';
     
             $messages = array_merge(
                 [
@@ -211,6 +242,8 @@ class CommandService
                 $text = $chunk->choices[0]->delta->content ?? '';
     
                 if (!empty($text)) {
+                    $fullText .= $text;
+
                     echo "data: " . json_encode([
                         'type' => 'text',
                         'text' => $text
@@ -219,6 +252,15 @@ class CommandService
                     flush();
                 }
             }
+
+            $uuid = Str::uuid();
+            $this->appendMessages($req, [
+                [
+                    'id' => $uuid,
+                    'role' => 'assistant',
+                    'content' => $fullText
+                ]
+            ]);
     
             echo "data: [DONE]\n\n";
             ob_flush();
@@ -231,7 +273,7 @@ class CommandService
         ]);
     }
 
-    public function suggestedListings(array $thread, array $listings)
+    public function suggestedListings(array $thread, array $listings, $req)
     {
         $systemMessage = [
             'role' => 'system',
@@ -317,7 +359,44 @@ class CommandService
         $fn = $response->choices[0]->message->functionCall ?? null;
     
         if ($fn && isset($fn->arguments)) {
-            return json_decode($fn->arguments, true);
+            $res = json_decode($fn->arguments, true);
+            $others = [];
+
+            foreach($res['others'] as $o)
+            {
+                $others[] = [
+                    'id' => $o
+                ];
+            }
+
+            $messages = [
+                [
+                    'id' => Str::uuid(),
+                    'role' => 'assistant',
+                    'content' => $res['message']
+                ],
+                [
+                    'id' => Str::uuid(),
+                    'role' => 'assistant',
+                    'content' => null,
+                    'metaData' => [
+                        'listing' => [
+                            'suggested' => [
+                                'id' => $res['suggested']
+                            ],
+                            'others' => $others
+                        ]
+                    ]
+                ],
+                [
+                    'id' => Str::uuid(),
+                    'role' => 'assistant',
+                    'content' => $res['follow_up']
+                ],
+            ];
+            $this->appendMessages($req, $messages);
+
+            return $res;
         }
     
         return [
@@ -328,7 +407,7 @@ class CommandService
         ];
     }
 
-    public function suggestedAgents(array $thread, array $agents)
+    public function suggestedAgents(array $thread, array $agents, $req)
     {
         $systemMessage = [
             'role' => 'system',
@@ -408,7 +487,44 @@ class CommandService
         $fn = $response->choices[0]->message->functionCall ?? null;
 
         if ($fn && isset($fn->arguments)) {
-            return json_decode($fn->arguments, true);
+            $res = json_decode($fn->arguments, true);
+            $others = [];
+
+            foreach($res['others'] as $o)
+            {
+                $others[] = [
+                    'id' => $o
+                ];
+            }
+
+            $messages = [
+                [
+                    'id' => Str::uuid(),
+                    'role' => 'assistant',
+                    'content' => $res['message']
+                ],
+                [
+                    'id' => Str::uuid(),
+                    'role' => 'assistant',
+                    'content' => null,
+                    'metaData' => [
+                        'agent' => [
+                            'suggested' => [
+                                'id' => $res['suggested']
+                            ],
+                            'others' => $others
+                        ]
+                    ]
+                ],
+                [
+                    'id' => Str::uuid(),
+                    'role' => 'assistant',
+                    'content' => $res['follow_up']
+                ],
+            ];
+            $this->appendMessages($req, $messages);
+
+            return $res;
         }
 
         return [
