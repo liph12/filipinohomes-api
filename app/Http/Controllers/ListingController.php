@@ -265,7 +265,6 @@ class ListingController extends Controller
         $statistics['sold']   = (clone $baseQuery)->sold()->count();
         $statistics['leased'] = (clone $baseQuery)->leased()->count();
         $statistics['agent'] = $agentCount;
-        $statistics['properties'] = $this->getListingCategoryStatistics($start, $end);
     
         return $statistics;
     }
