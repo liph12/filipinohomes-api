@@ -23,6 +23,7 @@ use App\Http\Controllers\{
     ChatController,
     ConversationController,
     FavoriteController,
+    MagazineController,
     MessageController,
     MaintenanceController,
     ReactionController
@@ -67,6 +68,7 @@ Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
     Route::apiResource('users', UserController::class);
+    Route::apiResource('magazines', MagazineController::class);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
     Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
