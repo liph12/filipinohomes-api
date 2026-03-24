@@ -58,6 +58,19 @@ class PageBuilder extends Model
                 'slug' => $finalSlug,
             ]);
         });
+
+        static::updating(function ($page) {
+            if ($page->isDirty('title')) {
+                $baseSlug = Str::slug($page->title);
+                $finalSlug = $baseSlug;
+
+                if (self::where('slug', $baseSlug)->where('id', '!=', $page->id)->exists()) {
+                    $finalSlug = $baseSlug . '-' . $page->id;
+                }
+
+                $page->slug = $finalSlug;
+            }
+        });
     }
 
     public function agent()
