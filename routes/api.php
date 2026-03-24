@@ -27,6 +27,7 @@ use App\Http\Controllers\{
     MessageController,
     MaintenanceController,
     FileUploadController,
+    PageBuilderController,
     ReactionController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -65,6 +66,8 @@ Route::get('/provinces', [ProvinceController::class, 'index']);
 Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']);
 Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
 Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
+Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
+Route::get('/page/agents', [PageBuilderController::class, 'index']);
 
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
