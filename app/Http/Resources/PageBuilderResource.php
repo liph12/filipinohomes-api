@@ -19,10 +19,9 @@ class PageBuilderResource extends JsonResource
             'description' => $this->description,
             'banner'      => $this->banner,
             'gallery'     => $this->gallery,
-            'youtube'     => $this->youtube,
+            'video_url'   => $this->video_url,
             'clicks'      => $this->clicks,
             'impressions' => $this->impressions,
-            'is_featured' => $this->is_featured,
             'agent'       => new AgentPageResource($this->agent)
         ];
     }

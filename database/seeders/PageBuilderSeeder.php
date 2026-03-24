@@ -37,7 +37,7 @@ class PageBuilderSeeder extends Seeder
                     'description' => $p->description,
                     'banner'      => $bannerPhoto,
                     'gallery'     => $galleryUpdated,
-                    'youtube'     => $p->youtube ?? null,
+                    'video_url'   => $p->video_url ?? null,
                     'agent_id'    => $p->agent_id,
                     'created_at'  => now(),
                     'updated_at'  => now(),

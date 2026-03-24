@@ -19,10 +19,9 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->json('banner')->nullable();
             $table->json('gallery')->nullable();
-            $table->json('youtube')->nullable();
+            $table->json('video_url')->nullable();
             $table->unsignedBigInteger('clicks')->default(0);
             $table->unsignedBigInteger('impressions')->default(0);
-            $table->boolean('is_featured')->default(false);
             $table->foreignId('agent_id')
                 ->constrained('agents')
                 ->restrictOnDelete();

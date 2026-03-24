@@ -53,8 +53,7 @@ public function store(Request $request)
         'description' => 'nullable|string',
         'banner'      => 'nullable|array',
         'gallery'     => 'nullable|array',
-        'youtube'     => 'nullable|array',
-        'is_featured' => 'boolean',
+        'video_url'   => 'nullable|array',
     ]);
 
     $data['agent_id'] = $agent->id;
@@ -76,8 +75,7 @@ public function store(Request $request)
             'description' => 'nullable|string',
             'banner'      => 'nullable|array',
             'gallery'     => 'nullable|array',
-            'youtube'     => 'nullable|array',
-            'is_featured' => 'boolean',
+            'video_url'   => 'nullable|array',
         ]);
 
         $pageBuilder->update($data);

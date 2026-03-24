@@ -19,10 +19,9 @@ class PageBuilder extends Model
         'description',
         'banner',
         'gallery',
-        'youtube',
+        'video_url',
         'clicks',
         'impressions',
-        'is_featured',
         'agent_id',
 
     ];
@@ -31,8 +30,7 @@ class PageBuilder extends Model
         'seo_tags' => 'array',
         'banner' => 'array',
         'gallery' => 'array',
-        'youtube' => 'array',
-        'is_featured' => 'boolean',
+        'video_url' => 'array',
         'clicks' => 'integer',
         'impressions' => 'integer',
     ];
