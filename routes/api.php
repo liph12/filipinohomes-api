@@ -23,8 +23,10 @@ use App\Http\Controllers\{
     ChatController,
     ConversationController,
     FavoriteController,
+    MagazineController,
     MessageController,
     MaintenanceController,
+    FileUploadController,
     ReactionController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -64,9 +66,15 @@ Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']
 Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
 Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
 
+// Public magazine routes
+Route::get('magazines', [MagazineController::class, 'index']);
+Route::get('magazines/{magazine}', [MagazineController::class, 'show']);
+Route::get('magazines/{magazine}/pdf', [MagazineController::class, 'streamPdf']);
+
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
     Route::apiResource('users', UserController::class);
+    Route::apiResource('magazines', MagazineController::class)->except(['index', 'show']);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
     Route::apiResource('properties', PropertyController::class);
     Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
@@ -83,6 +91,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::post('/upload', [ImageUploadController::class, 'upload']);
+    Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
     Route::post('/logout', [UserController::class, 'logout']);
     Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
     Route::post('/agent/profile', [AgentController::class, 'store']);
