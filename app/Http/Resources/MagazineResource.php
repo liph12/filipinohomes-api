@@ -17,10 +17,13 @@ class MagazineResource extends JsonResource
         return [
             'id' => $this->id,
             'title' => $this->title,
+            'slug' => $this->slug,
             'description' => $this->description,
             'cover_photo' => $this->cover_photo,
             'pdf_file' => $this->pdf_file,
             'publish_date' => $this->publish_date,
+            'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at,
         ];
     }
 }
