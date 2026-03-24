@@ -10,6 +10,8 @@ use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
+use App\Models\PropertyType;
 
 class ListingController extends Controller
 {
@@ -32,7 +34,7 @@ class ListingController extends Controller
                 }
             ])
             ->filter($request)
-            ->sorted($request->get('sort_by', 'featured'))
+            ->sorted($request->input('sort_by', 'featured'))
             ->paginate($request->integer('per_page', 10));
 
         return new ListingResourceCollection($listings);
@@ -213,9 +215,67 @@ class ListingController extends Controller
         ]);
     }
 
-    public function dashboard(Request $request)
+    private function getMonths()
     {
+        $months = [];
+    
+        $start = Carbon::now()->startOfYear();
+    
+        for ($i = 0; $i < 12; $i++) {
+            $months[] = $start->copy()->addMonths($i)->format('Y-m');
+        }
+    
+        return $months;
+    }
+
+    public function getListingCategoryStatistics($start, $end)
+    {
+        $propertyTypes = PropertyType::with([
+            'subTypes' => function ($q) use ($start, $end) {
+                $q->withCount([
+                    'attributes as total_listings' => function ($q) use ($start, $end) {
+                        $q->whereBetween('created_at', [$start, $end]);
+                    }
+                ]);
+            }
+        ])->get();
+    
+        return $propertyTypes;
+    }
+
+    public function createAnnualStatistics($month)
+    {
+        $start = Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+        $end = Carbon::createFromFormat('Y-m', $month)->endOfMonth();
+    
+        $baseQuery = Listing::query()
+            ->whereBetween('created_at', [$start, $end]);
+        $agentCount = \App\Models\Agent::whereBetween('member_since', [$start, $end])->count();
+    
+        $statistics['active'] = (clone $baseQuery)->active()->count();
+        $statistics['total']  = (clone $baseQuery)->count();
+        $statistics['views']  = (int) (clone $baseQuery)->sum('clicks');
+    
+        $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn(
+            'listing_id',
+            (clone $baseQuery)->select('id')
+        )->count();
+    
+        $statistics['rented'] = (clone $baseQuery)->rented()->count();
+        $statistics['sold']   = (clone $baseQuery)->sold()->count();
+        $statistics['leased'] = (clone $baseQuery)->leased()->count();
+        $statistics['agent'] = $agentCount;
+        $statistics['properties'] = $this->getListingCategoryStatistics($start, $end);
+    
+        return $statistics;
+    }
+
+    public function dashboard(Request $request)
+    {   
         $user = $request->user();
+        $isAdmin = $user->role->name === 'admin';
+        $annualDates = $this->getMonths();
+        $annualStatistics = [];
         $statistics = [
             'active'    => 0,
             'total'     => 0,
@@ -226,26 +286,40 @@ class ListingController extends Controller
             'agents'    => 0,
         ];
 
-        if ($user->role->name === 'admin') {
-            $listingsQuery = Listing::withCount('inQuiries');
-            $statistics['agents'] = \App\Models\Agent::count();
-        } elseif ($user->role->name === 'agent') {
-            $listingsQuery = Listing::withCount('inQuiries')->where('agent_id', $user->agent->id);
-            $statistics['agents'] = 1;
-        } else {
-            abort(403, 'Unauthorized.');
+        if($isAdmin)
+        {
+            foreach($annualDates as $d)
+            {
+                $annualStatistics[] = [
+                    'date' => $d,
+                    'statistics' => $statistics
+                ];
+            }
+    
+            foreach($annualStatistics as $key => $s)
+            {
+                $annualStatistics[$key]['statistics'] = $this->createAnnualStatistics($s['date']);
+            }
+    
+            return response()->json($annualStatistics);
         }
+        
+        $baseQuery = Listing::withCount('inQuiries')->where('agent_id', $user->agent->id);
+        $statistics['active'] = (clone $baseQuery)->active()->count();
+        $statistics['total']  = (clone $baseQuery)->count();
+        $statistics['views']  = (int) (clone $baseQuery)->sum('clicks');
+    
+        $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn(
+            'listing_id',
+            (clone $baseQuery)->select('id')
+        )->count();
+    
+        $statistics['rented'] = (clone $baseQuery)->rented()->count();
+        $statistics['sold']   = (clone $baseQuery)->sold()->count();
+        $statistics['leased'] = (clone $baseQuery)->leased()->count();
+        $statistics['agent'] = 1;
 
-        $statistics['active']    = (clone $listingsQuery)->active()->count();
-        $statistics['total']     = (clone $listingsQuery)->count();
-        $statistics['views']     = (int)(clone $listingsQuery)->sum('clicks');
-        $listingIds              = (clone $listingsQuery)->pluck('id');
-        $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn('listing_id', $listingIds)->count();
-        $statistics['rented']    = (clone $listingsQuery)->rented()->count();
-        $statistics['sold']      = (clone $listingsQuery)->sold()->count();
-        $statistics['leased']    = (clone $listingsQuery)->leased()->count();
-
-        return response()->json($statistics);
+        return response()->json($annualStatistics);
     }
 
     public function updateVisibility(Request $request, Listing $listing)
