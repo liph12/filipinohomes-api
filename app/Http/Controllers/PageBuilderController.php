@@ -19,6 +19,12 @@ class PageBuilderController extends Controller
         return new PageBuilderResource($pageBuilder);
     }
 
+    public function showByAgent(string $agentId)
+    {
+        $pageBuilder = PageBuilder::where('agent_id', $agentId)->firstOrFail();
+        return new PageBuilderResource($pageBuilder);
+    }
+
 public function store(Request $request)
 {
     $user = $request->user();
