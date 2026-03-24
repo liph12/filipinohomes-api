@@ -6,7 +6,7 @@ use App\Models\Magazine;
 use Illuminate\Http\Request;
 use App\Http\Resources\MagazineResourceCollection;
 use App\Http\Resources\MagazineResource;
-
+use Illuminate\Support\Str;
 class MagazineController extends Controller
 {
     public function index()
@@ -28,6 +28,7 @@ class MagazineController extends Controller
         $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'slug' => 'nullable|string',
             'publish_date' => 'required|date',
             'cover_photo.*' => 'nullable|string|url',
             'pdf_file.*' => 'nullable|string|url',
@@ -36,6 +37,7 @@ class MagazineController extends Controller
         $magazine = Magazine::create([
             'title' => $request->title,
             'description' => $request->description,
+            'slug' => $request->slug ?? Str::slug($request->title),
             'publish_date' => $request->publish_date,
             'cover_photo' => $request->cover_photo,
             'pdf_file' => $request->pdf_file,
