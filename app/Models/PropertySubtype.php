@@ -28,6 +28,11 @@ class PropertySubtype extends Model
         return $this->belongsTo(PropertyType::class, 'property_type_id');
     }
 
+    public function attributes()
+    {
+        return $this->hasMany(PropertyAttribute::class);
+    }
+
     public function save(array $options = [])
     {
         if ($this->exists) {
