@@ -89,6 +89,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/my-listings', [ListingController::class, 'myListings']);
     Route::get('/all-listings', [ListingController::class, 'allListings']);
     Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
+    Route::get('/user/dashboard/properties', [ListingController::class, 'propertyStatistics']);
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::get('/user/settings', [UserController::class, 'userSettings']);
     Route::post('agents', [AgentController::class, 'store']);
@@ -111,4 +112,3 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
 });
-
