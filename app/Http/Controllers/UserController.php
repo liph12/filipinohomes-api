@@ -95,6 +95,14 @@ class UserController extends Controller
         );
     }
 
+    public function userSettings()
+    {
+        return new UserResourceCollection(
+            User::latest()
+                ->paginate(10)
+        );
+    }
+
     public function show($id)
     {
         return new UserResource(
@@ -114,8 +122,10 @@ class UserController extends Controller
         $user = User::findOrFail($id);
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
-            'password' => 'sometimes|string|min:6',
+            // 'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
+            // 'password' => 'sometimes|string|min:6',
+            'avatar'            => 'nullable|string|url',
+            'mobile_no'         => 'nullable|string|max:20',
             'role_id' => 'sometimes|exists:roles,id',
         ]);
         $user->update($validated);
