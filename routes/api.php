@@ -28,7 +28,8 @@ use App\Http\Controllers\{
     MaintenanceController,
     FileUploadController,
     PageBuilderController,
-    ReactionController
+    ReactionController,
+    SitemapController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -69,6 +70,14 @@ Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
 Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
 Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
 Route::get('/page/agents', [PageBuilderController::class, 'index']);
+
+// Lightweight sitemap endpoints
+Route::get('sitemap/listings', [SitemapController::class, 'listings']);
+Route::get('sitemap/agents', [SitemapController::class, 'agents']);
+Route::get('sitemap/blogs', [SitemapController::class, 'blogs']);
+Route::get('sitemap/listing-images', [SitemapController::class, 'listingImages']);
+Route::get('sitemap/blog-images', [SitemapController::class, 'blogImages']);
+Route::get('sitemap/agent-images', [SitemapController::class, 'agentImages']);
 
 // Public magazine routes
 Route::get('magazines', [MagazineController::class, 'index']);
