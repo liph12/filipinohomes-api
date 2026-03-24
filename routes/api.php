@@ -26,6 +26,7 @@ use App\Http\Controllers\{
     MagazineController,
     MessageController,
     MaintenanceController,
+    FileUploadController,
     ReactionController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -85,6 +86,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::get('/agent/profile', [AgentController::class, 'profile']);
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::post('/upload', [ImageUploadController::class, 'upload']);
+    Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
     Route::post('/logout', [UserController::class, 'logout']);
     Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
     Route::post('/agent/profile', [AgentController::class, 'store']);
