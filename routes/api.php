@@ -67,6 +67,7 @@ Route::get('/provinces', [ProvinceController::class, 'index']);
 Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']);
 Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
 Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
+Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
 Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
 Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
 Route::get('/page/agents', [PageBuilderController::class, 'index']);
@@ -119,4 +120,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
     Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
+    Route::post('/offices', [OfficeController::class, 'store']);
+    Route::patch('/offices/{id}', [OfficeController::class, 'update']);
+    Route::get('/offices/{slug}', [OfficeController::class, 'show']);
 });

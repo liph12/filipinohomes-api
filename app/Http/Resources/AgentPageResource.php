@@ -27,6 +27,7 @@ class AgentPageResource extends JsonResource
                              ?: $user?->name
                              ?: 'Guest User',
             'avatar'       => $this->avatar ?? $user?->avatar,
+            'email'        => $user?->email,
             'mobile_no'    => $this->mobile_no ?? $user?->mobile_no,
             'socials'      => $this->socials,
         ];

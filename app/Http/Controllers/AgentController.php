@@ -89,6 +89,8 @@ class AgentController extends Controller
             'socials.instagram' => 'nullable|string|max:255',
             'socials.twitter'   => 'nullable|string|max:255',
             'socials.linkedin'  => 'nullable|string|max:255',
+            'socials.youtube'   => 'nullable|string|max:255',
+            'socials.tiktok'    => 'nullable|string|max:255',
             'bio'               => 'nullable|string',
             'avatar'            => 'nullable|string|url',
             'geo_location'      => 'nullable|array:lat,lng',
