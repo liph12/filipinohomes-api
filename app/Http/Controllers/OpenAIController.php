@@ -184,6 +184,12 @@ class OpenAIController extends Controller
 
     public function parseListingQuery(Request $request)
     {
+        $limitResponse = $this->cacheService->updateDailyLimit($request);
+
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
+        }
+        
         $data = $this->listingService->parseListingQuery($request->q ?? "");
 
         return response()->json($data);
