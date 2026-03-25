@@ -213,12 +213,13 @@ class OpenAIController extends Controller
             $log = [
                 'user_id' => Auth::user()->id,
                 'user_info' => $geoData,
+                'searches' => [$request->q],
                 'country' => $country,
-                'month' => $mon
+                'month' => $mon,
             ];
             AiSearchLog::create($log);
         }
-        
+
         $data = $this->listingService->parseListingQuery($request->q ?? "");
 
         return response()->json($data);
