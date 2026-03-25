@@ -9,6 +9,7 @@ class AiSearchLog extends Model
     protected $fillable = [
         'user_id',
         'user_info',
+        'searches',
         'country',
         'month'
     ];
