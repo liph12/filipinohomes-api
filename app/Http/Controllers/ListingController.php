@@ -10,8 +10,6 @@ use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Carbon;
-use App\Models\PropertyType;
 use App\Models\PropertySubtype;
 
 class ListingController extends Controller
@@ -22,7 +20,7 @@ class ListingController extends Controller
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class . ':admin')->only(['updateIsFeatured']);
     }
-
+    
     public function index(Request $request): ListingResourceCollection
     {
         Log::info('Listing index user: ', ['token' => $request->bearerToken()]);

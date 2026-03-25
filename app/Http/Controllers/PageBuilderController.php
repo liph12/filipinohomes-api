@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\PageBuilderResource;
 use App\Models\PageBuilder;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Models\Agent;
 class PageBuilderController extends Controller
@@ -11,6 +12,21 @@ class PageBuilderController extends Controller
     public function index()
     {
         return PageBuilderResource::collection(PageBuilder::paginate(10));
+    }
+
+    public function checkSlug(Request $request): JsonResponse
+    {
+        $slug = $request->input('slug', '');
+        $excludeId = $request->input('exclude_id');
+
+        $query = PageBuilder::where('slug', $slug);
+        if ($excludeId) {
+            $query->where('id', '!=', $excludeId);
+        }
+
+        return response()->json([
+            'available' => !$query->exists(),
+        ]);
     }
 
     public function show(string $slug)

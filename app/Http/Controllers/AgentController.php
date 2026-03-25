@@ -35,6 +35,20 @@ class AgentController extends Controller
         );
     }
 
+    public function statistics(Request $request)
+    {
+        $start = date('2024-01-01');
+        $end = date('Y-m-d');
+
+        if(isset($request->start_date) && isset($request->end_date))
+        {
+            $start = $request->start_date;
+            $end = $request->end_date;
+        }
+
+        // $agents = Agent::
+    }
+
     public function show($id)
     {
         $agent = Agent::with('user')
