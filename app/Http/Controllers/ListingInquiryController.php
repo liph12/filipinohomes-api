@@ -49,10 +49,7 @@ public function store(Request $request): JsonResponse
 
     $listing = Listing::findOrFail($request->listing_id);
     $user    = $request->user();
-
-    $ipResponse = Http::get('https://socket.leuteriorealty.com/user-info');
-    $ipData = $ipResponse->json();
-    $clientIp = $ipData['ip'] ?? $request->ip();
+    $clientIp = $request->ip();
 
     $geoResponse = Http::get('https://api.leuteriorealty.com/core-system/v1/public/api/user-info', [
         'ip' => $clientIp
