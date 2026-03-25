@@ -14,6 +14,7 @@ class AiSearchLog extends Model
     ];
 
     protected $casts = [
+        'user_info' => 'json',
         'searches' => 'array'
     ];
 }
