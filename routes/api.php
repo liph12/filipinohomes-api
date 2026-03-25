@@ -119,4 +119,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
     Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
+    Route::post('/offices', [OfficeController::class, 'store']);
+    Route::patch('/offices/{id}', [OfficeController::class, 'update']);
+    Route::get('/offices/{slug}', [OfficeController::class, 'show']);
 });
