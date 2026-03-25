@@ -206,7 +206,9 @@ class OpenAIController extends Controller
         {
             if($mon === $userLog->month)
             {
-                $userLog->searches[] = $request->q;
+                $searches = $userLog->searches;
+                $searches[] = $request->q;
+                $userLog->searches = $searches;
                 $userLog->save();
             }
         }else{
