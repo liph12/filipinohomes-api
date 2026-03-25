@@ -7,6 +7,9 @@ use App\Services\OpenAI\CommandService;
 use App\Services\OpenAI\CacheService;
 use App\Services\OpenAI\DataLayerService;
 use App\Services\OpenAI\ListingCommandService;
+use Illuminate\Support\Facades\Http;
+use App\Models\AiSearchLog;
+use Illuminate\Support\Facades\Auth;
 
 class OpenAIController extends Controller
 {
@@ -188,6 +191,32 @@ class OpenAIController extends Controller
 
         if ($limitResponse->getStatusCode() !== 200) {
             return $limitResponse;
+        }
+        $clientIp = $request->ip();
+        $geoResponse = Http::get('https://api.leuteriorealty.com/core-system/v1/public/api/user-info', [
+            'ip' => $clientIp
+        ]);
+        $geoData = $geoResponse->json();
+        $country = $geoData['country'];
+        $userId = Auth::user()->id;
+        $userLog = AiSearchLog::where('user_id', $userId)->first();
+        $mon = date('Y-m');
+
+        if($userLog)
+        {
+            if($mon === $userId->month)
+            {
+                $userLog->searches[] = $request->q;
+                $userLog->save();
+            }
+        }else{
+            $log = [
+                'user_id' => Auth::user()->id,
+                'user_info' => $geoData,
+                'country' => $country,
+                'month' => $mon
+            ];
+            AiSearchLog::create($log);
         }
         
         $data = $this->listingService->parseListingQuery($request->q ?? "");
