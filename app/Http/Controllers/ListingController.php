@@ -74,6 +74,7 @@ class ListingController extends Controller
         $status     = $request->input('status');
         $visibility = $request->input('visibility');
         $category   = $request->input('category');
+        $featured   = $request->input('featured'); // '1' | '0' | 'true' | 'false' | 'all' | null
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
         $applyStatus = function ($q) use ($status) {
@@ -92,8 +93,27 @@ class ListingController extends Controller
             return $q->whereHas('category', fn($sub) => $sub->where('name', $category));
         };
 
+        $applyFeatured = function ($q) use ($featured) {
+            if ($featured === null || $featured === '' || strtolower((string)$featured) === 'all') return $q;
+            $normalized = strtolower((string) $featured);
+            $bool = null;
+            if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+                $bool = true;
+            } elseif (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
+                $bool = false;
+            } else {
+                $parsed = filter_var($featured, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                if ($parsed !== null) $bool = $parsed;
+            }
+            if ($bool === true)  return $q->where('listings.is_featured', 1);
+            if ($bool === false) return $q->where(function($qq){
+                $qq->where('listings.is_featured', 0)->orWhereNull('listings.is_featured');
+            });
+            return $q;
+        };
+
         // ── Status counts: respect visibility + category filters, NOT status ──
-        $statusBase = $applyCategory($applyVisibility(clone $query));
+        $statusBase = $applyFeatured($applyCategory($applyVisibility(clone $query)));
         $statusCounts = [
             'active' => (clone $statusBase)->active()->count(),
             'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
@@ -102,7 +122,7 @@ class ListingController extends Controller
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
-        $visibilityBase = $applyCategory($applyStatus(clone $query));
+        $visibilityBase = $applyFeatured($applyCategory($applyStatus(clone $query)));
         $visibilityCounts = (clone $visibilityBase)
             ->selectRaw('visibility, COUNT(*) as count')
             ->groupBy('visibility')
@@ -110,7 +130,7 @@ class ListingController extends Controller
             ->toArray();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
-        $categoryBase = $applyStatus($applyVisibility(clone $query));
+        $categoryBase = $applyFeatured($applyStatus($applyVisibility(clone $query)));
         $categoryCounts = (clone $categoryBase)
             ->selectRaw('categories.name as category_name, COUNT(*) as count')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -122,6 +142,7 @@ class ListingController extends Controller
         $query = $applyStatus($query);
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
+        $query = $applyFeatured($query);
 
         $listings = $query->orderBy('created_at', 'desc')
             ->paginate($request->query('per_page', 10));
@@ -153,6 +174,7 @@ class ListingController extends Controller
         $status     = $request->input('status');
         $visibility = $request->input('visibility');
         $category   = $request->input('category');
+        $featured   = $request->input('featured'); // '1' | '0' | 'true' | 'false' | 'all' | null
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
         $applyStatus = function ($q) use ($status) {
@@ -171,8 +193,27 @@ class ListingController extends Controller
             return $q->whereHas('category', fn($sub) => $sub->where('name', $category));
         };
 
+        $applyFeatured = function ($q) use ($featured) {
+            if ($featured === null || $featured === '' || strtolower((string)$featured) === 'all') return $q;
+            $normalized = strtolower((string) $featured);
+            $bool = null;
+            if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+                $bool = true;
+            } elseif (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
+                $bool = false;
+            } else {
+                $parsed = filter_var($featured, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                if ($parsed !== null) $bool = $parsed;
+            }
+            if ($bool === true)  return $q->where('listings.is_featured', 1);
+            if ($bool === false) return $q->where(function($qq){
+                $qq->where('listings.is_featured', 0)->orWhereNull('listings.is_featured');
+            });
+            return $q;
+        };
+
         // ── Status counts: respect visibility + category filters, NOT status ──
-        $statusBase = $applyCategory($applyVisibility(clone $query));
+        $statusBase = $applyFeatured($applyCategory($applyVisibility(clone $query)));
         $statusCounts = [
             'active' => (clone $statusBase)->active()->count(),
             'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
@@ -181,7 +222,7 @@ class ListingController extends Controller
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
-        $visibilityBase = $applyCategory($applyStatus(clone $query));
+        $visibilityBase = $applyFeatured($applyCategory($applyStatus(clone $query)));
         $visibilityCounts = (clone $visibilityBase)
             ->selectRaw('visibility, COUNT(*) as count')
             ->groupBy('visibility')
@@ -189,7 +230,7 @@ class ListingController extends Controller
             ->toArray();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
-        $categoryBase = $applyStatus($applyVisibility(clone $query));
+        $categoryBase = $applyFeatured($applyStatus($applyVisibility(clone $query)));
         $categoryCounts = (clone $categoryBase)
             ->selectRaw('categories.name as category_name, COUNT(*) as count')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -201,6 +242,7 @@ class ListingController extends Controller
         $query = $applyStatus($query);
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
+        $query = $applyFeatured($query);
 
         $listings = $query->orderBy('created_at', 'desc')
             ->paginate($request->query('per_page', 10));
@@ -339,13 +381,17 @@ class ListingController extends Controller
         $this->authorize('update', $listing);
 
         $data = $request->validate([
-            'status' => 'required|in:active,rented,sold,leased',
+            'status'              => 'required|in:active,rented,sold,leased',
+            'status_change_date'  => 'required|date',
+            'status_remark'       => 'nullable|string',
         ]);
 
         $listing->property->update($data);
 
         return response()->json([
-            'status' => $listing->property->status
+            'status'             => $listing->property->status,
+            'status_change_date' => $listing->property->status_change_date,
+            'status_remark'      => $listing->property->status_remark,
         ]);
     }
 

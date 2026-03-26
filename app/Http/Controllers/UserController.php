@@ -95,11 +95,21 @@ class UserController extends Controller
         );
     }
 
-    public function userSettings()
+    public function userSettings(Request $request)
     {
+        $query = User::query()->latest();
+
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = (int) $request->query('per_page', 10);
+
         return new UserResourceCollection(
-            User::latest()
-                ->paginate(10)
+            $query->paginate($perPage)
         );
     }
 
