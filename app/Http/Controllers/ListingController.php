@@ -339,13 +339,17 @@ class ListingController extends Controller
         $this->authorize('update', $listing);
 
         $data = $request->validate([
-            'status' => 'required|in:active,rented,sold,leased',
+            'status'              => 'required|in:active,rented,sold,leased',
+            'status_change_date'  => 'required|date',
+            'status_remark'       => 'nullable|string',
         ]);
 
         $listing->property->update($data);
 
         return response()->json([
-            'status' => $listing->property->status
+            'status'             => $listing->property->status,
+            'status_change_date' => $listing->property->status_change_date,
+            'status_remark'      => $listing->property->status_remark,
         ]);
     }
 
