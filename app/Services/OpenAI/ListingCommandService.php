@@ -149,35 +149,39 @@ class ListingCommandService
                     'priceMax' => ['type'=>['number','null']],
                     'sqmMin' => ['type'=>['number','null']],
                     'sqmMax' => ['type'=>['number','null']],
-                    'search' => [
-                        'type'=>'string',
+                    'search' => ['type'=>'string'],
+                    'key_word' => [
+                        'type' => 'string',
                         'description' => <<<DESC
-                    Extract a short, keyword-based search phrase STRICTLY from the user query.
-    
+                    Extract a short, keyword-based phrase that describes the user's contextual search intent.
+
                     Guidelines:
                     - Use ONLY words or phrases that appear in the query.
                     - Do NOT infer or add terms that are not explicitly mentioned.
-                    - EXCLUDE any location names (e.g. cities, provinces, areas like BGC, Cebu, Makati).
-                    - Keep it SHORT (2–6 words only).
+                    - EXCLUDE:
+                    - Property types (e.g. house, condo, apartment, lot, office, townhouse)
+                    - ANY location names (e.g. cities, provinces, areas like BGC, Cebu, Makati)
+                    - Keep it SHORT (1–5 words only).
                     - Do NOT include full sentences.
                     - Do NOT include filler words like "looking for", "find", "show me", etc.
-    
-                    Focus on meaningful descriptive keywords such as:
-                    - Property terms mentioned (e.g. house, apartment, condo, lot, office)
-                    - Features or context (e.g. near beach, beachfront, with parking, furnished, pet friendly)
-                    - Numbers if relevant (e.g. 2 bedroom, 3 bath)
-                    - Price intent if mentioned (e.g. affordable, cheap, luxury)
-    
-                    - Preserve natural keyword combinations (e.g. "near beach house", "2 bedroom apartment furnished").
-    
+
+                    Focus ONLY on descriptive/contextual elements such as:
+                    - Environment or surroundings (e.g. near beach, beachfront, mountain view, city view)
+                    - Features or attributes (e.g. with parking, furnished, pet friendly, with pool, gated)
+                    - Lifestyle or intent (e.g. affordable, luxury, quiet, modern)
+                    - Numerical features ONLY if not tied to property type (e.g. 2 bedroom → keep "2 bedroom")
+
+                    - Preserve natural keyword combinations (e.g. "near beach", "with parking", "pet friendly furnished").
+
                     IMPORTANT:
-                    - If ANY meaningful keyword exists in the query, you MUST return a search string.
-                    - Only return "" if the query truly has no usable keywords.
-    
+                    - If ANY meaningful descriptive/context keyword exists, you MUST return a value.
+                    - Only return "" if the query has no usable descriptive/context words.
+
                     Examples:
-                    - "Looking for a house near the beach in Cebu" → "house near beach"
-                    - "2 bedroom apartment with parking Makati" → "2 bedroom apartment parking"
-                    - "Affordable condo for rent" → "affordable condo rent"
+                    - "Looking for a house near the beach in Cebu" → "near beach"
+                    - "2 bedroom apartment with parking Makati" → "2 bedroom parking"
+                    - "Affordable condo for rent" → "affordable"
+                    - "Luxury villa with pool in BGC" → "luxury with pool"
                     DESC
                     ],
                     'address' => ['type'=>'string']
