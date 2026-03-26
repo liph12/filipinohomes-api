@@ -149,7 +149,10 @@ class ListingCommandService
                     'priceMax' => ['type'=>['number','null']],
                     'sqmMin' => ['type'=>['number','null']],
                     'sqmMax' => ['type'=>['number','null']],
-                    'search' => ['type'=>'string'],
+                    'search' => [
+                        'type'=>'string',
+                        'description'=>'The actual value of the prompt.'
+                    ],
                     'key_word' => [
                         'type' => 'string',
                         'description' => <<<DESC
@@ -188,7 +191,7 @@ class ListingCommandService
                 ],
                 'required' => [
                     'categories','types','subtypes','furnishings','amenities',
-                    'beds','baths','priceMin','priceMax','sqmMin','sqmMax','search','address'
+                    'beds','baths','priceMin','priceMax','sqmMin','sqmMax','search','address','key_word'
                 ]
             ]
         ];
