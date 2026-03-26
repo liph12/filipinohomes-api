@@ -110,19 +110,24 @@ class Listing extends Model
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        if ($search = $request->input('search')) {
-            $array_words = explode(' ', $search);
+        // if($search = $request->input('search'))
+        // {
+        //     $array_words = explode(' ', $search);
+        //     $query->where(function ($sub) use ($array_words) {
+        //         foreach ($array_words as $w) {
+        //             $lower = strtolower($w);
+        //             $sub->where('listings.name', 'LIKE', "%{$lower}%");
+        //         }
+        //     });
+        // }
+
+        if ($key_word = $request->input('key_word')) {
+            $array_words = explode(' ', $key_word);
             $address = $request->input('address');
 
-            $query->where(function ($sub) use ($array_words) {
-                foreach ($array_words as $w) {
-                    $lower = strtolower($w);
-                    $sub->where('listings.name', 'LIKE', "%{$lower}%");
-                }
-            })->whereHas('property', function($q) use($array_words, $address){
-                $q->where(function ($sub) use ($address) {
-                    $sub->where('address', 'LIKE', "%{$address}%");
-                })->where(function ($q) use ($array_words) {
+            $query->whereHas('property', function($q) use($array_words, $address){
+                $q->where('address', 'LIKE', "%{$address}%")
+                ->where(function ($q) use ($array_words) {
                     foreach ($array_words as $w) {
                         $q->where(function ($sub) use ($w) {
                             $sub->where('description', 'LIKE', "%{$w}%");
@@ -197,14 +202,14 @@ class Listing extends Model
             $query->whereHas('property', fn ($q) => $q->whereIn('furnishing_id', $ids));
         }
 
-        if ($amenities = $request->input('amenities')) {
-            $names = is_array($amenities) ? $amenities : explode(',', $amenities);
-            $query->whereHas('property', function (Builder $q) use ($names) {
-                foreach ($names as $name) {
-                    $q->whereJsonContains('amenities', $name);
-                }
-            });
-        }
+        // if ($amenities = $request->input('amenities')) {
+        //     $names = is_array($amenities) ? $amenities : explode(',', $amenities);
+        //     $query->whereHas('property', function (Builder $q) use ($names) {
+        //         foreach ($names as $name) {
+        //             $q->whereJsonContains('amenities', $name);
+        //         }
+        //     });
+        // }
 
         return $query;
     }
