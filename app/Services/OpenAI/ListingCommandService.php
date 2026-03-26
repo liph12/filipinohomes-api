@@ -149,7 +149,32 @@ class ListingCommandService
                     'priceMax' => ['type'=>['number','null']],
                     'sqmMin' => ['type'=>['number','null']],
                     'sqmMax' => ['type'=>['number','null']],
-                    'search' => ['type'=>'string'],
+                    'search' => [
+                        'type'=>'string',
+                        'description' => <<<DESC
+                        Extract a short, keyword-based search phrase from the query.
+                        
+                        Guidelines:
+                        - Include relevant property keywords such as:
+                          - property type (e.g. condo, house, studio, townhouse)
+                          - subtype (e.g. 2 bedroom, loft, office)
+                          - key features (e.g. furnished, beachfront, parking, near mall)
+                          - property name if mentioned
+                        - Keep it SHORT (2–6 words only).
+                        - Do NOT include full sentences.
+                        - Do NOT include filler or vague words like "looking for", "alternative", etc.
+                        - Combine terms naturally (e.g. "2 bedroom condo furnished", "beach house", "office space BGC").
+                        
+                        IMPORTANT:
+                        - If ANY relevant keyword exists, you MUST return a search string.
+                        - Only return "" if the query truly has no meaningful searchable terms.
+                        
+                        Examples:
+                        - "Looking for a 2 bedroom condo in Cebu" → "2 bedroom condo"
+                        - "Affordable house and lot" → "house and lot"
+                        - "Office space for rent BGC" → "office space BGC"
+                        DESC
+                    ],
                     'address' => ['type'=>'string']
                 ],
                 'required' => [
