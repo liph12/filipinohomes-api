@@ -117,7 +117,7 @@ class Listing extends Model
             $query->where(function ($sub) use ($array_words) {
                 foreach ($array_words as $w) {
                     $lower = strtolower($w);
-                    $sub->where('name', 'LIKE', "%{$lower}%");
+                    $sub->where('listings.name', 'LIKE', "%{$lower}%");
                 }
             })->whereHas('property', function($q) use($array_words, $address){
                 $addr = explode(' ', $address);
