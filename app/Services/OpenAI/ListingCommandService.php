@@ -150,10 +150,11 @@ class ListingCommandService
                     'sqmMin' => ['type'=>['number','null']],
                     'sqmMax' => ['type'=>['number','null']],
                     'search' => ['type'=>'string'],
+                    'address' => ['type'=>'string']
                 ],
                 'required' => [
                     'categories','types','subtypes','furnishings','amenities',
-                    'beds','baths','priceMin','priceMax','sqmMin','sqmMax','search'
+                    'beds','baths','priceMin','priceMax','sqmMin','sqmMax','search','address'
                 ]
             ]
         ];
