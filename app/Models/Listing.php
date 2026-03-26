@@ -111,19 +111,30 @@ class Listing extends Model
     public function scopeFilter(Builder $query, Request $request): Builder
     {
         if ($search = $request->input('search')) {
-            $terms = collect(preg_split('/\s+/', trim($search)))
-                ->filter()
-                ->values();
-        
-            $query->where(function (Builder $q) use ($terms) {
-                foreach ($terms as $term) {
-                    $q->where(function (Builder $subQ) use ($term) {
-                        $subQ->where('listings.name', 'like', "%{$term}%")
-                             ->orWhereHas('property', function ($propQ) use ($term) {
-                                 $propQ->where('address', 'like', "%{$term}%");
-                             });
-                    });
+            $array_words = explode(' ', $search);
+            $address = $request->input('address');
+
+            $query->where(function ($sub) use ($array_words) {
+                foreach ($array_words as $w) {
+                    $lower = strtolower($w);
+                    $sub->where('name', 'LIKE', "%{$lower}%");
                 }
+            })->whereHas('property', function($q) use($array_words, $address){
+                $addr = explode(' ', $address);
+
+                $q->where(function ($q) use ($addr) {
+                    foreach ($addr as $w) {
+                        $q->where(function ($sub) use ($w) {
+                            $sub->where('address', 'LIKE', "%{$w}%");
+                        });
+                    }
+                })->where(function ($q) use ($array_words) {
+                    foreach ($array_words as $w) {
+                        $q->where(function ($sub) use ($w) {
+                            $sub->where('description', 'LIKE', "%{$w}%");
+                        });
+                    }
+                });
             });
         }
 
