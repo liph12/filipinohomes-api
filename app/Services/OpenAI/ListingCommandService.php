@@ -152,28 +152,33 @@ class ListingCommandService
                     'search' => [
                         'type'=>'string',
                         'description' => <<<DESC
-                        Extract a short, keyword-based search phrase from the query.
-                        
-                        Guidelines:
-                        - Include relevant property keywords such as:
-                          - property type (e.g. condo, house, studio, townhouse)
-                          - subtype (e.g. 2 bedroom, loft, office)
-                          - key features (e.g. furnished, beachfront, parking, near mall)
-                          - property name if mentioned
-                        - Keep it SHORT (2–6 words only).
-                        - Do NOT include full sentences.
-                        - Do NOT include filler or vague words like "looking for", "alternative", etc.
-                        - Combine terms naturally (e.g. "2 bedroom condo furnished", "beach house", "office space BGC").
-                        
-                        IMPORTANT:
-                        - If ANY relevant keyword exists, you MUST return a search string.
-                        - Only return "" if the query truly has no meaningful searchable terms.
-                        
-                        Examples:
-                        - "Looking for a 2 bedroom condo in Cebu" → "2 bedroom condo"
-                        - "Affordable house and lot" → "house and lot"
-                        - "Office space for rent BGC" → "office space BGC"
-                        DESC
+                    Extract a short, keyword-based search phrase STRICTLY from the user query.
+    
+                    Guidelines:
+                    - Use ONLY words or phrases that appear in the query.
+                    - Do NOT infer or add terms that are not explicitly mentioned.
+                    - EXCLUDE any location names (e.g. cities, provinces, areas like BGC, Cebu, Makati).
+                    - Keep it SHORT (2–6 words only).
+                    - Do NOT include full sentences.
+                    - Do NOT include filler words like "looking for", "find", "show me", etc.
+    
+                    Focus on meaningful descriptive keywords such as:
+                    - Property terms mentioned (e.g. house, apartment, condo, lot, office)
+                    - Features or context (e.g. near beach, beachfront, with parking, furnished, pet friendly)
+                    - Numbers if relevant (e.g. 2 bedroom, 3 bath)
+                    - Price intent if mentioned (e.g. affordable, cheap, luxury)
+    
+                    - Preserve natural keyword combinations (e.g. "near beach house", "2 bedroom apartment furnished").
+    
+                    IMPORTANT:
+                    - If ANY meaningful keyword exists in the query, you MUST return a search string.
+                    - Only return "" if the query truly has no usable keywords.
+    
+                    Examples:
+                    - "Looking for a house near the beach in Cebu" → "house near beach"
+                    - "2 bedroom apartment with parking Makati" → "2 bedroom apartment parking"
+                    - "Affordable condo for rent" → "affordable condo rent"
+                    DESC
                     ],
                     'address' => ['type'=>'string']
                 ],
