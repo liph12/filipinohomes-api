@@ -232,6 +232,7 @@ class Listing extends Model
         return match ($sortBy) {
             'most-viewed' => $query->orderBy('clicks', 'desc'),
             'newest'      => $query->orderBy('created_at', 'desc'),
+            'latest'      => $query->orderBy('updated_at', 'desc'),
             'price-low'   => $query->orderBy('price', 'asc'),
             'price-high'  => $query->orderBy('price', 'desc'),
             'sqm-low', 'sqm-high' => $this->applySqmSort($query, $sortBy),
