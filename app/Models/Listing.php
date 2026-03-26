@@ -120,14 +120,8 @@ class Listing extends Model
                     $sub->where('listings.name', 'LIKE', "%{$lower}%");
                 }
             })->whereHas('property', function($q) use($array_words, $address){
-                $addr = explode(' ', $address);
-
-                $q->where(function ($q) use ($addr) {
-                    foreach ($addr as $w) {
-                        $q->where(function ($sub) use ($w) {
-                            $sub->where('address', 'LIKE', "%{$w}%");
-                        });
-                    }
+                $q->where(function ($sub) use ($address) {
+                    $sub->where('address', 'LIKE', "%{$address}%");
                 })->where(function ($q) use ($array_words) {
                     foreach ($array_words as $w) {
                         $q->where(function ($sub) use ($w) {
