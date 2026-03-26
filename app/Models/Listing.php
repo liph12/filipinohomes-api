@@ -110,19 +110,24 @@ class Listing extends Model
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        if ($search = $request->input('search')) {
+        if($search = $request->input('search'))
+        {
             $array_words = explode(' ', $search);
-            $address = $request->input('address');
-
             $query->where(function ($sub) use ($array_words) {
                 foreach ($array_words as $w) {
                     $lower = strtolower($w);
                     $sub->where('listings.name', 'LIKE', "%{$lower}%");
                 }
-            })->whereHas('property', function($q) use($array_words, $address){
-                $q->where(function ($sub) use ($address) {
-                    $sub->where('address', 'LIKE', "%{$address}%");
-                })->where(function ($q) use ($array_words) {
+            });
+        }
+        
+        if ($key_word = $request->input('key_word')) {
+            $array_words = explode(' ', $key_word);
+            $address = $request->input('address');
+
+            $query->whereHas('property', function($q) use($array_words, $address){
+                $q->where('address', 'LIKE', "%{$address}%")
+                ->where(function ($q) use ($array_words) {
                     foreach ($array_words as $w) {
                         $q->where(function ($sub) use ($w) {
                             $sub->where('description', 'LIKE', "%{$w}%");
