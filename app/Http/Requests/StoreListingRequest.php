@@ -59,6 +59,7 @@ class StoreListingRequest extends FormRequest
             'amenities' => 'nullable|array',
             'amenities.*' => 'string',
             'geo_coordinates' => 'nullable|array:lat,lng',
+            'ats_expiration_date' => 'nullable|date',
             'is_project' => 'nullable|boolean',
             'project_id' => 'nullable|integer',
             'address_id' =>  'nullable|exists:barangays,id',
