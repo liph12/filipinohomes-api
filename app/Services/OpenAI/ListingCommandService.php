@@ -149,20 +149,7 @@ class ListingCommandService
                     'priceMax' => ['type'=>['number','null']],
                     'sqmMin' => ['type'=>['number','null']],
                     'sqmMax' => ['type'=>['number','null']],
-                    'search' => [
-                        'type'=>'string',
-                        'description' => <<<DESC
-                        Focus only on:
-                        - Name of the property or a listing
-                        - Property title
-                        - Property type (condo, studio, house)
-                        - Essential features (furnished, parking, near beach)
-                        Do NOT include vague words like "alternative" or full sentences.
-                        The result should be concise, relevant, and directly usable for searching property listings.
-                        Select a reasonable choice.
-                        Return an empty string "" if not MENTIONED.
-                        DESC
-                    ],
+                    'search' => ['type'=>'string'],
                     'address' => ['type'=>'string']
                 ],
                 'required' => [
