@@ -110,17 +110,17 @@ class Listing extends Model
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        if($search = $request->input('search'))
-        {
-            $array_words = explode(' ', $search);
-            $query->where(function ($sub) use ($array_words) {
-                foreach ($array_words as $w) {
-                    $lower = strtolower($w);
-                    $sub->where('listings.name', 'LIKE', "%{$lower}%");
-                }
-            });
-        }
-        
+        // if($search = $request->input('search'))
+        // {
+        //     $array_words = explode(' ', $search);
+        //     $query->where(function ($sub) use ($array_words) {
+        //         foreach ($array_words as $w) {
+        //             $lower = strtolower($w);
+        //             $sub->where('listings.name', 'LIKE', "%{$lower}%");
+        //         }
+        //     });
+        // }
+
         if ($key_word = $request->input('key_word')) {
             $array_words = explode(' ', $key_word);
             $address = $request->input('address');
