@@ -25,8 +25,7 @@ class ListingResource extends JsonResource
             'is_featured'    => $this->is_featured,
             'clicks'         => $this->clicks,
             'seo_tags'       => $this->seo_tags,
-            'created_at'     => $this->created_at,
-            'updated_at'     => $this->updated_at->diffForHumans(),
+            'created_at'     => $this->updated_at->diffForHumans(),
             'property'       => new PropertyResource($this->property),
             'category'       => new CategoryResource($this->category),
             'agent'          => new AgentResource($this->agent)
