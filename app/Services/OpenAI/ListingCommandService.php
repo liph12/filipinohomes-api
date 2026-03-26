@@ -187,11 +187,15 @@ class ListingCommandService
                     - "Luxury villa with pool in BGC" → "luxury with pool"
                     DESC
                     ],
-                    'address' => ['type'=>'string']
+                    'address' => ['type'=>'string'],
+                    'barangay' => ['type'=>'string'],
+                    'city' => ['type'=>'string'],
+                    'province' => ['type'=>'string'],
                 ],
                 'required' => [
                     'categories','types','subtypes','furnishings','amenities',
-                    'beds','baths','priceMin','priceMax','sqmMin','sqmMax','search','address','key_word'
+                    'beds','baths','priceMin','priceMax','sqmMin','sqmMax',
+                    'search','address','key_word','barangay','city','province'
                 ]
             ]
         ];
