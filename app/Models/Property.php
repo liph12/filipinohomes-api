@@ -85,4 +85,9 @@ class Property extends Model
     {
         return $this->belongsTo(User::class, 'deleted_by');
     }
+
+    public function barangay()
+    {
+        return $this->belongsTo(Barangay::class, 'address_id');
+    }
 }

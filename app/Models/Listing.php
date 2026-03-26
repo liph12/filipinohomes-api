@@ -123,10 +123,20 @@ class Listing extends Model
 
         if ($key_word = $request->input('key_word')) {
             $array_words = explode(' ', $key_word);
-            $address = $request->input('address');
+            $brgy = $request->input('barangay') ?? '';
+            $city = $request->input('city') ?? '';
+            $prov = $request->input('province') ?? '';
 
-            $query->whereHas('property', function($q) use($array_words, $address){
-                $q->where('address', 'LIKE', "%{$address}%")
+            $query->whereHas('property', function($q) use($array_words, $brgy, $city, $prov){
+                $q->whereHas('barangay', function($q) use($brgy, $city, $prov){
+                    $q->where('name', 'LIKE', "%{$brgy}%")
+                    ->whereHas('city', function($q) use($city, $prov){
+                        $q->where('name', 'LIKE', "%{$city}%")
+                        ->whereHas('province', function($q) use($prov){
+                            $q->where('name', 'LIKE', "%{$prov}%");
+                        });
+                    });
+                })
                 ->where(function ($q) use ($array_words) {
                     foreach ($array_words as $w) {
                         $q->where(function ($sub) use ($w) {
