@@ -55,6 +55,7 @@ class UpdateListingRequest extends FormRequest
             'amenities'           => 'nullable|array',
             'amenities.*'         => 'string',
             'geo_coordinates'     => 'nullable|array',
+            'ats_expiration_date' => 'nullable|date',
             'is_project'          => 'nullable|boolean',
             'project_id'          => 'nullable|integer',
             'project'             => 'nullable|array',

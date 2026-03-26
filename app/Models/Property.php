@@ -13,6 +13,9 @@ class Property extends Model
         'name',
         'address',
         'status',
+        'status_change_date',
+        'status_remark',
+        'ats_expiration_date',
         'photos',
         'amenities',
         'description',
@@ -30,6 +33,8 @@ class Property extends Model
         'amenities'  => 'array',
         'geo_coordinates'  => 'array',
         'is_project' => 'boolean',
+        'status_change_date' => 'date',
+        'ats_expiration_date' => 'date',
     ];
 
     public function propertyAttribute()
