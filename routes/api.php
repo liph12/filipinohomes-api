@@ -29,7 +29,8 @@ use App\Http\Controllers\{
     FileUploadController,
     PageBuilderController,
     ReactionController,
-    SitemapController
+    SitemapController,
+    BackgroundJobController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -83,6 +84,9 @@ Route::get('sitemap/agent-images', [SitemapController::class, 'agentImages']);
 Route::get('magazines', [MagazineController::class, 'index']);
 Route::get('magazines/{magazine}', [MagazineController::class, 'show']);
 Route::get('magazines/{magazine}/pdf', [MagazineController::class, 'streamPdf']);
+
+// Background Jobs
+Route::post('/listings/update-batch', [BackgroundJobController::class, 'execute']);
 
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
