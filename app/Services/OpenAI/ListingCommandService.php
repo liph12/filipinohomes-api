@@ -156,7 +156,7 @@ class ListingCommandService
                             return [
                                 'type' => 'image_url',
                                 'image_url' => [
-                                    'url' => $photo,
+                                    'url' => $photo['url'],
                                 ],
                             ];
                         }, $photos, array_keys($photos))
