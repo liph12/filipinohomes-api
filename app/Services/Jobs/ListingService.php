@@ -21,7 +21,7 @@ class ListingService
         $lastId = $state->last_id ?? 0;
         $listings = Listing::where('id', '>', $lastId)
         ->orderBy('id')
-        ->limit(1000)
+        ->limit(100)
         ->pluck('id');
 
         if ($listings->isEmpty()) {
