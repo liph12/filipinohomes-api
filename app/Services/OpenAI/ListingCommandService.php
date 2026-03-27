@@ -62,14 +62,14 @@ class ListingCommandService
     public function parseListingQuery(string $query): ?array
     {
         $prompt = <<<PROMPT
-    Extract structured real estate filters from the user query.
-    Use the taxonomy provided. 
-    Rules:
-    1. Always return a function call with structured data.
-    2. Include 'categories', 'types', 'subtypes', and 'furnishings'.
-    3. If the query mentions a type but no subtype, return all subtypes associated with that type.
-    PROMPT;
-    
+        Extract structured real estate filters from the user query.
+        Use the taxonomy provided. 
+        Rules:
+        1. Always return a function call with structured data.
+        2. Include 'categories', 'types', 'subtypes', and 'furnishings'.
+        3. If the query mentions a type but no subtype, return all subtypes associated with that type.
+        PROMPT;
+        
         $response = $this->client->chat()->create([
             'model' => 'gpt-5.4-mini',
             'messages' => [
@@ -101,6 +101,111 @@ class ListingCommandService
         }
     
         return null;
+    }
+
+    public function classifyImages(array $photos)
+    {
+        $prompt = <<<PROMPT
+        You are an AI assistant that evaluates real estate listing images.
+
+        Your task:
+        1. Classify each image into ONE of the following:
+        - Bad
+        - Good
+        - Excellent
+
+        Definitions:
+        - Bad:
+        Blurry, dark, low quality, duplicate, irrelevant, messy, obstructed, or not useful for marketing.
+
+        - Good:
+        Clear and usable images of the property. Shows rooms or features but may lack strong composition or lighting.
+
+        - Excellent:
+        High-quality, well-lit, professionally composed images. Visually appealing and ideal for marketing.
+
+        2. ONLY for Good and Excellent images:
+        Generate a SHORT keyword-based description.
+
+        Description rules:
+        - Use short phrases only (NOT full sentences)
+        - Focus on visible features (e.g., "modern kitchen", "spacious living room", "near beach", "city view", "bright bedroom")
+        - Do NOT include filler words
+        - Do NOT describe Bad images
+        - Keep it concise (3–6 words max)
+
+        Output format:
+        Return function call ONLY with structured JSON.
+        PROMPT;
+        
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => $prompt
+                ],
+                [
+                    'role' => 'user',
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => 'Classify the following real estate images.'
+                        ],
+                        ...array_map(function ($photo, $index) {
+                            return [
+                                'type' => 'image_url',
+                                'image_url' => [
+                                    'url' => $photo,
+                                ],
+                            ];
+                        }, $photos, array_keys($photos))
+                    ]
+                ],
+            ],
+            'functions' => [$this->getImageClassificationToolDefinition()],
+            'function_call' => [
+                'name' => 'classify_image_with_description'
+            ],
+        ]);
+
+        return $this->extractToolResponse($response);
+    }
+
+    protected function getImageClassificationToolDefinition(): array
+    {
+        return [
+            'name' => 'classify_image_with_description',
+            'description' => 'Classify real estate listing images and optionally describe them',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'results' => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'image_index' => [
+                                    'type' => 'integer',
+                                    'description' => 'Index of the image in the input array'
+                                ],
+                                'classification' => [
+                                    'type' => 'string',
+                                    'enum' => ['Bad', 'Good', 'Excellent'],
+                                    'description' => 'Quality classification of the image'
+                                ],
+                                'description' => [
+                                    'type' => 'string',
+                                    'description' => 'Short keyword-based description (ONLY for Good and Excellent images)'
+                                ]
+                            ],
+                            'required' => ['image_index', 'classification']
+                        ]
+                    ]
+                ],
+                'required' => ['results']
+            ]
+        ];
     }
 
     protected function getToolDefinition(): array

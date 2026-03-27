@@ -226,4 +226,12 @@ class OpenAIController extends Controller
 
         return response()->json($data);
     }
+
+    public function classifyListingPhotos(Request $request)
+    {
+        $photos = $request->input('photos', []);
+        $classifications = $this->listingService->classifyImages($photos);
+
+        return response()->json($classifications);
+    }
 }
