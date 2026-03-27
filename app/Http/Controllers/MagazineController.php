@@ -98,4 +98,25 @@ class MagazineController extends Controller
             'Cache-Control' => 'public, max-age=86400',
         ]);
     }
+
+    public function destroy($id)
+    {
+        $magazine = is_numeric($id)
+            ? Magazine::find($id)
+            : Magazine::where('slug', $id)->first();
+
+        if (! $magazine) {
+            return response()->json([
+                'message' => 'Magazine not found',
+                'id' => is_numeric($id) ? (int) $id : $id,
+            ], 404);
+        }
+
+        $magazine->delete();
+
+        return response()->json([
+            'message' => 'Magazine deleted',
+            'id' => $magazine->id,
+        ], 200);
+    }
 }
