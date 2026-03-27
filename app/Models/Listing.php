@@ -139,13 +139,24 @@ class Listing extends Model
             });
         }else{
             $search = $request->input('search') ?? '';
-            $array_words = explode(' ', $search);
-            $query->where(function ($sub) use ($array_words) {
-                foreach ($array_words as $w) {
-                    $lower = strtolower($w);
-                    $sub->where('listings.name', 'LIKE', "%{$lower}%");
-                }
-            });
+            $search = trim($request->input('search', ''));
+
+            if (!empty($search)) {
+                $array_words = array_filter(explode(' ', $search));
+            
+                $query->where(function ($sub) use ($array_words) {
+                    foreach ($array_words as $w) {
+                        $sub->orWhere('listings.name', 'LIKE', "%{$w}%");
+                    }
+                })
+                ->orWhereHas('property', function ($q) use ($array_words) {
+                    $q->where(function ($sub) use ($array_words) {
+                        foreach ($array_words as $w) {
+                            $sub->orWhere('address', 'LIKE', "%{$w}%");
+                        }
+                    });
+                });
+            }
         }
 
         if ($categories = $request->input('categories')) {
