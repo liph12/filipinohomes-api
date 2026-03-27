@@ -33,7 +33,7 @@ class ListingController extends Controller
                 }
             ])
             ->filter($request)
-            ->sorted($request->input('sort_by', 'featured'))
+            ->orderBy('updated_at', 'DESC')
             ->paginate($request->integer('per_page', 10));
 
         return new ListingResourceCollection($listings);
