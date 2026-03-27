@@ -110,17 +110,6 @@ class Listing extends Model
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        // if($search = $request->input('search'))
-        // {
-        //     $array_words = explode(' ', $search);
-        //     $query->where(function ($sub) use ($array_words) {
-        //         foreach ($array_words as $w) {
-        //             $lower = strtolower($w);
-        //             $sub->where('listings.name', 'LIKE', "%{$lower}%");
-        //         }
-        //     });
-        // }
-
         $brgy = $request->input('barangay') ?? '';
         $city = $request->input('city') ?? '';
         $prov = $request->input('province') ?? '';
@@ -150,26 +139,12 @@ class Listing extends Model
             });
         }else{
             $search = $request->input('search') ?? '';
-            $query->whereHas('property', function($q) use($search){
-                $array_words = explode(' ', $search);
-
-                $q->where(function ($q) use ($array_words) {
-                    foreach ($array_words as $w) {
-                        $q->where(function ($sub) use ($w) {
-                            $sub->where('name', 'LIKE', "%{$w}%");
-                        });
-                    }
-                    foreach ($array_words as $w) {
-                        $q->where(function ($sub) use ($w) {
-                            $sub->where('address', 'LIKE', "%{$w}%");
-                        });
-                    }
-                    // foreach ($array_words as $w) {
-                    //     $q->where(function ($sub) use ($w) {
-                    //         $sub->where('description', 'LIKE', "%{$w}%");
-                    //     });
-                    // }
-                });
+            $array_words = explode(' ', $search);
+            $query->where(function ($sub) use ($array_words) {
+                foreach ($array_words as $w) {
+                    $lower = strtolower($w);
+                    $sub->where('listings.name', 'LIKE', "%{$lower}%");
+                }
             });
         }
 
