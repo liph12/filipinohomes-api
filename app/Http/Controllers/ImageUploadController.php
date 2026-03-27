@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Intervention\Image\Laravel\Facades\Image;
 class ImageUploadController extends Controller
 {
 
@@ -41,10 +42,23 @@ class ImageUploadController extends Controller
         ]);
     }
 
+    // public function handleS3Upload($file, $dir)
+    // {
+    //     $fileName = $dir . "/" . Str::uuid() . "." . $file->getClientOriginalExtension();
+    //     Storage::disk('s3')->put($fileName, file_get_contents($file), 'public');
+
+    //     return env("AWS_URL") . $fileName;
+    // }
     public function handleS3Upload($file, $dir)
     {
-        $fileName = $dir . "/" . Str::uuid() . "." . $file->getClientOriginalExtension();
-        Storage::disk('s3')->put($fileName, file_get_contents($file), 'public');
+        $ext = $file->getClientOriginalExtension();
+        $fileName = $dir . "/" . Str::uuid() . "." . $ext; // keep original format
+
+        $image = Image::read($file)
+            ->scaleDown(width: 1920)
+            ->encode(quality: 92);    // near-lossless, keeps original format
+
+        Storage::disk('s3')->put($fileName, $image, 'public');
 
         return env("AWS_URL") . $fileName;
     }
