@@ -25,16 +25,22 @@ class ListingController extends Controller
     {
         Log::info('Listing index user: ', ['token' => $request->bearerToken()]);
         $listings = Listing::where('visibility', 'public')
-            ->with([
-                'property.propertyAttribute.subtype',
-                'category',
-                'agent' => function ($q) {
-                    $q->withCount('listings');
-                }
-            ])
-            ->filter($request)
-            ->orderBy('updated_at', 'DESC')
-            ->paginate($request->integer('per_page', 10));
+        ->with([
+            'property.propertyAttribute.subtype',
+            'category',
+            'agent' => function ($q) {
+                $q->withCount('listings');
+            }
+        ])
+        ->withCount([
+            'property as subtype_count' => function ($q) {
+                $q->join('property_attributes', 'properties.id', '=', 'property_attributes.property_id')
+                  ->join('subtypes', 'property_attributes.subtype_id', '=', 'subtypes.id');
+            }
+        ])
+        ->filter($request)
+        ->orderByDesc('subtype_count')
+        ->paginate($request->integer('per_page', 10));
 
         return new ListingResourceCollection($listings);
     }
