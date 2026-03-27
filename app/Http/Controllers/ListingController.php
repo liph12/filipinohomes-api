@@ -39,6 +39,7 @@ class ListingController extends Controller
             }
         ])
         ->filter($request)
+        ->orderByDesc('updated_at')
         ->orderByDesc('subtype_count')
         ->paginate($request->integer('per_page', 10));
 
