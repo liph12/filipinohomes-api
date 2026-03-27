@@ -91,6 +91,7 @@ Route::post('/listings/update-batch', [BackgroundJobController::class, 'execute'
 Route::middleware('auth:sanctum')->group(function(){
     Route::get('/authenticate', [UserController::class, 'authenticate']);
     Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
+    Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
     Route::apiResource('users', UserController::class);
     Route::apiResource('magazines', MagazineController::class)->except(['index', 'show']);
     Route::apiResource('property_attributes', PropertyAttributesController::class);
@@ -127,5 +128,4 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/offices', [OfficeController::class, 'store']);
     Route::patch('/offices/{office}', [OfficeController::class, 'update']);
     Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
- 
 });
