@@ -125,7 +125,7 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
     Route::post('/offices', [OfficeController::class, 'store']);
-    Route::patch('/offices/{id}', [OfficeController::class, 'update']);
-    Route::delete('/offices/{id}', [OfficeController::class, 'destroy']);
+    Route::patch('/offices/{office}', [OfficeController::class, 'update']);
+    Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
  
 });

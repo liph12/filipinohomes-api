@@ -41,11 +41,11 @@ class OfficeController extends Controller
         return response()->json(new OfficeResource($office), 201);
     }
 
-    public function update(Request $request, Office $id)
+    public function update(Request $request, Office $office)
     {
         $data = $request->validate([
             'name' => 'sometimes|required|string|max:255',
-            'slug' => 'sometimes|nullable|string|unique:offices,slug,' . $id,
+            'slug' => 'sometimes|nullable|string|unique:offices,slug,' . $office->id,
             'title' => 'nullable|string|max:255',
             'contact' => 'nullable|string|max:255',
             'phone' => 'nullable|string|max:50',
@@ -55,15 +55,26 @@ class OfficeController extends Controller
             'geo_coordinates' => 'nullable|array:lat,lng',
         ]);
 
-        $id->update($data);
+        $office->update($data);
 
-        return response()->json(new OfficeResource($id));
+        return response()->json(new OfficeResource($office));
     }
 
-    public function destroy(Office $office)
+    public function destroy($office)
     {
-        $office->delete();
+        $model = Office::find($office);
+        if (! $model) {
+            return response()->json([
+                'message' => 'Office not found',
+                'id' => is_numeric($office) ? (int) $office : $office,
+            ], 404);
+        }
 
-        return response()->json(null, 204);
+        $model->delete();
+
+        return response()->json([
+            'message' => 'Office deleted',
+            'id' => $model->id,
+        ], 200);
     }
 }
