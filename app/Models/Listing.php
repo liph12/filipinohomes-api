@@ -148,6 +148,19 @@ class Listing extends Model
                     }
                 });
             });
+        }else{
+            $search = $request->input('search') ?? '';
+            $query->whereHas('property', function($q) use($search){
+                $array_words = explode(' ', $search);
+
+                $q->where(function ($q) use ($array_words) {
+                    foreach ($array_words as $w) {
+                        $q->where(function ($sub) use ($w) {
+                            $sub->where('name', 'LIKE', "%{$w}%");
+                        });
+                    }
+                });
+            });
         }
 
         if ($categories = $request->input('categories')) {
