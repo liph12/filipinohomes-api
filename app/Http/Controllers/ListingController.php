@@ -31,10 +31,7 @@ class ListingController extends Controller
             }
         ])
         ->withCount([
-            'property as subtype_count' => function ($q) {
-                $q->join('property_attributes', 'properties.property_attribute_id', '=', 'property_attributes.id')
-                  ->join('property_subtypes', 'property_attributes.property_subtype_id', '=', 'property_subtypes.id');
-            }
+            'property.propertyAttribute.subtype as subtype_count'
         ])
         ->filter($request)
         ->orderByDesc('subtype_count')
