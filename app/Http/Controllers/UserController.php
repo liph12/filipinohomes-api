@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Http\Controllers;
+
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Http\Resources\UserResourceCollection;
@@ -86,12 +88,23 @@ class UserController extends Controller
         ]);
     }
 
-    public function index()
+    public function index(Request $request)
     {
+        $query = User::query()
+            ->latest()
+            ->where('created_at', '>=', now()->subDays(10));
+
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = (int) $request->query('per_page', 10);
+
         return new UserResourceCollection(
-            User::latest()
-                ->where('created_at', '>=', now()->subDays(10))
-                ->paginate(10)
+            $query->paginate($perPage)
         );
     }
 
@@ -102,7 +115,7 @@ class UserController extends Controller
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+                    ->orWhere('email', 'like', "%{$search}%");
             });
         }
 
@@ -119,14 +132,14 @@ class UserController extends Controller
             User::find($id)
         );
     }
-    
+
     public function profile()
     {
-        return new UserResource( 
+        return new UserResource(
             User::find(Auth::user()->id)
         );
     }
-    
+
     public function update($id, Request $request)
     {
         $user = User::findOrFail($id);
@@ -238,13 +251,12 @@ class UserController extends Controller
     {
         $verified = User::where([['email', $request->email], ['verification', $request->otp]])->first();
 
-        if(!$verified)
-        {
+        if (!$verified) {
             return response()->json([
                 'message' => 'Invalid one time pin.'
             ], 403);
         }
-        
+
         if (!$verified->remember_token) {
             $token = $verified->createToken('API Token')->plainTextToken;
             $verified->remember_token = $token;
