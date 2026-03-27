@@ -71,7 +71,7 @@ Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug'
 Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
 Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
 Route::get('/page/agents', [PageBuilderController::class, 'index']);
-
+   Route::get('/offices/{slug}', [OfficeController::class, 'show']);
 // Lightweight sitemap endpoints
 Route::get('sitemap/listings', [SitemapController::class, 'listings']);
 Route::get('sitemap/agents', [SitemapController::class, 'agents']);
@@ -126,5 +126,6 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
     Route::post('/offices', [OfficeController::class, 'store']);
     Route::patch('/offices/{id}', [OfficeController::class, 'update']);
-    Route::get('/offices/{slug}', [OfficeController::class, 'show']);
+    Route::delete('/offices/{id}', [OfficeController::class, 'destroy']);
+ 
 });
