@@ -54,6 +54,7 @@ class FavoriteController extends Controller
                 'listing' => function ($q) {
                     $q->with([
                         'property.propertyAttribute.subtype',
+                        'property.nearbyFacility',
                         'category',
                         'agent' => function ($q) {
                             $q->withCount('listings');

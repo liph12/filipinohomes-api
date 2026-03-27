@@ -26,7 +26,10 @@ class ListingController extends Controller
         Log::info('Listing index user: ', ['token' => $request->bearerToken()]);
         $listings = Listing::where('visibility', 'public')
         ->with([
-            'property.propertyAttribute.subtype','category','agent' => function ($q) {
+            'property.propertyAttribute.subtype',
+            'property.nearbyFacility',
+            'category',
+            'agent' => function ($q) {
                 $q->withCount('listings');
             }
         ])
@@ -147,7 +150,16 @@ class ListingController extends Controller
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
 
-        $listings = $query->orderBy('created_at', 'desc')
+        $listings = $query
+            ->with([
+                'property.propertyAttribute.subtype',
+                'property.nearbyFacility',
+                'category',
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                }
+            ])
+            ->orderBy('created_at', 'desc')
             ->paginate($request->query('per_page', 10));
 
         return (new ListingResourceCollection($listings))->additional([
@@ -247,7 +259,16 @@ class ListingController extends Controller
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
 
-        $listings = $query->orderBy('created_at', 'desc')
+        $listings = $query
+            ->with([
+                'property.propertyAttribute.subtype',
+                'property.nearbyFacility',
+                'category',
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                }
+            ])
+            ->orderBy('created_at', 'desc')
             ->paginate($request->query('per_page', 10));
 
         return (new ListingResourceCollection($listings))->additional([
@@ -421,6 +442,7 @@ class ListingController extends Controller
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
+                'property.nearbyFacility',
                 'category',
                 'agent.user',
             ])
@@ -443,6 +465,7 @@ class ListingController extends Controller
             ->where('visibility', 'public')
             ->with([
                 'property.propertyAttribute.subtype',
+                'property.nearbyFacility',
                 'category',
                 'agent' => function ($q) {
                     $q->withCount('listings');
