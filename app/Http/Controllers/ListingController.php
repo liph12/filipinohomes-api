@@ -32,15 +32,7 @@ class ListingController extends Controller
                 $q->withCount('listings');
             }
         ])
-        ->withCount([
-            'property as subtype_count' => function ($q) {
-                $q->join('property_attributes', 'properties.id', '=', 'property_attributes.property_id')
-                  ->join('subtypes', 'property_attributes.subtype_id', '=', 'subtypes.id');
-            }
-        ])
         ->filter($request)
-        ->orderByDesc('updated_at')
-        ->orderByDesc('subtype_count')
         ->paginate($request->integer('per_page', 10));
 
         return new ListingResourceCollection($listings);
