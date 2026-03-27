@@ -21,7 +21,7 @@ class UserResource extends JsonResource
             'created_at' => $this->created_at,
         ];
 
-        if ($this->pivot && $this->pivot->last_read_at) {
+        if ($this->pivot) {
             $data['last_read_at'] = $this->pivot->last_read_at;
         }
 
