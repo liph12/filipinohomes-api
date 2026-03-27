@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Intervention\Image\Laravel\Facades\Image;
 class ImageUploadController extends Controller
 {
 
@@ -49,17 +48,40 @@ class ImageUploadController extends Controller
 
     //     return env("AWS_URL") . $fileName;
     // }
-    public function handleS3Upload($file, $dir)
-    {
-        $ext = $file->getClientOriginalExtension();
-        $fileName = $dir . "/" . Str::uuid() . "." . $ext; // keep original format
+public function handleS3Upload($file, $dir)
+{
+    $ext      = strtolower($file->getClientOriginalExtension());
+    $fileName = $dir . "/" . Str::uuid() . "." . $ext;
 
-        $image = Image::read($file)
-            ->scaleDown(width: 1920)
-            ->encode(quality: 92);    // near-lossless, keeps original format
+    $source = match($ext) {
+        'jpg', 'jpeg' => imagecreatefromjpeg($file->getRealPath()),
+        'png'         => imagecreatefrompng($file->getRealPath()),
+        'webp'        => imagecreatefromwebp($file->getRealPath()),
+        default       => null,
+    };
 
-        Storage::disk('s3')->put($fileName, $image, 'public');
-
-        return env("AWS_URL") . $fileName;
+    if ($source && imagesx($source) > 1920) {
+        $newH   = (int) (imagesy($source) * 1920 / imagesx($source));
+        $resized = imagecreatetruecolor(1920, $newH);
+        if ($ext === 'png') { imagealphablending($resized, false); imagesavealpha($resized, true); }
+        imagecopyresampled($resized, $source, 0, 0, 0, 0, 1920, $newH, imagesx($source), imagesy($source));
+        imagedestroy($source);
+        $source = $resized;
     }
+
+    if ($source) {
+        ob_start();
+        match($ext) {
+            'jpg', 'jpeg' => imagejpeg($source, null, 92),
+            'png'         => imagepng($source, null, 6),
+            'webp'        => imagewebp($source, null, 92),
+        };
+        Storage::disk('s3')->put($fileName, ob_get_clean(), 'public');
+        imagedestroy($source);
+    } else {
+        Storage::disk('s3')->put($fileName, file_get_contents($file), 'public');
+    }
+
+    return env("AWS_URL") . $fileName;
+}
 }
