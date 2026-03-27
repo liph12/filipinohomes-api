@@ -164,11 +164,11 @@ class Listing extends Model
                             $sub->where('address', 'LIKE', "%{$w}%");
                         });
                     }
-                    foreach ($array_words as $w) {
-                        $q->where(function ($sub) use ($w) {
-                            $sub->where('description', 'LIKE', "%{$w}%");
-                        });
-                    }
+                    // foreach ($array_words as $w) {
+                    //     $q->where(function ($sub) use ($w) {
+                    //         $sub->where('description', 'LIKE', "%{$w}%");
+                    //     });
+                    // }
                 });
             });
         }
