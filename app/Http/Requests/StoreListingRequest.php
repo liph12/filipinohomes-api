@@ -88,6 +88,8 @@ class StoreListingRequest extends FormRequest
                 }
             }],
             'is_featured' => 'boolean',
+            // Accept flexible structures; normalization happens in service
+            'nearby_facilities' => 'nullable|array',
         ];
     }
 

@@ -82,6 +82,8 @@ class UpdateListingRequest extends FormRequest
                 }
             }],
             'is_featured' => 'sometimes|boolean',
+            // Accept flexible structures; normalization happens in service
+            'nearby_facilities' => 'sometimes|array',
         ];
     }
 

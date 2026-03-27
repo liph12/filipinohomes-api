@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Models\NearbyFacility;
 
 class ListingService
 {
@@ -45,8 +46,176 @@ class ListingService
 
             $listing->load(['property', 'category', 'agent']);
 
+            // Persist nearby facilities in the new schema (one row per property with JSON columns)
+            $facilitiesPayload = $this->buildNearbyFacilitiesPayload($data);
+            if (!empty($facilitiesPayload)) {
+                NearbyFacility::updateOrCreate(
+                    ['property_id' => $property->id],
+                    $facilitiesPayload
+                );
+            }
+
             return $listing;
         });
+    }
+
+    /**
+     * Normalize incoming nearby facilities from either 'nearby_facilities' (new)
+     * or legacy 'nearby_places' (old) into an associative array matching
+     * nearby_facilities table columns.
+     */
+    protected function buildNearbyFacilitiesPayload(array $data): array
+    {
+        $allowed = [
+            'school', 'hospital', 'clinic', 'pharmacy', 'fire_station', 'police_station'
+        ];
+
+        // New flexible format handling under 'nearby_facilities'
+        if (!empty($data['nearby_facilities']) && is_array($data['nearby_facilities'])) {
+            $nf = $data['nearby_facilities'];
+            $payload = [];
+
+            foreach ($allowed as $key) {
+                if (!isset($nf[$key])) {
+                    continue;
+                }
+
+                $value = $nf[$key];
+
+                // Case 1: Already an array of objects
+                if (is_array($value) && $this->isList($value)) {
+                    $payload[$key] = [];
+                    foreach ($value as $item) {
+                        $payload[$key][] = $this->normalizeFacilityItem($item);
+                    }
+                    continue;
+                }
+
+                // Case 2: Single object describing facility
+                if (is_array($value) && !$this->isList($value)) {
+                    $payload[$key] = [$this->normalizeFacilityItem($value)];
+                    continue;
+                }
+
+                // Case 3: Simple string e.g., 'hospital' => 'Community Hospital'
+                if (is_string($value)) {
+                    $commonGeo = $nf['geo_coordinates'] ?? null; // optional sibling
+                    $commonDistance = $nf['distance'] ?? null;     // optional sibling
+                    $payload[$key] = [
+                        $this->normalizeFacilityItem([
+                            'name'            => $value,
+                            'geo_coordinates' => $commonGeo,
+                            'distance'        => $commonDistance,
+                        ])
+                    ];
+                    continue;
+                }
+            }
+
+            return array_filter($payload, fn($v) => !empty($v));
+        }
+
+        // Legacy format: 'nearby_places' => [{type, name, distance_meters, geo_coordinates{lat,lng}, address}]
+        if (!empty($data['nearby_places']) && is_array($data['nearby_places'])) {
+            $grouped = [
+                'school' => [], 'hospital' => [], 'clinic' => [],
+                'pharmacy' => [], 'fire_station' => [], 'police_station' => [],
+            ];
+
+            foreach ($data['nearby_places'] as $p) {
+                $type = $p['type'] ?? '';
+                if ($type === 'police') { // map old to new
+                    $type = 'police_station';
+                }
+                if (!array_key_exists($type, $grouped)) {
+                    continue;
+                }
+
+                $coords = $p['geo_coordinates'] ?? [];
+                $grouped[$type][] = [
+                    'name'            => $p['name'] ?? null,
+                    'distance_meters' => $this->parseDistanceToMeters($p['distance'] ?? $p['distance_meters'] ?? null),
+                    'lat'             => isset($coords['lat']) ? (float) $coords['lat'] : null,
+                    'lng'             => isset($coords['lng']) ? (float) $coords['lng'] : null,
+                    'address'         => $p['address'] ?? null,
+                ];
+            }
+
+            // Remove empty groups
+            return array_filter($grouped, fn ($v) => !empty($v));
+        }
+
+        return [];
+    }
+
+    protected function normalizeFacilityItem(array $item): array
+    {
+        $coords = $item['geo_coordinates'] ?? $item['coords'] ?? null;
+        $lat = null;
+        $lng = null;
+        if (is_array($coords)) {
+            $lat = isset($coords['lat']) ? (float) $coords['lat'] : null;
+            $lng = isset($coords['lng']) ? (float) $coords['lng'] : null;
+        } else {
+            $lat = isset($item['lat']) ? (float) $item['lat'] : null;
+            $lng = isset($item['lng']) ? (float) $item['lng'] : null;
+        }
+
+        return [
+            'name'            => $item['name'] ?? $item['value'] ?? null,
+            'distance_meters' => $this->parseDistanceToMeters($item['distance'] ?? $item['distance_meters'] ?? null),
+            'lat'             => $lat,
+            'lng'             => $lng,
+            'address'         => $item['address'] ?? null,
+        ];
+    }
+
+    protected function parseDistanceToMeters($distance): ?int
+    {
+        if ($distance === null || $distance === '') {
+            return null;
+        }
+
+        if (is_numeric($distance)) {
+            return (int) round((float) $distance);
+        }
+
+        if (is_string($distance)) {
+            $s = trim(strtolower($distance));
+            // Replace commas, handle "1.2 km", "750 m", etc.
+            $s = str_replace(',', '', $s);
+            if (str_ends_with($s, 'km')) {
+                $num = (float) trim(substr($s, 0, -2));
+                return (int) round($num * 1000);
+            }
+            if (str_ends_with($s, 'm')) {
+                $num = (float) trim(substr($s, 0, -1));
+                return (int) round($num);
+            }
+            // Fallback: extract leading number
+            if (preg_match('/([0-9]+(\.[0-9]+)?)/', $s, $m)) {
+                $num = (float) $m[1];
+                // Heuristic: if mentions 'km' anywhere, treat as km
+                if (str_contains($s, 'km')) {
+                    return (int) round($num * 1000);
+                }
+                return (int) round($num);
+            }
+        }
+
+        return null;
+    }
+
+    protected function isList(array $arr): bool
+    {
+        if (function_exists('array_is_list')) {
+            return array_is_list($arr);
+        }
+        $i = 0;
+        foreach ($arr as $k => $_) {
+            if ($k !== $i++) return false;
+        }
+        return true;
     }
 
     protected function validatePropertySubtype(int $propertySubtypeId, int $propertyTypeId): void
@@ -214,6 +383,15 @@ class ListingService
             if (empty($listing->seo_tags) && empty($data['seo_tags'])) {
                 $this->syncSeoTags($listing);
                 $listing->refresh();
+            }
+
+            // Update nearby facilities if provided
+            $facilitiesPayload = $this->buildNearbyFacilitiesPayload($data);
+            if (!empty($facilitiesPayload)) {
+                NearbyFacility::updateOrCreate(
+                    ['property_id' => $property->id],
+                    $facilitiesPayload
+                );
             }
 
             $wasActuallyUpdated = $listing->wasChanged() ||

@@ -295,13 +295,13 @@ class Listing extends Model
         return $this->belongsTo(User::class, 'updated_by');
     }
 
-    public function deleter()
-    {
-        return $this->belongsTo(User::class, 'deleted_by');
-    }
-
     public function favoritedBy()
     {
         return $this->hasMany(Favorite::class);
+    }
+
+    public function nearbyFacilities()
+    {
+        return $this->hasOne(NearbyFacility::class, 'property_id', 'property_id');
     }
 }
