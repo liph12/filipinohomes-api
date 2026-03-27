@@ -185,9 +185,9 @@ class ListingCommandService
                         'items' => [
                             'type' => 'object',
                             'properties' => [
-                                'image_index' => [
+                                'image_id' => [
                                     'type' => 'integer',
-                                    'description' => 'Index of the image in the input array'
+                                    'description' => 'Id of the image in the input array of objects'
                                 ],
                                 'classification' => [
                                     'type' => 'string',
@@ -196,10 +196,10 @@ class ListingCommandService
                                 ],
                                 'description' => [
                                     'type' => 'string',
-                                    'description' => 'Short keyword-based description (ONLY for Good and Excellent images)'
+                                    'description' => 'Short keyword-based description (ONLY for Good and Excellent images). Return empty string if Bad.'
                                 ]
                             ],
-                            'required' => ['image_index', 'classification']
+                            'required' => ['image_index', 'classification', 'description']
                         ]
                     ]
                 ],
