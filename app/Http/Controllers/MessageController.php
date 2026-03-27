@@ -63,6 +63,11 @@ class MessageController extends Controller
             'reply_to_id' => $validated['reply_to_id'] ?? null,
         ]);
 
+        // Update sender's last_read_at so online presence reflects activity
+        $conversation->users()->updateExistingPivot(Auth::id(), [
+            'last_read_at' => Carbon::now(),
+        ]);
+
         $message->load(['user', 'replyTo.user', 'reactions.user']);
 
         return new MessageResource($message);
