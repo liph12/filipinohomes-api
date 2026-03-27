@@ -59,4 +59,11 @@ class OfficeController extends Controller
 
         return response()->json(new OfficeResource($id));
     }
+
+    public function destroy(Office $office)
+    {
+        $office->delete();
+
+        return response()->json(null, 204);
+    }
 }
