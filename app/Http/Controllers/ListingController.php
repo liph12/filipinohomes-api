@@ -26,9 +26,7 @@ class ListingController extends Controller
         Log::info('Listing index user: ', ['token' => $request->bearerToken()]);
         $listings = Listing::where('visibility', 'public')
         ->with([
-            'property.propertyAttribute.subtype',
-            'category',
-            'agent' => function ($q) {
+            'property.propertyAttribute.subtype','category','agent' => function ($q) {
                 $q->withCount('listings');
             }
         ])
