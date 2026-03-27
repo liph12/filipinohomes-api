@@ -142,7 +142,7 @@ class Listing extends Model
             
                 $query->where(function ($sub) use ($array_words) {
                     foreach ($array_words as $w) {
-                        $sub->orWhere('listings.name', 'LIKE', "%{$w}%");
+                        $sub->where('listings.name', 'LIKE', "%{$w}%");
                     }
                 })
                 ->orWhereHas('property', function ($q) use ($array_words) {
