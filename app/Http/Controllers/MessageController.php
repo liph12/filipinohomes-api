@@ -26,7 +26,7 @@ class MessageController extends Controller
 
         $messages = Message::where('conversation_id', $validated['conversation_id'])
             ->with(['user', 'replyTo.user', 'reactions.user'])
-            ->orderBy('created_at')
+            ->orderBy('created_at', 'desc')
             ->paginate(50);
 
         return MessageResource::collection($messages);

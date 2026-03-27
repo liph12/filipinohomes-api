@@ -11,15 +11,20 @@ class UserResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        return [
+        $data = [
             'id'        => $this->id,
             'name'      => $this->name,
             'email'     => $this->email,
             'mobile_no' => $this->agent->mobile_no ?? $this->mobile_no ?? "",
             'avatar'    => $this->avatar,
             'role'      => $this->role?->name,
-            // 'agent'     => $this->agent ? ['id' => $this->agent->id] : null,
             'created_at' => $this->created_at,
         ];
+
+        if ($this->pivot && $this->pivot->last_read_at) {
+            $data['last_read_at'] = $this->pivot->last_read_at;
+        }
+
+        return $data;
     }
 }
