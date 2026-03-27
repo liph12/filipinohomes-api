@@ -13,7 +13,7 @@ class ImageUploadController extends Controller
         if($request->hasFile('file')){
             
             $request->validate([
-                'file' => 'required|image|max:5120'
+                'file' => 'required|image'
             ]);
 
             try {
