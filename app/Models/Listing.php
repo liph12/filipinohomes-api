@@ -110,26 +110,22 @@ class Listing extends Model
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        $brgy = $request->input('barangay') ?? '';
-        $city = $request->input('city') ?? '';
-        $prov = $request->input('province') ?? '';
-
-        $query->whereHas('property', function($q) use($brgy, $city, $prov){
-            $q->whereHas('barangay', function($q) use($brgy, $city, $prov){
-                $q->where('name', 'LIKE', "%{$brgy}%")
-                ->whereHas('city', function($q) use($city, $prov){
-                    $q->where('name', 'LIKE', "%{$city}%")
-                    ->whereHas('province', function($q) use($prov){
-                        $q->where('name', 'LIKE', "%{$prov}%");
-                    });
-                });
-            });
-        });
-
         if ($key_word = $request->input('key_word')) {
+            $brgy = $request->input('barangay') ?? '';
+            $city = $request->input('city') ?? '';
+            $prov = $request->input('province') ?? '';
             $array_words = explode(' ', $key_word);
-            $query->whereHas('property', function($q) use($array_words){
-                $q->where(function ($q) use ($array_words) {
+    
+            $query->whereHas('property', function($q) use($brgy, $city, $prov, $array_words){
+                $q->whereHas('barangay', function($q) use($brgy, $city, $prov){
+                    $q->where('name', 'LIKE', "%{$brgy}%")
+                    ->whereHas('city', function($q) use($city, $prov){
+                        $q->where('name', 'LIKE', "%{$city}%")
+                        ->whereHas('province', function($q) use($prov){
+                            $q->where('name', 'LIKE', "%{$prov}%");
+                        });
+                    });
+                })->where(function ($q) use ($array_words) {
                     foreach ($array_words as $w) {
                         $q->where(function ($sub) use ($w) {
                             $sub->where('description', 'LIKE', "%{$w}%");
