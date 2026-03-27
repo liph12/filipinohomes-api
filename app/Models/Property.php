@@ -90,4 +90,9 @@ class Property extends Model
     {
         return $this->belongsTo(Barangay::class, 'address_id');
     }
+
+    public function nearbyFacility()
+    {
+        return $this->hasOne(NearbyFacility::class, 'property_id');
+    }
 }

@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\PropertyAttributesResource;
 use App\Http\Resources\FurnishingResource;
+use App\Http\Resources\NearbyFacilityResource;
 class PropertyResource extends JsonResource
 {
     /**
@@ -30,6 +31,7 @@ class PropertyResource extends JsonResource
             'is_project'            => $this->is_project,
             'property'              => $attributes,
             'furnishing'            => new FurnishingResource($this->furnishing),
+            'nearby_facilities'     => NearbyFacilityResource::make($this->whenLoaded('nearbyFacility')),
         ];
     }
 }
