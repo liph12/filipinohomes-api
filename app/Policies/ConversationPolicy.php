@@ -23,4 +23,9 @@ class ConversationPolicy
     {
         return $conversation->users()->where('users.id', $user->id)->exists();
     }
+
+    public function moderate(User $user, Conversation $conversation): bool
+    {
+        return $user->role?->name === 'admin';
+    }
 }

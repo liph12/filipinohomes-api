@@ -120,9 +120,11 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/admin/maintenance-toggle', [MaintenanceController::class, 'toggle']);
     Route::post('/page/agents', [PageBuilderController::class, 'store']);
     Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
-    Route::apiResource('chats', ChatController::class)->only(['index', 'store', 'show']);
+    Route::apiResource('chats', ChatController::class)->only(['index', 'store', 'show', 'destroy']);
     Route::apiResource('conversations', ConversationController::class)->only(['index', 'show']);
     Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
+    Route::post('conversations/{conversation}/accept', [ConversationController::class, 'accept']);
+    Route::post('conversations/{conversation}/reject', [ConversationController::class, 'reject']);
     Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
     Route::post('/offices', [OfficeController::class, 'store']);

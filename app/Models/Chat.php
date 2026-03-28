@@ -28,6 +28,6 @@ class Chat extends Model
 
     public function activeConversation()
     {
-        return $this->hasOne(Conversation::class)->where('status', 'active')->latestOfMany();
+        return $this->hasOne(Conversation::class)->whereIn('status', ['pending', 'accepted', 'rejected'])->latestOfMany();
     }
 }

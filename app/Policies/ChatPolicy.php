@@ -34,4 +34,9 @@ class ChatPolicy
     {
         return true;
     }
+
+    public function delete(User $user, Chat $chat): bool
+    {
+        return $chat->user_id === $user->id;
+    }
 }
