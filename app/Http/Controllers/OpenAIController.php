@@ -33,6 +33,13 @@ class OpenAIController extends Controller
         return response()->json($data);
     }
 
+    public function getDailyLimitCreate(Request $request)
+    {
+        $data = $this->cacheService->dailyLimit($request, 'create');
+
+        return response()->json($data);
+    }
+
     public function getCachedMessages(Request $request)
     {
         $cachedMessages = $this->cacheService->getDailyMessages($request);
@@ -230,6 +237,13 @@ class OpenAIController extends Controller
     public function classifyListingPhotos(Request $request)
     {
         $photos = $request->input('photos', []);
+
+        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
+        }
+
         $classifications = $this->listingService->classifyImages($photos);
 
         return response()->json($classifications);

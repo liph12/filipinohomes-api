@@ -14,7 +14,7 @@ class CacheService extends DataLayerService
         // to do
     }
     
-    public function updateDailyLimit(Request $request)
+    public function updateDailyLimit(Request $request, $type = 'user')
     {
         $deviceId = $request->input('device_id') ?? 'unknown';
         $ip = $request->ip();
@@ -22,10 +22,10 @@ class CacheService extends DataLayerService
         $guestIdentifier = 'guest_' . $deviceId . '|' . $ip;
         $user = Auth::guard('sanctum')->user();
         $guestLimit = config('openai.guest_limit');
-        $authLimit = config('openai.auth_limit');
+        $authLimit = $type === 'user' ? config('openai.auth_limit') : config('openai.auth_limit_create');
     
         if ($user) {
-            $identifier = 'user_' . $user->id;
+            $identifier = $type.'_' . $user->id;
             $dailyLimit = $authLimit;
     
             $userKey = 'daily_requests_' . $identifier;
@@ -105,14 +105,14 @@ class CacheService extends DataLayerService
         ], 200);
     }
 
-    public function dailyLimit(Request $request)
+    public function dailyLimit(Request $request, $type = 'user')
     {
         $guestLimit = config('openai.guest_limit');
-        $authLimit = config('openai.auth_limit');
+        $authLimit = $type === 'user' ? config('openai.auth_limit') : config('openai.auth_limit_create');
         $user = Auth::guard('sanctum')->user();
     
         if ($user) {
-            $identifier = 'user_' . $user->id;
+            $identifier = $type.'_' . $user->id;
             $dailyLimit = $authLimit;
         } else {
             $deviceId = $request->input('device_id') ?? 'unknown';
