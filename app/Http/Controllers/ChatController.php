@@ -6,6 +6,7 @@ use App\Http\Resources\ChatResource;
 use App\Models\Chat;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -17,14 +18,19 @@ class ChatController extends Controller
         $user = Auth::user();
         $roleName = $user->role?->name;
 
-        $query = Chat::with(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users']);
+        $query = Chat::with(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
 
         if ($roleName === 'admin') {
             // admin sees all
         } elseif ($roleName === 'agent') {
+            // Agent only sees conversations where they are a participant
+            // AND the conversation status is 'accepted' or 'closed' (not 'pending')
             $query->where(function ($q) use ($user) {
                 $q->where('user_id', $user->id)
-                    ->orWhereHas('conversations.users', fn ($sub) => $sub->where('users.id', $user->id));
+                    ->orWhereHas('conversations', function ($sub) use ($user) {
+                        $sub->whereHas('users', fn ($u) => $u->where('users.id', $user->id))
+                            ->whereIn('status', ['accepted', 'closed']);
+                    });
             });
         } else {
             $query->where('user_id', $user->id);
@@ -76,7 +82,7 @@ class ChatController extends Controller
             ->first();
 
         if ($existing) {
-            $existing->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users']);
+            $existing->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
             return new ChatResource($existing);
         }
 
@@ -87,15 +93,32 @@ class ChatController extends Controller
                 'user_id' => $user->id,
             ]);
 
+            $isListing = $validated['type'] === 'listing';
+
             $conversation = Conversation::create([
                 'chat_id' => $chat->id,
-                'status' => 'active',
+                'status' => $isListing ? 'pending' : 'accepted',
+                'agent_user_id' => $isListing ? $validated['target_user_id'] : null,
             ]);
 
-            $conversation->users()->attach([
-                $user->id => ['last_read_at' => now()],
-                $validated['target_user_id'] => ['last_read_at' => null],
-            ]);
+            if ($isListing) {
+                // Attach client + all admin users (not the agent yet)
+                $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
+
+                $attachments = [
+                    $user->id => ['last_read_at' => now()],
+                ];
+                foreach ($adminUserIds as $adminId) {
+                    $attachments[$adminId] = ['last_read_at' => null];
+                }
+                $conversation->users()->attach($attachments);
+            } else {
+                // Non-listing: attach client + target user directly (accepted)
+                $conversation->users()->attach([
+                    $user->id => ['last_read_at' => now()],
+                    $validated['target_user_id'] => ['last_read_at' => null],
+                ]);
+            }
 
             if (!empty($validated['message'])) {
                 Message::create([
@@ -109,7 +132,7 @@ class ChatController extends Controller
             return $chat;
         });
 
-        $chat->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users']);
+        $chat->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
 
         return new ChatResource($chat);
     }
@@ -121,5 +144,14 @@ class ChatController extends Controller
         $chat->load(['user', 'listing', 'conversations.latestMessage.user', 'conversations.users']);
 
         return new ChatResource($chat);
+    }
+
+    public function destroy(Chat $chat)
+    {
+        $this->authorize('delete', $chat);
+
+        $chat->delete();
+
+        return response()->json(['message' => 'Chat deleted.']);
     }
 }

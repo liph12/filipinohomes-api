@@ -48,6 +48,10 @@ class MessageController extends Controller
             abort(403, 'You are not a participant in this conversation.');
         }
 
+        if (in_array($conversation->status, ['rejected', 'closed'])) {
+            abort(403, 'Cannot send messages to a ' . $conversation->status . ' conversation.');
+        }
+
         if (!empty($validated['reply_to_id'])) {
             $replyMsg = Message::find($validated['reply_to_id']);
             if (!$replyMsg || $replyMsg->conversation_id !== $conversation->id) {

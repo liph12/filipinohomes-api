@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Resources\ConversationResource;
 use App\Models\Chat;
 use App\Models\Conversation;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -19,8 +20,15 @@ class ConversationController extends Controller
         $chat = Chat::findOrFail($validated['chat_id']);
         $this->authorize('view', $chat);
 
-        $conversations = Conversation::where('chat_id', $validated['chat_id'])
-            ->with(['latestMessage.user', 'users'])
+        $user = Auth::user();
+        $query = Conversation::where('chat_id', $validated['chat_id']);
+
+        // Agents should only see accepted/closed conversations, not pending ones
+        if ($user->role?->name === 'agent') {
+            $query->whereIn('status', ['accepted', 'closed']);
+        }
+
+        $conversations = $query->with(['latestMessage.user', 'users'])
             ->latest()
             ->paginate(20);
 
@@ -37,6 +45,55 @@ class ConversationController extends Controller
         $conversation->users()->updateExistingPivot($user->id, [
             'last_read_at' => now(),
         ]);
+
+        return new ConversationResource($conversation);
+    }
+
+    public function accept(Conversation $conversation)
+    {
+        $this->authorize('moderate', $conversation);
+
+        if ($conversation->status !== 'pending') {
+            return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
+        }
+
+        $user = Auth::user();
+
+        $conversation->update([
+            'status' => 'accepted',
+            'reviewed_by' => $user->id,
+            'reviewed_at' => now(),
+        ]);
+
+        // Add the agent to conversation_users so they can see the full history
+        if ($conversation->agent_user_id) {
+            $conversation->users()->syncWithoutDetaching([
+                $conversation->agent_user_id => ['last_read_at' => null],
+            ]);
+        }
+
+        $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
+
+        return new ConversationResource($conversation);
+    }
+
+    public function reject(Conversation $conversation)
+    {
+        $this->authorize('moderate', $conversation);
+
+        if ($conversation->status !== 'pending') {
+            return response()->json(['message' => 'Only pending conversations can be rejected.'], 422);
+        }
+
+        $user = Auth::user();
+
+        $conversation->update([
+            'status' => 'rejected',
+            'reviewed_by' => $user->id,
+            'reviewed_at' => now(),
+        ]);
+
+        $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
         return new ConversationResource($conversation);
     }
