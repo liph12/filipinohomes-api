@@ -33,6 +33,7 @@ class ListingController extends Controller
                 'barangays.name as barangay',
                 'cities.name as city',
                 'provinces.name as province',
+                DB::raw('COUNT(*) as total_properties')
             )
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
@@ -42,6 +43,8 @@ class ListingController extends Controller
                     $q->where('properties.address', 'LIKE', "%{$w}%");
                 }
             })
+            ->groupBy('properties.address')
+            ->orderByDesc('total_properties')
             ->limit(10)
             ->get()
             ->map(fn($row) => [
