@@ -17,7 +17,7 @@ class ListingController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'listingsByLocation']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class . ':admin')->only(['updateIsFeatured']);
     }
