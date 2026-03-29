@@ -26,7 +26,7 @@ class ListingController extends Controller
     {
         $search = $request->input("search");
         $terms = explode(' ', $search);
-        $locations = Property::where(function ($q) use ($terms) {
+        $locations = Property::select('address', 'address_id')->where(function ($q) use ($terms) {
             foreach ($terms as $w) {
                 $q->where(function ($sub) use ($w) {
                     $sub->where('description', 'LIKE', "%{$w}%");
