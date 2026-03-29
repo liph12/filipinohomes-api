@@ -42,13 +42,12 @@ class ListingController extends Controller
                     $q->where('properties.address', 'LIKE', "%{$w}%");
                 }
             })
-            ->orderByDesc('total_properties')
             ->limit(10)
             ->get()
             ->map(fn($row) => [
-                'barangay_id'      => $row->address_id,
-                'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
-                'total_properties' => $row->total_properties,
+                'barangay_id' => $row->address_id,
+                'address'     => $row->address,
+                'label'       => "{$row->barangay}, {$row->city}, {$row->province}",
             ]);
     
         return response()->json($locations);
