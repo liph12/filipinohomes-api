@@ -143,12 +143,14 @@ class Listing extends Model
             $search = trim($request->input('search', ''));
 
             if (!empty($search)) {
-                $array_words = array_filter(explode(' ', $search));
-            
-                $query->where(function ($sub) use ($array_words) {
-                    foreach ($array_words as $w) {
-                        $sub->where('listings.name', 'LIKE', "%{$w}%");
-                    }
+                $terms = array_filter(explode(' ', $search));
+        
+                $query->whereHas('property', function($q) use($terms){
+                    $q->where(function ($q) use ($terms) {
+                        foreach ($terms as $w) {
+                            $q->where('address', 'LIKE', "%{$w}%");
+                        }
+                    });
                 });
             }
         }
