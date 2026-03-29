@@ -28,12 +28,12 @@ class ListingController extends Controller
         $terms = explode(' ', $search);
     
         $locations = Property::select(
-                'properties.barangay_id',
+                'properties.address_id',
                 'barangays.name as barangay',
                 'cities.name as city',
                 'provinces.name as province'
             )
-            ->join('barangays', 'barangays.id', '=', 'properties.barangay_id')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
             ->where(function ($q) use ($terms) {
@@ -41,11 +41,11 @@ class ListingController extends Controller
                     $q->where('properties.address', 'LIKE', "%{$w}%");
                 }
             })
-            ->groupBy('properties.barangay_id', 'barangays.name', 'cities.name', 'provinces.name')
+            ->groupBy('properties.address_id', 'barangays.name', 'cities.name', 'provinces.name')
             ->limit(10)
             ->get()
             ->map(fn($row) => [
-                'barangay_id' => $row->barangay_id,
+                'barangay_id' => $row->address_id,
                 'label'       => "{$row->barangay}, {$row->city}, {$row->province}",
             ]);
     
