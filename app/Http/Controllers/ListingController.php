@@ -29,10 +29,10 @@ class ListingController extends Controller
     
         $locations = Property::select(
                 'properties.address_id',
+                'properties.address',
                 'barangays.name as barangay',
                 'cities.name as city',
                 'provinces.name as province',
-                DB::raw('COUNT(*) as total_properties')
             )
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
@@ -42,7 +42,6 @@ class ListingController extends Controller
                     $q->where('properties.address', 'LIKE', "%{$w}%");
                 }
             })
-            ->groupBy('properties.address_id', 'barangays.name', 'cities.name', 'provinces.name')
             ->orderByDesc('total_properties')
             ->limit(10)
             ->get()
