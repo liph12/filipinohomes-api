@@ -126,18 +126,21 @@ class Listing extends Model
             });
         });
 
-        if ($key_word = $request->input('key_word')) {
-            $array_words = explode(' ', $key_word);
-    
-            $query->whereHas('property', function($q) use($array_words){
-                $q->where(function ($q) use ($array_words) {
-                    foreach ($array_words as $w) {
-                        $q->where(function ($sub) use ($w) {
-                            $sub->where('description', 'LIKE', "%{$w}%");
-                        });
-                    }
+        if($request->input('ai'))
+        {
+            if ($key_word = $request->input('key_word')) {
+                $array_words = explode(' ', $key_word);
+        
+                $query->whereHas('property', function($q) use($array_words){
+                    $q->where(function ($q) use ($array_words) {
+                        foreach ($array_words as $w) {
+                            $q->where(function ($sub) use ($w) {
+                                $sub->where('description', 'LIKE', "%{$w}%");
+                            });
+                        }
+                    });
                 });
-            });
+            }
         }else{
             $search = $request->input('search') ?? '';
             $search = trim($request->input('search', ''));
@@ -154,6 +157,8 @@ class Listing extends Model
                 });
             }
         }
+
+
 
         if ($categories = $request->input('categories')) {
             $cats = is_array($categories) ? $categories : explode(',', $categories);
