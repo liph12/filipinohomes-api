@@ -126,7 +126,7 @@ class Listing extends Model
             });
         });
 
-        if($request->input('ai'))
+        if($request->input('ai') === 'true')
         {
             if ($key_word = $request->input('key_word')) {
                 $array_words = explode(' ', $key_word);
