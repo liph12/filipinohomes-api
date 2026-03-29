@@ -27,7 +27,7 @@ class ListingController extends Controller
         $search = $request->input("search");
         $terms = explode(' ', $search);
     
-        $locations = Property::select(
+        $locations = Property::public()->select(
                 'properties.address_id',
                 'properties.address',
                 'barangays.name as barangay',
