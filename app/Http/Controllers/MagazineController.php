@@ -55,6 +55,7 @@ class MagazineController extends Controller
 
         $request->validate([
             'title' => 'sometimes|string|max:255',
+            'slug' => 'sometimes|nullable|string|unique:magazines,slug,' . $magazine->id,
             'description' => 'nullable|string',
             'publish_date' => 'sometimes|date',
             'cover_photo.*' => 'nullable|string|url',

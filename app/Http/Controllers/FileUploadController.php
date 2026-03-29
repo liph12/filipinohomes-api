@@ -10,10 +10,11 @@ class FileUploadController extends Controller
 {
     public function uploadFile(Request $request)
     {
+        set_time_limit(900);
         if ($request->hasFile('file')) {
 
             $request->validate([
-                'file' => 'required|mimes:pdf', 
+                'file' => 'required|file|mimes:pdf|max:102400',
             ]);
 
             try {

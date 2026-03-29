@@ -28,27 +28,41 @@ class Magazine extends Model
     {
         parent::boot();
 
-        // Step 1: Assign temporary slug before insert to avoid UNIQUE error
         static::creating(function ($page) {
-            $token = Str::lower(Str::random(10));
-            $page->slug = 'tmp-' . $token;
-        });
+            // Use provided slug or derive from title
+            $baseSlug = $page->slug
+                ? Str::slug($page->slug)
+                : Str::slug($page->title);
 
-        // Step 2: After insert, update slug to use ID
-        static::created(function ($page) {
-            $baseSlug = Str::slug($page->title);
-            $finalSlug = $baseSlug . '-' . $page->id;
-
-            $page->updateQuietly([
-                'slug' => $finalSlug,
-            ]);
-        });
-
-        // Step 3: Updating existing magazine if title changes
-        static::updating(function ($page) {
-            if ($page->isDirty('title')) {
-                $page->slug = Str::slug($page->title) . '-' . $page->id;
+            // Fallback if title is also empty
+            if (empty($baseSlug)) {
+                $baseSlug = 'page-' . Str::lower(Str::random(6));
             }
+
+            $finalSlug = $baseSlug;
+            $counter = 1;
+
+            // Keep incrementing until unique (can't use ID yet, so use counter)
+            while (self::where('slug', $finalSlug)->exists()) {
+                $finalSlug = $baseSlug . '-' . $counter++;
+            }
+
+            $page->slug = $finalSlug;
+        });
+
+        static::updating(function ($page) {
+            $baseSlug = $page->isDirty('slug') && $page->slug
+                ? Str::slug($page->slug)
+                : Str::slug($page->title); 
+
+            $finalSlug = $baseSlug;
+            $counter = 1;
+
+            while (self::where('slug', $finalSlug)->where('id', '!=', $page->id)->exists()) {
+                $finalSlug = $baseSlug . '-' . $counter++;
+            }
+
+            $page->slug = $finalSlug;
         });
     }
 }

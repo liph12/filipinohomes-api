@@ -3,16 +3,12 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
-
+use App\Models\Office;
 class OfficeSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
-        DB::table('offices')->insert([
+        collect([
             ['id'=>1,'name'=>'Cebu Main','title'=>'Headquarters','contact'=>'Chijoh Yamson Iloida','phone'=>'09454858330 or (032) 254 8990','address'=>'133 MH Aznar St., Cebu City','created_at'=>'2026-01-05 20:29:42','updated_at'=>'2026-01-05 20:29:42'],
             ['id'=>2,'name'=>'OSMEÑA, CEBU CITY 2','title'=>'Branch Office','contact'=>'Maria Jesamy Nopal & Tzetel Malacarte & Joanna Gaspan','phone'=>'09462450274 or 09495532428 or 09453190175','address'=>'212 B- Jose Martinez Bldg., Osmeña Blvd., Cebu City','created_at'=>'2026-01-05 20:29:42','updated_at'=>'2026-01-05 20:29:42'],
             ['id'=>3,'name'=>'SAN NICHOLAS PROPER, CEBU CITY','title'=>'Branch Office','contact'=>'Engr. Fioralyn Rivera Tamarra','phone'=>'09152728445','address'=>'38 Figueroa St., San Nicholas Central, Cebu City','created_at'=>'2026-01-05 20:29:42','updated_at'=>'2026-01-05 20:29:42'],
@@ -74,6 +70,6 @@ class OfficeSeeder extends Seeder
             ['id'=>59,'name'=>'DAVAO CITY','title'=>'Branch Office','contact'=>'Jennison & Mary Joy Heramiz','phone'=>'0953-953-7958','address'=>'Rm 202, Esquina De Tavera Bldg., Tavera, V. Mapa St., Davao City','created_at'=>'2026-01-05 20:29:42','updated_at'=>'2026-01-05 20:29:42'],
             ['id'=>60,'name'=>'DAVAO CITY','title'=>'Branch Office','contact'=>'Alfad Songlan','phone'=>'0926-214-4315','address'=>'Door 3 Alyvea Bldg., Beside Bean Cafe in front of Holy Cross College of Davao, Sta. Ana Avenue, Davao City','created_at'=>'2026-01-05 20:29:42','updated_at'=>'2026-01-05 20:29:42'],
             ['id'=>61,'name'=>'DAVAO CITY','title'=>'Branch Office','contact'=>'Danilo & Leah Arches','phone'=>'0945-813-8293','address'=>'Door 2A, JTL Plaza 2, Bajada, Davao City','created_at'=>'2026-01-05 20:29:42','updated_at'=>'2026-01-05 20:29:42'],
-        ]);
+        ])->each(fn($office) => Office::create($office));
     }
 }
