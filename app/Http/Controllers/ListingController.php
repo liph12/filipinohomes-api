@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use App\Models\PropertySubtype;
+use App\Models\Property;
 
 class ListingController extends Controller
 {
@@ -19,6 +20,21 @@ class ListingController extends Controller
         $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class . ':admin')->only(['updateIsFeatured']);
+    }
+
+    public function listingsByLocation(Request $request)
+    {
+        $search = $request->input("search");
+        $terms = explode(' ', $search);
+        $locations = Property::where(function ($q) use ($terms) {
+            foreach ($terms as $w) {
+                $q->where(function ($sub) use ($w) {
+                    $sub->where('description', 'LIKE', "%{$w}%");
+                });
+            }
+        })->groupBy('address_id')->pluck('address')->limit(10)->get();
+
+        return response()->json($locations);
     }
     
     public function index(Request $request): ListingResourceCollection
