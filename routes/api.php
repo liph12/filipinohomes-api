@@ -43,7 +43,7 @@ Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
 Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
 Route::get('/posts/{slug}', [PostController::class, 'show']);
 Route::get('/offices', [OfficeController::class, 'index']);
-Route::get('/search-by-location', [ListingController::class, 'searchByLocation']);
+Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
 Route::get('/listings', [ListingController::class, 'index']); 
 Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
 Route::get('/listings/featured', [ListingController::class, 'featured']);
