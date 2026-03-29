@@ -27,14 +27,14 @@ class ListingController extends Controller
         $search = $request->input("search");
         $terms = explode(' ', $search);
     
-        $locations = Property::public()->select(
+        $locations = Property::select(
                 'properties.address_id',
                 'properties.address',
                 'barangays.name as barangay',
                 'cities.name as city',
                 'provinces.name as province',
                 DB::raw('COUNT(*) as total_properties')
-            )
+            )->whereHas('publicListing')
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
