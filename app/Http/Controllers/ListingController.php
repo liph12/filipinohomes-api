@@ -31,7 +31,8 @@ class ListingController extends Controller
                 'properties.address_id',
                 'barangays.name as barangay',
                 'cities.name as city',
-                'provinces.name as province'
+                'provinces.name as province',
+                DB::raw('COUNT(*) as total_properties')
             )
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
@@ -45,8 +46,9 @@ class ListingController extends Controller
             ->limit(10)
             ->get()
             ->map(fn($row) => [
-                'barangay_id' => $row->address_id,
-                'label'       => "{$row->barangay}, {$row->city}, {$row->province}",
+                'barangay_id'      => $row->address_id,
+                'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
+                'total_properties' => $row->total_properties,
             ]);
     
         return response()->json($locations);
