@@ -83,6 +83,46 @@ class ChatController extends Controller
 
         if ($existing) {
             $existing->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
+
+            // If the active conversation was rejected, allow re-inquiry by creating a new conversation
+            if ($existing->activeConversation && $existing->activeConversation->status === 'rejected') {
+                $isListing = $validated['type'] === 'listing';
+
+                DB::transaction(function () use ($existing, $validated, $user, $isListing) {
+                    $conversation = Conversation::create([
+                        'chat_id' => $existing->id,
+                        'status' => $isListing ? 'pending' : 'accepted',
+                        'agent_user_id' => $isListing ? $validated['target_user_id'] : null,
+                    ]);
+
+                    if ($isListing) {
+                        $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
+                        $attachments = [$user->id => ['last_read_at' => now()]];
+                        foreach ($adminUserIds as $adminId) {
+                            $attachments[$adminId] = ['last_read_at' => null];
+                        }
+                        $conversation->users()->attach($attachments);
+                    } else {
+                        $conversation->users()->attach([
+                            $user->id => ['last_read_at' => now()],
+                            $validated['target_user_id'] => ['last_read_at' => null],
+                        ]);
+                    }
+
+                    if (!empty($validated['message'])) {
+                        Message::create([
+                            'conversation_id' => $conversation->id,
+                            'user_id' => $user->id,
+                            'body' => $validated['message'],
+                            'type' => 'text',
+                        ]);
+                    }
+                });
+
+                $existing->touch();
+                $existing->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
+            }
+
             return new ChatResource($existing);
         }
 
