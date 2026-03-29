@@ -43,14 +43,21 @@ class ListingController extends Controller
                     $q->where('properties.address', 'LIKE', "%{$w}%");
                 }
             })
-            ->groupBy('properties.address')
+            ->groupBy(
+                'properties.address_id',
+                'properties.address',
+                'barangays.name',
+                'cities.name',
+                'provinces.name'
+            )
             ->orderByDesc('total_properties')
             ->limit(10)
             ->get()
             ->map(fn($row) => [
-                'barangay_id' => $row->address_id,
-                'address'     => $row->address,
-                'label'       => "{$row->barangay}, {$row->city}, {$row->province}",
+                'barangay_id'      => $row->address_id,
+                'address'          => $row->address,
+                'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
+                'total_properties' => $row->total_properties,
             ]);
     
         return response()->json($locations);
