@@ -43,6 +43,7 @@ class ListingController extends Controller
                 }
             })
             ->groupBy('properties.address_id', 'barangays.name', 'cities.name', 'provinces.name')
+            ->orderByDesc('total_properties')
             ->limit(10)
             ->get()
             ->map(fn($row) => [
