@@ -126,32 +126,39 @@ class Listing extends Model
             });
         });
 
-        if ($key_word = $request->input('key_word')) {
-            $array_words = explode(' ', $key_word);
-    
-            $query->whereHas('property', function($q) use($array_words){
-                $q->where(function ($q) use ($array_words) {
-                    foreach ($array_words as $w) {
-                        $q->where(function ($sub) use ($w) {
-                            $sub->where('description', 'LIKE', "%{$w}%");
-                        });
-                    }
+        if($request->input('ai') === 'true')
+        {
+            if ($key_word = $request->input('key_word')) {
+                $array_words = explode(' ', $key_word);
+        
+                $query->whereHas('property', function($q) use($array_words){
+                    $q->where(function ($q) use ($array_words) {
+                        foreach ($array_words as $w) {
+                            $q->where(function ($sub) use ($w) {
+                                $sub->where('description', 'LIKE', "%{$w}%");
+                            });
+                        }
+                    });
                 });
-            });
+            }
         }else{
             $search = $request->input('search') ?? '';
             $search = trim($request->input('search', ''));
 
             if (!empty($search)) {
-                $array_words = array_filter(explode(' ', $search));
-            
-                $query->where(function ($sub) use ($array_words) {
-                    foreach ($array_words as $w) {
-                        $sub->where('listings.name', 'LIKE', "%{$w}%");
-                    }
+                $terms = array_filter(explode(' ', $search));
+        
+                $query->whereHas('property', function($q) use($terms){
+                    $q->where(function ($q) use ($terms) {
+                        foreach ($terms as $w) {
+                            $q->where('address', 'LIKE', "%{$w}%");
+                        }
+                    });
                 });
             }
         }
+
+
 
         if ($categories = $request->input('categories')) {
             $cats = is_array($categories) ? $categories : explode(',', $categories);

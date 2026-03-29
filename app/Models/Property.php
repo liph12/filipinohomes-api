@@ -95,4 +95,9 @@ class Property extends Model
     {
         return $this->hasOne(NearbyFacility::class, 'property_id');
     }
+
+    public function publicListing()
+    {
+        return $this->hasOne(Listing::class, 'property_id')->public();
+    }
 }

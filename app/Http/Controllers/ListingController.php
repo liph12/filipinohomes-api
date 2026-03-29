@@ -11,14 +11,56 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use App\Models\PropertySubtype;
+use App\Models\Property;
 
 class ListingController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'listingsByLocation']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class . ':admin')->only(['updateIsFeatured']);
+    }
+
+    public function listingsByLocation(Request $request)
+    {
+        $search = $request->input("search");
+        $terms = explode(' ', $search);
+    
+        $locations = Property::select(
+                'properties.address_id',
+                'properties.address',
+                'barangays.name as barangay',
+                'cities.name as city',
+                'provinces.name as province',
+                DB::raw('COUNT(*) as total_properties')
+            )->whereHas('publicListing')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->where(function ($q) use ($terms) {
+                foreach ($terms as $w) {
+                    $q->where('properties.address', 'LIKE', "%{$w}%");
+                }
+            })
+            ->groupBy(
+                'properties.address_id',
+                'properties.address',
+                'barangays.name',
+                'cities.name',
+                'provinces.name'
+            )
+            ->orderByDesc('total_properties')
+            ->limit(10)
+            ->get()
+            ->map(fn($row) => [
+                'barangay_id'      => $row->address_id,
+                'address'          => $row->address,
+                'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
+                'total_properties' => $row->total_properties,
+            ]);
+    
+        return response()->json($locations);
     }
     
     public function index(Request $request): ListingResourceCollection

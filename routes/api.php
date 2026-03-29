@@ -43,6 +43,7 @@ Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
 Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
 Route::get('/posts/{slug}', [PostController::class, 'show']);
 Route::get('/offices', [OfficeController::class, 'index']);
+Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
 Route::get('/listings', [ListingController::class, 'index']); 
 Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
 Route::get('/listings/featured', [ListingController::class, 'featured']);
@@ -72,7 +73,7 @@ Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug'
 Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
 Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
 Route::get('/page/agents', [PageBuilderController::class, 'index']);
-   Route::get('/offices/{slug}', [OfficeController::class, 'show']);
+Route::get('/offices/{slug}', [OfficeController::class, 'show']);
 // Lightweight sitemap endpoints
 Route::get('sitemap/listings', [SitemapController::class, 'listings']);
 Route::get('sitemap/agents', [SitemapController::class, 'agents']);
