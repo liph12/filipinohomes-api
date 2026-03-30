@@ -30,7 +30,12 @@ use App\Http\Controllers\{
     PageBuilderController,
     ReactionController,
     SitemapController,
-    BackgroundJobController
+    BackgroundJobController,
+    AdCampaignController,
+    AdController,
+    AdSectionController,
+    AdPlacementController,
+    PublicAdController
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -89,6 +94,11 @@ Route::get('magazines', [MagazineController::class, 'index']);
 Route::get('magazines/{magazine}', [MagazineController::class, 'show']);
 Route::get('magazines/{magazine}/pdf', [MagazineController::class, 'streamPdf']);
 
+// Public ad routes
+Route::get('ads/section/{key}', [PublicAdController::class, 'show']);
+Route::post('ads/{id}/impression', [PublicAdController::class, 'trackImpression']);
+Route::post('ads/{id}/click', [PublicAdController::class, 'trackClick']);
+
 // Background Jobs
 Route::post('/listings/update-batch', [BackgroundJobController::class, 'execute']);
 
@@ -134,4 +144,11 @@ Route::middleware('auth:sanctum')->group(function(){
     Route::post('/offices', [OfficeController::class, 'store']);
     Route::patch('/offices/{office}', [OfficeController::class, 'update']);
     Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
+
+    // Ad management (admin)
+    Route::apiResource('ad-campaigns', AdCampaignController::class);
+    Route::apiResource('ads', AdController::class);
+    Route::apiResource('ad-sections', AdSectionController::class);
+    Route::apiResource('ad-placements', AdPlacementController::class);
+    Route::post('ad-placements/bulk', [AdPlacementController::class, 'bulkStore']);
 });
