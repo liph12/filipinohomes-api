@@ -49,7 +49,7 @@ class PublicAdController extends Controller
 
         $cacheKey = "{$deviceId}_{$id}_imp";
         $now = now('Asia/Manila');
-        $geo = $this->getGeoData($request);
+        $geo = $this->getGeoData();
 
         $analytics = AdAnalytics::firstOrCreate(
             [
@@ -95,7 +95,7 @@ class PublicAdController extends Controller
         $clickCacheKey = "{$deviceId}_{$id}_click";
         $now = now('Asia/Manila');
         $ttl = $this->getCacheTtl($ad);
-        $geo = $this->getGeoData($request);
+        $geo = $this->getGeoData();
 
         $lookupKeys = [
             'ad_id' => $id,
