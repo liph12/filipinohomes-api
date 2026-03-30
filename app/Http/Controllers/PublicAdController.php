@@ -9,6 +9,7 @@ use App\Http\Resources\AdResource;
 use App\Http\Resources\AdSectionResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 
 class PublicAdController extends Controller
 {
@@ -50,6 +51,7 @@ class PublicAdController extends Controller
 
         if (!Cache::has($cacheKey)) {
             $now = now('Asia/Manila');
+            $geo = $this->getGeoData($request);
 
             $analytics = AdAnalytics::firstOrCreate(
                 [
@@ -58,6 +60,9 @@ class PublicAdController extends Controller
                     'created_date_at' => $now->toDateString(),
                 ],
                 [
+                    'country' => $geo['country'],
+                    'state' => $geo['state'],
+                    'city' => $geo['city'],
                     'impressions' => 0,
                     'clicks' => 0,
                 ]
@@ -89,6 +94,15 @@ class PublicAdController extends Controller
         $clickCacheKey = "{$deviceId}_{$id}_click";
         $now = now('Asia/Manila');
         $ttl = $this->getCacheTtl($ad);
+        $geo = $this->getGeoData($request);
+
+        $geoDefaults = [
+            'country' => $geo['country'],
+            'state' => $geo['state'],
+            'city' => $geo['city'],
+            'impressions' => 0,
+            'clicks' => 0,
+        ];
 
         // If no impression was recorded yet, record it now
         if (!Cache::has($impCacheKey)) {
@@ -98,10 +112,7 @@ class PublicAdController extends Controller
                     'created_hour_at' => $now->format('H'),
                     'created_date_at' => $now->toDateString(),
                 ],
-                [
-                    'impressions' => 0,
-                    'clicks' => 0,
-                ]
+                $geoDefaults
             );
             $analytics->increment('impressions');
             $ad->increment('impressions');
@@ -119,10 +130,7 @@ class PublicAdController extends Controller
                     'created_hour_at' => $now->format('H'),
                     'created_date_at' => $now->toDateString(),
                 ],
-                [
-                    'impressions' => 0,
-                    'clicks' => 0,
-                ]
+                $geoDefaults
             );
             $analytics->increment('clicks');
             $ad->increment('clicks');
@@ -148,10 +156,7 @@ class PublicAdController extends Controller
                         'created_hour_at' => $currentHour,
                         'created_date_at' => $currentDate,
                     ],
-                    [
-                        'impressions' => 0,
-                        'clicks' => 0,
-                    ]
+                    $geoDefaults
                 );
                 $analytics->increment('clicks');
                 $ad->increment('clicks');
@@ -168,6 +173,35 @@ class PublicAdController extends Controller
             'success' => true,
             'click_url' => $ad->click_url,
         ]);
+    }
+
+    private function getGeoData(Request $request): array
+    {
+        $ip = $request->ip();
+        $cacheKey = "geo_ip_{$ip}";
+
+        return Cache::remember($cacheKey, now()->addHours(24), function () use ($ip) {
+            try {
+                $response = Http::timeout(2)->get("https://ipinfo.io/{$ip}/json");
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    return [
+                        'country' => $data['country'] ?? 'Unknown',
+                        'state' => $data['region'] ?? 'Unknown',
+                        'city' => $data['city'] ?? 'Unknown',
+                    ];
+                }
+            } catch (\Throwable) {
+                // Fallback on any failure
+            }
+
+            return [
+                'country' => 'PH',
+                'state' => 'Unknown',
+                'city' => 'Unknown',
+            ];
+        });
     }
 
     private function getCacheTtl(Ad $ad): \DateTimeInterface

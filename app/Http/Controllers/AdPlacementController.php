@@ -76,6 +76,29 @@ class AdPlacementController extends Controller
         return response()->json(['message' => 'Placement deleted', 'id' => $placement->id]);
     }
 
+    public function leaderboard(int $sectionId)
+    {
+        $placements = AdPlacement::where('ad_section_id', $sectionId)
+            ->whereHas('ad', fn($q) => $q->where('status', 'active')
+                ->whereHas('campaign', fn($cq) => $cq->active()))
+            ->with(['ad.campaign'])
+            ->orderByDesc('is_fixed')
+            ->orderByDesc('priority')
+            ->orderByDesc('weight')
+            ->get();
+
+        return response()->json([
+            'data' => $placements->map(fn($p) => [
+                'ad_id' => $p->ad_id,
+                'title' => $p->ad->title,
+                'priority' => $p->priority,
+                'weight' => $p->weight,
+                'is_fixed' => $p->is_fixed,
+                'campaign_name' => $p->ad->campaign?->name,
+            ])->values(),
+        ]);
+    }
+
     public function bulkStore(Request $request)
     {
         $validated = $request->validate([

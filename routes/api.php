@@ -143,8 +143,9 @@ Route::middleware('throttle:api')->group(function(){
         Route::apiResource('ad-campaigns', AdCampaignController::class);
         Route::apiResource('ads', AdController::class);
         Route::apiResource('ad-sections', AdSectionController::class);
-        Route::apiResource('ad-placements', AdPlacementController::class);
+        Route::get('ad-placements/leaderboard/{sectionId}', [AdPlacementController::class, 'leaderboard']);
         Route::post('ad-placements/bulk', [AdPlacementController::class, 'bulkStore']);
+        Route::apiResource('ad-placements', AdPlacementController::class);
     });
 });
 
