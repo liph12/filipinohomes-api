@@ -20,7 +20,9 @@ return new class extends Migration
             $table->string('created_hour_at')->default(null);
             $table->string('created_date_at')->default(null);
             $table->unsignedBigInteger('impressions')->default(0);
+            $table->unsignedBigInteger('total_impressions')->default(0);
             $table->unsignedBigInteger('clicks')->default(0);
+            $table->unsignedBigInteger('total_clicks')->default(0);
             $table->timestamps();
         });
     }

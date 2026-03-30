@@ -41,8 +41,6 @@ return new class extends Migration
             $table->string('click_url');
             $table->string('alt_text')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
-            $table->unsignedBigInteger('impressions')->default(0);
-            $table->unsignedBigInteger('clicks')->default(0);
             $table->timestamps();
             $table->softDeletes();
         });
