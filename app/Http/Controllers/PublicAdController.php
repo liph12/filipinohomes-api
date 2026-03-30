@@ -46,7 +46,7 @@ class PublicAdController extends Controller
             return response()->json(['success' => false, 'message' => 'device_id required'], 422);
         }
 
-        $cacheKey = "{$deviceId}_{$id}";
+        $cacheKey = "{$deviceId}_{$id}_imp";
 
         if (!Cache::has($cacheKey)) {
             $now = now('Asia/Manila');
@@ -67,10 +67,7 @@ class PublicAdController extends Controller
             $ad->increment('impressions');
 
             $ttl = $this->getCacheTtl($ad);
-            Cache::put($cacheKey, [
-                'hour' => $now->format('H'),
-                'date' => $now->toDateString(),
-            ], $ttl);
+            Cache::put($cacheKey, true, $ttl);
         }
 
         return response()->json(['success' => true]);
@@ -88,12 +85,13 @@ class PublicAdController extends Controller
             return response()->json(['success' => false, 'message' => 'device_id required'], 422);
         }
 
-        $cacheKey = "{$deviceId}_{$id}";
+        $impCacheKey = "{$deviceId}_{$id}_imp";
+        $clickCacheKey = "{$deviceId}_{$id}_click";
         $now = now('Asia/Manila');
-        $cached = Cache::get($cacheKey);
+        $ttl = $this->getCacheTtl($ad);
 
-        if (!$cached) {
-            // First encounter — record both impression and click
+        // If no impression was recorded yet, record it now
+        if (!Cache::has($impCacheKey)) {
             $analytics = AdAnalytics::firstOrCreate(
                 [
                     'ad_id' => $id,
@@ -106,13 +104,30 @@ class PublicAdController extends Controller
                 ]
             );
             $analytics->increment('impressions');
-            $analytics->increment('clicks');
-
             $ad->increment('impressions');
+            Cache::put($impCacheKey, true, $ttl);
+        }
+
+        // Click dedup logic
+        $cached = Cache::get($clickCacheKey);
+
+        if (!$cached) {
+            // First click — record it
+            $analytics = AdAnalytics::firstOrCreate(
+                [
+                    'ad_id' => $id,
+                    'created_hour_at' => $now->format('H'),
+                    'created_date_at' => $now->toDateString(),
+                ],
+                [
+                    'impressions' => 0,
+                    'clicks' => 0,
+                ]
+            );
+            $analytics->increment('clicks');
             $ad->increment('clicks');
 
-            $ttl = $this->getCacheTtl($ad);
-            Cache::put($cacheKey, [
+            Cache::put($clickCacheKey, [
                 'hour' => $now->format('H'),
                 'date' => $now->toDateString(),
             ], $ttl);
@@ -139,11 +154,9 @@ class PublicAdController extends Controller
                     ]
                 );
                 $analytics->increment('clicks');
-
                 $ad->increment('clicks');
 
-                $ttl = $this->getCacheTtl($ad);
-                Cache::put($cacheKey, [
+                Cache::put($clickCacheKey, [
                     'hour' => $currentHour,
                     'date' => $currentDate,
                 ], $ttl);
