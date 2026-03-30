@@ -10,7 +10,7 @@ class AdController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Ad::with(['campaign', 'placements.section']);
+        $query = Ad::with(['campaign', 'placements.section', 'analytics']);
 
         if ($campaignId = $request->input('campaign_id')) {
             $query->where('ad_campaign_id', $campaignId);
@@ -47,12 +47,12 @@ class AdController extends Controller
 
         $ad = Ad::create($validated);
 
-        return new AdResource($ad->load(['campaign', 'placements.section']));
+        return new AdResource($ad->load(['campaign', 'placements.section', 'analytics']));
     }
 
     public function show($id)
     {
-        $ad = Ad::with(['campaign', 'placements.section'])->findOrFail($id);
+        $ad = Ad::with(['campaign', 'placements.section', 'analytics'])->findOrFail($id);
 
         return new AdResource($ad);
     }
@@ -72,7 +72,7 @@ class AdController extends Controller
 
         $ad->update($validated);
 
-        return new AdResource($ad->load(['campaign', 'placements.section']));
+        return new AdResource($ad->load(['campaign', 'placements.section', 'analytics']));
     }
 
     public function destroy($id)

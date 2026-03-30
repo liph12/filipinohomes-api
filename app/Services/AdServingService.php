@@ -19,7 +19,7 @@ class AdServingService
         $placements = AdPlacement::where('ad_section_id', $section->id)
             ->whereHas('ad', fn($q) => $q->where('status', 'active')
                 ->whereHas('campaign', fn($cq) => $cq->active()))
-            ->with(['ad.campaign'])
+            ->with(['ad.campaign', 'ad.analytics'])
             ->orderByDesc('is_fixed')
             ->orderByDesc('priority')
             ->orderByDesc('weight')

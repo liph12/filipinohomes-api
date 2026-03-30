@@ -18,8 +18,6 @@ class Ad extends Model
         'click_url',
         'alt_text',
         'status',
-        'impressions',
-        'clicks',
     ];
 
     public function campaign()

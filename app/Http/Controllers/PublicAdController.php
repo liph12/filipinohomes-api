@@ -48,28 +48,29 @@ class PublicAdController extends Controller
         }
 
         $cacheKey = "{$deviceId}_{$id}_imp";
+        $now = now('Asia/Manila');
+        $geo = $this->getGeoData($request);
+
+        $analytics = AdAnalytics::firstOrCreate(
+            [
+                'ad_id' => $id,
+                'country' => $geo['country'],
+                'state' => $geo['state'],
+                'city' => $geo['city'],
+                'created_hour_at' => $now->format('H'),
+                'created_date_at' => $now->toDateString(),
+            ],
+            [
+                'impressions' => 0,
+                'total_impressions' => 0,
+                'clicks' => 0,
+                'total_clicks' => 0,
+            ]
+        );
+        $analytics->increment('total_impressions');
 
         if (!Cache::has($cacheKey)) {
-            $now = now('Asia/Manila');
-            $geo = $this->getGeoData($request);
-
-            $analytics = AdAnalytics::firstOrCreate(
-                [
-                    'ad_id' => $id,
-                    'country' => $geo['country'],
-                    'state' => $geo['state'],
-                    'city' => $geo['city'],
-                    'created_hour_at' => $now->format('H'),
-                    'created_date_at' => $now->toDateString(),
-                ],
-                [
-                    'impressions' => 0,
-                    'clicks' => 0,
-                ]
-            );
             $analytics->increment('impressions');
-
-            $ad->increment('impressions');
 
             $ttl = $this->getCacheTtl($ad);
             Cache::put($cacheKey, true, $ttl);
@@ -107,16 +108,21 @@ class PublicAdController extends Controller
 
         $defaults = [
             'impressions' => 0,
+            'total_impressions' => 0,
             'clicks' => 0,
+            'total_clicks' => 0,
         ];
 
         // If no impression was recorded yet, record it now
         if (!Cache::has($impCacheKey)) {
             $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
             $analytics->increment('impressions');
-            $ad->increment('impressions');
             Cache::put($impCacheKey, true, $ttl);
         }
+
+        // Always increment total_clicks
+        $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
+        $analytics->increment('total_clicks');
 
         // Click dedup logic
         $cached = Cache::get($clickCacheKey);
@@ -125,7 +131,6 @@ class PublicAdController extends Controller
             // First click — record it
             $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
             $analytics->increment('clicks');
-            $ad->increment('clicks');
 
             Cache::put($clickCacheKey, [
                 'hour' => $now->format('H'),
@@ -151,14 +156,13 @@ class PublicAdController extends Controller
                     $defaults
                 );
                 $analytics->increment('clicks');
-                $ad->increment('clicks');
 
                 Cache::put($clickCacheKey, [
                     'hour' => $currentHour,
                     'date' => $currentDate,
                 ], $ttl);
             }
-            // Same hour + same day → no action
+            // Same hour + same day → no action (total_clicks already incremented above)
         }
 
         return response()->json([

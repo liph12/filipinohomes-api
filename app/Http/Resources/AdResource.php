@@ -9,6 +9,11 @@ class AdResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $impressions = $this->analytics->sum('impressions');
+        $totalImpressions = $this->analytics->sum('total_impressions');
+        $clicks = $this->analytics->sum('clicks');
+        $totalClicks = $this->analytics->sum('total_clicks');
+
         return [
             'id' => $this->id,
             'ad_campaign_id' => $this->ad_campaign_id,
@@ -18,10 +23,12 @@ class AdResource extends JsonResource
             'click_url' => $this->click_url,
             'alt_text' => $this->alt_text,
             'status' => $this->status,
-            'impressions' => $this->impressions,
-            'clicks' => $this->clicks,
-            'ctr' => $this->impressions > 0
-                ? round(($this->clicks / $this->impressions) * 100, 2)
+            'impressions' => $impressions,
+            'total_impressions' => $totalImpressions,
+            'clicks' => $clicks,
+            'total_clicks' => $totalClicks,
+            'ctr' => $impressions > 0
+                ? round(($clicks / $impressions) * 100, 2)
                 : 0,
             'placements' => AdPlacementResource::collection($this->whenLoaded('placements')),
             'created_at' => $this->created_at?->toIso8601String(),

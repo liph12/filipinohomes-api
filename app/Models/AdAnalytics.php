@@ -14,7 +14,9 @@ class AdAnalytics extends Model
         'created_hour_at',
         'created_date_at',
         'impressions',
+        'total_impressions',
         'clicks',
+        'total_clicks',
     ];
 
     public function ad()
