@@ -10,6 +10,7 @@ use App\Services\User\LoginUserService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use App\Mail\LoginOtpMailer;
+use App\Mail\InquiryMailer;
 use Illuminate\Support\Facades\Mail;
 use App\Services\LeuterioreRealty\LrApiService;
 use App\Models\Agent;
@@ -17,6 +18,24 @@ use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller
 {
+    public function sendInquiry(Request $request)
+    {
+        $validated = $request->validate([
+            'name'    => 'required|string|max:255',
+            'email'   => 'required|email',
+            'message' => 'required|string|max:5000',
+        ]);
+            
+        Mail::to('marklawrince730@gmail.com')->send(new InquiryMailer(
+            $validated['name'],
+            $validated['email'],
+            $validated['message']
+        ));
+
+        return response()->json([
+            'message' => 'Inquiry sent successfully!'
+        ]);
+    }
     public function registerWithOtp(Request $request)
     {
         $validated = $request->validate([

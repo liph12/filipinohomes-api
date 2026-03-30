@@ -35,7 +35,7 @@ use App\Http\Controllers\{
     AdController,
     AdSectionController,
     AdPlacementController,
-    PublicAdController
+    PublicAdController,
 };
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
@@ -47,6 +47,7 @@ Route::middleware('throttle:auth')->group(function(){
 });
 
 Route::middleware('throttle:api')->group(function(){
+    Route::post('/inquiry', [UserController::class, 'sendInquiry']);
     Route::get('/blogs', [PostController::class, 'index']); 
     Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
     Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
