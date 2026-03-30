@@ -43,6 +43,7 @@ class PublicAdController extends Controller
         }
 
         $deviceId = $request->input('device_id');
+        
         if (!$deviceId) {
             return response()->json(['success' => false, 'message' => 'device_id required'], 422);
         }
@@ -173,29 +174,15 @@ class PublicAdController extends Controller
 
     private function getGeoData(Request $request): array
     {
-        $ip = $request->ip();
-        $cacheKey = "geo_ip_{$ip}";
+        $userInfo = $request->input("user_info");
+        $cacheKey = "geo_ip_{$userInfo['ip']}";
 
-        return Cache::remember($cacheKey, now()->addHours(24), function () use ($ip) {
-            try {
-                $response = Http::timeout(2)->get("https://ipinfo.io/{$ip}/json");
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    return [
-                        'country' => $data['country'] ?? 'Unknown',
-                        'state' => $data['region'] ?? 'Unknown',
-                        'city' => $data['city'] ?? 'Unknown',
-                    ];
-                }
-            } catch (\Throwable) {
-                // Fallback on any failure
-            }
+        return Cache::remember($cacheKey, now()->addHours(24), function () use ($userInfo) {
 
             return [
-                'country' => 'PH',
-                'state' => 'Unknown',
-                'city' => 'Unknown',
+                'country' => $userInfo['country'],
+                'state' => $userInfo['region'],
+                'city' => $userInfo['city'],
             ];
         });
     }
