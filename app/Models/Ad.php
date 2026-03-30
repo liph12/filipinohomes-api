@@ -38,4 +38,9 @@ class Ad extends Model
             ->withPivot('priority', 'weight', 'is_fixed')
             ->withTimestamps();
     }
+
+    public function analytics()
+    {
+        return $this->hasMany(AdAnalytics::class);
+    }
 }
