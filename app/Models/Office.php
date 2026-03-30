@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+
 class Office extends Model
 {
     use HasFactory;
@@ -30,34 +31,40 @@ class Office extends Model
         parent::boot();
 
         static::creating(function ($page) {
-            $token = Str::lower(Str::random(10));
-            $page->slug = 'tmp-' . $token;
-        });
+            // Use provided slug or derive from name
+            $baseSlug = $page->slug
+                ? Str::slug($page->slug)
+                : Str::slug($page->name);
 
-        static::created(function ($page) {
-            $baseSlug = Str::slug($page->name);
-            $finalSlug = $baseSlug;
-
-            if (self::where('slug', $baseSlug)->where('id', '!=', $page->id)->exists()) {
-                $finalSlug = $baseSlug . '-' . $page->id;
+            // Fallback if name is also empty
+            if (empty($baseSlug)) {
+                $baseSlug = 'page-' . Str::lower(Str::random(6));
             }
 
-            $page->updateQuietly([
-                'slug' => $finalSlug,
-            ]);
+            $finalSlug = $baseSlug;
+            $counter = 1;
+
+            // Keep incrementing until unique (can't use ID yet, so use counter)
+            while (self::where('slug', $finalSlug)->exists()) {
+                $finalSlug = $baseSlug . '-' . $counter++;
+            }
+
+            $page->slug = $finalSlug;
         });
 
         static::updating(function ($page) {
-            if ($page->isDirty('name')) {
-                $baseSlug = Str::slug($page->name);
-                $finalSlug = $baseSlug;
+            $baseSlug = $page->isDirty('slug') && $page->slug
+                ? Str::slug($page->slug)
+                : Str::slug($page->name);
 
-                if (self::where('slug', $baseSlug)->where('id', '!=', $page->id)->exists()) {
-                    $finalSlug = $baseSlug . '-' . $page->id;
-                }
+            $finalSlug = $baseSlug;
+            $counter = 1;
 
-                $page->slug = $finalSlug;
+            while (self::where('slug', $finalSlug)->where('id', '!=', $page->id)->exists()) {
+                $finalSlug = $baseSlug . '-' . $counter++;
             }
+
+            $page->slug = $finalSlug;
         });
     }
 }

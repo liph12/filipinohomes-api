@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+
 class Magazine extends Model
 {
     protected $table = 'magazines';
@@ -28,52 +29,40 @@ class Magazine extends Model
         parent::boot();
 
         static::creating(function ($page) {
-            if ($page->slug) {
-                $page->slug = Str::slug($page->slug);
-            } else {
-                $token = Str::lower(Str::random(10));
-                $page->slug = 'tmp-' . $token;
-            }
-        });
+            // Use provided slug or derive from title
+            $baseSlug = $page->slug
+                ? Str::slug($page->slug)
+                : Str::slug($page->title);
 
-        static::created(function ($page) {
-            if (!Str::startsWith($page->slug, 'tmp-')) {
-                $baseSlug = $page->slug;
-            } else {
-                $baseSlug = Str::slug($page->title);
+            // Fallback if title is also empty
+            if (empty($baseSlug)) {
+                $baseSlug = 'page-' . Str::lower(Str::random(6));
             }
 
             $finalSlug = $baseSlug;
+            $counter = 1;
 
-            if (self::where('slug', $baseSlug)->where('id', '!=', $page->id)->exists()) {
-                $finalSlug = $baseSlug . '-' . $page->id;
+            // Keep incrementing until unique (can't use ID yet, so use counter)
+            while (self::where('slug', $finalSlug)->exists()) {
+                $finalSlug = $baseSlug . '-' . $counter++;
             }
 
-            $page->updateQuietly([
-                'slug' => $finalSlug,
-            ]);
+            $page->slug = $finalSlug;
         });
 
         static::updating(function ($page) {
-            if ($page->isDirty('slug') && $page->slug) {
-                $baseSlug = Str::slug($page->slug);
-                $finalSlug = $baseSlug;
+            $baseSlug = $page->isDirty('slug') && $page->slug
+                ? Str::slug($page->slug)
+                : Str::slug($page->title); 
 
-                if (self::where('slug', $baseSlug)->where('id', '!=', $page->id)->exists()) {
-                    $finalSlug = $baseSlug . '-' . $page->id;
-                }
+            $finalSlug = $baseSlug;
+            $counter = 1;
 
-                $page->slug = $finalSlug;
-            } elseif ($page->isDirty('title') && !$page->isDirty('slug')) {
-                $baseSlug = Str::slug($page->title);
-                $finalSlug = $baseSlug;
-
-                if (self::where('slug', $baseSlug)->where('id', '!=', $page->id)->exists()) {
-                    $finalSlug = $baseSlug . '-' . $page->id;
-                }
-
-                $page->slug = $finalSlug;
+            while (self::where('slug', $finalSlug)->where('id', '!=', $page->id)->exists()) {
+                $finalSlug = $baseSlug . '-' . $counter++;
             }
+
+            $page->slug = $finalSlug;
         });
     }
 }
