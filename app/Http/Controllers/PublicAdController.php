@@ -49,7 +49,7 @@ class PublicAdController extends Controller
 
         $cacheKey = "{$deviceId}_{$id}_imp";
         $now = now('Asia/Manila');
-        $geo = $this->getGeoData();
+        $geo = $this->getGeoData($request);
 
         $analytics = AdAnalytics::firstOrCreate(
             [
@@ -95,7 +95,7 @@ class PublicAdController extends Controller
         $clickCacheKey = "{$deviceId}_{$id}_click";
         $now = now('Asia/Manila');
         $ttl = $this->getCacheTtl($ad);
-        $geo = $this->getGeoData();
+        $geo = $this->getGeoData($request);
 
         $lookupKeys = [
             'ad_id' => $id,
@@ -171,20 +171,23 @@ class PublicAdController extends Controller
         ]);
     }
 
-    private function getGeoData(): array
+    private function getGeoData(Request $request): array
     {
-        $response = Http::timeout(2)->get("https://ipinfo.io/json");
-        $data = $response->json();
-        $ip = $data['ip'];
+        $ip = $request->ip();
         $cacheKey = "geo_ip_{$ip}";
 
-        return Cache::remember($cacheKey, now()->addHours(24), function () use ($data) {
+        return Cache::remember($cacheKey, now()->addHours(24), function () use ($ip) {
             try {
-                return [
-                    'country' => $data['country'] ?? 'Unknown',
-                    'state' => $data['region'] ?? 'Unknown',
-                    'city' => $data['city'] ?? 'Unknown',
-                ];
+                $response = Http::timeout(2)->get("https://ipinfo.io/{$ip}/json");
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    return [
+                        'country' => $data['country'] ?? 'Unknown',
+                        'state' => $data['region'] ?? 'Unknown',
+                        'city' => $data['city'] ?? 'Unknown',
+                    ];
+                }
             } catch (\Throwable) {
                 // Fallback on any failure
             }
