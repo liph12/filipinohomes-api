@@ -25,7 +25,11 @@ class ListingController extends Controller
     public function listingsByLocation(Request $request)
     {
         $search = $request->input("search");
-        $terms = explode(' ', $search);
+        if (str_contains($search, '-')) {
+            $terms = explode('-', $search);
+        } else {
+            $terms = explode(' ', $search);
+        }
     
         $locations = Property::select(
                 'properties.address_id',
