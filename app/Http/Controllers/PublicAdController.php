@@ -3,9 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Ad;
+use App\Models\AdAnalytics;
 use App\Services\AdServingService;
 use App\Http\Resources\AdResource;
 use App\Http\Resources\AdSectionResource;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class PublicAdController extends Controller
 {
@@ -31,31 +34,138 @@ class PublicAdController extends Controller
         ]);
     }
 
-    public function trackImpression(int $id)
+    public function trackImpression(Request $request, int $id)
     {
         $ad = Ad::find($id);
         if (!$ad) {
             return response()->json(['message' => 'Ad not found'], 404);
         }
 
-        $ad->increment('impressions');
+        $deviceId = $request->input('device_id');
+        if (!$deviceId) {
+            return response()->json(['success' => false, 'message' => 'device_id required'], 422);
+        }
+
+        $cacheKey = "{$deviceId}_{$id}";
+
+        if (!Cache::has($cacheKey)) {
+            $now = now('Asia/Manila');
+
+            $analytics = AdAnalytics::firstOrCreate(
+                [
+                    'ad_id' => $id,
+                    'created_hour_at' => $now->format('H'),
+                    'created_date_at' => $now->toDateString(),
+                ],
+                [
+                    'impressions' => 0,
+                    'clicks' => 0,
+                ]
+            );
+            $analytics->increment('impressions');
+
+            $ad->increment('impressions');
+
+            $ttl = $this->getCacheTtl($ad);
+            Cache::put($cacheKey, [
+                'hour' => $now->format('H'),
+                'date' => $now->toDateString(),
+            ], $ttl);
+        }
 
         return response()->json(['success' => true]);
     }
 
-    public function trackClick(int $id)
+    public function trackClick(Request $request, int $id)
     {
         $ad = Ad::find($id);
         if (!$ad) {
             return response()->json(['message' => 'Ad not found'], 404);
         }
 
-        $ad->increment('clicks');
+        $deviceId = $request->input('device_id');
+        if (!$deviceId) {
+            return response()->json(['success' => false, 'message' => 'device_id required'], 422);
+        }
+
+        $cacheKey = "{$deviceId}_{$id}";
+        $now = now('Asia/Manila');
+        $cached = Cache::get($cacheKey);
+
+        if (!$cached) {
+            // First encounter — record both impression and click
+            $analytics = AdAnalytics::firstOrCreate(
+                [
+                    'ad_id' => $id,
+                    'created_hour_at' => $now->format('H'),
+                    'created_date_at' => $now->toDateString(),
+                ],
+                [
+                    'impressions' => 0,
+                    'clicks' => 0,
+                ]
+            );
+            $analytics->increment('impressions');
+            $analytics->increment('clicks');
+
+            $ad->increment('impressions');
+            $ad->increment('clicks');
+
+            $ttl = $this->getCacheTtl($ad);
+            Cache::put($cacheKey, [
+                'hour' => $now->format('H'),
+                'date' => $now->toDateString(),
+            ], $ttl);
+        } else {
+            $cachedHour = $cached['hour'];
+            $cachedDate = $cached['date'];
+            $currentHour = $now->format('H');
+            $currentDate = $now->toDateString();
+
+            $sameHour = $cachedHour === $currentHour;
+            $sameDay = $cachedDate === $currentDate;
+
+            if (!$sameHour || !$sameDay) {
+                // Different hour OR different day — allow click
+                $analytics = AdAnalytics::firstOrCreate(
+                    [
+                        'ad_id' => $id,
+                        'created_hour_at' => $currentHour,
+                        'created_date_at' => $currentDate,
+                    ],
+                    [
+                        'impressions' => 0,
+                        'clicks' => 0,
+                    ]
+                );
+                $analytics->increment('clicks');
+
+                $ad->increment('clicks');
+
+                $ttl = $this->getCacheTtl($ad);
+                Cache::put($cacheKey, [
+                    'hour' => $currentHour,
+                    'date' => $currentDate,
+                ], $ttl);
+            }
+            // Same hour + same day → no action
+        }
 
         return response()->json([
             'success' => true,
             'click_url' => $ad->click_url,
         ]);
     }
-}
 
+    private function getCacheTtl(Ad $ad): \DateTimeInterface
+    {
+        $endsAt = $ad->campaign?->ends_at;
+
+        if ($endsAt && $endsAt->isFuture()) {
+            return $endsAt;
+        }
+
+        // Fallback: 30 days if no campaign end date
+        return now('Asia/Manila')->addDays(30);
+    }
+}
