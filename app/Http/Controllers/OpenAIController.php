@@ -199,9 +199,9 @@ class OpenAIController extends Controller
         if ($limitResponse->getStatusCode() !== 200) {
             return $limitResponse;
         }
-        $clientIp = $request->ip();
+        $ipInfo = Http::get('https://ipinfo.io/json');
         $geoResponse = Http::get('https://api.leuteriorealty.com/core-system/v1/public/api/user-info', [
-            'ip' => $clientIp
+            'ip' => $ipInfo['ip']
         ]);
         $geoData = $geoResponse->json();
         $country = $geoData['country'];
