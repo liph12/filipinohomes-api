@@ -56,13 +56,13 @@ class PublicAdController extends Controller
             $analytics = AdAnalytics::firstOrCreate(
                 [
                     'ad_id' => $id,
+                    'country' => $geo['country'],
+                    'state' => $geo['state'],
+                    'city' => $geo['city'],
                     'created_hour_at' => $now->format('H'),
                     'created_date_at' => $now->toDateString(),
                 ],
                 [
-                    'country' => $geo['country'],
-                    'state' => $geo['state'],
-                    'city' => $geo['city'],
                     'impressions' => 0,
                     'clicks' => 0,
                 ]
@@ -96,24 +96,23 @@ class PublicAdController extends Controller
         $ttl = $this->getCacheTtl($ad);
         $geo = $this->getGeoData($request);
 
-        $geoDefaults = [
+        $lookupKeys = [
+            'ad_id' => $id,
             'country' => $geo['country'],
             'state' => $geo['state'],
             'city' => $geo['city'],
+            'created_hour_at' => $now->format('H'),
+            'created_date_at' => $now->toDateString(),
+        ];
+
+        $defaults = [
             'impressions' => 0,
             'clicks' => 0,
         ];
 
         // If no impression was recorded yet, record it now
         if (!Cache::has($impCacheKey)) {
-            $analytics = AdAnalytics::firstOrCreate(
-                [
-                    'ad_id' => $id,
-                    'created_hour_at' => $now->format('H'),
-                    'created_date_at' => $now->toDateString(),
-                ],
-                $geoDefaults
-            );
+            $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
             $analytics->increment('impressions');
             $ad->increment('impressions');
             Cache::put($impCacheKey, true, $ttl);
@@ -124,14 +123,7 @@ class PublicAdController extends Controller
 
         if (!$cached) {
             // First click — record it
-            $analytics = AdAnalytics::firstOrCreate(
-                [
-                    'ad_id' => $id,
-                    'created_hour_at' => $now->format('H'),
-                    'created_date_at' => $now->toDateString(),
-                ],
-                $geoDefaults
-            );
+            $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
             $analytics->increment('clicks');
             $ad->increment('clicks');
 
@@ -152,11 +144,11 @@ class PublicAdController extends Controller
                 // Different hour OR different day — allow click
                 $analytics = AdAnalytics::firstOrCreate(
                     [
-                        'ad_id' => $id,
+                        ...$lookupKeys,
                         'created_hour_at' => $currentHour,
                         'created_date_at' => $currentDate,
                     ],
-                    $geoDefaults
+                    $defaults
                 );
                 $analytics->increment('clicks');
                 $ad->increment('clicks');
