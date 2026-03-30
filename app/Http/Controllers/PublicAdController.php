@@ -58,3 +58,4 @@ class PublicAdController extends Controller
         ]);
     }
 }
+
