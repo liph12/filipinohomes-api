@@ -74,6 +74,8 @@ Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showB
 Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
 Route::get('/page/agents', [PageBuilderController::class, 'index']);
 Route::get('/offices/{slug}', [OfficeController::class, 'show']);
+Route::get('/__dev__/__admins__/', [AgentController::class, 'admins']);
+
 // Lightweight sitemap endpoints
 Route::get('sitemap/listings', [SitemapController::class, 'listings']);
 Route::get('sitemap/agents', [SitemapController::class, 'agents']);

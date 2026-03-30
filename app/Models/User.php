@@ -56,6 +56,13 @@ class User extends Authenticatable
         return $this->belongsTo(Role::class, 'role_id');
     }
 
+    public function scopeAdmin($q)
+    {
+        return $q->whereHas('role', function($sub){
+            $sub->where('name', 'admin');
+        });
+    }
+
     public function agent()
     {
         return $this->hasOne(Agent::class, 'user_id');

@@ -158,8 +158,6 @@ class Listing extends Model
             }
         }
 
-
-
         if ($categories = $request->input('categories')) {
             $cats = is_array($categories) ? $categories : explode(',', $categories);
             $query->whereHas('category', fn ($q) => $q->whereIn('name', $cats));

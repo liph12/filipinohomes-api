@@ -6,6 +6,7 @@ use App\Models\Agent;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
 use App\Http\Resources\UserResource;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 
@@ -33,6 +34,13 @@ class AgentController extends Controller
         return new AgentResourceCollection(
             $query->orderByDesc('listings_count')->paginate(12)
         );
+    }
+
+    public function admins()
+    {
+        $adminIds = User::admin()->pluck('id')->get();
+
+        return response()->json($adminIds);
     }
 
     public function statistics(Request $request)
