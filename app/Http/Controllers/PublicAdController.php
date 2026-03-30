@@ -171,23 +171,20 @@ class PublicAdController extends Controller
         ]);
     }
 
-    private function getGeoData(Request $request): array
+    private function getGeoData(): array
     {
-        $ip = $request->ip();
+        $response = Http::timeout(2)->get("https://ipinfo.io/json");
+        $data = $response->json();
+        $ip = $data['ip'];
         $cacheKey = "geo_ip_{$ip}";
 
-        return Cache::remember($cacheKey, now()->addHours(24), function () use ($ip) {
+        return Cache::remember($cacheKey, now()->addHours(24), function () use ($data) {
             try {
-                $response = Http::timeout(2)->get("https://ipinfo.io/{$ip}/json");
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    return [
-                        'country' => $data['country'] ?? 'Unknown',
-                        'state' => $data['region'] ?? 'Unknown',
-                        'city' => $data['city'] ?? 'Unknown',
-                    ];
-                }
+                return [
+                    'country' => $data['country'] ?? 'Unknown',
+                    'state' => $data['region'] ?? 'Unknown',
+                    'city' => $data['city'] ?? 'Unknown',
+                ];
             } catch (\Throwable) {
                 // Fallback on any failure
             }
