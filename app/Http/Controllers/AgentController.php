@@ -38,7 +38,7 @@ class AgentController extends Controller
 
     public function admins()
     {
-        $adminIds = User::admin()->pluck('id')->get();
+        $adminIds = User::query()->admin()->pluck('id')->get();
 
         return response()->json($adminIds);
     }
