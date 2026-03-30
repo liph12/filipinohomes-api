@@ -19,7 +19,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*'],
+    'allowed_origins' => ['http://localhost:8713','https://beta.filipinohomes.com','https://filipinohomes.vercel.app'],
 
     'allowed_origins_patterns' => [],
 
