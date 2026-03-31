@@ -103,7 +103,6 @@ Route::middleware('throttle:api')->group(function(){
     Route::get('/ads/section/{key}', [PublicAdController::class, 'show']);
     Route::post('/ads/{id}/impression', [PublicAdController::class, 'trackImpression']);
     Route::post('/ads/{id}/click', [PublicAdController::class, 'trackClick']);
-    Route::get('/ads/analytics/{group}', [PublicAdController::class, 'getAnalytics']);
 
     Route::middleware('auth:sanctum')->group(function(){
         Route::get('/authenticate', [UserController::class, 'authenticate']);
@@ -149,6 +148,7 @@ Route::middleware('throttle:api')->group(function(){
         Route::get('ad-placements/leaderboard/{sectionId}', [AdPlacementController::class, 'leaderboard']);
         Route::post('ad-placements/bulk', [AdPlacementController::class, 'bulkStore']);
         Route::apiResource('ad-placements', AdPlacementController::class);
+        Route::get('/ads/analytics/{group}', [PublicAdController::class, 'getAnalytics']);
     });
 });
 
