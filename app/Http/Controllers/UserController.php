@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Mail;
 use App\Services\LeuterioreRealty\LrApiService;
 use App\Models\Agent;
 use Illuminate\Support\Facades\DB;
+use App\Models\UserInfo;
 
 class UserController extends Controller
 {
@@ -271,6 +272,7 @@ class UserController extends Controller
 
     public function authRequestVerifyOtp(Request $request)
     {
+        $userInfo = $request->input('user_info');
         $verified = User::where([['email', $request->email], ['verification', $request->otp]])->first();
 
         if (!$verified) {
@@ -278,6 +280,13 @@ class UserController extends Controller
                 'message' => 'Invalid one time pin.'
             ], 403);
         }
+
+        $userInfo['user_id'] = $verified->id;
+        
+        UserInfo::updateOrCreate(
+            ['user_id' => $verified->id], // condition
+            $userInfo
+        );
 
         if (!$verified->remember_token) {
             $token = $verified->createToken('API Token')->plainTextToken;
