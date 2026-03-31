@@ -29,7 +29,10 @@ class UserController extends Controller
         Mail::to('marklawrince730@gmail.com')->send(new InquiryMailer(
             $validated['name'],
             $validated['email'],
-            $validated['message']
+            $validated['message'],
+            [
+                ['email' => env('MAIL_CC')],
+            ]
         ));
 
         return response()->json([
