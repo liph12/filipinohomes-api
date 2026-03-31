@@ -435,6 +435,91 @@ class ListingController extends Controller
         return response()->json($statistics);
     }
 
+    /**
+     * Status totals (rented/sold/leased) grouped by status_change_date.
+     * Mirrors /user/dashboard auth scope; admin = all, agent = own listings.
+     * Query params:
+     * - date_start (YYYY-MM-DD)
+     * - date_end   (YYYY-MM-DD)
+     * - granularity: day|month (default: day)
+     */
+public function dashboardStatusByDate(Request $request)
+{
+    $user    = $request->user();
+    $isAdmin = $user->role->name === 'admin';
+
+    $start    = $request->input('date_start') ?: '2024-01-01';
+    $end      = $request->input('date_end')   ?: date('Y-m-d');
+    $gran     = $request->query('granularity', 'day');
+    $statuses = ['rented', 'sold', 'leased'];
+
+    $dateExpr = $gran === 'month'
+        ? DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m-01') as date")
+        : DB::raw('DATE(properties.status_change_date) as date');
+
+    $groupByRaw = $gran === 'month'
+        ? "DATE_FORMAT(properties.status_change_date, '%Y-%m-01'), properties.status"
+        : "DATE(properties.status_change_date), properties.status";
+
+    $orderByRaw = $gran === 'month'
+        ? "DATE_FORMAT(properties.status_change_date, '%Y-%m-01')"
+        : "DATE(properties.status_change_date)";
+
+    $query = DB::table('properties')
+        ->select([$dateExpr, 'properties.status', DB::raw('COUNT(*) as count')])
+        ->whereIn('properties.status', $statuses)
+        ->whereNotNull('properties.status_change_date')
+        ->whereBetween(DB::raw('DATE(properties.status_change_date)'), [$start, $end]);
+
+    if (!$isAdmin) {
+        $agentId = $user->agent->id ?? null;
+        if ($agentId) {
+            $query->join('listings', 'listings.property_id', '=', 'properties.id')
+                  ->where('listings.agent_id', $agentId);
+        } else {
+            return response()->json([
+                'data'   => [],
+                'totals' => ['rented' => 0, 'sold' => 0, 'leased' => 0],
+                'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
+            ]);
+        }
+    }
+
+    $rows = $query
+        ->groupByRaw($groupByRaw)
+        ->orderByRaw($orderByRaw)
+        ->get();
+
+    $byDate = [];
+    $totals = array_fill_keys($statuses, 0);
+
+    foreach ($rows as $row) {
+        $d = (string) $row->date;
+        if (!isset($byDate[$d])) {
+            $byDate[$d] = array_merge(['date' => $d], array_fill_keys($statuses, 0), ['total' => 0]);
+        }
+        $st = (string) $row->status;
+        $ct = (int) $row->count;
+        if (in_array($st, $statuses, true)) {
+            $byDate[$d][$st] += $ct;
+            $byDate[$d]['total'] += $ct;
+            $totals[$st] += $ct;
+        }
+    }
+
+    ksort($byDate);
+
+    return response()->json([
+        'data'   => array_values($byDate),
+        'totals' => $totals,
+        'meta'   => [
+            'granularity' => $gran,
+            'from'        => $start,
+            'to'          => $end,
+        ],
+    ]);
+}
+
     public function updateVisibility(Request $request, Listing $listing)
     {
         $this->authorize('update', $listing);
