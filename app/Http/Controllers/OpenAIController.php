@@ -199,12 +199,7 @@ class OpenAIController extends Controller
         if ($limitResponse->getStatusCode() !== 200) {
             return $limitResponse;
         }
-        $ipInfo = Http::get('https://ipinfo.io/json');
-        $geoResponse = Http::get('https://api.leuteriorealty.com/core-system/v1/public/api/user-info', [
-            'ip' => $ipInfo['ip']
-        ]);
-        $geoData = $geoResponse->json();
-        $country = $geoData['country'];
+
         $userId = Auth::user()->id;
         $userLog = AiSearchLog::where('user_id', $userId)->first();
         $mon = date('Y-m');
@@ -221,9 +216,7 @@ class OpenAIController extends Controller
         }else{
             $log = [
                 'user_id' => Auth::user()->id,
-                'user_info' => $geoData,
                 'searches' => [$request->q],
-                'country' => $country,
                 'month' => $mon,
             ];
             AiSearchLog::create($log);

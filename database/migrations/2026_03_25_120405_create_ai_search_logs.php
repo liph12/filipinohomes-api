@@ -16,8 +16,6 @@ return new class extends Migration
             $table->foreignId('user_id')
                 ->constrained('users')
                 ->restrictOnDelete();
-            $table->json('user_info')->nullable();
-            $table->string('country')->nullable();
             $table->json('searches')->nullable();
             $table->string('month')->nullable();
             $table->timestamps();
