@@ -8,14 +8,11 @@ class AiSearchLog extends Model
 {
     protected $fillable = [
         'user_id',
-        'user_info',
         'searches',
-        'country',
         'month'
     ];
 
     protected $casts = [
-        'user_info' => 'json',
         'searches' => 'array'
     ];
 }
