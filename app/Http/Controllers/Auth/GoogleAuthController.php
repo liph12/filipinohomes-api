@@ -10,6 +10,7 @@ use App\Services\LeuterioreRealty\LrApiService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Models\UserInfo;
 
 class GoogleAuthController extends Controller
 {
@@ -21,6 +22,7 @@ class GoogleAuthController extends Controller
 
         $googleService = new GoogleTokenService();
         $googleUser = $googleService->verify($request->access_token);
+        $userInfo = $request->input('user_info');
 
         if (!$googleUser) {
             return response()->json([
@@ -101,6 +103,13 @@ class GoogleAuthController extends Controller
                 return $user;
             });
         }
+
+        $userInfo['user_id'] = $user->id;
+        
+        UserInfo::updateOrCreate(
+            ['user_id' => $user->id],
+            $userInfo
+        );
 
         $token = $this->getOrCreateToken($user);
 

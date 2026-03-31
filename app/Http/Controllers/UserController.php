@@ -282,7 +282,7 @@ class UserController extends Controller
         }
 
         $userInfo['user_id'] = $verified->id;
-        
+
         UserInfo::updateOrCreate(
             ['user_id' => $verified->id], // condition
             $userInfo
@@ -306,6 +306,7 @@ class UserController extends Controller
 
     public function devLogin(Request $request)
     {
+        $userInfo = $request->input('user_info');
         if (app()->environment() !== 'local') {
             abort(404);
         }
@@ -326,6 +327,13 @@ class UserController extends Controller
                 'verification' => 'verified',
             ]);
         }
+
+        $userInfo['user_id'] = $user->id;
+        
+        UserInfo::updateOrCreate(
+            ['user_id' => $user->id],
+            $userInfo
+        );
 
         if (!$user->remember_token) {
             $token = $user->createToken('API Token')->plainTextToken;
