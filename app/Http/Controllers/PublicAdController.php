@@ -9,7 +9,6 @@ use App\Http\Resources\AdResource;
 use App\Http\Resources\AdSectionResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 
 class PublicAdController extends Controller
 {
@@ -197,5 +196,13 @@ class PublicAdController extends Controller
 
         // Fallback: 30 days if no campaign end date
         return now('Asia/Manila')->addDays(30);
+    }
+
+    public function getAnalytics(Request $request)
+    {
+        $gr = $request->group;
+        $hours = Ad::getAnalytics($gr)->get();
+
+        return response()->json($hours);
     }
 }

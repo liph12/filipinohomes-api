@@ -99,9 +99,10 @@ Route::middleware('throttle:api')->group(function(){
     Route::get('magazines/{magazine}/pdf', [MagazineController::class, 'streamPdf']);
     
     // Public ad routes
-    Route::get('ads/section/{key}', [PublicAdController::class, 'show']);
-    Route::post('ads/{id}/impression', [PublicAdController::class, 'trackImpression']);
-    Route::post('ads/{id}/click', [PublicAdController::class, 'trackClick']);
+    Route::get('/ads/section/{key}', [PublicAdController::class, 'show']);
+    Route::post('/ads/{id}/impression', [PublicAdController::class, 'trackImpression']);
+    Route::post('/ads/{id}/click', [PublicAdController::class, 'trackClick']);
+    Route::get('/ads/analytics/{group}', [PublicAdController::class, 'getAnalytics']);
 
     Route::middleware('auth:sanctum')->group(function(){
         Route::get('/authenticate', [UserController::class, 'authenticate']);
