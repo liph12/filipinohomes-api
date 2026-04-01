@@ -7,9 +7,9 @@
                         <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;width:100%;max-width:640px;background-color:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 18px 48px rgba(15, 23, 42, 0.12);">
                             <tbody>
                                 <tr>
-                                    <td align="center" valign="top" style="background:#2654A5;padding:44px 32px 36px;border-bottom:1px solid #1f478b;">
-                                        <img align="center" alt="" src="https://dev.filipinohomes.com/assets/fh_logo_white-Bvw27naa.png"
-                                            width="350" style="max-width:350px;width:100%;padding-bottom:0;display:inline !important;vertical-align:bottom;border:0;height:auto;outline:none;text-decoration:none;" class="CToWUd a6T" data-bit="iit" tabindex="0" />
+                                    <td align="center" valign="top" style="background:#245ee0;padding:44px 32px 36px;border-bottom:1px solid #1f478b;">
+                                        <img align="center" alt="Filipino Homes" src="{{ $message->embed(storage_path('app/public/fh-logo-white-copy.png')) }}"
+                                            width="350" style="max-width:350px;width:100%;padding-bottom:0;display:inline !important;vertical-align:bottom;border:0;height:auto;outline:none;text-decoration:none;" />
                                     </td>
                                 </tr>
                                 <tr>
