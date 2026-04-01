@@ -11,13 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('ai_search_logs', function (Blueprint $table) {
+        Schema::create('user_info', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')
-                ->constrained('users')
-                ->restrictOnDelete();
-            $table->json('searches')->nullable();
-            $table->string('month')->nullable();
+            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->json('device')->default(null);
+            $table->string('country')->default('Unknown');
+            $table->string('state')->default('Unknown');
+            $table->string('city')->default('Unknown');
             $table->timestamps();
         });
     }
@@ -27,6 +27,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('ai_search_logs');
+        Schema::dropIfExists('user_info');
     }
 };

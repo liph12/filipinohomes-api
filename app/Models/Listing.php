@@ -163,6 +163,10 @@ class Listing extends Model
             $query->whereHas('category', fn ($q) => $q->whereIn('name', $cats));
         }
 
+        if ($type_str = $request->input('type_str')) {
+            $query->whereHas('property.propertyAttribute.subtype.type', fn ($q) => $q->where('name', 'LIKE', "%{$type_str}%"));
+        }
+
         if ($subtypes = $request->input('subtypes')) {
             $ids = is_array($subtypes) ? $subtypes : explode(',', $subtypes);
             $query->whereHas('property.propertyAttribute.subtype', fn ($q) => $q->whereIn('id', $ids));

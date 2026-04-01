@@ -44,6 +44,8 @@ Route::middleware('throttle:auth')->group(function(){
     Route::post('/login', [UserController::class, 'login']);
     Route::post('/auth/google', [GoogleAuthController::class, 'authenticate']);
     Route::post('/auth/dev-login', [UserController::class, 'devLogin']);
+    Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
+    Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
 });
 
 Route::middleware('throttle:api')->group(function(){
@@ -63,8 +65,6 @@ Route::middleware('throttle:api')->group(function(){
     Route::get('/property_subtypes', [PropertySubtypeController::class, 'index']);
     Route::get('/furnishings', [FurnishingController::class, 'index']);
     Route::get('/amenities', [AmenityController::class, 'index']);
-    Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
-    Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
     Route::get('agents', [AgentController::class, 'index']);
     Route::get('agents/{id}', [AgentController::class, 'show']);
     Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);

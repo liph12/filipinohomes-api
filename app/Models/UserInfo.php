@@ -4,15 +4,18 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class AiSearchLog extends Model
+class UserInfo extends Model
 {
+    protected $table = 'user_info';
     protected $fillable = [
         'user_id',
-        'searches',
-        'month'
+        'device',
+        'country',
+        'state',
+        'city'
     ];
 
     protected $casts = [
-        'searches' => 'array'
+        'device' => 'json'
     ];
 }

@@ -9,23 +9,57 @@ use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Cache;
 use App\Mail\LoginOtpMailer;
 use App\Mail\InquiryMailer;
 use Illuminate\Support\Facades\Mail;
 use App\Services\LeuterioreRealty\LrApiService;
 use App\Models\Agent;
 use Illuminate\Support\Facades\DB;
+use App\Models\UserInfo;
+use App\Models\Inquiry;
 
 class UserController extends Controller
 {
     public function sendInquiry(Request $request)
     {
+        $deviceId = $request->input('device_id');
+
+        if (!$deviceId) {
+            return response()->json([
+                'message' => 'Device ID is required.'
+            ], 400);
+        }
+
+        $cacheKey = "inquiry_attempts:{$deviceId}";
+        $banKey   = "inquiry_ban:{$deviceId}";
+
+        if (Cache::has($banKey)) {
+            return response()->json([
+                'message' => 'Too many requests. Try again after 5 minutes.'
+            ], 429);
+        }
+
+        $attempts = Cache::get($cacheKey, 0);
+
+        if ($attempts >= 5) {
+            Cache::put($banKey, true, now()->addMinutes(5));
+
+            return response()->json([
+                'message' => 'You are temporarily blocked for 5 minutes.'
+            ], 429);
+        }
+
+        Cache::put($cacheKey, $attempts + 1, now()->addMinute());
+
+        $userInfo = $request->input('user_info');
+
         $validated = $request->validate([
             'name'    => 'required|string|max:255',
             'email'   => 'required|email',
             'message' => 'required|string|max:5000',
         ]);
-            
+
         Mail::to('marklawrince730@gmail.com')->send(new InquiryMailer(
             $validated['name'],
             $validated['email'],
@@ -35,10 +69,21 @@ class UserController extends Controller
             ]
         ));
 
+        Inquiry::create([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'message' => $validated['message'],
+            'device' => $userInfo['device'],
+            'country' => $userInfo['country'],
+            'state' => $userInfo['state'],
+            'city' => $userInfo['city']
+        ]);
+
         return response()->json([
             'message' => 'Inquiry sent successfully!'
         ]);
     }
+    
     public function registerWithOtp(Request $request)
     {
         $validated = $request->validate([
@@ -271,6 +316,7 @@ class UserController extends Controller
 
     public function authRequestVerifyOtp(Request $request)
     {
+        $userInfo = $request->input('user_info');
         $verified = User::where([['email', $request->email], ['verification', $request->otp]])->first();
 
         if (!$verified) {
@@ -278,6 +324,13 @@ class UserController extends Controller
                 'message' => 'Invalid one time pin.'
             ], 403);
         }
+
+        $userInfo['user_id'] = $verified->id;
+
+        UserInfo::updateOrCreate(
+            ['user_id' => $verified->id], // condition
+            $userInfo
+        );
 
         if (!$verified->remember_token) {
             $token = $verified->createToken('API Token')->plainTextToken;
@@ -297,6 +350,7 @@ class UserController extends Controller
 
     public function devLogin(Request $request)
     {
+        $userInfo = $request->input('user_info');
         if (app()->environment() !== 'local') {
             abort(404);
         }
@@ -317,6 +371,13 @@ class UserController extends Controller
                 'verification' => 'verified',
             ]);
         }
+
+        $userInfo['user_id'] = $user->id;
+        
+        UserInfo::updateOrCreate(
+            ['user_id' => $user->id],
+            $userInfo
+        );
 
         if (!$user->remember_token) {
             $token = $user->createToken('API Token')->plainTextToken;
