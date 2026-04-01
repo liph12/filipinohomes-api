@@ -146,7 +146,7 @@ class Listing extends Model
             $search = trim($request->input('search', ''));
             $address = $request->input('address');
 
-            if(!empty($search))
+            if(!empty($address))
             {
                 $query->whereHas('property', function($q) use($address){
                     $q->where('address', 'LIKE', "%{$address}%");
