@@ -144,17 +144,25 @@ class Listing extends Model
         }else{
             $search = $request->input('search') ?? '';
             $search = trim($request->input('search', ''));
+            $address = $request->input('address');
 
-            if (!empty($search)) {
-                $terms = array_filter(explode(' ', $search));
-        
-                $query->whereHas('property', function($q) use($terms){
-                    $q->where(function ($q) use ($terms) {
-                        foreach ($terms as $w) {
-                            $q->where('address', 'LIKE', "%{$w}%");
-                        }
-                    });
+            if(!empty($search))
+            {
+                $query->whereHas('property', function($q) use($address){
+                    $q->where('address', 'LIKE', "%{$address}%");
                 });
+            }else{
+                if (!empty($search)) {
+                    $terms = array_filter(explode(' ', $search));
+            
+                    $query->whereHas('property', function($q) use($terms){
+                        $q->where(function ($q) use ($terms) {
+                            foreach ($terms as $w) {
+                                $q->where('address', 'LIKE', "%{$w}%");
+                            }
+                        });
+                    });
+                }
             }
         }
 
