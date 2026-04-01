@@ -8,7 +8,7 @@
                             <tbody>
                                 <tr>
                                     <td align="center" valign="top" style="background:#245ee0;padding:44px 32px 36px;border-bottom:1px solid #1f478b;">
-                                        <img align="center" alt="Filipino Homes" src="{{ $message->embed(public_path('fh-logo-white-copy.png')) }}"
+                                        <img align="center" alt="Filipino Homes" src="{{ asset('fh-logo-white-copy.png') }}"
                                             width="350" style="max-width:350px;width:100%;padding-bottom:0;display:inline !important;vertical-align:bottom;border:0;height:auto;outline:none;text-decoration:none;" />
                                     </td>
                                 </tr>
