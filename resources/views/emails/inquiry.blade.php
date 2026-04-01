@@ -67,22 +67,6 @@
                                     </td>
                                 </tr>
 
-                                <tr>
-                                    <td align="left" valign="top"
-                                        style="background-color:#ffffff;padding:8px 40px 40px;">
-                                        <span
-                                            style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
-                                            This is an automated notification from
-                                            <a href="https://filipinohomes.com" target="_blank"
-                                                style="color:#1d4ed8;text-decoration:none;">filipinohomes.com</a>.
-                                            Please do not reply directly to this email. To respond to the client, use the email address shown above.
-                                            If you believe this message was sent in error, please visit our
-                                            <a href="https://filipinohomes.com/contact" target="_blank"
-                                                style="color:#1d4ed8;text-decoration:none;">Contact Us</a> page.
-                                        </span>
-                                    </td>
-                                </tr>
-
                             </tbody>
                         </table>
                     </td>
