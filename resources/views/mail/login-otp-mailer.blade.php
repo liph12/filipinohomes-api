@@ -20,7 +20,7 @@
                                 </tr>
                                 <tr>
                                     <td align="left" valign="top" style="background-color:#ffffff;padding:0 40px 28px;">
-                                        <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">Hello {{ $name }},
+                                        <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;text-transform:capitalize;">Hello {{ $name }},
                                             <br /><br />
                                             To complete your sign in; enter the 6-character
                                             code in the original window.
