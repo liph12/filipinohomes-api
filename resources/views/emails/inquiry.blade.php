@@ -19,7 +19,7 @@
                                     <td align="center" valign="top"
                                         style="background:#245ee0;padding:44px 32px 36px;border-bottom:1px solid #1f478b;">
                                         <img align="center" alt="Filipino Homes"
-                                            src="{{ $message->embed(storage_path('app/public/fh-logo-white-copy.png')) }}"
+                                            src="https://api2.filipinohomes.com/fh-logo-white.png"
                                             width="350"
                                             style="max-width:350px;width:100%;padding-bottom:0;display:inline !important;vertical-align:bottom;border:0;height:auto;outline:none;text-decoration:none;" />
                                     </td>
@@ -63,22 +63,6 @@
                                             From:<br/>
                                             <strong style="color:#162033;">{{ $clientName }}</strong><br/>
                                             <a href="mailto:{{ $clientEmail }}" style="color:#1d4ed8;text-decoration:none;">{{ $clientEmail }}</a>
-                                        </span>
-                                    </td>
-                                </tr>
-
-                                <tr>
-                                    <td align="left" valign="top"
-                                        style="background-color:#ffffff;padding:8px 40px 40px;">
-                                        <span
-                                            style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
-                                            This is an automated notification from
-                                            <a href="https://filipinohomes.com" target="_blank"
-                                                style="color:#1d4ed8;text-decoration:none;">filipinohomes.com</a>.
-                                            Please do not reply directly to this email. To respond to the client, use the email address shown above.
-                                            If you believe this message was sent in error, please visit our
-                                            <a href="https://filipinohomes.com/contact" target="_blank"
-                                                style="color:#1d4ed8;text-decoration:none;">Contact Us</a> page.
                                         </span>
                                     </td>
                                 </tr>

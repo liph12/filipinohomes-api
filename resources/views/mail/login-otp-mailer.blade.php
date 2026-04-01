@@ -8,7 +8,7 @@
                             <tbody>
                                 <tr>
                                     <td align="center" valign="top" style="background:#245ee0;padding:44px 32px 36px;border-bottom:1px solid #1f478b;">
-                                        <img align="center" alt="Filipino Homes" src="{{ $message->embed(storage_path('app/public/fh-logo-white-copy.png')) }}"
+                                        <img align="center" alt="Filipino Homes" src="https://api2.filipinohomes.com/fh-logo-white.png"
                                             width="350" style="max-width:350px;width:100%;padding-bottom:0;display:inline !important;vertical-align:bottom;border:0;height:auto;outline:none;text-decoration:none;" />
                                     </td>
                                 </tr>
@@ -20,7 +20,7 @@
                                 </tr>
                                 <tr>
                                     <td align="left" valign="top" style="background-color:#ffffff;padding:0 40px 28px;">
-                                        <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">Hello {{ $name }},
+                                        <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;text-transform:capitalize;">Hello {{ $name }},
                                             <br /><br />
                                             To complete your sign in; enter the 6-character
                                             code in the original window.
