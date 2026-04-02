@@ -239,15 +239,6 @@ class Listing extends Model
             $query->whereHas('property', fn ($q) => $q->whereIn('furnishing_id', $ids));
         }
 
-        // if ($amenities = $request->input('amenities')) {
-        //     $names = is_array($amenities) ? $amenities : explode(',', $amenities);
-        //     $query->whereHas('property', function (Builder $q) use ($names) {
-        //         foreach ($names as $name) {
-        //             $q->whereJsonContains('amenities', $name);
-        //         }
-        //     });
-        // }
-
         return $query;
     }
 

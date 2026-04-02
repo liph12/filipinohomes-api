@@ -71,7 +71,6 @@ class ListingController extends Controller
     
     public function index(Request $request): ListingResourceCollection
     {
-        Log::info('Listing index user: ', ['token' => $request->bearerToken()]);
         $listings = Listing::where('visibility', 'public')
         ->with([
             'property.propertyAttribute.subtype',
@@ -92,6 +91,14 @@ class ListingController extends Controller
         ->paginate(12);
 
         return new ListingResourceCollection($listings);
+    }
+
+    public function resolveByKeywordsAndSlug(Request $request)
+    {        
+        return [
+            'property' => Listing::where('slug', $request->slug)->first(),
+            'resource' => $this->index($request),
+        ];
     }
 
     public function subtypeCounts(Request $request): JsonResponse

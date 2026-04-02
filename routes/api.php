@@ -85,6 +85,7 @@ Route::middleware('throttle:api')->group(function(){
     Route::get('/page/agents', [PageBuilderController::class, 'index']);
     Route::get('/offices/{slug}', [OfficeController::class, 'show']);
     Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
+    Route::get('/resolve-properties-keywords', [AgentController::class, 'resolveByKeywordsAndSlug']);
     
     // Lightweight sitemap endpoints
     Route::get('sitemap/listings', [SitemapController::class, 'listings']);
