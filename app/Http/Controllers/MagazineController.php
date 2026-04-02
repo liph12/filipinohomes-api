@@ -10,10 +10,34 @@ use App\Http\Resources\MagazineResource;
 use Illuminate\Support\Str;
 class MagazineController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $query = Magazine::query();
+
+        if ($request->filled('search')) {
+            $term = trim((string) $request->input('search'));
+            if ($term !== '') {
+                $query->where(function ($q) use ($term) {
+                    $q->where('title', 'like', "%{$term}%")
+                      ->orWhere('description', 'like', "%{$term}%");
+                });
+            }
+        }
+
+        if ($request->filled('year')) {
+            $year = (int) $request->input('year');
+            if ($year > 0) {
+                $query->whereYear('publish_date', $year);
+            }
+            $items = $query->orderBy('publish_date', 'desc')->get();
+            return MagazineResource::collection($items);
+        }
+
+        $perPage = (int) $request->input('per_page', 10);
+        if ($perPage < 1) { $perPage = 10; }
+
         return new MagazineResourceCollection(
-            Magazine::latest()->paginate(10)
+            $query->orderBy('publish_date', 'desc')->paginate($perPage)
         );
     }
 
