@@ -94,21 +94,25 @@ class ListingController extends Controller
     }
 
     public function resolveByKeywordsAndSlug(Request $request)
-    {        
-        $listing = Listing::where('slug', $request->slug)->where('visibility', 'public')
-        ->with([
-            'property.propertyAttribute.subtype',
-            'property.nearbyFacility',
-            'category',
-            'agent' => function ($q) {
-                $q->withCount('listings');
-            }
-        ])
-        ->withCount([
-            'property as subtype_count' => function ($q) {
-                $q->whereHas('propertyAttribute.subtype');
-            }
-        ])->first();
+    {   
+        $listing = null;
+        if($slug = $request->input('slug'))
+        {
+            $listing = Listing::where('slug', $slug)->where('visibility', 'public')
+            ->with([
+                'property.propertyAttribute.subtype',
+                'property.nearbyFacility',
+                'category',
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                }
+            ])
+            ->withCount([
+                'property as subtype_count' => function ($q) {
+                    $q->whereHas('propertyAttribute.subtype');
+                }
+            ])->first();
+        }
 
         return [
             'property' => $listing,
