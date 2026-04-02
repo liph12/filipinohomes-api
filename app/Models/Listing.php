@@ -144,17 +144,25 @@ class Listing extends Model
         }else{
             $search = $request->input('search') ?? '';
             $search = trim($request->input('search', ''));
+            $address = $request->input('address');
 
-            if (!empty($search)) {
-                $terms = array_filter(explode(' ', $search));
-        
-                $query->whereHas('property', function($q) use($terms){
-                    $q->where(function ($q) use ($terms) {
-                        foreach ($terms as $w) {
-                            $q->where('address', 'LIKE', "%{$w}%");
-                        }
-                    });
+            if(!empty($address))
+            {
+                $query->whereHas('property', function($q) use($address){
+                    $q->where('address', 'LIKE', "%{$address}%");
                 });
+            }else{
+                if (!empty($search)) {
+                    $terms = array_filter(explode(' ', $search));
+            
+                    $query->whereHas('property', function($q) use($terms){
+                        $q->where(function ($q) use ($terms) {
+                            foreach ($terms as $w) {
+                                $q->where('address', 'LIKE', "%{$w}%");
+                            }
+                        });
+                    });
+                }
             }
         }
 
@@ -165,6 +173,10 @@ class Listing extends Model
 
         if ($type_str = $request->input('type_str')) {
             $query->whereHas('property.propertyAttribute.subtype.type', fn ($q) => $q->where('name', 'LIKE', "%{$type_str}%"));
+        }
+
+        if ($subtype_str = $request->input('subtype_str')) {
+            $query->whereHas('property.propertyAttribute.subtype', fn ($q) => $q->where('name', 'LIKE', "%{$subtype_str}%"));
         }
 
         if ($subtypes = $request->input('subtypes')) {
@@ -226,15 +238,6 @@ class Listing extends Model
             $ids = is_array($furnishings) ? $furnishings : explode(',', $furnishings);
             $query->whereHas('property', fn ($q) => $q->whereIn('furnishing_id', $ids));
         }
-
-        // if ($amenities = $request->input('amenities')) {
-        //     $names = is_array($amenities) ? $amenities : explode(',', $amenities);
-        //     $query->whereHas('property', function (Builder $q) use ($names) {
-        //         foreach ($names as $name) {
-        //             $q->whereJsonContains('amenities', $name);
-        //         }
-        //     });
-        // }
 
         return $query;
     }
