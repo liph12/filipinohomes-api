@@ -39,6 +39,10 @@ return [
             'serialize' => false,
         ],
 
+        'ratelimit' => [
+            'driver' => 'array',
+        ],
+
         'database' => [
             'driver' => 'database',
             'connection' => env('DB_CACHE_CONNECTION'),
