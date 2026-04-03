@@ -57,6 +57,7 @@ Route::middleware('throttle:api')->group(function(){
     Route::get('/offices', [OfficeController::class, 'index']);
     Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
     Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
+    Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
     Route::get('/listings', [ListingController::class, 'index']); 
     Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
     Route::get('/listings/featured', [ListingController::class, 'featured']);

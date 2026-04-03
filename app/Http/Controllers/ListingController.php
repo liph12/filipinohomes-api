@@ -99,6 +99,20 @@ class ListingController extends Controller
     
         return response()->json($locations);
     }
+
+    public function listingByCityAll()
+    {    
+        $cities = Property::select(
+                'cities.name as city',
+            )->whereHas('publicListing')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->groupBy('cities.id')
+            ->get();
+    
+        return response()->json($cities);
+    }
     
     public function index(Request $request): ListingResourceCollection
     {
