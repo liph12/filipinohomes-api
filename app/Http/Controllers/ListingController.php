@@ -144,6 +144,15 @@ class ListingController extends Controller
         $listing = null;
         if($slug = $request->input('slug'))
         {
+            $currListing = Listing::where('slug', $slug)->first();
+            $ip = $request->ip();
+            $cacheKey = "listing_{$currListing->id}_clicked_by_{$ip}";
+        
+            if (!Cache::has($cacheKey)) {
+                $currListing->increment('clicks');
+                Cache::put($cacheKey, true, now()->addDay());
+            }
+
             $listing = Listing::where('slug', $slug)->where('visibility', 'public')
             ->with([
                 'property.propertyAttribute.subtype',
