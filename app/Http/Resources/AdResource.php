@@ -23,6 +23,8 @@ class AdResource extends JsonResource
             'click_url' => $this->click_url,
             'alt_text' => $this->alt_text,
             'status' => $this->status,
+            'starts_at' => $this->starts_at?->toIso8601String(),
+            'ends_at' => $this->ends_at?->toIso8601String(),
             'impressions' => $impressions,
             'total_impressions' => $totalImpressions,
             'clicks' => $clicks,

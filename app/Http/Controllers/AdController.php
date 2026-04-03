@@ -43,6 +43,8 @@ class AdController extends Controller
             'click_url' => 'required|url|max:2048',
             'alt_text' => 'nullable|string|max:255',
             'status' => 'required|in:active,inactive',
+            'starts_at' => 'nullable|date',
+            'ends_at' => 'nullable|date|after_or_equal:starts_at',
         ]);
 
         $ad = Ad::create($validated);
@@ -68,6 +70,8 @@ class AdController extends Controller
             'click_url' => 'sometimes|url|max:2048',
             'alt_text' => 'nullable|string|max:255',
             'status' => 'sometimes|in:active,inactive',
+            'starts_at' => 'nullable|date',
+            'ends_at' => 'nullable|date|after_or_equal:starts_at',
         ]);
 
         $ad->update($validated);

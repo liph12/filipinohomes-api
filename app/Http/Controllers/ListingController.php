@@ -8,7 +8,6 @@ use App\Models\Listing;
 use Illuminate\Http\Request;
 use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use App\Models\PropertySubtype;
 use App\Models\Property;
@@ -19,7 +18,7 @@ class ListingController extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug', 'listingsByLocationAll', 'listingByCityAll']);
         $this->middleware(RoleMiddleware::class . ':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class . ':admin')->only(['updateIsFeatured']);
     }
@@ -68,6 +67,53 @@ class ListingController extends Controller
     
         return response()->json($locations);
     }
+
+    public function listingsByLocationAll()
+    {    
+        $locations = Property::select(
+                'properties.address_id',
+                'properties.address',
+                'barangays.name as barangay',
+                'cities.name as city',
+                'provinces.name as province',
+                DB::raw('COUNT(*) as total_properties')
+            )->whereHas('publicListing')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->groupBy(
+                'properties.address_id',
+                'properties.address',
+                'barangays.name',
+                'cities.name',
+                'provinces.name'
+            )
+            ->orderByDesc('total_properties')
+            ->get()
+            ->map(fn($row) => [
+                'barangay_id'      => $row->address_id,
+                'address'          => $row->address,
+                'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
+                'total_properties' => $row->total_properties,
+            ]);
+    
+        return response()->json($locations);
+    }
+
+    public function listingByCityAll()
+    {    
+        $cities = Property::select(
+                'cities.name as city',
+                'provinces.name as province',
+            )->whereHas('publicListing')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->groupBy('cities.id')
+            ->get();
+    
+        return response()->json($cities);
+    }
     
     public function index(Request $request): ListingResourceCollection
     {
@@ -98,6 +144,15 @@ class ListingController extends Controller
         $listing = null;
         if($slug = $request->input('slug'))
         {
+            $currListing = Listing::where('slug', $slug)->first();
+            $ip = $request->ip();
+            $cacheKey = "listing_{$currListing->id}_clicked_by_{$ip}";
+        
+            if (!Cache::has($cacheKey)) {
+                $currListing->increment('clicks');
+                Cache::put($cacheKey, true, now()->addDay());
+            }
+
             $listing = Listing::where('slug', $slug)->where('visibility', 'public')
             ->with([
                 'property.propertyAttribute.subtype',
@@ -115,7 +170,7 @@ class ListingController extends Controller
         }
 
         return [
-            'property' => $listing,
+            'property' => $listing === null ? null : new ListingResource($listing),
             'resource' => $this->index($request),
         ];
     }
@@ -416,7 +471,7 @@ class ListingController extends Controller
     {   
         $user = $request->user();
         $isAdmin = $user->role->name === 'admin';
-        $start = date('2024-01-01');
+        $start = date('2020-01-01');
         $end = date('Y-m-d');
         $statistics = [
             'active'    => 0,

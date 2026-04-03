@@ -37,6 +37,7 @@ use App\Http\Controllers\{
     AdPlacementController,
     PublicAdController,
 };
+use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
 
@@ -56,6 +57,8 @@ Route::middleware('throttle:api')->group(function(){
     Route::get('/posts/{slug}', [PostController::class, 'show']);
     Route::get('/offices', [OfficeController::class, 'index']);
     Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
+    Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
+    Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
     Route::get('/listings', [ListingController::class, 'index']); 
     Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
     Route::get('/listings/featured', [ListingController::class, 'featured']);
@@ -144,6 +147,7 @@ Route::middleware('throttle:api')->group(function(){
         Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
     
         // Ad management (admin)
+        Route::post('ad-preview-token', [AdPreviewController::class, 'generateToken']);
         Route::apiResource('ad-campaigns', AdCampaignController::class);
         Route::apiResource('ads', AdController::class);
         Route::apiResource('ad-sections', AdSectionController::class);

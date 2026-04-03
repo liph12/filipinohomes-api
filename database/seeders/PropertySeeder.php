@@ -59,7 +59,7 @@ public function run(): void
     $usedSlugs     = Listing::pluck('slug')->flip();        // slug => true
     $usedCodes     = Listing::pluck('code')->flip();        // code => true
 
-    $startDate = '2024-01-01';
+    $startDate = '2020-01-01';
     $endDate   = Carbon::now()->toDateString();
 
     Proplisting::whereBetween('date_added', [$startDate, $endDate])
