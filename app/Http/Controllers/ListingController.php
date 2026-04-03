@@ -104,6 +104,7 @@ class ListingController extends Controller
     {    
         $cities = Property::select(
                 'cities.name as city',
+                'provinces.name as province',
             )->whereHas('publicListing')
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
