@@ -42,6 +42,7 @@ class AdCampaignResource extends JsonResource
             'days_left' => $daysLeft,
             'starts_in' => $startsIn,
             'is_running' => $isRunning,
+            'loop_duration' => $this->loop_duration ?? 5,
             'ads_count' => $this->whenCounted('ads'),
             'ads' => AdResource::collection($this->whenLoaded('ads')),
             'created_at' => $this->created_at?->toIso8601String(),

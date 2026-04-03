@@ -18,6 +18,13 @@ class Ad extends Model
         'click_url',
         'alt_text',
         'status',
+        'starts_at',
+        'ends_at',
+    ];
+
+    protected $casts = [
+        'starts_at' => 'datetime',
+        'ends_at'   => 'datetime',
     ];
 
     public function campaign()

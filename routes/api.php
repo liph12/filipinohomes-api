@@ -37,6 +37,7 @@ use App\Http\Controllers\{
     AdPlacementController,
     PublicAdController,
 };
+use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
 
@@ -145,6 +146,7 @@ Route::middleware('throttle:api')->group(function(){
         Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
     
         // Ad management (admin)
+        Route::post('ad-preview-token', [AdPreviewController::class, 'generateToken']);
         Route::apiResource('ad-campaigns', AdCampaignController::class);
         Route::apiResource('ads', AdController::class);
         Route::apiResource('ad-sections', AdSectionController::class);

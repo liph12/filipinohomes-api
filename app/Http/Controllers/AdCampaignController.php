@@ -36,6 +36,7 @@ class AdCampaignController extends Controller
             'status' => 'required|in:active,inactive,scheduled,expired',
             'starts_at' => 'nullable|date',
             'ends_at' => 'nullable|date|after_or_equal:starts_at',
+            'loop_duration' => 'nullable|integer|min:1|max:60',
         ]);
 
         $campaign = AdCampaign::create($validated);
@@ -62,6 +63,7 @@ class AdCampaignController extends Controller
             'status' => 'sometimes|in:active,inactive,scheduled,expired',
             'starts_at' => 'nullable|date',
             'ends_at' => 'nullable|date|after_or_equal:starts_at',
+            'loop_duration' => 'nullable|integer|min:1|max:60',
         ]);
 
         $campaign->update($validated);
