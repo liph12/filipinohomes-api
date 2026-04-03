@@ -115,7 +115,7 @@ class ListingController extends Controller
         }
 
         return [
-            'property' => $listing,
+            'property' => new ListingResource($listing),
             'resource' => $this->index($request),
         ];
     }
