@@ -10,6 +10,20 @@ use App\Http\Resources\MagazineResource;
 use Illuminate\Support\Str;
 class MagazineController extends Controller
 {
+    public function years()
+    {
+        $years = Magazine::query()
+            ->whereNotNull('publish_date')
+            ->selectRaw('YEAR(publish_date) as year')
+            ->groupBy('year')
+            ->orderByDesc('year')
+            ->pluck('year')
+            ->filter()
+            ->values();
+
+        return response()->json($years, 200);
+    }
+
     public function index(Request $request)
     {
         $query = Magazine::query();

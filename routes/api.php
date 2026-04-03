@@ -97,6 +97,7 @@ Route::middleware('throttle:api')->group(function(){
     
     // Public magazine routes
     Route::get('magazines', [MagazineController::class, 'index']);
+    Route::get('magazines/years', [MagazineController::class, 'years']);
     Route::get('magazines/{magazine}', [MagazineController::class, 'show']);
     Route::get('magazines/{magazine}/pdf', [MagazineController::class, 'streamPdf']);
     
