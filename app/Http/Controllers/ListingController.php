@@ -471,7 +471,7 @@ class ListingController extends Controller
     {   
         $user = $request->user();
         $isAdmin = $user->role->name === 'admin';
-        $start = date('2024-01-01');
+        $start = date('2020-01-01');
         $end = date('Y-m-d');
         $statistics = [
             'active'    => 0,
