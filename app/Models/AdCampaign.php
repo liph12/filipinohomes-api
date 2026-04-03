@@ -17,11 +17,13 @@ class AdCampaign extends Model
         'status',
         'starts_at',
         'ends_at',
+        'loop_duration',
     ];
 
     protected $casts = [
-        'starts_at' => 'datetime',
-        'ends_at'   => 'datetime',
+        'starts_at'     => 'datetime',
+        'ends_at'       => 'datetime',
+        'loop_duration' => 'integer',
     ];
 
     public function ads()

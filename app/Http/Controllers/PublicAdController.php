@@ -18,19 +18,23 @@ class PublicAdController extends Controller
 
     public function show(string $key)
     {
-        $ads = $this->adServingService->getAdsForSection($key);
+        $result = $this->adServingService->getAdsForSection($key);
+        $ads = $result['ads'];
+        $loopDuration = $result['loop_duration'];
         $section = \App\Models\AdSection::where('key', $key)->first();
 
         if ($ads->isEmpty()) {
             return response()->json([
                 'data' => [],
                 'section' => $section ? new AdSectionResource($section) : null,
+                'loop_duration' => $loopDuration,
             ]);
         }
 
         return response()->json([
             'data' => AdResource::collection($ads),
             'section' => $section ? new AdSectionResource($section) : null,
+            'loop_duration' => $loopDuration,
         ]);
     }
 
