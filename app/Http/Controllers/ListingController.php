@@ -115,7 +115,7 @@ class ListingController extends Controller
         }
 
         return [
-            'property' => new ListingResource($listing),
+            'property' => $listing === null ? null : new ListingResource($listing),
             'resource' => $this->index($request),
         ];
     }
