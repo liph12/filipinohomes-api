@@ -105,8 +105,9 @@ class ConversationController extends Controller
         $user = Auth::user();
         $now = now();
 
-        $conversation->users()->updateExistingPivot($user->id, [
-            'last_read_at' => $now,
+        // Ensure the user is a participant (admins may not be in agent-type chats)
+        $conversation->users()->syncWithoutDetaching([
+            $user->id => ['last_read_at' => $now],
         ]);
 
         // Mark individual messages as read
