@@ -123,4 +123,16 @@ public function store(Request $request)
             'message' => 'Page restored successfully.'
         ]);
     }
+
+    public function deleted(Request $request)
+    {
+        $user = $request->user();
+        if (!$user || ($user->role->name ?? null) !== 'admin') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $perPage = (int)($request->input('per_page', 10));
+        $q = PageBuilder::onlyTrashed()->orderByDesc('deleted_at');
+        return PageBuilderResource::collection($q->paginate($perPage));
+    }
 }

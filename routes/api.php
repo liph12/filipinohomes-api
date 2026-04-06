@@ -40,7 +40,7 @@ use App\Http\Controllers\{
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
-
+use App\Http\Middleware\RoleMiddleware;
 Route::middleware('strip.tags')->group(function(){
     Route::middleware('throttle:auth')->group(function(){
         Route::post('/login', [UserController::class, 'login']);
@@ -142,6 +142,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/admin/maintenance-toggle', [MaintenanceController::class, 'toggle']);
             Route::post('/page/agents', [PageBuilderController::class, 'store']);
             Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
+            Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);
+            Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
+            Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted']);
 
             // Magazine, Office & Ad management (admin + editor only)
             Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
