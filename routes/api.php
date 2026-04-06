@@ -126,7 +126,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/my-listings', [ListingController::class, 'myListings']);
             Route::get('/all-listings', [ListingController::class, 'allListings']);
             Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
-            Route::get('/user/status-by-date', [ListingController::class, 'dashboardStatusByDate']);
+            Route::get('/user/status-by-date', [ListingController::class,  'dashboardStatusByDate']);
             Route::get('/user/profile', [UserController::class, 'profile']);
             Route::get('/user/settings', [UserController::class, 'userSettings']);
             Route::post('agents', [AgentController::class, 'store']);
