@@ -7,6 +7,7 @@ use App\Models\PageBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Models\Agent;
+use Illuminate\Support\Facades\Cache;
 class PageBuilderController extends Controller
 {
     public function index()
@@ -135,4 +136,54 @@ public function store(Request $request)
         $q = PageBuilder::onlyTrashed()->orderByDesc('deleted_at');
         return PageBuilderResource::collection($q->paginate($perPage));
     }
+
+    // ── Public tracking: Page (Agent PageBuilder) impressions ─────────────
+    public function trackImpression(Request $request, int $id)
+    {
+        $page = PageBuilder::find($id);
+        if (!$page) {
+            return response()->json(['message' => 'Page not found'], 404);
+        }
+
+        $deviceId = $request->input('device_id');
+        if (!$deviceId) {
+            return response()->json(['success' => false, 'message' => 'device_id required'], 422);
+        }
+
+        $cacheKey = "{$deviceId}_page_{$id}_imp";
+        if (!Cache::has($cacheKey)) {
+            $page->increment('impressions');
+            Cache::put($cacheKey, true, now('Asia/Manila')->addDays(30));
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+public function trackClick(Request $request, int $id)
+{
+    $deviceId = $request->input('device_id');
+    if (!$deviceId) return response()->json(['success' => false, 'message' => 'device_id required'], 422);
+
+    $page = PageBuilder::find($id);
+    if (!$page) return response()->json(['message' => 'Page not found'], 404);
+
+    $now = now('Asia/Manila');
+    $clickKey = "{$deviceId}_page_{$id}_click";
+    $impKey = "{$deviceId}_page_{$id}_imp";
+
+    // Ensure impression
+    if (!Cache::has($impKey)) {
+        $page->increment('impressions');
+        Cache::put($impKey, true, $now->copy()->addDays(30));
+    }
+
+    // Count click once per day per device
+    $lastClicked = Cache::get($clickKey);
+    if ($lastClicked !== $now->toDateString()) {
+        $page->increment('clicks');
+        Cache::put($clickKey, $now->toDateString(), $now->copy()->endOfDay());
+    }
+
+    return response()->json(['success' => true]);
+}
 }
