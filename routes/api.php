@@ -142,6 +142,10 @@ Route::middleware('throttle:api')->group(function(){
         Route::post('/admin/maintenance-toggle', [MaintenanceController::class, 'toggle']);
         Route::post('/page/agents', [PageBuilderController::class, 'store']);
         Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
+        Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);
+        Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
+        Route::post('/page/agents/bulk-delete', [PageBuilderController::class, 'bulkDestroy']);
+        Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted']);
         Route::post('/offices', [OfficeController::class, 'store']);
         Route::patch('/offices/{office}', [OfficeController::class, 'update']);
         Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);

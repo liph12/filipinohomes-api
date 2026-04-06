@@ -33,7 +33,6 @@ class PageBuilderPolicy
 
     public function delete(User $user, PageBuilder $pageBuilder)
     {
-        return $user->role->name === 'admin' || 
-            ($user->role->name === 'agent' && $pageBuilder->agent->user_id === $user->id);
+        return $user->role->name === 'admin';
     }
 }

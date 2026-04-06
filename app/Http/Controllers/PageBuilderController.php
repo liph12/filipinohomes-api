@@ -98,4 +98,29 @@ public function store(Request $request)
 
         return new PageBuilderResource($pageBuilder);
     }
+
+    public function destroy(Request $request, $id)
+    {
+        $pageBuilder = PageBuilder::findOrFail($id);
+        $this->authorize('delete', $pageBuilder);
+
+        $pageBuilder->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Page deleted successfully.'
+        ]);
+    }
+
+    public function restore(Request $request, $id)
+    {
+        $pageBuilder = PageBuilder::withTrashed()->findOrFail($id);
+        $this->authorize('delete', $pageBuilder);
+        $pageBuilder->restore();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Page restored successfully.'
+        ]);
+    }
 }
