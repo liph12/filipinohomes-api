@@ -85,6 +85,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
         Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
         Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
+        Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted']);
         Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
         Route::get('/page/agents', [PageBuilderController::class, 'index']);
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
@@ -144,7 +145,6 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
             Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);
             Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
-            Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted']);
     
             // Magazine, Office & Ad management (admin + editor only)
             Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
