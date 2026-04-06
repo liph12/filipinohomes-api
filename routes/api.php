@@ -39,6 +39,7 @@ use App\Http\Controllers\{
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\Auth\GoogleAuthController;
+use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('strip.tags')->group(function(){
@@ -115,7 +116,6 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
             Route::apiResource('users', UserController::class);
-            Route::apiResource('magazines', MagazineController::class)->except(['index', 'show']);
             Route::apiResource('property_attributes', PropertyAttributesController::class);
             Route::apiResource('properties', PropertyController::class);
             Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
@@ -143,19 +143,22 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/admin/maintenance-toggle', [MaintenanceController::class, 'toggle']);
             Route::post('/page/agents', [PageBuilderController::class, 'store']);
             Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
-            Route::post('/offices', [OfficeController::class, 'store']);
-            Route::patch('/offices/{office}', [OfficeController::class, 'update']);
-            Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
-        
-            // Ad management (admin)
-            Route::post('ad-preview-token', [AdPreviewController::class, 'generateToken']);
-            Route::apiResource('ad-campaigns', AdCampaignController::class);
-            Route::apiResource('ads', AdController::class);
-            Route::apiResource('ad-sections', AdSectionController::class);
-            Route::get('ad-placements/leaderboard/{sectionId}', [AdPlacementController::class, 'leaderboard']);
-            Route::post('ad-placements/bulk', [AdPlacementController::class, 'bulkStore']);
-            Route::apiResource('ad-placements', AdPlacementController::class);
-            Route::get('/ads/analytics/{group}', [PublicAdController::class, 'getAnalytics']);
+
+            // Magazine, Office & Ad management (admin + editor only)
+            Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
+                Route::apiResource('magazines', MagazineController::class)->except(['index', 'show']);
+                Route::post('/offices', [OfficeController::class, 'store']);
+                Route::patch('/offices/{office}', [OfficeController::class, 'update']);
+                Route::delete('/offices/{office}', [OfficeController::class, 'destroy']);
+                Route::post('ad-preview-token', [AdPreviewController::class, 'generateToken']);
+                Route::apiResource('ad-campaigns', AdCampaignController::class);
+                Route::apiResource('ads', AdController::class);
+                Route::apiResource('ad-sections', AdSectionController::class);
+                Route::get('ad-placements/leaderboard/{sectionId}', [AdPlacementController::class, 'leaderboard']);
+                Route::post('ad-placements/bulk', [AdPlacementController::class, 'bulkStore']);
+                Route::apiResource('ad-placements', AdPlacementController::class);
+                Route::get('/ads/analytics/{group}', [PublicAdController::class, 'getAnalytics']);
+            });
         });
     });
     
