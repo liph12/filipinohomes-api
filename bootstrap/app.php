@@ -12,7 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->alias([
+            'strip.tags' => \App\Http\Middleware\StripHtmlTags::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
     $exceptions->shouldRenderJsonWhen(
