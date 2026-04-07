@@ -417,7 +417,7 @@ class UserController extends Controller
     
     public function getClients()
     {
-        $users = User::with('userInfo')->client()->get();
+        $users = User::whereHas('userInfo')->with('userInfo')->client()->get();
 
         return response()->json($users);
     }

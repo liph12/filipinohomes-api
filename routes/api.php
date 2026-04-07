@@ -116,6 +116,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::post('/ads/{id}/click', [PublicAdController::class, 'trackClick']);
     
         Route::middleware('auth:sanctum')->group(function(){
+            Route::get('/client-logins', [UserController::class, 'getClients']);
             Route::get('/authenticate', [UserController::class, 'authenticate']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
