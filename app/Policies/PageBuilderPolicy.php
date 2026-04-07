@@ -35,4 +35,9 @@ class PageBuilderPolicy
     {
         return $user->role->name === 'admin';
     }
+
+    public function viewDeleted(User $user)
+    {
+        return $user->role->name === 'admin';
+    }
 }

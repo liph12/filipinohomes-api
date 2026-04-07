@@ -127,10 +127,7 @@ public function store(Request $request)
 
     public function deleted(Request $request)
     {
-        $user = $request->user();
-        if (!$user || ($user->role->name ?? null) !== 'admin') {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
+        $this->authorize('viewDeleted', PageBuilder::class);
 
         $perPage = (int)($request->input('per_page', 10));
         $q = PageBuilder::onlyTrashed()->orderByDesc('deleted_at');
