@@ -90,8 +90,8 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
         Route::get('/page/agents', [PageBuilderController::class, 'index']);
         // PageBuilder public tracking
-        Route::post('/page/agents/{id}/impression', [PageBuilderController::class, 'trackImpression']);
-        Route::post('/page/agents/{id}/click', [PageBuilderController::class, 'trackClick']);
+        Route::post('/page/agents/{slug}/impression', [PageBuilderController::class, 'trackImpression']);
+        Route::post('/page/agents/{slug}/click', [PageBuilderController::class, 'trackClick']);
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
         Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
