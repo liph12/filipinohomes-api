@@ -414,4 +414,11 @@ class UserController extends Controller
         $user = Auth::user();
         return response()->json(new UserResource($user));
     }
+    
+    public function getClients()
+    {
+        $users = User::with('userInfo')->client()->get();
+
+        return response()->json($users);
+    }
 }

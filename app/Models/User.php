@@ -63,6 +63,13 @@ class User extends Authenticatable
         });
     }
 
+    public function scopeClient($q)
+    {
+        return $q->whereHas('role', function($sub){
+            $sub->where('name', 'client');
+        });
+    }
+
     public function agent()
     {
         return $this->hasOne(Agent::class, 'user_id');
@@ -83,5 +90,10 @@ class User extends Authenticatable
     public function favorites()
     {
         return $this->hasMany(Favorite::class);
+    }
+
+    public function userInfo()
+    {
+        return $this->hasOne(UserInfo::class);
     }
 }
