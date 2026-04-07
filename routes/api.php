@@ -85,12 +85,13 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
         Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
         Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
-        Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted']);
+        Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted'])
+            ->middleware(['auth:sanctum']);
         Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
         Route::get('/page/agents', [PageBuilderController::class, 'index']);
         // PageBuilder public tracking
-        Route::post('/page/agents/{id}/impression', [PageBuilderController::class, 'trackImpression']);
-        Route::post('/page/agents/{id}/click', [PageBuilderController::class, 'trackClick']);
+        Route::post('/page/agents/{slug}/impression', [PageBuilderController::class, 'trackImpression']);
+        Route::post('/page/agents/{slug}/click', [PageBuilderController::class, 'trackClick']);
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
         Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
@@ -147,7 +148,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/page/agents', [PageBuilderController::class, 'store']);
             Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
             Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);
+            
             Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
+
     
             // Magazine, Office & Ad management (admin + editor only)
             Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {

@@ -10,6 +10,25 @@ use App\Models\Agent;
 use Illuminate\Support\Facades\Cache;
 class PageBuilderController extends Controller
 {
+    private function trackingIdentifier(Request $request): string
+    {
+        if ($request->user()) {
+            return 'user_' . $request->user()->id;
+        }
+
+        $deviceId = $request->input('device_id')
+            ?? $request->header('X-Device-Id')
+            ?? $request->header('x-device-id')
+            ?? $request->cookie('device_id');
+
+        if ($deviceId) {
+            return 'dev_' . (string) $deviceId . '|' . (string) $request->ip();
+        }
+
+        $ua = (string) ($request->userAgent() ?? 'unknown');
+        $ip = (string) $request->ip();
+        return 'guest_' . substr(hash('sha256', $ip . '|' . $ua), 0, 32);
+    }
     public function index()
     {
         return PageBuilderResource::collection(PageBuilder::paginate(10));
@@ -127,61 +146,57 @@ public function store(Request $request)
 
     public function deleted(Request $request)
     {
-        $user = $request->user();
-        if (!$user || ($user->role->name ?? null) !== 'admin') {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
+        $this->authorize('viewDeleted', PageBuilder::class);
 
         $perPage = (int)($request->input('per_page', 10));
         $q = PageBuilder::onlyTrashed()->orderByDesc('deleted_at');
         return PageBuilderResource::collection($q->paginate($perPage));
     }
 
-    // ── Public tracking: Page (Agent PageBuilder) impressions ─────────────
-    public function trackImpression(Request $request, int $id)
-    {
-        $page = PageBuilder::find($id);
-        if (!$page) {
-            return response()->json(['message' => 'Page not found'], 404);
-        }
-
-        $deviceId = $request->input('device_id');
-        if (!$deviceId) {
-            return response()->json(['success' => false, 'message' => 'device_id required'], 422);
-        }
-
-        $cacheKey = "{$deviceId}_page_{$id}_imp";
-        if (!Cache::has($cacheKey)) {
-            $page->increment('impressions');
-            Cache::put($cacheKey, true, now('Asia/Manila')->addDays(30));
-        }
-
-        return response()->json(['success' => true]);
+public function trackImpression(Request $request, string $slug)
+{
+    $page = PageBuilder::where('slug', $slug)->first();
+    if (!$page) {
+        return response()->json(['message' => 'Page not found'], 404);
     }
 
-public function trackClick(Request $request, int $id)
-{
-    $deviceId = $request->input('device_id');
-    if (!$deviceId) return response()->json(['success' => false, 'message' => 'device_id required'], 422);
+    $identifier = $this->trackingIdentifier($request);
 
-    $page = PageBuilder::find($id);
+    $now = now('Asia/Manila');
+    $today = $now->toDateString();
+    $cacheKey = "{$identifier}_page_{$slug}_imp_{$today}";
+
+    if (!Cache::has($cacheKey)) {
+        $page->increment('impressions');
+        Cache::put($cacheKey, true, $now->copy()->endOfDay());
+    }
+
+    return response()->json(['success' => true]);
+}
+
+public function trackClick(Request $request, string $slug)
+{
+    $identifier = $this->trackingIdentifier($request);
+
+    $page = PageBuilder::where('slug', $slug)->first();
     if (!$page) return response()->json(['message' => 'Page not found'], 404);
 
     $now = now('Asia/Manila');
-    $clickKey = "{$deviceId}_page_{$id}_click";
-    $impKey = "{$deviceId}_page_{$id}_imp";
+    $today = $now->toDateString();
 
-    // Ensure impression
+    $clickKey = "{$identifier}_page_{$slug}_click";
+    $impKey   = "{$identifier}_page_{$slug}_imp_{$today}";
+    // Ensure impression counted if somehow missed
     if (!Cache::has($impKey)) {
         $page->increment('impressions');
-        Cache::put($impKey, true, $now->copy()->addDays(30));
+        Cache::put($impKey, true, $now->copy()->endOfDay());
     }
 
     // Count click once per day per device
     $lastClicked = Cache::get($clickKey);
-    if ($lastClicked !== $now->toDateString()) {
+    if ($lastClicked !== $today) {
         $page->increment('clicks');
-        Cache::put($clickKey, $now->toDateString(), $now->copy()->endOfDay());
+        Cache::put($clickKey, $today, $now->copy()->endOfDay());
     }
 
     return response()->json(['success' => true]);

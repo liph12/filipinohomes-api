@@ -13,6 +13,8 @@ use App\Models\Conversation;
 use App\Policies\ConversationPolicy;
 use App\Models\Message;
 use App\Policies\MessagePolicy;
+use App\Models\PageBuilder;
+use App\Policies\PageBuilderPolicy;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -25,6 +27,7 @@ class AuthServiceProvider extends ServiceProvider
         Chat::class => ChatPolicy::class,
         Conversation::class => ConversationPolicy::class,
         Message::class => MessagePolicy::class,
+        PageBuilder::class => PageBuilderPolicy::class,
     ];
 
     /**
