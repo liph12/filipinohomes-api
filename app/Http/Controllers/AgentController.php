@@ -14,7 +14,9 @@ class AgentController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Agent::with('user')->withCount('listings');
+        $query = Agent::with('user')->whereHas('user.role', function($q){
+            $q->where('name', 'agent');
+        })->withCount('listings');
 
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
