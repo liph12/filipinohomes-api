@@ -39,4 +39,9 @@ return [
         'client_id' => env('GOOGLE_CLIENT_ID'),
     ],
 
+    'homesphnews' => [
+        'base_url' => env('HOMESPHNEWS_BASE_URL', 'https://homesphnews-api-394504332858.asia-southeast1.run.app/api'),
+        'key' => env('HOMESPHNEWS_API_KEY'),
+    ],
+
 ];

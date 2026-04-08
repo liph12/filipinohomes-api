@@ -38,6 +38,7 @@ use App\Http\Controllers\{
     PublicAdController,
 };
 use App\Http\Controllers\AdPreviewController;
+use App\Http\Controllers\HomesPhNewsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\RoleMiddleware;
@@ -104,6 +105,10 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('sitemap/blog-images', [SitemapController::class, 'blogImages']);
         Route::get('sitemap/agent-images', [SitemapController::class, 'agentImages']);
         
+        // Public HomesPhNews proxy (server-side X-Site-Key, avoids CORS for browsers)
+        Route::get('news', [HomesPhNewsController::class, 'index']);
+        Route::get('news/{identifier}', [HomesPhNewsController::class, 'show']);
+
         // Public magazine routes
         Route::get('magazines', [MagazineController::class, 'index']);
         Route::get('magazines/years', [MagazineController::class, 'years']);
