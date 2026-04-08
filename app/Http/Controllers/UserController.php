@@ -412,6 +412,10 @@ class UserController extends Controller
     public function authenticate()
     {
         $user = Auth::user();
+        $_user = User::find($user->id);
+        $_user->active_at = now();
+        $_user->save();
+
         return response()->json(new UserResource($user));
     }
     
