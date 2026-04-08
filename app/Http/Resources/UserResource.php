@@ -30,7 +30,6 @@ class UserResource extends JsonResource
             'active_at' => $lastSeen,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
-            'active_at_raw' => $lastActive
         ];
 
         if ($this->pivot) {
