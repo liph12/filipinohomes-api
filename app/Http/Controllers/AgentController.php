@@ -40,7 +40,7 @@ class AgentController extends Controller
             $query
                 ->select('agents.*')
                 ->orderByDesc('users.updated_at')
-                ->orderByDesc('listings_count')
+                // ->orderByDesc('listings_count')
                 ->paginate(12)
         );
     }
