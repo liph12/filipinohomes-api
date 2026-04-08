@@ -65,7 +65,7 @@ class AgentController extends Controller
             ->withCount('listings')
             ->findOrFail($id);
 
-        $agent->setRelation('listings', $agent->listings()->paginate(10));
+        $agent->setRelation('listings', $agent->listings()->paginate(12));
 
         return new AgentResource($agent);
     }
