@@ -2,6 +2,8 @@
 namespace App\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Carbon\Carbon;
+
 class UserResource extends JsonResource
 {
     /**
@@ -11,6 +13,13 @@ class UserResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $lastActive = Carbon::parse($this->active_at ?? $this->updated_at);
+        $lastSeen = $lastActive->isToday()
+        ? 'Active at ' . $lastActive->format('g:i A')
+        : ($lastActive->isYesterday()
+            ? 'Yesterday at ' . $lastActive->format('g:i A')
+            : $lastActive->format('F j \a\t g:i A'));
+
         $data = [
             'id'        => $this->id,
             'name'      => $this->name,
@@ -18,8 +27,9 @@ class UserResource extends JsonResource
             'mobile_no' => $this->agent->mobile_no ?? $this->mobile_no ?? "",
             'avatar'    => $this->avatar,
             'role'      => $this->role?->name,
+            'active_at' => $lastSeen,
             'created_at' => $this->created_at,
-            'updated_at' => $this->updated_at
+            'updated_at' => $this->updated_at,
         ];
 
         if ($this->pivot) {
