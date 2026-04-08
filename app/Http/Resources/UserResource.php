@@ -19,6 +19,7 @@ class UserResource extends JsonResource
             'avatar'    => $this->avatar,
             'role'      => $this->role?->name,
             'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at
         ];
 
         if ($this->pivot) {
