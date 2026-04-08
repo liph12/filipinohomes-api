@@ -14,13 +14,16 @@ class AgentController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Agent::with('user')->whereHas('user.role', function($q){
-            $q->where('name', 'agent');
-        })->withCount('listings');
-
+        $query = Agent::with('user')
+            ->whereHas('user.role', function($q){
+                $q->where('name', 'agent');
+            })
+            ->withCount('listings')
+            ->join('users', 'users.id', '=', 'agents.user_id');
+    
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
-
+    
             $query->where(function ($q) use ($term) {
                 $q->where('first_name', 'LIKE', $term)
                   ->orWhere('last_name', 'LIKE', $term)
@@ -32,9 +35,13 @@ class AgentController extends Controller
                   });
             });
         }
-
+    
         return new AgentResourceCollection(
-            $query->orderByDesc('listings_count')->paginate(12)
+            $query
+                ->select('agents.*')
+                ->orderByDesc('users.updated_at')
+                ->orderByDesc('listings_count')
+                ->paginate(12)
         );
     }
 
