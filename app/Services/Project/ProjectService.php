@@ -2,33 +2,32 @@
 
 namespace App\Services\Project;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use App\Models\Project;
 
 class ProjectService
 {
-    protected string $apiUrl = 'https://api.leuteriorealty.com/fh/v2/public/api/get-projects';
-
     public function fetchProjects(): array
     {
-        return Cache::remember('projects_api', 600, function () {
-            $response = Http::withHeaders([
-                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-                'Accept' => 'application/json, text/javascript, */*; q=0.01',
-                'Accept-Language' => 'en-US,en;q=0.9',
-                'Referer' => 'https://api.leuteriorealty.com/',
-            ])
-            ->withoutVerifying() // optional
-            ->get($this->apiUrl);
+        return Cache::remember('projects_db', 600, function () {
+            $rows = Project::query()->get();
 
-            if ($response->failed()) {
-                return [
-                    'error' => 'Failed to fetch projects from external API',
-                    'status' => $response->status()
-                ];
-            }
+            return $rows->map(function (Project $p) {
+                $lat = $p->latitude ?? $p->lat ?? null;
+                $lng = $p->longitude ?? $p->lng ?? null;
 
-            return $response->json();
+                $geo = null;
+                if ($lat !== null && $lng !== null) {
+                    $geo = [
+                        'lat' => is_numeric($lat) ? (float) $lat : null,
+                        'lng' => is_numeric($lng) ? (float) $lng : null,
+                    ];
+                }
+
+                return array_merge($p->toArray(), [
+                    'geo_coordinates' => $geo,
+                ]);
+            })->toArray();
         });
     }
 }
