@@ -5,9 +5,10 @@ namespace App\Http\Controllers;
 use App\Http\Resources\ConversationResource;
 use App\Models\Chat;
 use App\Models\Conversation;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Mail\MessageNotificationMailer;
+use Illuminate\Support\Facades\Mail;
 
 class ConversationController extends Controller
 {
@@ -52,6 +53,9 @@ class ConversationController extends Controller
     public function accept(Conversation $conversation)
     {
         $this->authorize('moderate', $conversation);
+        $message = $conversation->latestMessage->body;
+        $agent = $conversation->agentUser;
+        $sender = $conversation->chat->user;
 
         if ($conversation->status !== 'pending') {
             return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
@@ -73,6 +77,8 @@ class ConversationController extends Controller
         }
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
+
+        Mail::to('libresphilip14@gmail.com')->send(new MessageNotificationMailer($sender, $agent, $message));
 
         return new ConversationResource($conversation);
     }
