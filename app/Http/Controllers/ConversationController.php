@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Mail\MessageNotificationMailer;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 
 class ConversationController extends Controller
 {
@@ -57,6 +58,7 @@ class ConversationController extends Controller
         $agent = $conversation->agentUser;
         $sender = $conversation->chat->user;
         $type = $conversation->chat->listing;
+        $slug = Str::slug($type->name)."-".$conversation->id;
 
         if ($conversation->status !== 'pending') {
             return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
@@ -79,7 +81,7 @@ class ConversationController extends Controller
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
-        Mail::to('libresphilip14@gmail.com')->send(new MessageNotificationMailer($sender, $agent, $message, $type->slug));
+        Mail::to('libresphilip14@gmail.com')->send(new MessageNotificationMailer($sender, $agent, $message, $slug));
 
         return new ConversationResource($conversation);
     }
