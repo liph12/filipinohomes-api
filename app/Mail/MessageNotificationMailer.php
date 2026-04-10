@@ -5,6 +5,7 @@ namespace App\Mail;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
+use App\Models\User;
 
 class MessageNotificationMailer extends Mailable
 {
@@ -38,8 +39,11 @@ class MessageNotificationMailer extends Mailable
      */
     public function build()
     {
-        $mail = $this->to('libresphilip14@gmail.com')->from(env('MAIL_FROM'), 'FH Support Team')
+        $adminEmails = User::where('role_id', 1)->pluck('email');
+
+        $mail = $this->to($this->receiverEmail)->from(env('MAIL_FROM'), 'FH Support Team')
         ->subject('Filipino Homes - New message received')
+        ->bcc($adminEmails)
         ->markdown('emails.message-notification');
 
         return $mail;

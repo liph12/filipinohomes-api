@@ -81,7 +81,7 @@ class ConversationController extends Controller
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
-        Mail::to('libresphilip14@gmail.com')->send(new MessageNotificationMailer($sender, $agent, $message, $slug));
+        Mail::to($agent->email)->send(new MessageNotificationMailer($sender, $agent, $message, $slug));
 
         return new ConversationResource($conversation);
     }
