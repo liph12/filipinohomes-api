@@ -15,6 +15,9 @@ class PropertyResource extends JsonResource
     public function toArray(Request $request): array
     {
         $attributes = new PropertyAttributesResource($this->propertyAttribute);
+        $barangay  = optional($this->barangay);
+        $city      = optional($barangay->city);
+        $province  = optional($city->province);
          return [
             'id'                    => $this->id,
             'name'                  => $this->name,
@@ -25,7 +28,20 @@ class PropertyResource extends JsonResource
             'address'               => $this->address,
             'photos'                => $this->photos,       
             'amenities'             => $this->amenities,   
-            'address_id'            => $this->address_id,
+            'address_id'            => [
+                'id'   => $this->address_id,
+                'name' => $barangay->name,
+                'city' => [
+                    'id'         => $city->id,
+                    'name'       => $city->name,
+                    'postalcode' => $city->postalcode,
+                ],
+                'province' => [
+                    'id'   => $province->id,
+                    'name' => $province->name,
+                    'code' => $province->code,
+                ],
+            ],
             'description'           => $this->description,
             'geo_coordinates'       => $this->geo_coordinates,
             'is_project'            => $this->is_project,
