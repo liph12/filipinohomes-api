@@ -42,16 +42,45 @@ class FullListingController extends Controller
     }
     public function show(Listing $listing): JsonResponse
     {
-        // Use propertyAttribute (matching the model method name)
+        // Load relations needed to resolve address hierarchy
         $listing->load([
-            'property.propertyAttribute.subtype.type', 
+            'property.propertyAttribute.subtype.type',
             'property.furnishing',
+            'property.barangay.city.province',
             'category',
-            'agent'
+            'agent',
         ]);
 
+        // Transform response so property.address_id contains barangay + city + province info
+        $payload = $listing->toArray();
+
+        try {
+            $barangay = optional($listing->property)->barangay;
+            if ($barangay) {
+                $city = optional($barangay)->city;
+                $province = optional($city)->province;
+
+                $payload['property']['address_id'] = [
+                    'id'   => $barangay->id,
+                    'name' => $barangay->name,
+                    'city' => $city ? [
+                        'id'         => $city->id,
+                        'name'       => $city->name,
+                        'postalcode' => $city->postalcode,
+                    ] : null,
+                    'province' => $province ? [
+                        'id'   => $province->id,
+                        'name' => $province->name,
+                        'code' => $province->code,
+                    ] : null,
+                ];
+            }
+        } catch (\Throwable $e) {
+            // Best-effort; ignore transformation errors
+        }
+
         return response()->json([
-            'data' => $listing
+            'data' => $payload,
         ]);
     }
     public function update(UpdateListingRequest $request, Listing $listing): JsonResponse
