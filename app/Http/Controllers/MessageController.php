@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\MessageResource;
+use App\Jobs\SendMessageNotification;
 use App\Models\Conversation;
 use App\Models\Message;
 use Illuminate\Http\Request;
@@ -71,6 +72,13 @@ class MessageController extends Controller
         $conversation->users()->updateExistingPivot(Auth::id(), [
             'last_read_at' => Carbon::now(),
         ]);
+
+        // Dispatch notification job (async, with 30-min cooldown per recipient)
+        SendMessageNotification::dispatch(
+            $conversation->id,
+            $message->id,
+            Auth::id()
+        );
 
         $message->load(['user', 'replyTo.user', 'reactions.user']);
 

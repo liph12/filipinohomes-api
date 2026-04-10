@@ -17,12 +17,13 @@ class MessageNotificationMailer extends Mailable
     public $senderName;
     public $message;
     public $slug;
+    public $roleName;
     /**
      * Create a new message instance.
      *
      * @return void
      */
-    public function __construct($sender, $receiver, $message, $slug)
+    public function __construct($sender, $receiver, $message, $slug, $roleName = 'agent')
     {
         $this->receiverEmail = $receiver->email;
         $this->receiverName = $receiver->name;
@@ -30,6 +31,7 @@ class MessageNotificationMailer extends Mailable
         $this->senderName = $sender->name;
         $this->message = $message;
         $this->slug = $slug;
+        $this->roleName = $roleName;
     }
 
     /**

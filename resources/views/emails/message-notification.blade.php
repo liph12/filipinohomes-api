@@ -42,7 +42,7 @@
                                             style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
                                             Hello {{ $receiverName }},
                                             <br /><br />
-                                            A new message has been submitted through Filipino Homes. Please review below and follow up with the client at your earliest convenience.
+                                            A new message has been submitted through Filipino Homes. Please review below and respond at your earliest convenience.
                                         </span>
                                     </td>
                                 </tr>
@@ -70,7 +70,7 @@
                                 <!-- BUTTON SECTION -->
                                 <tr>
                                     <td align="center" style="padding:24px 40px 40px;">
-                                        <a href="https://filipinohomes.com/agent/listing-inquiries/{{ $slug }}"
+                                        <a href="https://filipinohomes.com/{{ $roleName }}/listing-inquiries/{{ $slug }}"
                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;">
                                             View Message
                                         </a>

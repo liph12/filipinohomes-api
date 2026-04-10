@@ -8,12 +8,13 @@ class ConversationUser extends Model
 {
     protected $table = 'conversation_users';
 
-    protected $fillable = ['user_id', 'conversation_id', 'last_read_at'];
+    protected $fillable = ['user_id', 'conversation_id', 'last_read_at', 'last_notified_at'];
 
     protected function casts(): array
     {
         return [
             'last_read_at' => 'datetime',
+            'last_notified_at' => 'datetime',
         ];
     }
 

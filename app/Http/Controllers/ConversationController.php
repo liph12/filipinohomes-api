@@ -75,7 +75,10 @@ class ConversationController extends Controller
         // Add the agent to conversation_users so they can see the full history
         if ($conversation->agent_user_id) {
             $conversation->users()->syncWithoutDetaching([
-                $conversation->agent_user_id => ['last_read_at' => null],
+                $conversation->agent_user_id => [
+                    'last_read_at' => null,
+                    'last_notified_at' => now(),
+                ],
             ]);
         }
 
