@@ -70,7 +70,7 @@
                                 <!-- BUTTON SECTION -->
                                 <tr>
                                     <td align="center" style="padding:24px 40px 40px;">
-                                        <a href="{{ $messageUrl }}"
+                                        <a href="https://filipinohomes.com/agent/listing-inquiries/{{ $slug }}"
                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;">
                                             View Message
                                         </a>

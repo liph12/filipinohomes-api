@@ -56,6 +56,7 @@ class ConversationController extends Controller
         $message = $conversation->latestMessage->body;
         $agent = $conversation->agentUser;
         $sender = $conversation->chat->user;
+        $type = $conversation->chat->listing;
 
         if ($conversation->status !== 'pending') {
             return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
@@ -78,7 +79,7 @@ class ConversationController extends Controller
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
-        Mail::to('libresphilip14@gmail.com')->send(new MessageNotificationMailer($sender, $agent, $message));
+        Mail::to('libresphilip14@gmail.com')->send(new MessageNotificationMailer($sender, $agent, $message, $type->slug));
 
         return new ConversationResource($conversation);
     }

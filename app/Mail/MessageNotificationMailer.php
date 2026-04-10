@@ -15,18 +15,20 @@ class MessageNotificationMailer extends Mailable
     public $senderEmail;
     public $senderName;
     public $message;
+    public $slug;
     /**
      * Create a new message instance.
      *
      * @return void
      */
-    public function __construct($sender, $receiver, $message)
+    public function __construct($sender, $receiver, $message, $slug)
     {
         $this->receiverEmail = $receiver->email;
         $this->receiverName = $receiver->name;
         $this->senderEmail = $sender->email;
         $this->senderName = $sender->name;
         $this->message = $message;
+        $this->slug = $slug;
     }
 
     /**
