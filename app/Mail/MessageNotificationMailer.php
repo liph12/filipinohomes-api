@@ -12,6 +12,7 @@ class MessageNotificationMailer extends Mailable
 
     public $receiverEmail;
     public $receiverName;
+    public $senderEmail;
     public $senderName;
     public $message;
     /**
@@ -23,6 +24,7 @@ class MessageNotificationMailer extends Mailable
     {
         $this->receiverEmail = $receiver->email;
         $this->receiverName = $receiver->name;
+        $this->senderEmail = $sender->email;
         $this->senderName = $sender->name;
         $this->message = $message;
     }

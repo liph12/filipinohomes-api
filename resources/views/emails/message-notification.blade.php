@@ -62,6 +62,7 @@
                                         <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
                                             From:<br/>
                                             <strong style="color:#162033;">{{ $senderName }}</strong><br/>
+                                            <a href="mailto:{{ $senderEmail }}" style="color:#1d4ed8;text-decoration:none;">{{ $senderEmail }}</a>
                                         </span>
                                     </td>
                                 </tr>
