@@ -40,7 +40,7 @@
                                         style="background-color:#ffffff;padding:12px 40px 24px;">
                                         <span
                                             style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
-                                            Hello {{ $name }},
+                                            Hello {{ $receiverName }},
                                             <br /><br />
                                             A new message has been submitted through Filipino Homes. Please review below and follow up with the client at your earliest convenience.
                                         </span>
