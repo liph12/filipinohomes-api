@@ -41,7 +41,7 @@ class SitemapController extends Controller
         $perPage = min((int) $request->input('per_page', 500), 1000);
 
         $paginator = Agent::query()
-            ->select('id', 'created_at')
+            ->select('id', 'created_at') 
             ->orderBy('id')
             ->paginate($perPage);
 
