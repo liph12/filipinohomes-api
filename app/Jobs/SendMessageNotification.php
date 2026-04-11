@@ -6,7 +6,6 @@ use App\Mail\MessageNotificationMailer;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
-use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -27,57 +26,47 @@ class SendMessageNotification implements ShouldQueue
 
     public function handle(): void
     {
-        $conversation = Conversation::with(['users', 'chat.user', 'chat.listing'])->find($this->conversationId);
+        $conversation = Conversation::with(['chat.user', 'chat.listing'])->find($this->conversationId);
         $message = Message::find($this->messageId);
 
         if (!$conversation || !$message) {
             return;
         }
 
-        $sender = User::find($this->senderId);
-
-        if (!$sender) {
+        // Only send email when the agent replies for the first time
+        // (Admin acceptance already emails the agent via ConversationController::accept)
+        if ($this->senderId !== $conversation->agent_user_id) {
             return;
         }
 
-        $cooldown = now()->subMinutes(30);
+        // Check if this is the agent's first message in the conversation
+        $hasEarlierMessages = Message::where('conversation_id', $conversation->id)
+            ->where('user_id', $this->senderId)
+            ->where('id', '!=', $message->id)
+            ->exists();
 
-        foreach ($conversation->users as $user) {
-            // Don't notify the sender
-            if ($user->id === $this->senderId) {
-                continue;
-            }
-
-            $pivot = $user->pivot;
-
-            // Skip if user has read recently (they're active on the page)
-            if ($pivot->last_read_at && Carbon::parse($pivot->last_read_at)->isAfter($message->created_at)) {
-                continue;
-            }
-
-            // Skip if notified recently (30-minute cooldown)
-            if ($pivot->last_notified_at && Carbon::parse($pivot->last_notified_at)->isAfter($cooldown)) {
-                continue;
-            }
-
-            // Build slug for the email link
-            $listing = $conversation->chat->listing;
-            $slug = $listing
-                ? Str::slug($listing->name) . '-' . $conversation->chat_id
-                : 'chat-' . $conversation->chat_id;
-
-            // Determine the recipient's dashboard path based on role
-            $roleName = $user->role?->name ?? 'client';
-
-            // Send email
-            Mail::to($user->email)->queue(
-                new MessageNotificationMailer($sender, $user, $message->body, $slug, $roleName)
-            );
-
-            // Update last_notified_at to prevent rapid-fire emails
-            $conversation->users()->updateExistingPivot($user->id, [
-                'last_notified_at' => now(),
-            ]);
+        if ($hasEarlierMessages) {
+            return;
         }
+
+        $sender = User::find($this->senderId);
+        $client = $conversation->chat->user;
+
+        if (!$sender || !$client) {
+            return;
+        }
+
+        // Build slug for the email link
+        $listing = $conversation->chat->listing;
+        $slug = $listing
+            ? Str::slug($listing->name) . '-' . $conversation->chat_id
+            : 'chat-' . $conversation->chat_id;
+
+        $roleName = $client->role?->name ?? 'client';
+
+        // Send email notification to the client
+        Mail::to($client->email)->send(
+            new MessageNotificationMailer($sender, $client, $message->body, $slug, $roleName)
+        );
     }
 }
