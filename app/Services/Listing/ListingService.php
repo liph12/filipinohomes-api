@@ -262,7 +262,7 @@ class ListingService
             'ats_expiration_date'  => $data['ats_expiration_date'] ?? null,
             'ats_attachments'      => $data['ats_attachments'] ?? [
                 'photos' => [],
-                'documents' => [],
+                'documents' => [],    
             ],
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
