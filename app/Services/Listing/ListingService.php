@@ -260,6 +260,10 @@ class ListingService
             'description'          => $data['description'] ?? null,
             'geo_coordinates'      => $data['geo_coordinates'] ?? null,
             'ats_expiration_date'  => $data['ats_expiration_date'] ?? null,
+            'ats_attachments'      => $data['ats_attachments'] ?? [
+                'photos' => [],
+                'documents' => [],
+            ],
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
             'furnishing_id'        => $furnishingId,
@@ -349,7 +353,7 @@ class ListingService
 
             $propertyFields = [
                 'address', 'photos', 'amenities', 'description',
-                'geo_coordinates', 'ats_expiration_date', 'is_project', 'furnishing_id','address_id'
+                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'is_project', 'furnishing_id','address_id'
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
