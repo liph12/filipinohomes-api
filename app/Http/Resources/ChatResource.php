@@ -21,6 +21,7 @@ class ChatResource extends JsonResource
                     'slug' => $this->listing->slug,
                     'price' => $this->listing->price,
                     'featured_photo' => $this->listing->featured_photo,
+                    'property_status' => $this->listing->property?->status ?? 'active',
                 ];
             }),
             'active_conversation' => new ConversationResource($this->whenLoaded('activeConversation')),

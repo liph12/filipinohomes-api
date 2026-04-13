@@ -36,6 +36,7 @@ use App\Http\Controllers\{
     AdSectionController,
     AdPlacementController,
     PublicAdController,
+    BlockedUserController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -183,8 +184,14 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
             Route::post('conversations/{conversation}/accept', [ConversationController::class, 'accept']);
             Route::post('conversations/{conversation}/reject', [ConversationController::class, 'reject']);
+            Route::post('conversations/{conversation}/close', [ConversationController::class, 'close']);
+            Route::post('conversations/{conversation}/reopen', [ConversationController::class, 'reopen']);
             Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
             Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
+            Route::get('blocked-users', [BlockedUserController::class, 'index']);
+            Route::get('blocked-users/check', [BlockedUserController::class, 'check']);
+            Route::post('blocked-users', [BlockedUserController::class, 'store']);
+            Route::delete('blocked-users/{blockedUser}', [BlockedUserController::class, 'destroy']);
         });
     }); 
 });

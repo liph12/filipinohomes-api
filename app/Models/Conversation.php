@@ -9,10 +9,11 @@ class Conversation extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['chat_id', 'status', 'agent_user_id', 'reviewed_by', 'reviewed_at'];
+    protected $fillable = ['chat_id', 'status', 'agent_user_id', 'reviewed_by', 'reviewed_at', 'closed_at', 'closed_by'];
 
     protected $casts = [
         'reviewed_at' => 'datetime',
+        'closed_at' => 'datetime',
     ];
 
     public function chat()
@@ -28,6 +29,11 @@ class Conversation extends Model
     public function agentUser()
     {
         return $this->belongsTo(User::class, 'agent_user_id');
+    }
+
+    public function closedBy()
+    {
+        return $this->belongsTo(User::class, 'closed_by');
     }
 
     public function messages()

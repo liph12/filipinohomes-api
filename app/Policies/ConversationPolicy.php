@@ -28,4 +28,14 @@ class ConversationPolicy
     {
         return $user->role?->name === 'admin';
     }
+
+    public function close(User $user, Conversation $conversation): bool
+    {
+        return $conversation->agent_user_id === $user->id;
+    }
+
+    public function reopen(User $user, Conversation $conversation): bool
+    {
+        return $conversation->agent_user_id === $user->id;
+    }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\MessageResource;
 use App\Jobs\SendMessageNotification;
+use App\Models\BlockedUser;
 use App\Models\Conversation;
 use App\Models\Message;
 use Illuminate\Http\Request;
@@ -51,6 +52,16 @@ class MessageController extends Controller
 
         if (in_array($conversation->status, ['rejected', 'closed'])) {
             abort(403, 'Cannot send messages to a ' . $conversation->status . ' conversation.');
+        }
+
+        // Check if sender is blocked by the conversation's agent
+        if ($conversation->agent_user_id) {
+            $isBlocked = BlockedUser::where('agent_user_id', $conversation->agent_user_id)
+                ->where('blocked_user_id', Auth::id())
+                ->exists();
+            if ($isBlocked) {
+                abort(403, 'You have been blocked from this conversation.');
+            }
         }
 
         if (!empty($validated['reply_to_id'])) {
@@ -112,8 +123,11 @@ class MessageController extends Controller
     {
         $this->authorize('delete', $message);
 
-        $message->update(['status' => 'deleted', 'body' => '']);
+        $isOwner = $message->user_id === Auth::id();
+        $status = $isOwner ? 'unsent' : 'deleted';
 
-        return response()->json(['message' => 'Message deleted.']);
+        $message->update(['status' => $status, 'body' => '']);
+
+        return response()->json(['message' => $isOwner ? 'Message unsent.' : 'Message deleted.']);
     }
 }

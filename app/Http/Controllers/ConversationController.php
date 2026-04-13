@@ -110,6 +110,44 @@ class ConversationController extends Controller
         return new ConversationResource($conversation);
     }
 
+    public function close(Conversation $conversation)
+    {
+        $this->authorize('close', $conversation);
+
+        if ($conversation->status !== 'accepted') {
+            return response()->json(['message' => 'Only accepted conversations can be closed.'], 422);
+        }
+
+        $conversation->update([
+            'status' => 'closed',
+            'closed_at' => now(),
+            'closed_by' => Auth::id(),
+        ]);
+
+        $conversation->load(['latestMessage.user', 'users', 'closedBy']);
+
+        return new ConversationResource($conversation);
+    }
+
+    public function reopen(Conversation $conversation)
+    {
+        $this->authorize('reopen', $conversation);
+
+        if ($conversation->status !== 'closed') {
+            return response()->json(['message' => 'Only closed conversations can be reopened.'], 422);
+        }
+
+        $conversation->update([
+            'status' => 'accepted',
+            'closed_at' => null,
+            'closed_by' => null,
+        ]);
+
+        $conversation->load(['latestMessage.user', 'users']);
+
+        return new ConversationResource($conversation);
+    }
+
     public function markRead(Conversation $conversation)
     {
         $this->authorize('view', $conversation);

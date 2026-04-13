@@ -18,7 +18,7 @@ class ChatController extends Controller
         $user = Auth::user();
         $roleName = $user->role?->name;
 
-        $query = Chat::with(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
+        $query = Chat::with(['user', 'listing.property', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
 
         if ($roleName === 'admin') {
             // admin sees all
