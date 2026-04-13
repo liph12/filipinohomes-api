@@ -527,7 +527,7 @@ public function dashboardStatusByDate(Request $request): JsonResponse
     $validated = $request->validate([
         'date_start'  => 'nullable|date',
         'date_end'    => 'nullable|date|after_or_equal:date_start',
-        'granularity' => 'nullable|in:day,month',
+        'granularity' => 'nullable|in:day,month,year',
     ]);
 
     $user    = $request->user();
@@ -549,13 +549,16 @@ public function dashboardStatusByDate(Request $request): JsonResponse
         if (!$agentId) return $emptyResponse();
     }
 
-    $dateExpr   = $gran === 'month'
-        ? DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m-01') as date")
-        : DB::raw('DATE(properties.status_change_date) as date');
-
-    $groupByRaw = $gran === 'month'
-        ? "DATE_FORMAT(properties.status_change_date, '%Y-%m-01'), properties.status"
-        : "DATE(properties.status_change_date), properties.status";
+    if ($gran === 'month') {
+        $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m-01') as date");
+        $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-%m-01'), properties.status";
+    } elseif ($gran === 'year') {
+        $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-01-01') as date");
+        $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-01-01'), properties.status";
+    } else {
+        $dateExpr   = DB::raw('DATE(properties.status_change_date) as date');
+        $groupByRaw = "DATE(properties.status_change_date), properties.status";
+    }
 
     $cacheKey = 'dashboard_status:' . ($isAdmin ? 'admin' : "agent_{$agentId}") . ":{$user->id}:{$gran}:{$start}:{$end}";
 
