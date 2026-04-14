@@ -21,7 +21,7 @@ class ReactionController extends Controller
             && Auth::user()->role?->name !== 'admin') {
             abort(403, 'You are not a participant in this conversation.');
         }
-
+ 
         $existing = MessageReaction::where('message_id', $message->id)
             ->where('user_id', Auth::id())
             ->where('emoji', $validated['emoji'])
