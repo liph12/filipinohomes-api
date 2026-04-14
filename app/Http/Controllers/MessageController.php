@@ -79,6 +79,9 @@ class MessageController extends Controller
             'reply_to_id' => $validated['reply_to_id'] ?? null,
         ]);
 
+        // Touch the parent chat so it sorts to the top of the list
+        $conversation->chat->touch();
+
         // Update sender's last_read_at so online presence reflects activity
         $conversation->users()->updateExistingPivot(Auth::id(), [
             'last_read_at' => Carbon::now(),
