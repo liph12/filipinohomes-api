@@ -61,6 +61,7 @@ class UpdateListingRequest extends FormRequest
             'ats_attachments.photos.*'     => 'string|url',
             'ats_attachments.documents'    => 'sometimes|array',
             'ats_attachments.documents.*'  => 'string|url',
+            'ats_remarks'                  => 'nullable|string',
             'is_project'          => 'nullable|boolean',
             'project_id'          => 'nullable|integer',
             'project'             => 'nullable|array',
@@ -89,6 +90,7 @@ class UpdateListingRequest extends FormRequest
             'is_featured' => 'sometimes|boolean',
             // Accept flexible structures; normalization happens in service
             'nearby_facilities' => 'sometimes|array',
+            'ats_status'        => 'sometimes|in:approve,pending,expired',
         ];
     }
 

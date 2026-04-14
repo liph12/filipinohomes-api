@@ -65,6 +65,7 @@ class StoreListingRequest extends FormRequest
             'ats_attachments.photos.*'     => 'string|url',
             'ats_attachments.documents'    => 'nullable|array',
             'ats_attachments.documents.*'  => 'string|url',
+            'ats_remarks'                  => 'nullable|string',
             'is_project' => 'nullable|boolean',
             'project_id' => 'nullable|integer',
             'address_id' =>  'nullable|exists:barangays,id',

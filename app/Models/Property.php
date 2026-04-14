@@ -17,7 +17,9 @@ class Property extends Model
         'status_remark',
         'ats_expiration_date',
         'ats_attachments',
+        'ats_remarks',
         'ats_status',
+        'reviewed_by',
         'photos',
         'amenities',
         'description',
@@ -35,9 +37,11 @@ class Property extends Model
         'amenities'  => 'array',
         'geo_coordinates'  => 'array',
         'ats_attachments'  => 'array',
+        'ats_remarks'       => 'string',
         'is_project' => 'boolean',
         'status_change_date' => 'date',
         'ats_expiration_date' => 'date',
+        'reviewed_by' => 'integer',
     ];
 
     public function propertyAttribute()
@@ -93,6 +97,11 @@ class Property extends Model
     public function deleter()
     {
         return $this->belongsTo(User::class, 'deleted_by');
+    }
+
+    public function reviewer()
+    {
+        return $this->belongsTo(User::class, 'reviewed_by');
     }
 
     public function barangay()

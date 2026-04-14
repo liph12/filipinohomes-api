@@ -217,6 +217,7 @@ class ListingController extends Controller
         $visibility = $request->input('visibility');
         $category   = $request->input('category');
         $featured   = $request->input('featured'); // '1' | '0' | 'true' | 'false' | 'all' | null
+        $atsStatus  = $request->input('ats_status'); // 'pending' | 'approved' | 'expired'
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
         $applyStatus = function ($q) use ($status) {
@@ -254,8 +255,15 @@ class ListingController extends Controller
             return $q;
         };
 
+        // ATS status filter maps 'approved' -> 'approve' in DB
+        $applyAtsStatus = function ($q) use ($atsStatus) {
+            if (!$atsStatus || strtolower((string)$atsStatus) === 'all') return $q;
+            $dbVal = strtolower((string)$atsStatus) === 'approved' ? 'approve' : strtolower((string)$atsStatus);
+            return $q->whereHas('property', fn ($sub) => $sub->where('ats_status', $dbVal));
+        };
+
         // ── Status counts: respect visibility + category filters, NOT status ──
-        $statusBase = $applyFeatured($applyCategory($applyVisibility(clone $query)));
+        $statusBase = $applyAtsStatus($applyFeatured($applyCategory($applyVisibility(clone $query))));
         $statusCounts = [
             'active' => (clone $statusBase)->active()->count(),
             'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
@@ -264,7 +272,7 @@ class ListingController extends Controller
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
-        $visibilityBase = $applyFeatured($applyCategory($applyStatus(clone $query)));
+        $visibilityBase = $applyAtsStatus($applyFeatured($applyCategory($applyStatus(clone $query))));
         $visibilityCounts = (clone $visibilityBase)
             ->selectRaw('visibility, COUNT(*) as count')
             ->groupBy('visibility')
@@ -272,7 +280,7 @@ class ListingController extends Controller
             ->toArray();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
-        $categoryBase = $applyFeatured($applyStatus($applyVisibility(clone $query)));
+        $categoryBase = $applyAtsStatus($applyFeatured($applyStatus($applyVisibility(clone $query))));
         $categoryCounts = (clone $categoryBase)
             ->selectRaw('categories.name as category_name, COUNT(*) as count')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -285,6 +293,7 @@ class ListingController extends Controller
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
+        $query = $applyAtsStatus($query);
         $atsStatus = $request->input('ats_status');
 $applyAtsStatus = function ($q) use ($atsStatus) {
     if (!$atsStatus) return $q;

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use App\Models\NearbyFacility;
 
 class ListingService
@@ -264,6 +265,7 @@ class ListingService
                 'photos' => [],
                 'documents' => [],    
             ],
+            'ats_remarks'          => $data['ats_remarks'] ?? null,
             'ats_status'           => 'pending',
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
@@ -354,7 +356,7 @@ class ListingService
 
             $propertyFields = [
                 'address', 'photos', 'amenities', 'description',
-                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'is_project', 'furnishing_id','address_id'
+                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'is_project', 'furnishing_id','address_id'
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
@@ -364,6 +366,17 @@ class ListingService
                 $existing = $property->ats_attachments;
                 if ($this->attachmentsChanged($existing, $incoming)) {
                     $propertyData['ats_status'] = 'pending';
+                    // Reset reviewer when going back to pending
+                    $propertyData['reviewed_by'] = null;
+                }
+            }
+
+            // If ats_status is explicitly provided and changed, record reviewer
+            if (isset($data['ats_status'])) {
+                $incomingStatus = $data['ats_status'];
+                if ($incomingStatus !== $property->ats_status) {
+                    $propertyData['ats_status'] = $incomingStatus;
+                    $propertyData['reviewed_by'] = Auth::id();
                 }
             }
             $property->update($propertyData);
