@@ -283,6 +283,12 @@ class ListingController extends Controller
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
+        $atsStatus = $request->input('ats_status');
+$applyAtsStatus = function ($q) use ($atsStatus) {
+    if (!$atsStatus) return $q;
+    return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
+};
+$query = $applyAtsStatus($query);
 
         $listings = $query
             ->with([
@@ -392,6 +398,12 @@ class ListingController extends Controller
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
+        $atsStatus = $request->input('ats_status');
+$applyAtsStatus = function ($q) use ($atsStatus) {
+    if (!$atsStatus) return $q;
+    return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
+};
+$query = $applyAtsStatus($query);
 
         $listings = $query
             ->with([
