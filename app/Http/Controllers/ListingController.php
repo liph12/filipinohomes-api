@@ -152,7 +152,9 @@ class ListingController extends Controller
                 $cacheKey = "listing_{$currListing->id}_clicked_by_{$deviceId}";
             
                 if (!Cache::has($cacheKey)) {
+                    $currListing->timestamps = false;
                     $currListing->increment('clicks');
+                    $currListing->timestamps = true;
                     Cache::put($cacheKey, true, now()->addDay());
                 }
     
