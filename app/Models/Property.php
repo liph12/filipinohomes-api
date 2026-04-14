@@ -62,6 +62,23 @@ class Property extends Model
             }
         });
 
+        // Auto-expire when a property is retrieved and ATS is due
+        static::retrieved(function ($model) {
+            try {
+                if (!empty($model->ats_expiration_date)
+                    && $model->ats_status !== 'expired'
+                    && \Illuminate\Support\Carbon::parse($model->ats_expiration_date)->isPast()) {
+                    // Avoid touching updated_at noisily
+                    $originalTimestamps = $model->timestamps;
+                    $model->timestamps = false;
+                    $model->forceFill(['ats_status' => 'expired'])->saveQuietly();
+                    $model->timestamps = $originalTimestamps;
+                }
+            } catch (\Throwable $e) {
+                // Best-effort safeguard; do not block requests on failure
+            }
+        });
+
         static::creating(function ($model) {
             if (Auth::check()) {
                 $model->created_by = Auth::id();

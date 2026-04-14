@@ -93,8 +93,17 @@ class FullListingController extends Controller
                 return response()->json(['message' => 'You do not own this listing.'], 403);
             }
 
+        $payload = $request->validated();
+
+        // Only admins may update ATS status; reject agents attempting to change it
+        if (array_key_exists('ats_status', $payload) && ($user->role->name ?? null) !== 'admin') {
+            return response()->json([
+                'message' => 'Only admins can update ATS status.'
+            ], 403);
+        }
+
         $updated = $this->listingService->updateListing(
-            $request->validated(),
+            $payload,
             $listing,
             $agent
         );
