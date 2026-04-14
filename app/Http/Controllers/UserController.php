@@ -425,4 +425,26 @@ class UserController extends Controller
 
         return response()->json($users);
     }
+
+    public function searchUsers(Request $request)
+    {
+        $search = $request->query('q', '');
+        if (strlen($search) < 2) {
+            return response()->json([]);
+        }
+
+        $currentUserId = Auth::id();
+
+        $users = User::where('id', '!=', $currentUserId)
+            ->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            })
+            ->select('id', 'name', 'email', 'avatar', 'role_id', 'active_at')
+            ->with('role:id,name')
+            ->limit(10)
+            ->get();
+
+        return response()->json($users);
+    }
 }
