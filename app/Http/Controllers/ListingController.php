@@ -148,8 +148,8 @@ class ListingController extends Controller
 
             if($currListing)
             {
-                $ip = $request->ip();
-                $cacheKey = "listing_{$currListing->id}_clicked_by_{$ip}";
+                $deviceId = $request->input('device_id');
+                $cacheKey = "listing_{$currListing->id}_clicked_by_{$deviceId}";
             
                 if (!Cache::has($cacheKey)) {
                     $currListing->increment('clicks');
