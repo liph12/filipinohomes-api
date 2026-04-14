@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
 use App\Models\PropertySubtype;
 use App\Models\Property;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Gate;    
+use Illuminate\Support\Facades\Gate;
 
 class ListingController extends Controller
 {
@@ -31,15 +31,15 @@ class ListingController extends Controller
         } else {
             $terms = explode(' ', $search);
         }
-    
+
         $locations = Property::select(
-                'properties.address_id',
-                'properties.address',
-                'barangays.name as barangay',
-                'cities.name as city',
-                'provinces.name as province',
-                DB::raw('COUNT(*) as total_properties')
-            )->whereHas('publicListing')
+            'properties.address_id',
+            'properties.address',
+            'barangays.name as barangay',
+            'cities.name as city',
+            'provinces.name as province',
+            DB::raw('COUNT(*) as total_properties')
+        )->whereHas('publicListing')
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
@@ -64,20 +64,20 @@ class ListingController extends Controller
                 'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
                 'total_properties' => $row->total_properties,
             ]);
-    
+
         return response()->json($locations);
     }
 
     public function listingsByLocationAll()
-    {    
+    {
         $locations = Property::select(
-                'properties.address_id',
-                'properties.address',
-                'barangays.name as barangay',
-                'cities.name as city',
-                'provinces.name as province',
-                DB::raw('COUNT(*) as total_properties')
-            )->whereHas('publicListing')
+            'properties.address_id',
+            'properties.address',
+            'barangays.name as barangay',
+            'cities.name as city',
+            'provinces.name as province',
+            DB::raw('COUNT(*) as total_properties')
+        )->whereHas('publicListing')
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
@@ -96,82 +96,80 @@ class ListingController extends Controller
                 'label'            => "{$row->barangay}, {$row->city}, {$row->province}",
                 'total_properties' => $row->total_properties,
             ]);
-    
+
         return response()->json($locations);
     }
 
     public function listingByCityAll()
-    {    
+    {
         $cities = Property::select(
-                'cities.name as city',
-                'provinces.name as province',
-            )->whereHas('publicListing')
+            'cities.name as city',
+            'provinces.name as province',
+        )->whereHas('publicListing')
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
             ->groupBy('cities.id')
             ->get();
-    
+
         return response()->json($cities);
     }
-    
+
     public function index(Request $request): ListingResourceCollection
     {
         $listings = Listing::where('visibility', 'public')
-        ->with([
-            'property.propertyAttribute.subtype',
-            'property.nearbyFacility',
-            'category',
-            'agent' => function ($q) {
-                $q->withCount('listings');
-            }
-        ])
-        ->withCount([
-            'property as subtype_count' => function ($q) {
-                $q->whereHas('propertyAttribute.subtype');
-            }
-        ])
-        ->filter($request)
-        ->orderByDesc('updated_at')
-        ->orderByDesc('subtype_count')
-        ->paginate(12);
+            ->with([
+                'property.propertyAttribute.subtype',
+                'property.nearbyFacility',
+                'category',
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                }
+            ])
+            ->withCount([
+                'property as subtype_count' => function ($q) {
+                    $q->whereHas('propertyAttribute.subtype');
+                }
+            ])
+            ->filter($request)
+            ->orderByDesc('updated_at')
+            ->orderByDesc('subtype_count')
+            ->paginate(12);
 
         return new ListingResourceCollection($listings);
     }
 
     public function resolveByKeywordsAndSlug(Request $request)
-    {   
+    {
         $listing = null;
-        if($slug = $request->input('slug'))
-        {
+        if ($slug = $request->input('slug')) {
             $currListing = Listing::where('slug', $slug)->first();
 
-            if($currListing)
-            {
+            if ($currListing) {
                 $deviceId = $request->input('device_id');
                 $cacheKey = "listing_{$currListing->id}_clicked_by_{$deviceId}";
-            
+
                 if (!Cache::has($cacheKey)) {
                     $currListing->timestamps = false;
                     $currListing->increment('clicks');
                     $currListing->timestamps = true;
                     Cache::put($cacheKey, true, now()->addDay());
                 }
-    
+
                 $listing = Listing::where('slug', $slug)->where('visibility', 'public')
-                ->with([
-                    'property.propertyAttribute.subtype',
-                    'property.nearbyFacility',
-                    'category',
-                    'agent' => function ($q) {
-                        $q->withCount('listings');
-                    }
-                ])
-                ->withCount([
-                    'property as subtype_count' => function ($q) {
-                        $q->whereHas('propertyAttribute.subtype');
-                    }
-                ])->first();
+                    ->with([
+                        'property.propertyAttribute.subtype',
+                        'property.nearbyFacility',
+                        'category',
+                        'agent' => function ($q) {
+                            $q->withCount('listings');
+                        }
+                    ])
+                    ->withCount([
+                        'property as subtype_count' => function ($q) {
+                            $q->whereHas('propertyAttribute.subtype');
+                        }
+                    ])->first();
             }
         }
 
@@ -249,7 +247,7 @@ class ListingController extends Controller
                 if ($parsed !== null) $bool = $parsed;
             }
             if ($bool === true)  return $q->where('listings.is_featured', 1);
-            if ($bool === false) return $q->where(function($qq){
+            if ($bool === false) return $q->where(function ($qq) {
                 $qq->where('listings.is_featured', 0)->orWhereNull('listings.is_featured');
             });
             return $q;
@@ -259,7 +257,7 @@ class ListingController extends Controller
         $applyAtsStatus = function ($q) use ($atsStatus) {
             if (!$atsStatus || strtolower((string)$atsStatus) === 'all') return $q;
             $dbVal = strtolower((string)$atsStatus) === 'approved' ? 'approve' : strtolower((string)$atsStatus);
-            return $q->whereHas('property', fn ($sub) => $sub->where('ats_status', $dbVal));
+            return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $dbVal));
         };
 
         // ── Status counts: respect visibility + category filters, NOT status ──
@@ -295,11 +293,11 @@ class ListingController extends Controller
         $query = $applyFeatured($query);
         $query = $applyAtsStatus($query);
         $atsStatus = $request->input('ats_status');
-$applyAtsStatus = function ($q) use ($atsStatus) {
-    if (!$atsStatus) return $q;
-    return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
-};
-$query = $applyAtsStatus($query);
+        $applyAtsStatus = function ($q) use ($atsStatus) {
+            if (!$atsStatus) return $q;
+            return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
+        };
+        $query = $applyAtsStatus($query);
 
         $listings = $query
             ->with([
@@ -322,11 +320,11 @@ $query = $applyAtsStatus($query);
         ]);
     }
 
-    public function allListings (Request $request)
+    public function allListings(Request $request)
     {
         $user = $request->user();
         if ($user->role->name !== 'admin') abort(403);
-        $query = Listing::query(); 
+        $query = Listing::query();
 
         // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
@@ -341,6 +339,7 @@ $query = $applyAtsStatus($query);
         $visibility = $request->input('visibility');
         $category   = $request->input('category');
         $featured   = $request->input('featured'); // '1' | '0' | 'true' | 'false' | 'all' | null
+        $subtypes   = $request->input('subtypes'); // array or comma-separated ids
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
         $applyStatus = function ($q) use ($status) {
@@ -372,14 +371,23 @@ $query = $applyAtsStatus($query);
                 if ($parsed !== null) $bool = $parsed;
             }
             if ($bool === true)  return $q->where('listings.is_featured', 1);
-            if ($bool === false) return $q->where(function($qq){
+            if ($bool === false) return $q->where(function ($qq) {
                 $qq->where('listings.is_featured', 0)->orWhereNull('listings.is_featured');
             });
             return $q;
         };
 
+        // Subtype filter via ids (comma-separated or array)
+        $applySubtypes = function ($q) use ($subtypes) {
+            if (!$subtypes) return $q;
+            $ids = is_array($subtypes) ? $subtypes : explode(',', (string)$subtypes);
+            $ids = array_filter(array_map('intval', $ids));
+            if (empty($ids)) return $q;
+            return $q->whereHas('property.propertyAttribute.subtype', fn($sub) => $sub->whereIn('id', $ids));
+        };
+
         // ── Status counts: respect visibility + category filters, NOT status ──
-        $statusBase = $applyFeatured($applyCategory($applyVisibility(clone $query)));
+        $statusBase = $applySubtypes($applyFeatured($applyCategory($applyVisibility(clone $query))));
         $statusCounts = [
             'active' => (clone $statusBase)->active()->count(),
             'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
@@ -388,7 +396,7 @@ $query = $applyAtsStatus($query);
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
-        $visibilityBase = $applyFeatured($applyCategory($applyStatus(clone $query)));
+        $visibilityBase = $applySubtypes($applyFeatured($applyCategory($applyStatus(clone $query))));
         $visibilityCounts = (clone $visibilityBase)
             ->selectRaw('visibility, COUNT(*) as count')
             ->groupBy('visibility')
@@ -396,7 +404,7 @@ $query = $applyAtsStatus($query);
             ->toArray();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
-        $categoryBase = $applyFeatured($applyStatus($applyVisibility(clone $query)));
+        $categoryBase = $applySubtypes($applyFeatured($applyStatus($applyVisibility(clone $query))));
         $categoryCounts = (clone $categoryBase)
             ->selectRaw('categories.name as category_name, COUNT(*) as count')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -409,12 +417,13 @@ $query = $applyAtsStatus($query);
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
+        $query = $applySubtypes($query);
         $atsStatus = $request->input('ats_status');
-$applyAtsStatus = function ($q) use ($atsStatus) {
-    if (!$atsStatus) return $q;
-    return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
-};
-$query = $applyAtsStatus($query);
+        $applyAtsStatus = function ($q) use ($atsStatus) {
+            if (!$atsStatus) return $q;
+            return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
+        };
+        $query = $applyAtsStatus($query);
 
         $listings = $query
             ->with([
@@ -438,24 +447,24 @@ $query = $applyAtsStatus($query);
     }
 
     public function createPropertyStatistics($start, $end, $typeId)
-    {    
-        $baseQuery = Listing::whereHas('property.propertyAttribute', function($q) use($typeId){
+    {
+        $baseQuery = Listing::whereHas('property.propertyAttribute', function ($q) use ($typeId) {
             $q->where('property_subtype_id', $typeId);
         })->whereBetween('created_at', [$start, $end]);
 
         $statistics['active'] = (clone $baseQuery)->active()->count();
         $statistics['total']  = (clone $baseQuery)->count();
         $statistics['views']  = (int) (clone $baseQuery)->sum('clicks');
-    
+
         $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn(
             'listing_id',
             (clone $baseQuery)->select('id')
         )->count();
-    
+
         $statistics['rented'] = (clone $baseQuery)->rented()->count();
         $statistics['sold']   = (clone $baseQuery)->sold()->count();
         $statistics['leased'] = (clone $baseQuery)->leased()->count();
-    
+
         return $statistics;
     }
 
@@ -474,8 +483,7 @@ $query = $applyAtsStatus($query);
         ];
 
 
-        foreach($subTypes as $st)
-        {
+        foreach ($subTypes as $st) {
             $stat = $this->createPropertyStatistics($start, $end, $st->id);
             $statistics[] = [
                 'type' => $st->type->name,
@@ -495,7 +503,7 @@ $query = $applyAtsStatus($query);
     }
 
     public function dashboard(Request $request)
-    {   
+    {
         $user = $request->user();
         $isAdmin = $user->role->name === 'admin';
         $start = date('2020-01-01');
@@ -510,14 +518,12 @@ $query = $applyAtsStatus($query);
             'agents'    => 0,
         ];
 
-        if(isset($request->date_start) && isset($request->date_start))
-        {
+        if (isset($request->date_start) && isset($request->date_start)) {
             $start = $request->date_start;
             $end = $request->date_end;
         }
 
-        if($isAdmin)
-        {
+        if ($isAdmin) {
             $agentCount = \App\Models\Agent::whereBetween('member_since', [$start, $end])->count();
             $propertyStatistics = $this->propertyStatistics($start, $end);
 
@@ -526,17 +532,17 @@ $query = $applyAtsStatus($query);
                 'properties' => $propertyStatistics
             ];
         }
-        
+
         $baseQuery = Listing::withCount('inQuiries')->where('agent_id', $user->agent->id);
         $statistics['active'] = (clone $baseQuery)->active()->count();
         $statistics['total']  = (clone $baseQuery)->count();
         $statistics['views']  = (int) (clone $baseQuery)->sum('clicks');
-    
+
         $statistics['inquiries'] = \App\Models\ListingInquiry::whereIn(
             'listing_id',
             (clone $baseQuery)->select('id')
         )->count();
-    
+
         $statistics['rented'] = (clone $baseQuery)->rented()->count();
         $statistics['sold']   = (clone $baseQuery)->sold()->count();
         $statistics['leased'] = (clone $baseQuery)->leased()->count();
@@ -545,86 +551,92 @@ $query = $applyAtsStatus($query);
         return response()->json($statistics);
     }
 
-public function dashboardStatusByDate(Request $request): JsonResponse
-{
-    $validated = $request->validate([
-        'date_start'  => 'nullable|date',
-        'date_end'    => 'nullable|date|after_or_equal:date_start',
-        'granularity' => 'nullable|in:day,month,year',
-    ]);
+    public function dashboardStatusByDate(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'date_start'  => 'nullable|date',
+            'date_end'    => 'nullable|date|after_or_equal:date_start',
+            'granularity' => 'nullable|in:day,month,year',
+        ]);
 
-    $user    = $request->user();
-    $isAdmin = Gate::forUser($user)->allows('view-all-dashboard');
-    $start   = $validated['date_start'] ?? now()->startOfYear()->toDateString();
-    $end     = $validated['date_end']   ?? now()->toDateString();
-    $gran    = $validated['granularity'] ?? 'day';
-    $statuses = ['rented', 'sold', 'leased'];
+        $user    = $request->user();
+        $isAdmin = Gate::forUser($user)->allows('view-all-dashboard');
+        $start   = $validated['date_start'] ?? now()->startOfYear()->toDateString();
+        $end     = $validated['date_end']   ?? now()->toDateString();
+        $gran    = $validated['granularity'] ?? 'day';
+        $statuses = ['rented', 'sold', 'leased'];
 
-    $emptyResponse = fn() => response()->json([
-        'data'   => [],
-        'totals' => array_fill_keys($statuses, 0),
-        'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
-    ]);
-
-    if (!$isAdmin) {
-        $user->loadMissing('agent');
-        $agentId = $user->agent?->id;
-        if (!$agentId) return $emptyResponse();
-    }
-
-    if ($gran === 'month') {
-        $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m-01') as date");
-        $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-%m-01'), properties.status";
-    } elseif ($gran === 'year') {
-        $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-01-01') as date");
-        $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-01-01'), properties.status";
-    } else {
-        $dateExpr   = DB::raw('DATE(properties.status_change_date) as date');
-        $groupByRaw = "DATE(properties.status_change_date), properties.status";
-    }
-
-    $cacheKey = 'dashboard_status:' . ($isAdmin ? 'admin' : "agent_{$agentId}") . ":{$user->id}:{$gran}:{$start}:{$end}";
-
-    $rows = Cache::remember($cacheKey, now()->addMinutes(15), function () use (
-        $dateExpr, $groupByRaw, $statuses, $start, $end, $isAdmin, $agentId
-    ) {
-        $query = DB::table('properties')
-            ->select([$dateExpr, 'properties.status', DB::raw('COUNT(*) as count')])
-            ->whereIn('properties.status', $statuses)
-            ->whereNotNull('properties.status_change_date')
-            ->whereBetween(DB::raw('DATE(properties.status_change_date)'), [$start, $end]);
+        $emptyResponse = fn() => response()->json([
+            'data'   => [],
+            'totals' => array_fill_keys($statuses, 0),
+            'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
+        ]);
 
         if (!$isAdmin) {
-            $query->join('listings', 'listings.property_id', '=', 'properties.id')
-                  ->where('listings.agent_id', $agentId);
+            $user->loadMissing('agent');
+            $agentId = $user->agent?->id;
+            if (!$agentId) return $emptyResponse();
         }
 
-        return $query
-            ->groupByRaw($groupByRaw)
-            ->orderByRaw($groupByRaw)
-            ->get();
-    });
+        if ($gran === 'month') {
+            $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m-01') as date");
+            $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-%m-01'), properties.status";
+        } elseif ($gran === 'year') {
+            $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-01-01') as date");
+            $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-01-01'), properties.status";
+        } else {
+            $dateExpr   = DB::raw('DATE(properties.status_change_date) as date');
+            $groupByRaw = "DATE(properties.status_change_date), properties.status";
+        }
 
-    $byDate = [];
-    $totals = array_fill_keys($statuses, 0);
+        $cacheKey = 'dashboard_status:' . ($isAdmin ? 'admin' : "agent_{$agentId}") . ":{$user->id}:{$gran}:{$start}:{$end}";
 
-    foreach ($rows as $row) {
-        $date   = (string) $row->date;
-        $status = (string) $row->status;
-        $count  = (int)    $row->count;
+        $rows = Cache::remember($cacheKey, now()->addMinutes(15), function () use (
+            $dateExpr,
+            $groupByRaw,
+            $statuses,
+            $start,
+            $end,
+            $isAdmin,
+            $agentId
+        ) {
+            $query = DB::table('properties')
+                ->select([$dateExpr, 'properties.status', DB::raw('COUNT(*) as count')])
+                ->whereIn('properties.status', $statuses)
+                ->whereNotNull('properties.status_change_date')
+                ->whereBetween(DB::raw('DATE(properties.status_change_date)'), [$start, $end]);
 
-        $byDate[$date] ??= array_merge(['date' => $date], array_fill_keys($statuses, 0), ['total' => 0]);
-        $byDate[$date][$status] += $count;
-        $byDate[$date]['total'] += $count;
-        $totals[$status]        += $count;
+            if (!$isAdmin) {
+                $query->join('listings', 'listings.property_id', '=', 'properties.id')
+                    ->where('listings.agent_id', $agentId);
+            }
+
+            return $query
+                ->groupByRaw($groupByRaw)
+                ->orderByRaw($groupByRaw)
+                ->get();
+        });
+
+        $byDate = [];
+        $totals = array_fill_keys($statuses, 0);
+
+        foreach ($rows as $row) {
+            $date   = (string) $row->date;
+            $status = (string) $row->status;
+            $count  = (int)    $row->count;
+
+            $byDate[$date] ??= array_merge(['date' => $date], array_fill_keys($statuses, 0), ['total' => 0]);
+            $byDate[$date][$status] += $count;
+            $byDate[$date]['total'] += $count;
+            $totals[$status]        += $count;
+        }
+
+        return response()->json([
+            'data'   => array_values($byDate),
+            'totals' => $totals,
+            'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
+        ]);
     }
-
-    return response()->json([
-        'data'   => array_values($byDate),
-        'totals' => $totals,
-        'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
-    ]);
-}
 
     public function updateVisibility(Request $request, Listing $listing)
     {
