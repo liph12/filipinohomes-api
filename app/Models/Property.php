@@ -17,6 +17,7 @@ class Property extends Model
         'status_remark',
         'ats_expiration_date',
         'ats_attachments',
+        'ats_status',
         'photos',
         'amenities',
         'description',
@@ -51,6 +52,12 @@ class Property extends Model
 
     protected static function booted()
     {
+        static::saving(function ($model) {
+            if (!empty($model->ats_expiration_date) && \Illuminate\Support\Carbon::parse($model->ats_expiration_date)->isPast()) {
+                $model->ats_status = 'expired';
+            }
+        });
+
         static::creating(function ($model) {
             if (Auth::check()) {
                 $model->created_by = Auth::id();

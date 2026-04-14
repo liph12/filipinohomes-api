@@ -264,6 +264,7 @@ class ListingService
                 'photos' => [],
                 'documents' => [],    
             ],
+            'ats_status'           => 'pending',
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
             'furnishing_id'        => $furnishingId,
@@ -357,6 +358,14 @@ class ListingService
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
+
+            if (array_key_exists('ats_attachments', $data)) {
+                $incoming = $data['ats_attachments'];
+                $existing = $property->ats_attachments;
+                if ($this->attachmentsChanged($existing, $incoming)) {
+                    $propertyData['ats_status'] = 'pending';
+                }
+            }
             $property->update($propertyData);
 
             $slug = $listing->slug;
@@ -407,5 +416,76 @@ class ListingService
 
             return $listing;
         });
+    }
+
+    /**
+     * Determine if ATS attachments changed vs existing, treating null/empty as same and comparing deeply.
+     */
+    protected function attachmentsChanged($existing, $incoming): bool
+    {
+        $normExisting = $this->normalizeAttachments($existing);
+        $normIncoming = $this->normalizeAttachments($incoming);
+
+        return $this->stableHash($normExisting) !== $this->stableHash($normIncoming);
+    }
+
+    protected function normalizeAttachments($value): array
+    {
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $value = $decoded;
+            }
+        }
+
+        $result = [
+            'photos'    => [],
+            'documents' => [],
+        ];
+
+        if (is_array($value)) {
+            $result['photos']    = isset($value['photos']) && is_array($value['photos']) ? array_values($value['photos']) : [];
+            $result['documents'] = isset($value['documents']) && is_array($value['documents']) ? array_values($value['documents']) : [];
+        }
+
+        // Sort to ensure order-insensitive comparison
+        $this->deepSort($result['photos']);
+        $this->deepSort($result['documents']);
+
+        return $result;
+    }
+
+    protected function deepSort(array &$arr): void
+    {
+        usort($arr, function ($a, $b) {
+            $ha = is_array($a) ? json_encode($this->deepSortedCopy($a)) : json_encode($a);
+            $hb = is_array($b) ? json_encode($this->deepSortedCopy($b)) : json_encode($b);
+            return $ha <=> $hb;
+        });
+    }
+
+    protected function deepSortedCopy($val)
+    {
+        if (!is_array($val)) return $val;
+        $copy = $val;
+        foreach ($copy as &$v) {
+            if (is_array($v)) $v = $this->deepSortedCopy($v);
+        }
+        // Normalize list ordering
+        if ($this->isList($copy)) {
+            usort($copy, function ($a, $b) {
+                $ha = json_encode($a);
+                $hb = json_encode($b);
+                return $ha <=> $hb;
+            });
+        } else {
+            ksort($copy);
+        }
+        return $copy;
+    }
+
+    protected function stableHash($val): string
+    {
+        return md5(json_encode($this->deepSortedCopy($val)) ?: '');
     }
 }
