@@ -91,8 +91,8 @@ class UpdateListingRequest extends FormRequest
             // Accept flexible structures; normalization happens in service
             'nearby_facilities' => 'sometimes|array',
             'ats_status'        => 'sometimes|in:approve,pending,expired,rejected',
-        ];
-    }
+    ];
+    } 
 
     protected function failedAuthorization()
     {
