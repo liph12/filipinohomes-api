@@ -160,11 +160,13 @@ class ConversationController extends Controller
             $user->id => ['last_read_at' => $now],
         ]);
 
-        // Mark individual messages as read
-        $conversation->messages()
-            ->where('user_id', '!=', $user->id)
-            ->whereNull('read_at')
-            ->update(['read_at' => $now]);
+        // Admins should not trigger "seen" — only update pivot for unread tracking
+        if ($user->role?->name !== 'admin') {
+            $conversation->messages()
+                ->where('user_id', '!=', $user->id)
+                ->whereNull('read_at')
+                ->update(['read_at' => $now]);
+        }
 
         return response()->json([
             'message' => 'Marked as read.',

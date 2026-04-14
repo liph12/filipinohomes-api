@@ -148,11 +148,13 @@ class ListingController extends Controller
 
             if($currListing)
             {
-                $ip = $request->ip();
-                $cacheKey = "listing_{$currListing->id}_clicked_by_{$ip}";
+                $deviceId = $request->input('device_id');
+                $cacheKey = "listing_{$currListing->id}_clicked_by_{$deviceId}";
             
                 if (!Cache::has($cacheKey)) {
+                    $currListing->timestamps = false;
                     $currListing->increment('clicks');
+                    $currListing->timestamps = true;
                     Cache::put($cacheKey, true, now()->addDay());
                 }
     
