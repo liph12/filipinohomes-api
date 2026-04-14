@@ -36,7 +36,8 @@ class ChatController extends Controller
             $query->where('user_id', $user->id);
         }
 
-        $chats = $query->latest()->paginate(20);
+        $perPage = (int) request()->query('per_page', 100);
+        $chats = $query->latest()->paginate(min($perPage, 200));
 
         // Compute unread counts for each conversation
         foreach ($chats as $chat) {
