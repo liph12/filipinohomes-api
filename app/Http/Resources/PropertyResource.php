@@ -26,6 +26,7 @@ class PropertyResource extends JsonResource
             'status_remark'          => $this->status_remark,
             'ats_expiration_date'    => $this->ats_expiration_date,
             'ats_attachments'        => $this->ats_attachments,
+            'ats_status'            => $this->ats_status,
             'address'               => $this->address,
             'photos'                => $this->photos,       
             'amenities'             => $this->amenities,   
