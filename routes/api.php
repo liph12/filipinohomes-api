@@ -146,6 +146,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             Route::get('/projects', [ProjectController::class, 'index']);
+            Route::post('/projects', [ProjectController::class, 'store']);
+            Route::patch('/projects/{project}', [ProjectController::class, 'update']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);
             Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
             Route::post('/logout', [UserController::class, 'logout']);

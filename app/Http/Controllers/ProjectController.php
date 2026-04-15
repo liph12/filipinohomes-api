@@ -9,6 +9,8 @@ use App\Models\Property;
 use App\Http\Resources\ListingResourceCollection;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ProjectController extends Controller
 {
@@ -19,6 +21,84 @@ class ProjectController extends Controller
         return response()->json([
             'message' => 'Projects fetched successfully',
             'data' => $projects
+        ]);
+    }
+
+    public function store(Request $request, ProjectService $projectService): JsonResponse
+    {
+        $user = $request->user();
+        if (($user->role->name ?? null) !== 'admin') {
+            return response()->json(['message' => 'Only admins can create projects.'], 403);
+        }
+
+        $data = $request->validate([
+            'name'             => 'required|string|max:255',
+            'prov_id'          => 'nullable|integer',
+            'prop_type_id'     => 'nullable|integer',
+            'city_id'          => 'nullable|integer',
+            'brgy_id'          => 'nullable|integer',
+            'street'           => 'nullable|string|max:255',
+            'mapaddress'       => 'nullable|string|max:500',
+            'latitude'         => 'nullable|numeric',
+            'longitude'        => 'nullable|numeric',
+            'complete_address' => 'nullable|string|max:1000',
+            'date_updated'       => 'nullable|date',
+            'featured_photo'   => 'nullable|string|max:1000',
+            'photos_url'       => 'nullable|array',
+            'photos_url.*'     => 'string|max:1000',
+        ]);
+
+        $payload = array_merge($data, [
+            'date_updated' => $data['date_updated'] ?? now()->toDateString(),
+            'added_by'     => $user->id,
+            // Some legacy schemas require a non-null 'devid'; provide a fallback
+            'devid'        => $request->input('devid')
+                                ?? $request->input('device_id')
+                                ?? $request->header('X-Device-Id')
+                                ?? (string) Str::uuid(),
+        ]);
+
+        $project = Project::create($payload);
+        Cache::forget('projects_db');
+
+        return response()->json([
+            'message' => 'Project created successfully',
+            'data'    => $project->toArray(),
+        ], 201);
+    }
+
+    public function update(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if (($user->role->name ?? null) !== 'admin') {
+            return response()->json(['message' => 'Only admins can update projects.'], 403);
+        }
+
+        $data = $request->validate([
+            'name'             => 'sometimes|string|max:255',
+            'prov_id'          => 'sometimes|integer|nullable',
+            'prop_type_id'     => 'sometimes|integer|nullable',
+            'city_id'          => 'sometimes|integer|nullable',
+            'brgy_id'          => 'sometimes|integer|nullable',
+            'street'           => 'sometimes|string|max:255|nullable',
+            'mapaddress'       => 'sometimes|string|max:500|nullable',
+            'latitude'         => 'sometimes|numeric|nullable',
+            'longitude'        => 'sometimes|numeric|nullable',
+            'complete_address' => 'sometimes|string|max:1000|nullable',
+            'date_added'       => 'sometimes|date|nullable',
+            'featured_photo'   => 'sometimes|string|max:1000|nullable',
+            'photos_url'       => 'sometimes|array|nullable',
+            'photos_url.*'     => 'string|max:1000',
+        ]);
+
+        $project->update(array_merge($data, [
+            'date_updated' => now()->toDateString(),
+        ]));
+        Cache::forget('projects_db');
+
+        return response()->json([
+            'message' => 'Project updated successfully',
+            'data'    => $project->toArray(),
         ]);
     }
     public function projects(ProjectService $projectService)
