@@ -147,7 +147,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::post('/projects', [ProjectController::class, 'store']);
-            Route::patch('/projects/{project}', [ProjectController::class, 'update']);
+            Route::patch('/projects/{id}', [ProjectController::class, 'update']);
+            Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);
             Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
             Route::post('/logout', [UserController::class, 'logout']);
