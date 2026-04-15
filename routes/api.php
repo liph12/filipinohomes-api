@@ -61,7 +61,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/offices', [OfficeController::class, 'index']);
         Route::get('/project/{slug}', [ProjectController::class, 'show'])->where('slug', '.*');
         Route::get('/project-list', [ProjectController::class, 'projects']);
-        Route::post('/projects/{slug}/view', [ProjectController::class, 'trackView']);
+        Route::post('/project/{slug}/view', [ProjectController::class, 'trackView']);
         Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
         Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
         Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
