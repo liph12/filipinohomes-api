@@ -14,6 +14,25 @@ use Illuminate\Support\Facades\Cache;
 
 class ProjectController extends Controller
 {
+    private function trackingIdentifier(Request $request): string
+    {
+        if ($request->user()) {
+            return 'user_' . $request->user()->id;
+        }
+
+        $deviceId = $request->input('device_id')
+            ?? $request->header('X-Device-Id')
+            ?? $request->header('x-device-id')
+            ?? $request->cookie('device_id');
+
+        if ($deviceId) {
+            return 'dev_' . (string) $deviceId . '|' . (string) $request->ip();
+        }
+
+        $ua = (string) ($request->userAgent() ?? 'unknown');
+        $ip = (string) $request->ip();
+        return 'guest_' . substr(hash('sha256', $ip . '|' . $ua), 0, 32);
+    }
     public function index(ProjectService $service): JsonResponse
     {
         return response()->json([
@@ -117,6 +136,30 @@ class ProjectController extends Controller
         Cache::forget('projects_db');
 
         return response()->json(['message' => 'Project deleted successfully']);
+    }
+
+    public function trackView(Request $request, string $slug): JsonResponse
+    {
+        $project = Project::where('slug', $slug)->first()
+            ?? Project::all()->first(fn ($p) => Str::slug($p->name) === Str::slug($slug));
+        if (!$project) {
+            return response()->json(['message' => 'Project not found'], 404);
+        }
+
+        $identifier = $this->trackingIdentifier($request);
+        $now = now('Asia/Manila');
+        $today = $now->toDateString();
+
+        $viewKey = "{$identifier}_project_{$slug}_view";
+        $lastViewed = Cache::get($viewKey);
+
+        if ($lastViewed !== $today) {
+            // increment once per day per device/user
+            $project->increment('views');
+            Cache::put($viewKey, $today, $now->copy()->endOfDay());
+        }
+
+        return response()->json(['success' => true]);
     }
 
     public function projects(ProjectService $service): JsonResponse
