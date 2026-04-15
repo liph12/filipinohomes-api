@@ -11,7 +11,13 @@ return new class extends Migration {
     {
         Schema::table('projects', function (Blueprint $table) {
             if (!Schema::hasColumn('projects', 'slug')) {
-                $table->string('slug', 191)->nullable();
+                // Place slug right after name for readability
+                try {
+                    $table->string('slug', 191)->nullable()->after('name');
+                } catch (\Throwable $e) {
+                    // Fallback when the platform/driver doesn't support 'after'
+                    $table->string('slug', 191)->nullable();
+                }
             }
             // Add timestamps if not present (append without relying on existing columns)
             if (!Schema::hasColumn('projects', 'created_at')) {
@@ -70,6 +76,16 @@ return new class extends Migration {
                 // ignore if already exists or platform doesn't support in this context
             }
         });
+
+        // For existing schemas where slug already existed, try to move it after name (MySQL only)
+        try {
+            $driver = DB::getDriverName();
+            if ($driver === 'mysql' && Schema::hasColumn('projects', 'slug') && Schema::hasColumn('projects', 'name')) {
+                DB::statement('ALTER TABLE projects MODIFY slug VARCHAR(191) NULL AFTER name');
+            }
+        } catch (\Throwable $e) {
+            // Ignore if not supported
+        }
 
         // Make 'devid' column nullable without requiring Doctrine DBAL
         if (Schema::hasColumn('projects', 'devid')) {
