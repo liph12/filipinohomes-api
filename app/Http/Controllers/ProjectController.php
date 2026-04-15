@@ -47,11 +47,6 @@ class ProjectController extends Controller
         $payload = array_merge($data, [
             'date_updated' => now(),
             'added_by' => $request->user()->id,
-            // Some legacy schemas require a non-null 'devid'; provide a fallback
-            'devid' => $request->input('devid')
-                        ?? $request->input('device_id')
-                        ?? $request->header('X-Device-Id')
-                        ?? (string) Str::uuid(),
         ]);
 
         // Ensure mapaddress has a raw address fallback
@@ -69,11 +64,13 @@ class ProjectController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, Project $project): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
         if (($request->user()->role->name ?? null) !== 'admin') {
             return response()->json(['message' => 'Only admins can update projects.'], 403);
         }
+
+        $project = Project::findOrFail($id);
 
         $updates = array_merge(
             $request->validate([
@@ -109,12 +106,13 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function destroy(Request $request, Project $project): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
         if (($request->user()->role->name ?? null) !== 'admin') {
             return response()->json(['message' => 'Only admins can delete projects.'], 403);
         }
 
+        $project = Project::findOrFail($id);
         $project->delete();
         Cache::forget('projects_db');
 
