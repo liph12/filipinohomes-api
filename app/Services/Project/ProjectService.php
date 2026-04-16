@@ -9,6 +9,17 @@ use Illuminate\Support\Facades\DB;
 
 class ProjectService
 {
+    private function extractStreetFromAddress(Property $property): ?string
+    {
+        $address = trim((string) $property->address);
+        if ($address === '') {
+            return null;
+        }
+
+        $segments = array_filter(array_map('trim', explode(',', $address)));
+        return $segments[0] ?? null;
+    }
+
     public function fetchProjects(): array
     {
         return Cache::remember('projects_db', 600, function () {
@@ -111,7 +122,7 @@ class ProjectService
                 'brgy_id' => $property->address_id,
                 'city_id' => $city?->id,
                 'prov_id' => $province?->id,
-                'street' => $property->address,
+                'street' => $this->extractStreetFromAddress($property),
                 'geo_coordinates' => $geo,
                 'complete_address' => $property->address,
                 'properties_count' => 1,
