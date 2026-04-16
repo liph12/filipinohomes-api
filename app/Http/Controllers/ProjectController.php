@@ -221,6 +221,24 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function backfillUnassociatedProjects(Request $request, ProjectService $service): JsonResponse
+    {
+        if (($request->user()->role->name ?? null) !== 'admin') {
+            return response()->json(['message' => 'Only admins can backfill unassociated projects.'], 403);
+        }
+
+        $validated = $request->validate([
+            'limit' => 'nullable|integer|min:1|max:1000',
+        ]);
+
+        $result = $service->backfillUnassociatedProjects($validated['limit'] ?? null);
+
+        return response()->json([
+            'message' => 'Unassociated projects backfilled successfully',
+            'data' => $result,
+        ]);
+    }
+
     public function projectsWithListings(Request $request, ProjectService $service): JsonResponse
     {
         $page = (int) $request->query('page', 1);

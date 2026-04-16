@@ -19,6 +19,91 @@ use App\Models\NearbyFacility;
 
 class ListingService
 {
+    protected function normalizedValue(?string $value): string
+    {
+        return strtolower(trim((string) $value));
+    }
+
+    protected function roundedCoordinateValue($value): ?float
+    {
+        return is_numeric($value) ? round((float) $value, 4) : null;
+    }
+
+    protected function prioritizeProjectsWithStreet($query)
+    {
+        return $query
+            ->orderByRaw("CASE WHEN TRIM(COALESCE(street, '')) <> '' THEN 0 ELSE 1 END")
+            ->orderBy('id');
+    }
+
+    protected function findMatchingProjectByLocation(array $data, string $projectName): ?Project
+    {
+        $normalizedName = $this->normalizedValue($projectName);
+        if ($normalizedName === '') {
+            return null;
+        }
+
+        $barangayId = !empty($data['address_id']) ? (int) $data['address_id'] : null;
+        $normalizedAddress = $this->normalizedValue($data['address'] ?? '');
+        $geo = is_array($data['geo_coordinates'] ?? null) ? $data['geo_coordinates'] : [];
+        $lat = $this->roundedCoordinateValue($geo['lat'] ?? null);
+        $lng = $this->roundedCoordinateValue($geo['lng'] ?? null);
+
+        $queries = [];
+
+        if ($lat !== null && $lng !== null) {
+            $queries[] = function () use ($normalizedName, $lat, $lng, $barangayId) {
+                $query = Project::query()
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])
+                    ->whereRaw('ROUND(CAST(latitude AS DECIMAL(12,8)), 4) = ?', [$lat])
+                    ->whereRaw('ROUND(CAST(longitude AS DECIMAL(12,8)), 4) = ?', [$lng]);
+
+                if ($barangayId !== null) {
+                    $query->where('brgy_id', $barangayId);
+                }
+
+                return $this->prioritizeProjectsWithStreet($query)->first();
+            };
+        }
+
+        if ($barangayId !== null && $normalizedAddress !== '') {
+            $queries[] = function () use ($normalizedName, $normalizedAddress, $barangayId) {
+                return $this->prioritizeProjectsWithStreet(Project::query()
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])
+                    ->where('brgy_id', $barangayId)
+                    ->whereRaw('LOWER(TRIM(complete_address)) = ?', [$normalizedAddress])
+                )->first();
+            };
+        }
+
+        if ($normalizedAddress !== '') {
+            $queries[] = function () use ($normalizedName, $normalizedAddress) {
+                return $this->prioritizeProjectsWithStreet(Project::query()
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])
+                    ->whereRaw('LOWER(TRIM(complete_address)) = ?', [$normalizedAddress])
+                )->first();
+            };
+        }
+
+        if ($barangayId !== null) {
+            $queries[] = function () use ($normalizedName, $barangayId) {
+                return $this->prioritizeProjectsWithStreet(Project::query()
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])
+                    ->where('brgy_id', $barangayId)
+                )->first();
+            };
+        }
+
+        foreach ($queries as $resolve) {
+            $project = $resolve();
+            if ($project) {
+                return $project;
+            }
+        }
+
+        return null;
+    }
+
     public function createListing(array $data, Agent $agent): Listing
     {
         $this->validatePropertySubtype(
@@ -302,10 +387,7 @@ class ListingService
             return null;
         }
 
-        $project = Project::query()
-            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)])
-            ->orderBy('id')
-            ->first();
+        $project = $this->findMatchingProjectByLocation($data, $projectName);
 
         if (!$project) {
             $project = Project::create($this->buildProjectPayload($data, $projectName));
@@ -350,11 +432,35 @@ class ListingService
             return;
         }
 
-        Property::query()
+        $normalizedAddress = $this->normalizedValue($project->complete_address);
+        $lat = $this->roundedCoordinateValue($project->latitude);
+        $lng = $this->roundedCoordinateValue($project->longitude);
+        $hasLocationFilter = $project->brgy_id !== null || $normalizedAddress !== '' || ($lat !== null && $lng !== null);
+
+        if (!$hasLocationFilter) {
+            return;
+        }
+
+        $query = Property::query()
             ->where('is_project', true)
             ->whereNull('project_id')
-            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)])
-            ->update(['project_id' => $project->id]);
+            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)]);
+
+        if ($project->brgy_id !== null) {
+            $query->where('address_id', $project->brgy_id);
+        }
+
+        if ($normalizedAddress !== '') {
+            $query->whereRaw("LOWER(TRIM(COALESCE(address, ''))) = ?", [$normalizedAddress]);
+        }
+
+        if ($lat !== null && $lng !== null) {
+            $query
+                ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lat')) AS DECIMAL(12,8)), 4) = ?", [$lat])
+                ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lng')) AS DECIMAL(12,8)), 4) = ?", [$lng]);
+        }
+
+        $query->update(['project_id' => $project->id]);
     }
 
     protected function createListingRecord(

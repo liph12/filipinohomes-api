@@ -149,6 +149,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::get('/project-list', [ProjectController::class, 'projects']);
+            Route::post('/projects/unassociated/backfill', [ProjectController::class, 'backfillUnassociatedProjects']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
