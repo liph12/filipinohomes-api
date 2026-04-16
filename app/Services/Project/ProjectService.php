@@ -50,6 +50,7 @@ class ProjectService
                     ->whereColumn('properties.name', 'projects.name')
                     ->where('is_project', true);
             }, 'properties_count')
+            ->orderByDesc('properties_count')
             ->paginate($perPage);
 
         $collection = $paginator->getCollection()->transform(function (Project $p) {
