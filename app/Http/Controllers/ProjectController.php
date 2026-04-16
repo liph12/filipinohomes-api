@@ -162,9 +162,11 @@ class ProjectController extends Controller
         return response()->json(['success' => true]);
     }
 
-    public function projects(ProjectService $service): JsonResponse
+    public function projects(Request $request, ProjectService $service): JsonResponse
     {
-        $projects = $service->fetchProjectsPaginated(12);
+        $page = (int) $request->query('page', 1);
+        $search = (string) $request->query('search', '');
+        $projects = $service->fetchProjectsPaginated(12, $search);
 
         return response()->json([
             'message' => 'Projects fetched successfully',
@@ -181,7 +183,8 @@ class ProjectController extends Controller
     public function unassociatedProjects(Request $request, ProjectService $service): JsonResponse
     {
         $page = (int) $request->query('page', 1);
-        $properties = $service->fetchUnassociatedProjectPropertiesPaginated(10, $page);
+        $search = (string) $request->query('search', '');
+        $properties = $service->fetchUnassociatedProjectPropertiesPaginated(10, $page, $search);
 
         return response()->json([
             'message' => 'Unassociated project properties fetched successfully',

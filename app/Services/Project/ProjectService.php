@@ -52,7 +52,7 @@ class ProjectService
         });
     }
 
-public function fetchProjectsPaginated(int $perPage = 12)
+public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
 {
     $paginator = Project::query()
         ->leftJoin('properties', function ($join) {
@@ -60,6 +60,13 @@ public function fetchProjectsPaginated(int $perPage = 12)
                  ->where('properties.is_project', true);
         })
         ->select('projects.*', DB::raw('COUNT(properties.id) as properties_count'))
+        ->when(trim($search) !== '', function ($query) use ($search) {
+            $searchTerm = '%' . strtolower(trim($search)) . '%';
+            $query->where(function ($q) use ($searchTerm) {
+                $q->whereRaw('LOWER(projects.name) like ?', [$searchTerm])
+                  ->orWhereRaw('LOWER(projects.complete_address) like ?', [$searchTerm]);
+            });
+        })
         ->groupBy('projects.id')
         ->orderByDesc('properties_count')
         ->paginate($perPage);
@@ -86,11 +93,18 @@ public function fetchProjectsPaginated(int $perPage = 12)
     return $paginator;
 }
 
-    public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1)
+    public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1, string $search = "")
     {
         $paginator = Property::query()
             ->with(['barangay.city.province'])
             ->where('is_project', true)
+            ->when(trim($search) !== '', function ($query) use ($search) {
+                $searchTerm = '%' . strtolower(trim($search)) . '%';
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->whereRaw('LOWER(name) like ?', [$searchTerm])
+                      ->orWhereRaw('LOWER(address) like ?', [$searchTerm]);
+                });
+            })
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw('1'))
                     ->from('projects')
