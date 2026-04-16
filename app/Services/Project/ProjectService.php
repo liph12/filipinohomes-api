@@ -78,7 +78,8 @@ class ProjectService
 
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1)
     {
-        return Property::query()
+        $paginator = Property::query()
+            ->with(['barangay.city.province'])
             ->where('is_project', true)
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw('1'))
@@ -87,5 +88,38 @@ class ProjectService
             })
             ->orderBy('name')
             ->paginate($perPage, ['*'], 'page', $page);
+
+        $collection = $paginator->getCollection()->transform(function (Property $property) {
+            $barangay = $property->barangay;
+            $city = $barangay?->city;
+            $province = $city?->province;
+
+            $geo = null;
+            if (is_array($property->geo_coordinates)) {
+                $geo = [
+                    'lat' => $property->geo_coordinates['lat'] ?? null,
+                    'lng' => $property->geo_coordinates['lng'] ?? null,
+                ];
+            } elseif ($property->latitude !== null && $property->longitude !== null) {
+                $geo = [
+                    'lat' => is_numeric($property->latitude) ? (float) $property->latitude : null,
+                    'lng' => is_numeric($property->longitude) ? (float) $property->longitude : null,
+                ];
+            }
+
+            return array_merge($property->toArray(), [
+                'brgy_id' => $property->address_id,
+                'city_id' => $city?->id,
+                'prov_id' => $province?->id,
+                'street' => $property->address,
+                'geo_coordinates' => $geo,
+                'complete_address' => $property->address,
+                'properties_count' => 1,
+            ]);
+        });
+
+        $paginator->setCollection($collection);
+
+        return $paginator;
     }
 }
