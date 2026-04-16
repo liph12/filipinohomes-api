@@ -73,7 +73,7 @@ class ProjectService
 
         $paginator->setCollection($collection);
 
-        return $paginator;
+        return $paginator;  
     }
 
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1)
