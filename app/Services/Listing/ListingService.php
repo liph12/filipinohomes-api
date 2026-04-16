@@ -8,6 +8,7 @@ use App\Models\Property;
 use App\Models\PropertyAttribute;
 use App\Models\Project;
 use App\Models\PropertySubtype;
+use App\Models\Barangay;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
@@ -293,15 +294,67 @@ class ListingService
             return Project::find($projectId);
         }
 
-        $projectName = trim((string) data_get($data, 'project.name', ''));
+        $projectName = trim((string) (
+            data_get($data, 'project.name')
+            ?? ($data['project_name'] ?? '')
+        ));
         if ($projectName === '') {
             return null;
         }
 
-        return Project::query()
+        $project = Project::query()
             ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)])
             ->orderBy('id')
             ->first();
+
+        if (!$project) {
+            $project = Project::create($this->buildProjectPayload($data, $projectName));
+        }
+
+        $this->syncProjectProperties($project);
+
+        return $project;
+    }
+
+    protected function buildProjectPayload(array $data, string $projectName): array
+    {
+        $address = trim((string) ($data['address'] ?? ''));
+        $barangay = !empty($data['address_id'])
+            ? Barangay::with('city.province')->find($data['address_id'])
+            : null;
+        $city = $barangay?->city;
+        $province = $city?->province;
+        $geo = is_array($data['geo_coordinates'] ?? null) ? $data['geo_coordinates'] : [];
+        $street = $address !== '' ? trim((string) Str::before($address, ',')) : null;
+
+        return [
+            'name' => $projectName,
+            'prov_id' => $province?->id,
+            'city_id' => $city?->id,
+            'brgy_id' => $barangay?->id,
+            'street' => $street,
+            'mapaddress' => $address,
+            'complete_address' => $address,
+            'latitude' => isset($geo['lat']) ? (string) $geo['lat'] : '',
+            'longitude' => isset($geo['lng']) ? (string) $geo['lng'] : '',
+            'date_updated' => now(),
+            'featured_photo' => null,
+            'photos_url' => null,
+        ];
+    }
+
+    protected function syncProjectProperties(Project $project): void
+    {
+        $projectName = trim((string) $project->name);
+        if ($projectName === '') {
+            return;
+        }
+
+        Property::query()
+            ->where('is_project', true)
+            ->whereNull('project_id')
+            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)])
+            ->update(['project_id' => $project->id]);
     }
 
     protected function createListingRecord(
