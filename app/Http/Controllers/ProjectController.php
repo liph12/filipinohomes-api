@@ -178,6 +178,23 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function unassociatedProjects(Request $request, ProjectService $service): JsonResponse
+    {
+        $page = (int) $request->query('page', 1);
+        $properties = $service->fetchUnassociatedProjectPropertiesPaginated(10, $page);
+
+        return response()->json([
+            'message' => 'Unassociated project properties fetched successfully',
+            'data' => $properties->items(),
+            'meta' => [
+                'current_page' => $properties->currentPage(),
+                'last_page' => $properties->lastPage(),
+                'per_page' => $properties->perPage(),
+                'total' => $properties->total(),
+            ],
+        ]);
+    }
+
     public function show(string $slug): JsonResponse
     {
         $project = Project::query()

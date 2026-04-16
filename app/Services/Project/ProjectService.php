@@ -4,6 +4,7 @@ namespace App\Services\Project;
 
 use Illuminate\Support\Facades\Cache;
 use App\Models\Project;
+use App\Models\Property;
 use Illuminate\Support\Facades\DB;
 
 class ProjectService
@@ -73,5 +74,18 @@ class ProjectService
         $paginator->setCollection($collection);
 
         return $paginator;
+    }
+
+    public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1)
+    {
+        return Property::query()
+            ->where('is_project', true)
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw('1'))
+                    ->from('projects')
+                    ->whereRaw('LOWER(projects.name) = LOWER(properties.name)');
+            })
+            ->orderBy('name')
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 }
