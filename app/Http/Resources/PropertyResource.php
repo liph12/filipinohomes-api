@@ -49,6 +49,7 @@ class PropertyResource extends JsonResource
             'description'           => $this->description,
             'geo_coordinates'       => $this->geo_coordinates,
             'is_project'            => $this->is_project,
+            'project_id'            => $this->project_id,
             'property'              => $attributes,
             'furnishing'            => new FurnishingResource($this->furnishing),
             'nearby_facilities'     => NearbyFacilityResource::make($this->whenLoaded('nearbyFacility')),

@@ -14,6 +14,21 @@ use Illuminate\Support\Facades\Cache;
 
 class ProjectController extends Controller
 {
+    private function normalizeLocationKeys(array $data): array
+    {
+        if (array_key_exists('province_id', $data) && !array_key_exists('prov_id', $data)) {
+            $data['prov_id'] = $data['province_id'];
+        }
+
+        if (array_key_exists('barangay_id', $data) && !array_key_exists('brgy_id', $data)) {
+            $data['brgy_id'] = $data['barangay_id'];
+        }
+
+        unset($data['province_id'], $data['barangay_id']);
+
+        return $data;
+    }
+
     private function trackingIdentifier(Request $request): string
     {
         if ($request->user()) {
@@ -33,6 +48,7 @@ class ProjectController extends Controller
         $ip = (string) $request->ip();
         return 'guest_' . substr(hash('sha256', $ip . '|' . $ua), 0, 32);
     }
+
     public function index(ProjectService $service): JsonResponse
     {
         return response()->json([
@@ -47,11 +63,13 @@ class ProjectController extends Controller
             return response()->json(['message' => 'Only admins can create projects.'], 403);
         }
 
-        $data = $request->validate([
+        $data = $this->normalizeLocationKeys($request->validate([
             'name' => 'required|string|max:255',
-            'prov_id' => 'nullable|integer',
-            'city_id' => 'nullable|integer',
-            'brgy_id' => 'nullable|integer',
+            'prov_id' => 'nullable|exists:provinces,id',
+            'city_id' => 'nullable|exists:cities,id',
+            'brgy_id' => 'nullable|exists:barangays,id',
+            'province_id' => 'nullable|exists:provinces,id',
+            'barangay_id' => 'nullable|exists:barangays,id',
             'street' => 'nullable|string|max:255',
             'mapaddress' => 'nullable|string|max:500',
             'latitude' => 'nullable|numeric',
@@ -61,7 +79,7 @@ class ProjectController extends Controller
             'featured_photo.*' => 'string|max:1000',
             'photos_url' => 'nullable|array',
             'photos_url.*' => 'string|max:1000',
-        ]);
+        ]));
 
         $payload = array_merge($data, [
             'date_updated' => now(),
@@ -92,11 +110,13 @@ class ProjectController extends Controller
         $project = Project::findOrFail($id);
 
         $updates = array_merge(
-            $request->validate([
+            $this->normalizeLocationKeys($request->validate([
                 'name' => 'sometimes|string|max:255',
-                'prov_id' => 'sometimes|integer|nullable',
-                'city_id' => 'sometimes|integer|nullable',
-                'brgy_id' => 'sometimes|integer|nullable',
+                'prov_id' => 'sometimes|exists:provinces,id|nullable',
+                'city_id' => 'sometimes|exists:cities,id|nullable',
+                'brgy_id' => 'sometimes|exists:barangays,id|nullable',
+                'province_id' => 'sometimes|exists:provinces,id|nullable',
+                'barangay_id' => 'sometimes|exists:barangays,id|nullable',
                 'street' => 'sometimes|string|max:255|nullable',
                 'mapaddress' => 'sometimes|string|max:500|nullable',
                 'latitude' => 'sometimes|numeric|nullable',
@@ -106,7 +126,7 @@ class ProjectController extends Controller
                 'featured_photo.*' => 'string|max:1000',
                 'photos_url' => 'sometimes|array|nullable',
                 'photos_url.*' => 'string|max:1000',
-            ]),
+            ])),
             ['date_updated' => now()]
         );
 
@@ -140,8 +160,11 @@ class ProjectController extends Controller
 
     public function trackView(Request $request, string $slug): JsonResponse
     {
-        $project = Project::where('slug', $slug)->first()
-            ?? Project::all()->first(fn ($p) => Str::slug($p->name) === Str::slug($slug));
+        $project = Project::query()
+            ->where('slug', $slug)
+            ->orWhereRaw('LOWER(name) = ?', [strtolower(str_replace('-', ' ', $slug))])
+            ->first();
+
         if (!$project) {
             return response()->json(['message' => 'Project not found'], 404);
         }
@@ -199,32 +222,45 @@ class ProjectController extends Controller
     }
 
     public function projectsWithListings(Request $request, ProjectService $service): JsonResponse
-{
-    $page = (int) $request->query('page', 1);
-    $search = (string) $request->query('search', '');
+    {
+        $page = (int) $request->query('page', 1);
+        $search = (string) $request->query('search', '');
 
-    $projects = $service->fetchProjectsWithListingsPaginated(12, $search);
+        $projects = $service->fetchProjectsWithListingsPaginated(12, $search);
 
-    return response()->json([
-        'message' => 'Projects with listings fetched successfully',
-        'data' => $projects->items(),
-        'meta' => [
-            'current_page' => $projects->currentPage(),
-            'last_page' => $projects->lastPage(),
-            'per_page' => $projects->perPage(),
-            'total' => $projects->total(),
-        ],
-    ]);
-}
+        return response()->json([
+            'message' => 'Projects with listings fetched successfully',
+            'data' => $projects->items(),
+            'meta' => [
+                'current_page' => $projects->currentPage(),
+                'last_page' => $projects->lastPage(),
+                'per_page' => $projects->perPage(),
+                'total' => $projects->total(),
+            ],
+        ]);
+    }
 
     public function show(string $slug): JsonResponse
     {
         $project = Project::query()
-            ->whereRaw('LOWER(name) = ?', [strtolower(str_replace('-', ' ', $slug))])
+            ->withCount([
+                'properties as properties_count' => function ($query) {
+                    $query->where('is_project', true);
+                },
+            ])
+            ->where(function ($query) use ($slug) {
+                $query->where('slug', $slug)
+                    ->orWhereRaw('LOWER(name) = ?', [strtolower(str_replace('-', ' ', $slug))]);
+            })
             ->first()
-            ?? Project::all()->first(fn ($p) =>
-                Str::slug($p->name) === Str::slug($slug)
-            );
+            ?? Project::query()
+                ->withCount([
+                    'properties as properties_count' => function ($query) {
+                        $query->where('is_project', true);
+                    },
+                ])
+                ->where('slug', Str::slug($slug))
+                ->first();
 
         if (!$project) {
             return response()->json(['message' => 'Project not found'], 404);
@@ -237,14 +273,10 @@ class ProjectController extends Controller
             ]
             : null;
 
-        $propertiesCount = Property::where('is_project', true)
-            ->whereRaw('LOWER(name) = ?', [strtolower($project->name)])
-            ->count();
-
         $listings = Listing::where('visibility', 'public')
             ->whereHas('property', fn ($q) =>
                 $q->where('is_project', true)
-                  ->whereRaw('LOWER(name) = ?', [strtolower($project->name)])
+                  ->where('project_id', $project->id)
             )
             ->with([
                 'property.propertyAttribute.subtype',
@@ -259,7 +291,7 @@ class ProjectController extends Controller
             'message' => 'Project fetched successfully',
             'data' => array_merge($project->toArray(), [
                 'geo_coordinates' => $geo,
-                'properties_count' => $propertiesCount,
+                'properties_count' => (int) ($project->properties_count ?? 0),
             ]),
             'listings' => (new ListingResourceCollection($listings))->toArray(request()),
             'listings_meta' => [

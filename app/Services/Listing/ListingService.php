@@ -6,12 +6,14 @@ use App\Models\Agent;
 use App\Models\Listing;
 use App\Models\Property;
 use App\Models\PropertyAttribute;
+use App\Models\Project;
 use App\Models\PropertySubtype;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use App\Models\NearbyFacility;
 
 class ListingService
@@ -23,7 +25,7 @@ class ListingService
             $data['property_type_id']
         );
 
-        return DB::transaction(function () use ($data, $agent) {
+        $listing = DB::transaction(function () use ($data, $agent) {
 
             $propertyAttribute = $this->createPropertyAttribute($data);
 
@@ -58,6 +60,10 @@ class ListingService
 
             return $listing;
         });
+
+        Cache::forget('projects_db');
+
+        return $listing;
     }
 
     /**
@@ -247,14 +253,16 @@ class ListingService
         int $propertyAttributeId,
         ?int $furnishingId
     ): Property {
-        $propertyName = $data['name'];
+        $project = $this->resolveProject($data);
+        $propertyName = $project?->name ?? $data['name'];
 
-        if (($data['is_project'] ?? false) && isset($data['project']['name'])) {
+        if (($data['is_project'] ?? false) && isset($data['project']['name']) && !$project) {
             $propertyName = $data['project']['name'];
         }
 
         return Property::create([
             'name'                 => $propertyName,
+            'project_id'           => $project?->id,
             'address'              => $data['address'],
             'photos'               => $data['photos'] ?? [],
             'amenities'            => $data['amenities'] ?? [],
@@ -272,6 +280,28 @@ class ListingService
             'furnishing_id'        => $furnishingId,
             'address_id'           => $data['address_id'] ?? null,
         ]);
+    }
+
+    protected function resolveProject(array $data): ?Project
+    {
+        if (!($data['is_project'] ?? false)) {
+            return null;
+        }
+
+        $projectId = $data['project_id'] ?? data_get($data, 'project.id');
+        if (!empty($projectId)) {
+            return Project::find($projectId);
+        }
+
+        $projectName = trim((string) data_get($data, 'project.name', ''));
+        if ($projectName === '') {
+            return null;
+        }
+
+        return Project::query()
+            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)])
+            ->orderBy('id')
+            ->first();
     }
 
     protected function createListingRecord(
@@ -337,9 +367,13 @@ class ListingService
             );
         }
 
-        return DB::transaction(function () use ($data, $listing, $agent) {
+        $updatedListing = DB::transaction(function () use ($data, $listing, $agent) {
             $property          = $listing->property;
             $propertyAttribute = $property->propertyAttribute;
+            $project           = $this->resolveProject($data);
+            $isProject         = array_key_exists('is_project', $data)
+                ? (bool) $data['is_project']
+                : (bool) $property->is_project;
 
             $attributeData = array_intersect_key($data, array_flip([
                 'bedroom_count', 'bathroom_count', 'garage_count',
@@ -348,7 +382,9 @@ class ListingService
             $propertyAttribute->update($attributeData);
 
             $propertyName = $property->name;
-            if (isset($data['is_project']) && $data['is_project'] && isset($data['project']['name'])) {
+            if ($isProject && $project) {
+                $propertyName = $project->name;
+            } elseif ($isProject && isset($data['project']['name'])) {
                 $propertyName = $data['project']['name'];
             } elseif (isset($data['name'])) {
                 $propertyName = $data['name'];
@@ -360,6 +396,14 @@ class ListingService
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
+
+            if (!$isProject) {
+                $propertyData['project_id'] = null;
+            } elseif ($project) {
+                $propertyData['project_id'] = $project->id;
+            } elseif (array_key_exists('project_id', $data) && $data['project_id'] === null) {
+                $propertyData['project_id'] = null;
+            }
 
             if (array_key_exists('ats_attachments', $data)) {
                 $incoming = $data['ats_attachments'];
@@ -429,6 +473,10 @@ class ListingService
 
             return $listing;
         });
+
+        Cache::forget('projects_db');
+
+        return $updatedListing;
     }
 
     /**

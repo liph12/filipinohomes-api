@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class Project extends Model
 {
     use SoftDeletes;
+
     protected $table = 'projects';
     /**
      * Allow mass-assignment for the expected project columns
@@ -27,6 +28,9 @@ class Project extends Model
         'complete_address',
         'date_updated',
         'added_by',
+        'created_by',
+        'updated_by',
+        'deleted_by',
         'featured_photo',
         'photos_url',
     ];
@@ -114,5 +118,40 @@ class Project extends Model
                 $project->save();
             }
         });
+    }
+
+    public function properties()
+    {
+        return $this->hasMany(Property::class, 'project_id');
+    }
+
+    public function province()
+    {
+        return $this->belongsTo(Province::class, 'prov_id');
+    }
+
+    public function city()
+    {
+        return $this->belongsTo(City::class, 'city_id');
+    }
+
+    public function barangay()
+    {
+        return $this->belongsTo(Barangay::class, 'brgy_id');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function deleter()
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
     }
 }

@@ -12,4 +12,9 @@ class Province extends Model
     {
         return $this->hasMany(City::class, 'province_id');
     }
+
+    public function projects()
+    {
+        return $this->hasMany(Project::class, 'prov_id');
+    }
 }

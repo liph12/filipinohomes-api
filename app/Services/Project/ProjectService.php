@@ -5,8 +5,7 @@ namespace App\Services\Project;
 use Illuminate\Support\Facades\Cache;
 use App\Models\Project;
 use App\Models\Property;
-use App\Models\Listing;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class ProjectService
 {
@@ -21,60 +20,10 @@ class ProjectService
         return $segments[0] ?? null;
     }
 
-    public function fetchProjects(): array
+    private function transformProject(Project $project): array
     {
-        return Cache::remember('projects_db', 600, function () {
-            $rows = Project::query()
-                ->select('projects.*')
-                ->selectSub(function ($q) {
-                    $q->from('properties')
-                        ->selectRaw('COUNT(*)')
-                        ->whereColumn('properties.name', 'projects.name')
-                        ->where('is_project', true);
-                }, 'properties_count')
-                ->get();
-
-            return $rows->map(function (Project $p) {
-                $lat = $p->latitude ?? $p->lat ?? null;
-                $lng = $p->longitude ?? $p->lng ?? null;
-
-                $geo = null;
-                if ($lat !== null && $lng !== null) {
-                    $geo = [
-                        'lat' => is_numeric($lat) ? (float) $lat : null,
-                        'lng' => is_numeric($lng) ? (float) $lng : null,
-                    ];
-                }
-
-                return array_merge($p->toArray(), [
-                    'geo_coordinates' => $geo,
-                ]);
-            })->toArray();
-        });
-    }
-
-public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
-{
-    $paginator = Project::query()
-        ->leftJoin('properties', function ($join) {
-            $join->on('properties.name', '=', 'projects.name')
-                 ->where('properties.is_project', true);
-        })
-        ->select('projects.*', DB::raw('COUNT(properties.id) as properties_count'))
-        ->when(trim($search) !== '', function ($query) use ($search) {
-            $searchTerm = '%' . strtolower(trim($search)) . '%';
-            $query->where(function ($q) use ($searchTerm) {
-                $q->whereRaw('LOWER(projects.name) like ?', [$searchTerm])
-                  ->orWhereRaw('LOWER(projects.complete_address) like ?', [$searchTerm]);
-            });
-        })
-        ->groupBy('projects.id')
-        ->orderByDesc('properties_count')
-        ->paginate($perPage);
-
-    $collection = $paginator->getCollection()->transform(function (Project $p) {
-        $lat = $p->latitude ?? $p->lat ?? null;
-        $lng = $p->longitude ?? $p->lng ?? null;
+        $lat = $project->latitude ?? $project->lat ?? null;
+        $lng = $project->longitude ?? $project->lng ?? null;
 
         $geo = null;
         if ($lat !== null && $lng !== null) {
@@ -84,42 +33,76 @@ public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
             ];
         }
 
-        return array_merge($p->toArray(), [
+        return array_merge($project->toArray(), [
             'geo_coordinates' => $geo,
         ]);
-    });
+    }
 
-    $paginator->setCollection($collection);
+    private function applyProjectSearch($query, string $search)
+    {
+        $search = trim($search);
+        if ($search === '') {
+            return $query;
+        }
 
-    return $paginator;
-}
+        $searchTerm = '%' . $search . '%';
+
+        return $query->where(function ($q) use ($searchTerm) {
+            $q->where('projects.name', 'like', $searchTerm)
+                ->orWhere('projects.complete_address', 'like', $searchTerm);
+        });
+    }
+
+    public function fetchProjects(): array
+    {
+        return Cache::remember('projects_db', 600, function () {
+            $rows = Project::query()
+                ->withCount([
+                    'properties as properties_count' => function ($query) {
+                        $query->where('is_project', true);
+                    },
+                ])
+                ->get();
+
+            return $rows->map(fn (Project $project) => $this->transformProject($project))->toArray();
+        });
+    }
+
+    public function fetchProjectsPaginated(int $perPage = 12, string $search = ""): LengthAwarePaginator
+    {
+        $paginator = Project::query()
+            ->withCount([
+                'properties as properties_count' => function ($query) {
+                    $query->where('is_project', true);
+                },
+            ]);
+
+        $paginator = $this->applyProjectSearch($paginator, $search)
+            ->orderByDesc('properties_count')
+            ->paginate($perPage);
+
+        $paginator->setCollection(
+            $paginator->getCollection()->map(fn (Project $project) => $this->transformProject($project))
+        );
+
+        return $paginator;
+    }
 
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1, string $search = "")
     {
         $paginator = Property::query()
             ->select('properties.*')
             ->with(['barangay.city.province'])
+            ->withCount(['publicListing as listings_count'])
             ->where('is_project', true)
+            ->whereNull('project_id')
             ->when(trim($search) !== '', function ($query) use ($search) {
-                $searchTerm = '%' . strtolower(trim($search)) . '%';
+                $searchTerm = '%' . trim($search) . '%';
                 $query->where(function ($q) use ($searchTerm) {
-                    $q->whereRaw('LOWER(name) like ?', [$searchTerm])
-                      ->orWhereRaw('LOWER(address) like ?', [$searchTerm]);
+                    $q->where('name', 'like', $searchTerm)
+                      ->orWhere('address', 'like', $searchTerm);
                 });
             })
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw('1'))
-                    ->from('projects')
-                    ->whereRaw('LOWER(projects.name) = LOWER(properties.name)');
-            })
-            ->selectSub(function ($q) {
-                $q->from('listings')
-                    ->selectRaw('COUNT(*)')
-                    ->where('visibility', 'public')
-                    ->join('properties as p', 'p.id', '=', 'listings.property_id')
-                    ->whereColumn('p.name', 'properties.name')
-                    ->where('p.is_project', true);
-            }, 'listings_count')
             ->orderBy('name')
             ->paginate($perPage, ['*'], 'page', $page);
 
@@ -158,47 +141,25 @@ public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
     }
 
     public function fetchProjectsWithListingsPaginated(int $perPage = 12, string $search = "")
-{
-    $query = Project::query()
-        ->leftJoin('properties', function ($join) {
-            $join->on('properties.name', '=', 'projects.name')
-                 ->where('properties.is_project', true);
-        })
-        ->select('projects.*', DB::raw('COUNT(properties.id) as properties_count'))
-        ->groupBy('projects.id')
-        ->havingRaw('COUNT(properties.id) > 0') // ✅ KEY FIX
-        ->orderByDesc('properties_count');
+    {
+        $query = Project::query()
+            ->withCount([
+                'properties as properties_count' => function ($q) {
+                    $q->where('is_project', true);
+                },
+            ])
+            ->whereHas('properties', function ($q) {
+                $q->where('is_project', true);
+            });
 
-    if (trim($search) !== '') {
-        $searchTerm = '%' . strtolower(trim($search)) . '%';
+        $paginator = $this->applyProjectSearch($query, $search)
+            ->orderByDesc('properties_count')
+            ->paginate($perPage);
 
-        $query->where(function ($q) use ($searchTerm) {
-            $q->whereRaw('LOWER(projects.name) like ?', [$searchTerm])
-              ->orWhereRaw('LOWER(projects.complete_address) like ?', [$searchTerm]);
-        });
+        $paginator->setCollection(
+            $paginator->getCollection()->map(fn (Project $project) => $this->transformProject($project))
+        );
+
+        return $paginator;
     }
-
-    $paginator = $query->paginate($perPage);
-
-    $collection = $paginator->getCollection()->transform(function (Project $p) {
-        $lat = $p->latitude ?? $p->lat ?? null;
-        $lng = $p->longitude ?? $p->lng ?? null;
-
-        $geo = null;
-        if ($lat !== null && $lng !== null) {
-            $geo = [
-                'lat' => is_numeric($lat) ? (float) $lat : null,
-                'lng' => is_numeric($lng) ? (float) $lng : null,
-            ];
-        }
-
-        return array_merge($p->toArray(), [
-            'geo_coordinates' => $geo,
-        ]);
-    });
-
-    $paginator->setCollection($collection);
-
-    return $paginator;
-}
 }

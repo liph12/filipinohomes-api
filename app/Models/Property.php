@@ -11,6 +11,7 @@ class Property extends Model
     
     protected $fillable = [
         'name',
+        'project_id',
         'address',
         'status',
         'status_change_date',
@@ -39,6 +40,7 @@ class Property extends Model
         'ats_attachments'  => 'array',
         'ats_remarks'       => 'string',
         'is_project' => 'boolean',
+        'project_id' => 'integer',
         'status_change_date' => 'date',
         'ats_expiration_date' => 'date',
         'reviewed_by' => 'integer',
@@ -52,6 +54,11 @@ class Property extends Model
     public function furnishing()
     {
         return $this->belongsTo(Furnishing::class, 'furnishing_id');
+    }
+
+    public function project()
+    {
+        return $this->belongsTo(Project::class, 'project_id');
     }
 
     protected static function booted()
@@ -134,5 +141,10 @@ class Property extends Model
     public function publicListing()
     {
         return $this->hasOne(Listing::class, 'property_id')->public();
+    }
+
+    public function listings()
+    {
+        return $this->hasMany(Listing::class, 'property_id');
     }
 }
