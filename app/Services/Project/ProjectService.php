@@ -226,7 +226,7 @@ class ProjectService
 
     private function unassociatedProjectNameGroupsQuery(string $search = '')
     {
-        $normalizedName = $this->normalizedNameExpression('properties.name');
+        $normalizedName = $this->normalizedNameExpression('properties.name');  
 
         return Property::query()
             ->selectRaw('MIN(properties.id) as sample_property_id')
