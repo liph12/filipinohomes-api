@@ -198,6 +198,25 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function projectsWithListings(Request $request, ProjectService $service): JsonResponse
+{
+    $page = (int) $request->query('page', 1);
+    $search = (string) $request->query('search', '');
+
+    $projects = $service->fetchProjectsWithListingsPaginated(12, $search);
+
+    return response()->json([
+        'message' => 'Projects with listings fetched successfully',
+        'data' => $projects->items(),
+        'meta' => [
+            'current_page' => $projects->currentPage(),
+            'last_page' => $projects->lastPage(),
+            'per_page' => $projects->perPage(),
+            'total' => $projects->total(),
+        ],
+    ]);
+}
+
     public function show(string $slug): JsonResponse
     {
         $project = Project::query()

@@ -61,7 +61,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/offices', [OfficeController::class, 'index']);
         Route::get('/projects/unassociated', [ProjectController::class, 'unassociatedProjects']);
         Route::get('/project/{slug}', [ProjectController::class, 'show'])->where('slug', '.*');
-        Route::get('/project-list', [ProjectController::class, 'projects']);
+        Route::get('/project-list-with-listings', [ProjectController::class, 'projectsWithListings']);
         Route::post('/project/{slug}/view', [ProjectController::class, 'trackView']);
         Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
         Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
@@ -148,6 +148,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             Route::get('/projects', [ProjectController::class, 'index']);
+            Route::get('/project-list', [ProjectController::class, 'projects']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
