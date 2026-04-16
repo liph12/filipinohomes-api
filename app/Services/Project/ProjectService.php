@@ -5,6 +5,7 @@ namespace App\Services\Project;
 use Illuminate\Support\Facades\Cache;
 use App\Models\Project;
 use App\Models\Property;
+use App\Models\Listing;
 use Illuminate\Support\Facades\DB;
 
 class ProjectService
@@ -96,6 +97,7 @@ public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1, string $search = "")
     {
         $paginator = Property::query()
+            ->select('properties.*')
             ->with(['barangay.city.province'])
             ->where('is_project', true)
             ->when(trim($search) !== '', function ($query) use ($search) {
@@ -110,6 +112,14 @@ public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
                     ->from('projects')
                     ->whereRaw('LOWER(projects.name) = LOWER(properties.name)');
             })
+            ->selectSub(function ($q) {
+                $q->from('listings')
+                    ->selectRaw('COUNT(*)')
+                    ->where('visibility', 'public')
+                    ->join('properties as p', 'p.id', '=', 'listings.property_id')
+                    ->whereColumn('p.name', 'properties.name')
+                    ->where('p.is_project', true);
+            }, 'listings_count')
             ->orderBy('name')
             ->paginate($perPage, ['*'], 'page', $page);
 
@@ -138,7 +148,7 @@ public function fetchProjectsPaginated(int $perPage = 12, string $search = "")
                 'street' => $this->extractStreetFromAddress($property),
                 'geo_coordinates' => $geo,
                 'complete_address' => $property->address,
-                'properties_count' => 1,
+                'properties_count' => $property->listings_count ?? 0,
             ]);
         });
 
