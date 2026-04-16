@@ -52,40 +52,39 @@ class ProjectService
         });
     }
 
-    public function fetchProjectsPaginated(int $perPage = 12)
-    {
-        $paginator = Project::query()
-            ->select('projects.*')
-            ->selectSub(function ($q) {
-                $q->from('properties')
-                    ->selectRaw('COUNT(*)')
-                    ->whereColumn('properties.name', 'projects.name')
-                    ->where('is_project', true);
-            }, 'properties_count')
-            ->orderByDesc('properties_count')
-            ->paginate($perPage);
+public function fetchProjectsPaginated(int $perPage = 12)
+{
+    $paginator = Project::query()
+        ->leftJoin('properties', function ($join) {
+            $join->on('properties.name', '=', 'projects.name')
+                 ->where('properties.is_project', true);
+        })
+        ->select('projects.*', DB::raw('COUNT(properties.id) as properties_count'))
+        ->groupBy('projects.id')
+        ->orderByDesc('properties_count')
+        ->paginate($perPage);
 
-        $collection = $paginator->getCollection()->transform(function (Project $p) {
-            $lat = $p->latitude ?? $p->lat ?? null;
-            $lng = $p->longitude ?? $p->lng ?? null;
+    $collection = $paginator->getCollection()->transform(function (Project $p) {
+        $lat = $p->latitude ?? $p->lat ?? null;
+        $lng = $p->longitude ?? $p->lng ?? null;
 
-            $geo = null;
-            if ($lat !== null && $lng !== null) {
-                $geo = [
-                    'lat' => is_numeric($lat) ? (float) $lat : null,
-                    'lng' => is_numeric($lng) ? (float) $lng : null,
-                ];
-            }
+        $geo = null;
+        if ($lat !== null && $lng !== null) {
+            $geo = [
+                'lat' => is_numeric($lat) ? (float) $lat : null,
+                'lng' => is_numeric($lng) ? (float) $lng : null,
+            ];
+        }
 
-            return array_merge($p->toArray(), [
-                'geo_coordinates' => $geo,
-            ]);
-        });
+        return array_merge($p->toArray(), [
+            'geo_coordinates' => $geo,
+        ]);
+    });
 
-        $paginator->setCollection($collection);
+    $paginator->setCollection($collection);
 
-        return $paginator;  
-    }
+    return $paginator;
+}
 
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1)
     {
