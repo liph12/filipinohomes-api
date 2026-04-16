@@ -111,4 +111,19 @@ class User extends Authenticatable
     {
         return $this->hasMany(Project::class, 'created_by');
     }
+
+    public function addedProjects()
+    {
+        return $this->hasMany(Project::class, 'added_by', 'email');
+    }
+
+    public function updatedProjects()
+    {
+        return $this->hasMany(Project::class, 'updated_by');
+    }
+
+    public function deletedProjects()
+    {
+        return $this->hasMany(Project::class, 'deleted_by');
+    }
 }

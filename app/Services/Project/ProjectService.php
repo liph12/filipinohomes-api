@@ -224,6 +224,28 @@ class ProjectService
             ->groupByRaw("{$normalizedName}, properties.address_id, {$normalizedAddress}, {$lat}, {$lng}");
     }
 
+    private function unassociatedProjectNameGroupsQuery(string $search = '')
+    {
+        $normalizedName = $this->normalizedNameExpression('properties.name');
+
+        return Property::query()
+            ->selectRaw('MIN(properties.id) as sample_property_id')
+            ->selectRaw("{$normalizedName} as normalized_name")
+            ->selectRaw('COUNT(*) as properties_count')
+            ->where('properties.is_project', true)
+            ->whereNull('properties.project_id')
+            ->whereRaw("TRIM(properties.name) <> ''")
+            ->when(trim($search) !== '', function ($query) use ($search) {
+                $searchTerm = '%' . trim($search) . '%';
+
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->where('properties.name', 'like', $searchTerm)
+                        ->orWhere('properties.address', 'like', $searchTerm);
+                });
+            })
+            ->groupByRaw($normalizedName);
+    }
+
     public function fetchProjects(): array
     {
         return Cache::remember('projects_db', 600, function () {
@@ -261,7 +283,7 @@ class ProjectService
 
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1, string $search = "")
     {
-        $groups = $this->unassociatedProjectGroupsQuery($search);
+        $groups = $this->unassociatedProjectNameGroupsQuery($search);
 
         $paginator = DB::query()
             ->fromSub($groups, 'unassociated_groups')

@@ -49,7 +49,7 @@ class Project extends Model
         'prop_type_id' => 'integer',
         'city_id'      => 'integer',
         'brgy_id'      => 'integer',
-        'added_by'     => 'integer',
+        'added_by'     => 'string',
         'created_by'   => 'integer',
         'updated_by'   => 'integer',
         'deleted_by'   => 'integer',
@@ -57,53 +57,90 @@ class Project extends Model
 
     public $timestamps = true;
 
+    protected static function normalizeProjectText(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $value = preg_replace('/^\s*,+\s*/', '', $value);
+        $value = preg_replace('/\s+/', ' ', trim((string) $value));
+
+        return $value === '' ? null : $value;
+    }
+
+    protected static function resolveUniqueName(?string $value, ?int $ignoreId = null): string
+    {
+        $base = static::normalizeProjectText($value) ?? 'Project';
+        $candidate = $base;
+        $counter = 2;
+
+        while (static::withTrashed()
+            ->whereRaw('LOWER(TRIM(name)) = ?', [Str::lower($candidate)])
+            ->when($ignoreId !== null, fn ($query) => $query->where('id', '!=', $ignoreId))
+            ->exists()) {
+            $suffix = " ({$counter})";
+            $candidate = Str::limit($base, 255 - strlen($suffix), '') . $suffix;
+            $counter++;
+        }
+
+        return $candidate;
+    }
+
+    protected static function resolveUniqueSlug(?string $value, ?int $ignoreId = null): string
+    {
+        $base = Str::slug((string) $value);
+        if ($base === '') {
+            $base = 'project';
+        }
+
+        $candidate = $base;
+        $counter = 2;
+
+        while (static::withTrashed()
+            ->where('slug', $candidate)
+            ->when($ignoreId !== null, fn ($query) => $query->where('id', '!=', $ignoreId))
+            ->exists()) {
+            $suffix = '-' . $counter;
+            $candidate = Str::limit($base, 191 - strlen($suffix), '') . $suffix;
+            $counter++;
+        }
+
+        return $candidate;
+    }
+
     protected static function booted(): void
     {
-        // Before insert: set temporary slug and creator
-        static::creating(function (Project $project) {
-            if (empty($project->slug)) {
-                $token = Str::lower(Str::random(10));
-                $project->slug = 'tmp-' . $token;
+        static::saving(function (Project $project) {
+            $project->name = static::resolveUniqueName($project->name, $project->exists ? $project->id : null);
+            $project->street = static::normalizeProjectText($project->street);
+            $project->complete_address = static::normalizeProjectText($project->complete_address);
+            $project->mapaddress = static::normalizeProjectText($project->mapaddress);
+
+            if (!$project->complete_address && $project->mapaddress) {
+                $project->complete_address = $project->mapaddress;
             }
+
+            if (!$project->mapaddress && $project->complete_address) {
+                $project->mapaddress = $project->complete_address;
+            }
+
+            if (!$project->exists || $project->isDirty('name') || empty($project->slug)) {
+                $project->slug = static::resolveUniqueSlug($project->name, $project->exists ? $project->id : null);
+            }
+        });
+
+        static::creating(function (Project $project) {
             if (Auth::check()) {
                 if (empty($project->added_by)) {
-                    $project->added_by = Auth::id();
+                    $project->added_by = Auth::user()?->email;
                 }
                 $project->created_by = Auth::id();
                 $project->updated_by = Auth::id();
             }
         });
 
-        // After insert: compute final unique slug (append -{id} on conflict)
-        static::created(function (Project $project) {
-            $base = Str::slug((string) $project->name);
-            if ($base === '') {
-                $base = 'project';
-            }
-            $final = $base;
-            $exists = static::query()->where('slug', $base)->where('id', '!=', $project->id)->exists();
-            if ($exists) {
-                $final = $base . '-' . $project->id;
-            }
-            if ($project->slug !== $final) {
-                $project->updateQuietly(['slug' => $final]);
-            }
-        });
-
-        // Before update: if name changed, recompute slug with possible -{id}
         static::updating(function (Project $project) {
-            if ($project->isDirty('name')) {
-                $base = Str::slug((string) $project->name);
-                if ($base === '') {
-                    $base = 'project';
-                }
-                $final = $base;
-                $exists = static::query()->where('slug', $base)->where('id', '!=', $project->id)->exists();
-                if ($exists) {
-                    $final = $base . '-' . $project->id;
-                }
-                $project->slug = $final;
-            }
             if (Auth::check()) {
                 $project->updated_by = Auth::id();
             }
@@ -143,6 +180,11 @@ class Project extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function adder()
+    {
+        return $this->belongsTo(User::class, 'added_by', 'email');
     }
 
     public function updater()

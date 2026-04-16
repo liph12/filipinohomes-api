@@ -83,7 +83,7 @@ class ProjectController extends Controller
 
         $payload = array_merge($data, [
             'date_updated' => now(),
-            'added_by' => $request->user()->id,
+            'added_by' => $request->user()->email,
         ]);
 
         // Ensure mapaddress has a raw address fallback
