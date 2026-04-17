@@ -10,7 +10,6 @@ use App\Http\Resources\ListingResourceCollection;
 use App\Http\Resources\ProjectResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
 
 class ProjectController extends Controller
@@ -150,7 +149,6 @@ class ProjectController extends Controller
     {
         $project = Project::query()
             ->where('slug', $slug)
-            ->orWhereRaw('LOWER(name) = ?', [strtolower(str_replace('-', ' ', $slug))])
             ->first();
 
         if (!$project) {
@@ -255,19 +253,8 @@ class ProjectController extends Controller
                     $query->where('is_project', true);
                 },
             ])
-            ->where(function ($query) use ($slug) {
-                $query->where('slug', $slug)
-                    ->orWhereRaw('LOWER(name) = ?', [strtolower(str_replace('-', ' ', $slug))]);
-            })
-            ->first()
-            ?? Project::query()
-                ->withCount([
-                    'properties as properties_count' => function ($query) {
-                        $query->where('is_project', true);
-                    },
-                ])
-                ->where('slug', Str::slug($slug))
-                ->first();
+            ->where('slug', $slug)
+            ->first();
 
         if (!$project) {
             return response()->json(['message' => 'Project not found'], 404);
