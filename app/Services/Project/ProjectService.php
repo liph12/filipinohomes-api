@@ -139,8 +139,11 @@ class ProjectService
     {
         $sourceProperty = $sourcePropertyId ? Property::query()->find($sourcePropertyId) : null;
         $linkedCount = 0;
+        $sourcePropertyRowId = null;
+        $barangayIds = [];
 
         if ($sourceProperty) {
+            $sourcePropertyRowId = (int) $sourceProperty->id;
             $linkedCount += Property::query()
                 ->where('id', $sourceProperty->id)
                 ->where('is_project', true)
@@ -152,20 +155,20 @@ class ProjectService
             $lat = $this->roundedCoordinateValue($geo['lat'] ?? null);
             $lng = $this->roundedCoordinateValue($geo['lng'] ?? null);
             $barangayId = $sourceProperty->address_id;
+            $barangayIds = array_values(array_unique(array_filter([
+                $sourceProperty->address_id,
+                $project->brgy_id,
+            ], fn ($id) => $id !== null)));
         } else {
             $projectName = trim((string) $project->name);
             $normalizedAddress = $this->normalizedValue($project->complete_address);
             $lat = $this->roundedCoordinateValue($project->latitude);
             $lng = $this->roundedCoordinateValue($project->longitude);
             $barangayId = $project->brgy_id;
+            $barangayIds = $barangayId !== null ? [$barangayId] : [];
         }
 
         if ($projectName === '') {
-            return 0;
-        }
-
-        $hasLocationFilter = $barangayId !== null || $normalizedAddress !== '' || ($lat !== null && $lng !== null);
-        if (!$hasLocationFilter) {
             return 0;
         }
 
@@ -174,19 +177,36 @@ class ProjectService
             ->whereNull('project_id')
             ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)]);
 
-        if ($barangayId !== null) {
-            $query->where('address_id', $barangayId);
+        if ($sourcePropertyRowId !== null) {
+            $query->where('id', '!=', $sourcePropertyRowId);
         }
 
-        if ($normalizedAddress !== '') {
-            $query->whereRaw("LOWER(TRIM(COALESCE(address, ''))) = ?", [$normalizedAddress]);
-        }
+        $query->where(function ($locationQuery) use ($barangayIds, $normalizedAddress, $lat, $lng) {
+            $hasLocationSignal = false;
 
-        if ($lat !== null && $lng !== null) {
-            $query
-                ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lat')) AS DECIMAL(12,8)), 4) = ?", [$lat])
-                ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lng')) AS DECIMAL(12,8)), 4) = ?", [$lng]);
-        }
+            if ($normalizedAddress !== '') {
+                $hasLocationSignal = true;
+                $locationQuery->orWhereRaw("LOWER(TRIM(COALESCE(address, ''))) = ?", [$normalizedAddress]);
+            }
+
+            if ($barangayIds !== []) {
+                $hasLocationSignal = true;
+                $locationQuery->orWhereIn('address_id', $barangayIds);
+            }
+
+            if ($lat !== null && $lng !== null) {
+                $hasLocationSignal = true;
+                $locationQuery->orWhere(function ($geoQuery) use ($lat, $lng) {
+                    $geoQuery
+                        ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lat')) AS DECIMAL(12,8)), 4) = ?", [$lat])
+                        ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lng')) AS DECIMAL(12,8)), 4) = ?", [$lng]);
+                });
+            }
+
+            if (!$hasLocationSignal) {
+                $locationQuery->orWhereRaw('1 = 1');
+            }
+        });
 
         return $linkedCount + $query->update(['project_id' => $project->id]);
     }
