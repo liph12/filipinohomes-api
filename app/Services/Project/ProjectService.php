@@ -31,24 +31,6 @@ class ProjectService
         return $segments[0] ?? null;
     }
 
-    private function transformProject(Project $project): array
-    {
-        $lat = $project->latitude ?? $project->lat ?? null;
-        $lng = $project->longitude ?? $project->lng ?? null;
-
-        $geo = null;
-        if ($lat !== null && $lng !== null) {
-            $geo = [
-                'lat' => is_numeric($lat) ? (float) $lat : null,
-                'lng' => is_numeric($lng) ? (float) $lng : null,
-            ];
-        }
-
-        return array_merge($project->toArray(), [
-            'geo_coordinates' => $geo,
-        ]);
-    }
-
     private function applyProjectSearch($query, string $search)
     {
         $search = trim($search);
@@ -226,12 +208,11 @@ class ProjectService
 
     private function unassociatedProjectNameGroupsQuery(string $search = '')
     {
-        $normalizedName = $this->normalizedNameExpression('properties.name');  
+        $normalizedName = $this->normalizedNameExpression('properties.name');
 
         return Property::query()
             ->selectRaw('MIN(properties.id) as sample_property_id')
             ->selectRaw("{$normalizedName} as normalized_name")
-            ->selectRaw('COUNT(*) as properties_count')
             ->where('properties.is_project', true)
             ->whereNull('properties.project_id')
             ->whereRaw("TRIM(properties.name) <> ''")
@@ -249,34 +230,20 @@ class ProjectService
     public function fetchProjects(): array
     {
         return Cache::remember('projects_db', 600, function () {
-            $rows = Project::query()
-                ->withCount([
-                    'properties as properties_count' => function ($query) {
-                        $query->where('is_project', true);
-                    },
-                ])
-                ->get();
-
-            return $rows->map(fn (Project $project) => $this->transformProject($project))->toArray();
+            return Project::query()
+                ->withCount('properties as properties_count')
+                ->get()
+                ->all();
         });
     }
 
     public function fetchProjectsPaginated(int $perPage = 12, string $search = ""): LengthAwarePaginator
     {
-        $paginator = Project::query()
-            ->withCount([
-                'properties as properties_count' => function ($query) {
-                    $query->where('is_project', true);
-                },
-            ]);
+        $paginator = Project::query()->withCount('properties as properties_count');
 
         $paginator = $this->applyProjectSearch($paginator, $search)
             ->orderByDesc('properties_count')
             ->paginate($perPage);
-
-        $paginator->setCollection(
-            $paginator->getCollection()->map(fn (Project $project) => $this->transformProject($project))
-        );
 
         return $paginator;
     }
@@ -299,7 +266,6 @@ class ProjectService
                 'properties.geo_coordinates',
                 'cities.id as city_id',
                 'provinces.id as prov_id',
-                'unassociated_groups.properties_count',
             ])
             ->orderBy('properties.name')
             ->paginate($perPage, ['*'], 'page', $page);
@@ -317,7 +283,6 @@ class ProjectService
                 'street' => $segments[0] ?? null,
                 'geo_coordinates' => $this->decodeGeoCoordinates($row->geo_coordinates),
                 'complete_address' => $row->complete_address,
-                'properties_count' => (int) ($row->properties_count ?? 0),
             ];
         });
 
@@ -389,22 +354,12 @@ class ProjectService
     public function fetchProjectsWithListingsPaginated(int $perPage = 12, string $search = "")
     {
         $query = Project::query()
-            ->withCount([
-                'properties as properties_count' => function ($q) {
-                    $q->where('is_project', true);
-                },
-            ])
-            ->whereHas('properties', function ($q) {
-                $q->where('is_project', true);
-            });
+            ->withCount('properties as properties_count')
+            ->whereHas('properties');
 
         $paginator = $this->applyProjectSearch($query, $search)
             ->orderByDesc('properties_count')
             ->paginate($perPage);
-
-        $paginator->setCollection(
-            $paginator->getCollection()->map(fn (Project $project) => $this->transformProject($project))
-        );
 
         return $paginator;
     }

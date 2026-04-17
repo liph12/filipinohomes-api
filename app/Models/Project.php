@@ -131,6 +131,10 @@ class Project extends Model
         });
 
         static::creating(function (Project $project) {
+            if ($project->views === null) {
+                $project->views = 0;
+            }
+
             if (Auth::check()) {
                 if (empty($project->added_by)) {
                     $project->added_by = Auth::user()?->email;

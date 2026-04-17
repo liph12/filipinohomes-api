@@ -15,6 +15,8 @@ use App\Models\Message;
 use App\Policies\MessagePolicy;
 use App\Models\PageBuilder;
 use App\Policies\PageBuilderPolicy;
+use App\Models\Project;
+use App\Policies\ProjectPolicy;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -28,6 +30,7 @@ class AuthServiceProvider extends ServiceProvider
         Conversation::class => ConversationPolicy::class,
         Message::class => MessagePolicy::class,
         PageBuilder::class => PageBuilderPolicy::class,
+        Project::class => ProjectPolicy::class,
     ];
 
     /**

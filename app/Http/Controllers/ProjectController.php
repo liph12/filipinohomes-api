@@ -7,6 +7,7 @@ use App\Models\Project;
 use App\Models\Listing;
 use App\Models\Property;
 use App\Http\Resources\ListingResourceCollection;
+use App\Http\Resources\ProjectResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -46,6 +47,7 @@ class ProjectController extends Controller
 
         $ua = (string) ($request->userAgent() ?? 'unknown');
         $ip = (string) $request->ip();
+
         return 'guest_' . substr(hash('sha256', $ip . '|' . $ua), 0, 32);
     }
 
@@ -57,11 +59,9 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function store(Request $request, ProjectService $service): JsonResponse
+    public function store(Request $request, ProjectService $service): ProjectResource
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            return response()->json(['message' => 'Only admins can create projects.'], 403);
-        }
+        $this->authorize('create', Project::class);
 
         $data = $this->normalizeLocationKeys($request->validate([
             'name' => 'required|string|max:255',
@@ -95,19 +95,13 @@ class ProjectController extends Controller
 
         Cache::forget('projects_db');
 
-        return response()->json([
-            'message' => 'Project created successfully',
-            'data' => $project,
-        ], 201);
+        return ProjectResource::make($project);
     }
 
-    public function update(Request $request, $id): JsonResponse
+    public function update(Request $request, $id): ProjectResource
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            return response()->json(['message' => 'Only admins can update projects.'], 403);
-        }
-
         $project = Project::findOrFail($id);
+        $this->authorize('update', $project);
 
         $updates = array_merge(
             $this->normalizeLocationKeys($request->validate([
@@ -139,19 +133,13 @@ class ProjectController extends Controller
 
         Cache::forget('projects_db');
 
-        return response()->json([
-            'message' => 'Project updated successfully',
-            'data' => $project,
-        ]);
+        return ProjectResource::make($project);
     }
 
     public function destroy(Request $request, $id): JsonResponse
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            return response()->json(['message' => 'Only admins can delete projects.'], 403);
-        }
-
         $project = Project::findOrFail($id);
+        $this->authorize('delete', $project);
         $project->delete();
         Cache::forget('projects_db');
 
@@ -177,7 +165,10 @@ class ProjectController extends Controller
         $lastViewed = Cache::get($viewKey);
 
         if ($lastViewed !== $today) {
-            // increment once per day per device/user
+            if ($project->views === null) {
+                $project->forceFill(['views' => 0])->saveQuietly();
+            }
+
             $project->increment('views');
             Cache::put($viewKey, $today, $now->copy()->endOfDay());
         }
@@ -223,9 +214,7 @@ class ProjectController extends Controller
 
     public function backfillUnassociatedProjects(Request $request, ProjectService $service): JsonResponse
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            return response()->json(['message' => 'Only admins can backfill unassociated projects.'], 403);
-        }
+        $this->authorize('backfill', Project::class);
 
         $validated = $request->validate([
             'limit' => 'nullable|integer|min:1|max:1000',
@@ -305,13 +294,13 @@ class ProjectController extends Controller
             ->latest()
             ->paginate(12);
 
+        $projectData = ProjectResource::make($project);
+        $projectData['geo_coordinates'] = $geo;
+
         return response()->json([
             'message' => 'Project fetched successfully',
-            'data' => array_merge($project->toArray(), [
-                'geo_coordinates' => $geo,
-                'properties_count' => (int) ($project->properties_count ?? 0),
-            ]),
-            'listings' => (new ListingResourceCollection($listings))->toArray(request()),
+            'data' => (object) $projectData,
+            'listings' => (new ListingResourceCollection($listings)),
             'listings_meta' => [
                 'current_page' => $listings->currentPage(),
                 'last_page' => $listings->lastPage(),
