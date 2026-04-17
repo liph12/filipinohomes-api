@@ -27,8 +27,4 @@ class ProjectPolicy
         return ($user->role->name ?? null) === 'admin';
     }
 
-    public function backfill(User $user): bool
-    {
-        return ($user->role->name ?? null) === 'admin';
-    }
 }

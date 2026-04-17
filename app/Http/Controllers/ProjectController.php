@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Services\Project\ProjectService;
 use App\Models\Project;
 use App\Models\Listing;
-use App\Models\Property;
 use App\Http\Resources\ListingResourceCollection;
 use App\Http\Resources\ProjectResource;
 use Illuminate\Http\JsonResponse;
@@ -64,6 +63,7 @@ class ProjectController extends Controller
 
         $data = $this->normalizeLocationKeys($request->validate([
             'name' => 'required|string|max:255',
+            'source_property_id' => 'nullable|exists:properties,id',
             'prov_id' => 'nullable|exists:provinces,id',
             'city_id' => 'nullable|exists:cities,id',
             'brgy_id' => 'nullable|exists:barangays,id',
@@ -91,13 +91,14 @@ class ProjectController extends Controller
         }
 
         $project = Project::create($payload);
+        $service->syncProjectProperties($project, $data['source_property_id'] ?? null);
 
         Cache::forget('projects_db');
 
         return ProjectResource::make($project);
     }
 
-    public function update(Request $request, $id): ProjectResource
+    public function update(Request $request, $id, ProjectService $service): ProjectResource
     {
         $project = Project::findOrFail($id);
         $this->authorize('update', $project);
@@ -105,6 +106,7 @@ class ProjectController extends Controller
         $updates = array_merge(
             $this->normalizeLocationKeys($request->validate([
                 'name' => 'sometimes|string|max:255',
+                'source_property_id' => 'sometimes|exists:properties,id|nullable',
                 'prov_id' => 'sometimes|exists:provinces,id|nullable',
                 'city_id' => 'sometimes|exists:cities,id|nullable',
                 'brgy_id' => 'sometimes|exists:barangays,id|nullable',
@@ -129,6 +131,7 @@ class ProjectController extends Controller
         }
 
         $project->update($updates);
+        $service->syncProjectProperties($project->fresh(), $updates['source_property_id'] ?? null);
 
         Cache::forget('projects_db');
 
@@ -207,22 +210,6 @@ class ProjectController extends Controller
                 'per_page' => $properties->perPage(),
                 'total' => $properties->total(),
             ],
-        ]);
-    }
-
-    public function backfillUnassociatedProjects(Request $request, ProjectService $service): JsonResponse
-    {
-        $this->authorize('backfill', Project::class);
-
-        $validated = $request->validate([
-            'limit' => 'nullable|integer|min:1|max:1000',
-        ]);
-
-        $result = $service->backfillUnassociatedProjects($validated['limit'] ?? null);
-
-        return response()->json([
-            'message' => 'Unassociated projects backfilled successfully',
-            'data' => $result,
         ]);
     }
 

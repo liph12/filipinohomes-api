@@ -3,32 +3,20 @@
 namespace App\Services\Project;
 
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use App\Models\Project;
 use App\Models\Property;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class ProjectService
 {
-    private function normalizedNameExpression(string $column = 'name'): string
+    private function normalizedValue(?string $value): string
     {
-        return "LOWER(TRIM({$column}))";
+        return strtolower(trim((string) $value));
     }
 
-    private function roundedGeoCoordinateExpression(string $column, string $key): string
+    private function roundedCoordinateValue($value): ?float
     {
-        return "ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT({$column}, '$.{$key}')) AS DECIMAL(12,8)), 4)";
-    }
-
-    private function extractStreetFromAddress(Property $property): ?string
-    {
-        $address = trim((string) $property->address);
-        if ($address === '') {
-            return null;
-        }
-
-        $segments = array_filter(array_map('trim', explode(',', $address)));
-        return $segments[0] ?? null;
+        return is_numeric($value) ? round((float) $value, 4) : null;
     }
 
     private function applyProjectSearch($query, string $search)
@@ -72,161 +60,6 @@ class ProjectService
         ];
     }
 
-    private function roundedCoordinateValue($value): ?float
-    {
-        return is_numeric($value) ? round((float) $value, 4) : null;
-    }
-
-    private function prioritizeProjectsWithStreet($query)
-    {
-        return $query
-            ->orderByRaw("CASE WHEN TRIM(COALESCE(street, '')) <> '' THEN 0 ELSE 1 END")
-            ->orderBy('id');
-    }
-
-    private function findMatchingProjectForProperty(Property $property): ?Project
-    {
-        $normalizedName = strtolower(trim((string) $property->name));
-        if ($normalizedName === '') {
-            return null;
-        }
-
-        $normalizedAddress = strtolower(trim((string) $property->address));
-        $barangayId = $property->address_id ? (int) $property->address_id : null;
-        $geo = $this->decodeGeoCoordinates($property->geo_coordinates);
-        $lat = $this->roundedCoordinateValue($geo['lat'] ?? null);
-        $lng = $this->roundedCoordinateValue($geo['lng'] ?? null);
-
-        $queries = [];
-
-        if ($lat !== null && $lng !== null) {
-            $queries[] = function () use ($normalizedName, $lat, $lng, $barangayId) {
-                $query = Project::query()
-                    ->whereRaw($this->normalizedNameExpression('name') . ' = ?', [$normalizedName])
-                    ->whereRaw('ROUND(CAST(latitude AS DECIMAL(12,8)), 4) = ?', [$lat])
-                    ->whereRaw('ROUND(CAST(longitude AS DECIMAL(12,8)), 4) = ?', [$lng]);
-
-                if ($barangayId !== null) {
-                    $query->where('brgy_id', $barangayId);
-                }
-
-                return $this->prioritizeProjectsWithStreet($query)->first();
-            };
-        }
-
-        if ($barangayId !== null && $normalizedAddress !== '') {
-            $queries[] = function () use ($normalizedName, $normalizedAddress, $barangayId) {
-                return $this->prioritizeProjectsWithStreet(Project::query()
-                    ->whereRaw($this->normalizedNameExpression('name') . ' = ?', [$normalizedName])
-                    ->where('brgy_id', $barangayId)
-                    ->whereRaw($this->normalizedNameExpression('complete_address') . ' = ?', [$normalizedAddress])
-                )->first();
-            };
-        }
-
-        if ($normalizedAddress !== '') {
-            $queries[] = function () use ($normalizedName, $normalizedAddress) {
-                return $this->prioritizeProjectsWithStreet(Project::query()
-                    ->whereRaw($this->normalizedNameExpression('name') . ' = ?', [$normalizedName])
-                    ->whereRaw($this->normalizedNameExpression('complete_address') . ' = ?', [$normalizedAddress])
-                )->first();
-            };
-        }
-
-        if ($barangayId !== null) {
-            $queries[] = function () use ($normalizedName, $barangayId) {
-                return $this->prioritizeProjectsWithStreet(Project::query()
-                    ->whereRaw($this->normalizedNameExpression('name') . ' = ?', [$normalizedName])
-                    ->where('brgy_id', $barangayId)
-                )->first();
-            };
-        }
-
-        foreach ($queries as $resolve) {
-            $project = $resolve();
-            if ($project) {
-                return $project;
-            }
-        }
-
-        return null;
-    }
-
-    private function buildProjectPayloadFromProperty(Property $property): array
-    {
-        $property->loadMissing('barangay.city.province');
-
-        $barangay = $property->barangay;
-        $city = $barangay?->city;
-        $province = $city?->province;
-        $geo = $this->decodeGeoCoordinates($property->geo_coordinates);
-
-        return [
-            'name' => trim((string) $property->name),
-            'prov_id' => $province?->id,
-            'city_id' => $city?->id,
-            'brgy_id' => $barangay?->id,
-            'street' => $this->extractStreetFromAddress($property),
-            'mapaddress' => $property->address,
-            'complete_address' => $property->address,
-            'latitude' => isset($geo['lat']) ? (string) $geo['lat'] : '',
-            'longitude' => isset($geo['lng']) ? (string) $geo['lng'] : '',
-            'date_updated' => now(),
-            'featured_photo' => null,
-            'photos_url' => null,
-        ];
-    }
-
-    private function unassociatedProjectGroupsQuery(string $search = '')
-    {
-        $normalizedName = $this->normalizedNameExpression('properties.name');
-        $normalizedAddress = $this->normalizedNameExpression("COALESCE(properties.address, '')");
-        $lat = $this->roundedGeoCoordinateExpression('properties.geo_coordinates', 'lat');
-        $lng = $this->roundedGeoCoordinateExpression('properties.geo_coordinates', 'lng');
-
-        return Property::query()
-            ->selectRaw('MIN(properties.id) as sample_property_id')
-            ->selectRaw("{$normalizedName} as normalized_name")
-            ->selectRaw('properties.address_id as brgy_id')
-            ->selectRaw("{$normalizedAddress} as normalized_address")
-            ->selectRaw("{$lat} as geo_lat")
-            ->selectRaw("{$lng} as geo_lng")
-            ->selectRaw('COUNT(*) as properties_count')
-            ->where('properties.is_project', true)
-            ->whereNull('properties.project_id')
-            ->whereRaw("TRIM(properties.name) <> ''")
-            ->when(trim($search) !== '', function ($query) use ($search) {
-                $searchTerm = '%' . trim($search) . '%';
-
-                $query->where(function ($q) use ($searchTerm) {
-                    $q->where('properties.name', 'like', $searchTerm)
-                        ->orWhere('properties.address', 'like', $searchTerm);
-                });
-            })
-            ->groupByRaw("{$normalizedName}, properties.address_id, {$normalizedAddress}, {$lat}, {$lng}");
-    }
-
-    private function unassociatedProjectNameGroupsQuery(string $search = '')
-    {
-        $normalizedName = $this->normalizedNameExpression('properties.name');
-
-        return Property::query()
-            ->selectRaw('MIN(properties.id) as sample_property_id')
-            ->selectRaw("{$normalizedName} as normalized_name")
-            ->where('properties.is_project', true)
-            ->whereNull('properties.project_id')
-            ->whereRaw("TRIM(properties.name) <> ''")
-            ->when(trim($search) !== '', function ($query) use ($search) {
-                $searchTerm = '%' . trim($search) . '%';
-
-                $query->where(function ($q) use ($searchTerm) {
-                    $q->where('properties.name', 'like', $searchTerm)
-                        ->orWhere('properties.address', 'like', $searchTerm);
-                });
-            })
-            ->groupByRaw($normalizedName);
-    }
-
     public function fetchProjects(): array
     {
         return Cache::remember('projects_db', 600, function () {
@@ -250,11 +83,18 @@ class ProjectService
 
     public function fetchUnassociatedProjectPropertiesPaginated(int $perPage = 10, int $page = 1, string $search = "")
     {
-        $groups = $this->unassociatedProjectNameGroupsQuery($search);
+        $paginator = Property::query()
+            ->where('properties.is_project', true)
+            ->whereNull('properties.project_id')
+            ->whereRaw("TRIM(properties.name) <> ''")
+            ->when(trim($search) !== '', function ($query) use ($search) {
+                $searchTerm = '%' . trim($search) . '%';
 
-        $paginator = DB::query()
-            ->fromSub($groups, 'unassociated_groups')
-            ->join('properties', 'properties.id', '=', 'unassociated_groups.sample_property_id')
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->where('properties.name', 'like', $searchTerm)
+                        ->orWhere('properties.address', 'like', $searchTerm);
+                });
+            })
             ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
             ->leftJoin('cities', 'cities.id', '=', 'barangays.city_id')
             ->leftJoin('provinces', 'provinces.id', '=', 'cities.province_id')
@@ -268,11 +108,13 @@ class ProjectService
                 'provinces.id as prov_id',
             ])
             ->orderBy('properties.name')
+            ->orderBy('properties.id')
             ->paginate($perPage, ['*'], 'page', $page);
 
         $collection = $paginator->getCollection()->transform(function ($row) {
             $address = trim((string) ($row->complete_address ?? ''));
             $segments = array_filter(array_map('trim', explode(',', $address)));
+            $geoCoordinates = $this->decodeGeoCoordinates($row->geo_coordinates);
 
             return [
                 'id' => (int) $row->id,
@@ -281,7 +123,9 @@ class ProjectService
                 'city_id' => $row->city_id ? (int) $row->city_id : null,
                 'prov_id' => $row->prov_id ? (int) $row->prov_id : null,
                 'street' => $segments[0] ?? null,
-                'geo_coordinates' => $this->decodeGeoCoordinates($row->geo_coordinates),
+                'latitude' => $geoCoordinates['lat'] ?? null,
+                'longitude' => $geoCoordinates['lng'] ?? null,
+                'geo_coordinates' => $geoCoordinates,
                 'complete_address' => $row->complete_address,
             ];
         });
@@ -291,64 +135,60 @@ class ProjectService
         return $paginator;
     }
 
-    public function backfillUnassociatedProjects(?int $limit = null): array
+    public function syncProjectProperties(Project $project, ?int $sourcePropertyId = null): int
     {
-        $groupsQuery = $this->unassociatedProjectGroupsQuery()
-            ->orderBy('sample_property_id');
+        $sourceProperty = $sourcePropertyId ? Property::query()->find($sourcePropertyId) : null;
+        $linkedCount = 0;
 
-        if ($limit !== null && $limit > 0) {
-            $groupsQuery->limit($limit);
-        }
-
-        $groups = $groupsQuery->get();
-
-        $createdProjects = 0;
-        $matchedProjects = 0;
-        $linkedProperties = 0;
-
-        foreach ($groups as $group) {
-            $sampleProperty = Property::query()
-                ->with('barangay.city.province')
-                ->find($group->sample_property_id);
-
-            if (!$sampleProperty) {
-                continue;
-            }
-
-            $project = $this->findMatchingProjectForProperty($sampleProperty);
-
-            if (!$project) {
-                $project = Project::create($this->buildProjectPayloadFromProperty($sampleProperty));
-                $createdProjects++;
-            } else {
-                $matchedProjects++;
-            }
-
-            $linkedProperties += Property::query()
+        if ($sourceProperty) {
+            $linkedCount += Property::query()
+                ->where('id', $sourceProperty->id)
                 ->where('is_project', true)
-                ->whereNull('project_id')
-                ->whereRaw($this->normalizedNameExpression('name') . ' = ?', [$group->normalized_name])
-                ->where(function ($query) use ($group) {
-                    if ($group->brgy_id === null) {
-                        $query->whereNull('address_id');
-                    } else {
-                        $query->where('address_id', $group->brgy_id);
-                    }
-                })
-                ->whereRaw($this->normalizedNameExpression("COALESCE(address, '')") . ' = ?', [$group->normalized_address])
-                ->whereRaw("{$this->roundedGeoCoordinateExpression('geo_coordinates', 'lat')} <=> ?", [$group->geo_lat])
-                ->whereRaw("{$this->roundedGeoCoordinateExpression('geo_coordinates', 'lng')} <=> ?", [$group->geo_lng])
                 ->update(['project_id' => $project->id]);
+
+            $projectName = trim((string) $sourceProperty->name);
+            $normalizedAddress = $this->normalizedValue($sourceProperty->address);
+            $geo = $this->decodeGeoCoordinates($sourceProperty->geo_coordinates);
+            $lat = $this->roundedCoordinateValue($geo['lat'] ?? null);
+            $lng = $this->roundedCoordinateValue($geo['lng'] ?? null);
+            $barangayId = $sourceProperty->address_id;
+        } else {
+            $projectName = trim((string) $project->name);
+            $normalizedAddress = $this->normalizedValue($project->complete_address);
+            $lat = $this->roundedCoordinateValue($project->latitude);
+            $lng = $this->roundedCoordinateValue($project->longitude);
+            $barangayId = $project->brgy_id;
         }
 
-        Cache::forget('projects_db');
+        if ($projectName === '') {
+            return 0;
+        }
 
-        return [
-            'groups_processed' => $groups->count(),
-            'projects_created' => $createdProjects,
-            'projects_matched' => $matchedProjects,
-            'properties_linked' => $linkedProperties,
-        ];
+        $hasLocationFilter = $barangayId !== null || $normalizedAddress !== '' || ($lat !== null && $lng !== null);
+        if (!$hasLocationFilter) {
+            return 0;
+        }
+
+        $query = Property::query()
+            ->where('is_project', true)
+            ->whereNull('project_id')
+            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower($projectName)]);
+
+        if ($barangayId !== null) {
+            $query->where('address_id', $barangayId);
+        }
+
+        if ($normalizedAddress !== '') {
+            $query->whereRaw("LOWER(TRIM(COALESCE(address, ''))) = ?", [$normalizedAddress]);
+        }
+
+        if ($lat !== null && $lng !== null) {
+            $query
+                ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lat')) AS DECIMAL(12,8)), 4) = ?", [$lat])
+                ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lng')) AS DECIMAL(12,8)), 4) = ?", [$lng]);
+        }
+
+        return $linkedCount + $query->update(['project_id' => $project->id]);
     }
 
     public function fetchProjectsWithListingsPaginated(int $perPage = 12, string $search = "")
