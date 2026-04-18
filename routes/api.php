@@ -149,7 +149,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::get('/project-list', [ProjectController::class, 'projects']);
+            Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);
             Route::post('/projects', [ProjectController::class, 'store']);
+            Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);
+            Route::post('/projects/{id}/link-deleted-properties', [ProjectController::class, 'linkDeletedProjectProperties']);
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);

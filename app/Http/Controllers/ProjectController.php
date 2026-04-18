@@ -213,6 +213,44 @@ class ProjectController extends Controller
         ]);
     }
 
+    public function deletedProjects(Request $request, ProjectService $service): JsonResponse
+    {
+        $page = (int) $request->query('page', 1);
+        $search = (string) $request->query('search', '');
+        $projects = $service->fetchDeletedProjectsPaginated(10, $page, $search);
+
+        return response()->json([
+            'message' => 'Deleted projects fetched successfully',
+            'data' => ProjectResource::collection($projects->items()),
+            'meta' => [
+                'current_page' => $projects->currentPage(),
+                'last_page' => $projects->lastPage(),
+                'per_page' => $projects->perPage(),
+                'total' => $projects->total(),
+            ],
+        ]);
+    }
+
+    public function linkUnassociatedProperty(Request $request, int $id, ProjectService $service): JsonResponse
+    {
+        $project = Project::query()->findOrFail($id);
+        $this->authorize('link', $project);
+
+        $data = $request->validate([
+            'source_property_id' => 'required|exists:properties,id',
+        ]);
+
+        $linkedCount = $service->syncProjectProperties($project, (int) $data['source_property_id']);
+
+        Cache::forget('projects_db');
+
+        return response()->json([
+            'message' => 'Project linked successfully',
+            'data' => ProjectResource::make($project->fresh()),
+            'linked_count' => $linkedCount,
+        ]);
+    }
+
     public function projectsWithListings(Request $request, ProjectService $service): JsonResponse
     {
         $page = (int) $request->query('page', 1);
@@ -229,6 +267,32 @@ class ProjectController extends Controller
                 'per_page' => $projects->perPage(),
                 'total' => $projects->total(),
             ],
+        ]);
+    }
+
+    public function linkDeletedProjectProperties(Request $request, int $id, ProjectService $service): JsonResponse
+    {
+        $deletedProject = Project::onlyTrashed()->findOrFail($id);
+
+        $data = $request->validate([
+            'destination_project_id' => 'required|integer',
+        ]);
+
+        $destinationProject = Project::query()->findOrFail((int) $data['destination_project_id']);
+        $this->authorize('link', $destinationProject);
+
+        if ((int) $destinationProject->id === (int) $deletedProject->id) {
+            return response()->json(['message' => 'Destination project must be different.'], 422);
+        }
+
+        $linkedCount = $service->relinkDeletedProjectProperties($deletedProject, $destinationProject);
+
+        Cache::forget('projects_db');
+
+        return response()->json([
+            'message' => 'Deleted project properties linked successfully',
+            'data' => ProjectResource::make($destinationProject->fresh()),
+            'linked_count' => $linkedCount,
         ]);
     }
 

@@ -60,6 +60,24 @@ class ProjectService
         ];
     }
 
+    private function applyPropertyCityProvinceMatch($query, ?int $cityId, ?int $provinceId): void
+    {
+        $query->whereExists(function ($subQuery) use ($cityId, $provinceId) {
+            $subQuery->selectRaw('1')
+                ->from('barangays')
+                ->join('cities', 'cities.id', '=', 'barangays.city_id')
+                ->whereColumn('barangays.id', 'properties.address_id');
+
+            if ($cityId !== null) {
+                $subQuery->where('cities.id', $cityId);
+            }
+
+            if ($provinceId !== null) {
+                $subQuery->where('cities.province_id', $provinceId);
+            }
+        });
+    }
+
     public function fetchProjects(): array
     {
         return Cache::remember('projects_db', 600, function () {
@@ -140,7 +158,6 @@ class ProjectService
         $sourceProperty = $sourcePropertyId ? Property::query()->find($sourcePropertyId) : null;
         $linkedCount = 0;
         $sourcePropertyRowId = null;
-        $barangayIds = [];
 
         if ($sourceProperty) {
             $sourcePropertyRowId = (int) $sourceProperty->id;
@@ -150,26 +167,26 @@ class ProjectService
                 ->update(['project_id' => $project->id]);
 
             $projectName = trim((string) $sourceProperty->name);
-            $normalizedAddress = $this->normalizedValue($sourceProperty->address);
             $geo = $this->decodeGeoCoordinates($sourceProperty->geo_coordinates);
             $lat = $this->roundedCoordinateValue($geo['lat'] ?? null);
             $lng = $this->roundedCoordinateValue($geo['lng'] ?? null);
-            $barangayId = $sourceProperty->address_id;
-            $barangayIds = array_values(array_unique(array_filter([
-                $sourceProperty->address_id,
-                $project->brgy_id,
-            ], fn ($id) => $id !== null)));
         } else {
             $projectName = trim((string) $project->name);
-            $normalizedAddress = $this->normalizedValue($project->complete_address);
             $lat = $this->roundedCoordinateValue($project->latitude);
             $lng = $this->roundedCoordinateValue($project->longitude);
-            $barangayId = $project->brgy_id;
-            $barangayIds = $barangayId !== null ? [$barangayId] : [];
         }
 
         if ($projectName === '') {
             return 0;
+        }
+
+        $cityId = $project->city_id ? (int) $project->city_id : null;
+        $provinceId = $project->prov_id ? (int) $project->prov_id : null;
+        $canMatchCityProvince = $cityId !== null && $provinceId !== null;
+        $canMatchCoordinates = $lat !== null && $lng !== null;
+
+        if (!$canMatchCityProvince && !$canMatchCoordinates) {
+            return $linkedCount;
         }
 
         $query = Property::query()
@@ -181,34 +198,45 @@ class ProjectService
             $query->where('id', '!=', $sourcePropertyRowId);
         }
 
-        $query->where(function ($locationQuery) use ($barangayIds, $normalizedAddress, $lat, $lng) {
-            $hasLocationSignal = false;
-
-            if ($normalizedAddress !== '') {
-                $hasLocationSignal = true;
-                $locationQuery->orWhereRaw("LOWER(TRIM(COALESCE(address, ''))) = ?", [$normalizedAddress]);
+        $query->where(function ($matchQuery) use ($canMatchCityProvince, $canMatchCoordinates, $cityId, $provinceId, $lat, $lng) {
+            if ($canMatchCityProvince) {
+                $matchQuery->orWhere(function ($cityProvinceQuery) use ($cityId, $provinceId) {
+                    $this->applyPropertyCityProvinceMatch($cityProvinceQuery, $cityId, $provinceId);
+                });
             }
 
-            if ($barangayIds !== []) {
-                $hasLocationSignal = true;
-                $locationQuery->orWhereIn('address_id', $barangayIds);
-            }
-
-            if ($lat !== null && $lng !== null) {
-                $hasLocationSignal = true;
-                $locationQuery->orWhere(function ($geoQuery) use ($lat, $lng) {
-                    $geoQuery
+            if ($canMatchCoordinates) {
+                $matchQuery->orWhere(function ($coordinatesQuery) use ($lat, $lng) {
+                    $coordinatesQuery
                         ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lat')) AS DECIMAL(12,8)), 4) = ?", [$lat])
                         ->whereRaw("ROUND(CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lng')) AS DECIMAL(12,8)), 4) = ?", [$lng]);
                 });
             }
-
-            if (!$hasLocationSignal) {
-                $locationQuery->orWhereRaw('1 = 1');
-            }
         });
 
         return $linkedCount + $query->update(['project_id' => $project->id]);
+    }
+
+    public function fetchDeletedProjectsPaginated(int $perPage = 10, int $page = 1, string $search = ""): LengthAwarePaginator
+    {
+        return $this->applyProjectSearch(
+            Project::onlyTrashed()->withCount([
+                'properties as properties_count' => function ($query) {
+                    $query->where('is_project', true);
+                },
+            ]),
+            $search
+        )
+            ->orderByDesc('deleted_at')
+            ->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    public function relinkDeletedProjectProperties(Project $deletedProject, Project $destinationProject): int
+    {
+        return Property::query()
+            ->where('is_project', true)
+            ->where('project_id', $deletedProject->id)
+            ->update(['project_id' => $destinationProject->id]);
     }
 
     public function fetchProjectsWithListingsPaginated(int $perPage = 12, string $search = "")
