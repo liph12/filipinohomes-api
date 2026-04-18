@@ -22,6 +22,11 @@ class ProjectPolicy
         return ($user->role->name ?? null) === 'admin';
     }
 
+    public function link(User $user, Project $project): bool
+    {
+        return ($user->role->name ?? null) === 'admin';
+    }
+
     public function delete(User $user, Project $project): bool
     {
         return ($user->role->name ?? null) === 'admin';
