@@ -3,12 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Models\Agent;
+use App\Models\ListingInquiry;
+use App\Models\LoginLog;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class AgentController extends Controller
 {
@@ -45,18 +49,111 @@ class AgentController extends Controller
         return response()->json($adminIds);
     }
 
-    public function statistics(Request $request)
+    public function statistics(Request $request, $id)
     {
-        $start = date('2024-01-01');
-        $end = date('Y-m-d');
+        $agent = Agent::with('user')->withCount('listings')->findOrFail($id);
+        $user = $agent->user;
 
-        if(isset($request->start_date) && isset($request->end_date))
-        {
-            $start = $request->start_date;
-            $end = $request->end_date;
+        $activeListings = $agent->listings()
+            ->whereHas('property', fn($q) => $q->where('status', 'active'))
+            ->count();
+
+        $soldCount = $agent->listings()
+            ->whereHas('property', fn($q) => $q->where('status', 'sold'))
+            ->count();
+
+        $rentedCount = $agent->listings()
+            ->whereHas('property', fn($q) => $q->where('status', 'rented'))
+            ->count();
+
+        $leasedCount = $agent->listings()
+            ->whereHas('property', fn($q) => $q->where('status', 'leased'))
+            ->count();
+
+        $totalInquiries = ListingInquiry::where('agent_id', $agent->id)->count();
+        $pendingInquiries = ListingInquiry::where('agent_id', $agent->id)
+            ->where('status', 'pending')
+            ->count();
+
+        // Sold chart — last 12 months grouped by month
+        $twelveMonthsAgo = Carbon::now()->subMonths(11)->startOfMonth();
+        $soldByMonth = $agent->listings()
+            ->join('properties', 'listings.property_id', '=', 'properties.id')
+            ->where('properties.status', 'sold')
+            ->where('properties.status_change_date', '>=', $twelveMonthsAgo)
+            ->select(
+                DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m') as month"),
+                DB::raw('COUNT(*) as count')
+            )
+            ->groupBy('month')
+            ->orderBy('month')
+            ->pluck('count', 'month');
+
+        $soldChart = [];
+        for ($i = 0; $i < 12; $i++) {
+            $month = Carbon::now()->subMonths(11 - $i)->format('Y-m');
+            $soldChart[] = [
+                'month' => $month,
+                'count' => $soldByMonth[$month] ?? 0,
+            ];
         }
 
-        // $agents = Agent::
+        // Recent inquiries
+        $recentInquiries = ListingInquiry::where('agent_id', $agent->id)
+            ->with(['listing:id,name,slug', 'client:id,name,email'])
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get()
+            ->map(fn($inq) => [
+                'id'           => $inq->id,
+                'listing_name' => $inq->listing?->name ?? 'N/A',
+                'listing_slug' => $inq->listing?->slug ?? '',
+                'client_name'  => $inq->client?->name ?? 'N/A',
+                'client_email' => $inq->client?->email ?? '',
+                'status'       => $inq->status,
+                'created_at'   => $inq->created_at?->toDateTimeString(),
+            ]);
+
+        // Login history
+        $loginHistory = $user
+            ? LoginLog::where('user_id', $user->id)
+                ->orderByDesc('logged_in_at')
+                ->limit(20)
+                ->get()
+                ->map(fn($log) => [
+                    'id'          => $log->id,
+                    'ip_address'  => $log->ip_address,
+                    'user_agent'  => $log->user_agent,
+                    'logged_in_at' => $log->logged_in_at?->toDateTimeString(),
+                ])
+            : [];
+
+        $fullName = collect([$agent->first_name, $agent->middle_name, $agent->last_name])
+            ->filter()->join(' ') ?: $user?->name ?: 'Guest User';
+
+        return response()->json([
+            'agent' => [
+                'id'           => $agent->id,
+                'full_name'    => $fullName,
+                'avatar'       => $agent->avatar ?? $user?->avatar,
+                'address'      => $agent->address,
+                'member_since' => $agent->member_since,
+                'email'        => $user?->email,
+                'mobile_no'    => $agent->mobile_no ?? $user?->mobile_no,
+            ],
+            'kpi' => [
+                'total_listings'    => $agent->listings_count,
+                'active_listings'   => $activeListings,
+                'sold_count'        => $soldCount,
+                'rented_count'      => $rentedCount,
+                'leased_count'      => $leasedCount,
+                'total_inquiries'   => $totalInquiries,
+                'pending_inquiries' => $pendingInquiries,
+            ],
+            'sold_chart'        => $soldChart,
+            'recent_inquiries'  => $recentInquiries,
+            'login_history'     => $loginHistory,
+        ]);
     }
 
     public function show($id)

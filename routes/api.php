@@ -76,6 +76,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/furnishings', [FurnishingController::class, 'index']);
         Route::get('/amenities', [AmenityController::class, 'index']);
         Route::get('agents', [AgentController::class, 'index']);
+        Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
         Route::get('agents/{id}', [AgentController::class, 'show']);
         Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
         Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);

@@ -235,7 +235,11 @@ class UserController extends Controller
         ]);
 
         try {
-            $result = $loginUserService->execute($credentials);
+            $result = $loginUserService->execute(
+                $credentials,
+                $request->ip(),
+                $request->userAgent()
+            );
             return response()->json($result, 200);
         } catch (\Exception $e) {
             return response()->json([
