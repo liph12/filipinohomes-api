@@ -148,6 +148,19 @@ class ProjectController extends Controller
         return response()->json(['message' => 'Project deleted successfully']);
     }
 
+    public function restore(Request $request, $id): JsonResponse
+    {
+        $project = Project::withTrashed()->findOrFail($id);
+        $this->authorize('delete', $project);
+        $project->restore();
+        Cache::forget('projects_db');
+
+        return response()->json([
+            'message' => 'Project restored successfully',
+            'data' => ProjectResource::make($project->fresh()),
+        ]);
+    }
+
     public function trackView(Request $request, string $slug): JsonResponse
     {
         $project = Project::query()
@@ -274,7 +287,7 @@ class ProjectController extends Controller
 
     public function linkDeletedProjectProperties(Request $request, int $id, ProjectService $service): JsonResponse
     {
-        $deletedProject = Project::onlyTrashed()->findOrFail($id);
+        $sourceProject = Project::withTrashed()->findOrFail($id);
 
         $data = $request->validate([
             'destination_project_id' => 'required|integer',
@@ -283,16 +296,16 @@ class ProjectController extends Controller
         $destinationProject = Project::query()->findOrFail((int) $data['destination_project_id']);
         $this->authorize('link', $destinationProject);
 
-        if ((int) $destinationProject->id === (int) $deletedProject->id) {
+        if ((int) $destinationProject->id === (int) $sourceProject->id) {
             return response()->json(['message' => 'Destination project must be different.'], 422);
         }
 
-        $linkedCount = $service->relinkDeletedProjectProperties($deletedProject, $destinationProject);
+        $linkedCount = $service->relinkDeletedProjectProperties($sourceProject, $destinationProject);
 
         Cache::forget('projects_db');
 
         return response()->json([
-            'message' => 'Deleted project properties linked successfully',
+            'message' => 'Project properties linked successfully',
             'data' => ProjectResource::make($destinationProject->fresh()),
             'linked_count' => $linkedCount,
         ]);

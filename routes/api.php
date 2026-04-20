@@ -154,6 +154,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);
             Route::post('/projects/{id}/link-deleted-properties', [ProjectController::class, 'linkDeletedProjectProperties']);
+            Route::post('/projects/{id}/restore', [ProjectController::class, 'restore']);
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);
