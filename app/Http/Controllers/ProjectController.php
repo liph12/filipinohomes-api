@@ -181,7 +181,8 @@ class ProjectController extends Controller
     {
         $page = (int) $request->query('page', 1);
         $search = (string) $request->query('search', '');
-        $projects = $service->fetchProjectsPaginated(12, $search);
+        $sortBy = (string) $request->query('sort_by', 'properties');
+        $projects = $service->fetchProjectsPaginated(12, $search, $sortBy);
 
         return response()->json([
             'message' => 'Projects fetched successfully',
@@ -255,8 +256,9 @@ class ProjectController extends Controller
     {
         $page = (int) $request->query('page', 1);
         $search = (string) $request->query('search', '');
+        $sortBy = (string) $request->query('sort_by', 'properties');
 
-        $projects = $service->fetchProjectsWithListingsPaginated(12, $search);
+        $projects = $service->fetchProjectsWithListingsPaginated(12, $search, $sortBy);
 
         return response()->json([
             'message' => 'Projects with listings fetched successfully',

@@ -3,15 +3,89 @@
 namespace App\Services\Project;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use App\Models\Project;
 use App\Models\Property;
+use Illuminate\Support\Str;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class ProjectService
 {
+    private const DEFAULT_SORT = 'properties';
+    private const PROJECT_LIST_COLUMNS = [
+        'projects.id',
+        'projects.name',
+        'projects.slug',
+        'projects.complete_address',
+        'projects.featured_photo',
+        'projects.photos_url',
+        'projects.latitude',
+        'projects.longitude',
+        'projects.views',
+    ];
+
     private function normalizedValue(?string $value): string
     {
         return strtolower(trim((string) $value));
+    }
+
+    private function normalizeSort(string $sortBy): string
+    {
+        $sortBy = strtolower(trim($sortBy));
+
+        return match ($sortBy) {
+            'views', 'a-z', 'az', 'properties' => $sortBy,
+            default => self::DEFAULT_SORT,
+        };
+    }
+
+    private function applyProjectSort($query, string $sortBy)
+    {
+        $sortBy = $this->normalizeSort($sortBy);
+
+        return match ($sortBy) {
+            'views' => $query
+                ->orderByRaw('COALESCE(views, 0) DESC')
+                ->orderByDesc('properties_count')
+                ->orderBy('name'),
+            'a-z', 'az' => $query
+                ->orderBy('name')
+                ->orderByDesc('properties_count'),
+            default => $query
+                ->orderByDesc('properties_count')
+                ->orderByRaw('COALESCE(views, 0) DESC')
+                ->orderBy('name'),
+        };
+    }
+
+    private function projectCountsSubquery()
+    {
+        return Property::query()
+            ->selectRaw('project_id, COUNT(*) as properties_count')
+            ->where('is_project', true)
+            ->whereNotNull('project_id')
+            ->groupBy('project_id');
+    }
+
+    private function baseProjectListQuery(bool $withListingsOnly = false)
+    {
+        $counts = $this->projectCountsSubquery();
+
+        $query = Project::query()
+            ->select([
+                ...self::PROJECT_LIST_COLUMNS,
+                DB::raw('COALESCE(project_property_counts.properties_count, 0) as properties_count'),
+            ]);
+
+        if ($withListingsOnly) {
+            return $query->joinSub($counts, 'project_property_counts', function ($join) {
+                $join->on('project_property_counts.project_id', '=', 'projects.id');
+            });
+        }
+
+        return $query->leftJoinSub($counts, 'project_property_counts', function ($join) {
+            $join->on('project_property_counts.project_id', '=', 'projects.id');
+        });
     }
 
     private function roundedCoordinateValue($value): ?float
@@ -27,10 +101,22 @@ class ProjectService
         }
 
         $searchTerm = '%' . $search . '%';
+        $booleanSearch = collect(preg_split('/[^[:alnum:]]+/u', Str::lower($search)) ?: [])
+            ->map(fn ($term) => trim((string) $term))
+            ->filter(fn ($term) => $term !== '' && Str::length($term) >= 3)
+            ->map(fn ($term) => $term . '*')
+            ->implode(' ');
 
-        return $query->where(function ($q) use ($searchTerm) {
-            $q->where('projects.name', 'like', $searchTerm)
-                ->orWhere('projects.complete_address', 'like', $searchTerm);
+        return $query->where(function ($q) use ($searchTerm, $booleanSearch) {
+            if ($booleanSearch !== '') {
+                $q->whereRaw(
+                    'MATCH(projects.name, projects.complete_address) AGAINST (? IN BOOLEAN MODE)',
+                    [$booleanSearch]
+                );
+            } else {
+                $q->where('projects.name', 'like', $searchTerm)
+                    ->orWhere('projects.complete_address', 'like', $searchTerm);
+            }
         });
     }
 
@@ -81,20 +167,27 @@ class ProjectService
     public function fetchProjects(): array
     {
         return Cache::remember('projects_db', 600, function () {
-            return Project::query()
-                ->withCount('properties as properties_count')
+            return $this->baseProjectListQuery()
+                ->orderByDesc('properties_count')
+                ->orderByRaw('COALESCE(views, 0) DESC')
+                ->orderBy('name')
                 ->get()
                 ->all();
         });
     }
 
-    public function fetchProjectsPaginated(int $perPage = 12, string $search = ""): LengthAwarePaginator
+    public function fetchProjectsPaginated(
+        int $perPage = 12,
+        string $search = "",
+        string $sortBy = self::DEFAULT_SORT
+    ): LengthAwarePaginator
     {
-        $paginator = Project::query()->withCount('properties as properties_count');
+        $paginator = $this->baseProjectListQuery();
 
-        $paginator = $this->applyProjectSearch($paginator, $search)
-            ->orderByDesc('properties_count')
-            ->paginate($perPage);
+        $paginator = $this->applyProjectSort(
+            $this->applyProjectSearch($paginator, $search),
+            $sortBy
+        )->paginate($perPage);
 
         return $paginator;
     }
@@ -239,15 +332,18 @@ class ProjectService
             ->update(['project_id' => $destinationProject->id]);
     }
 
-    public function fetchProjectsWithListingsPaginated(int $perPage = 12, string $search = "")
+    public function fetchProjectsWithListingsPaginated(
+        int $perPage = 12,
+        string $search = "",
+        string $sortBy = self::DEFAULT_SORT
+    )
     {
-        $query = Project::query()
-            ->withCount('properties as properties_count')
-            ->whereHas('properties');
+        $query = $this->baseProjectListQuery(true);
 
-        $paginator = $this->applyProjectSearch($query, $search)
-            ->orderByDesc('properties_count')
-            ->paginate($perPage);
+        $paginator = $this->applyProjectSort(
+            $this->applyProjectSearch($query, $search),
+            $sortBy
+        )->paginate($perPage);
 
         return $paginator;
     }
