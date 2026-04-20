@@ -80,6 +80,11 @@ class User extends Authenticatable
         return $this->hasMany(Chat::class);
     }
 
+    public function loginLogs()
+    {
+        return $this->hasMany(LoginLog::class);
+    }
+
     public function blockedClients()
     {
         return $this->hasMany(BlockedUser::class, 'agent_user_id');
