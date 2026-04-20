@@ -18,9 +18,18 @@ class AgentController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Agent::with('user')->whereHas('user.role', function($q){
-            $q->where('name', 'agent');
-        })->withCount('listings');
+        $perPage = max(1, min((int) $request->query('per_page', 12), 24));
+
+        $query = Agent::query()
+            ->select('agents.*')
+            ->with([
+                'user',
+                'pageBuilder:id,agent_id,slug',
+            ])
+            ->whereHas('user.role', function($q){
+                $q->where('name', 'agent');
+            })
+            ->withCount('listings');
 
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
@@ -38,7 +47,9 @@ class AgentController extends Controller
         }
 
         return new AgentResourceCollection(
-            $query->orderByDesc('listings_count')->paginate(12)
+            $query
+                ->orderByDesc('listings_count')
+                ->paginate($perPage)
         );
     }
 

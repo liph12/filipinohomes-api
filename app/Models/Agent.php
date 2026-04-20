@@ -35,4 +35,9 @@ class Agent extends Model
     {
         return $this->hasMany(Listing::class, 'agent_id');
     }
+
+    public function pageBuilder()
+    {
+        return $this->hasOne(PageBuilder::class, 'agent_id');
+    }
 }

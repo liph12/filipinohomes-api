@@ -30,6 +30,7 @@ class AgentResource extends JsonResource
             'geo_location' => $this->geo_location,
             'member_since' => $this->member_since,
             'listings_count' => $this->listings_count,
+            'page_slug'    => $this->pageBuilder?->slug,
             'user'         => new UserResource($user),
             'listings' => AgentListingResource::collection($this->whenLoaded('listings')),
             'listings_pagination' => $this->when(
