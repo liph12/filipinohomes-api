@@ -339,7 +339,7 @@ class ProjectService
     )
     {
         $query = $this->baseProjectListQuery(true);
-
+  
         $paginator = $this->applyProjectSort(
             $this->applyProjectSearch($query, $search),
             $sortBy
