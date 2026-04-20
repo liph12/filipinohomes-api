@@ -248,6 +248,11 @@ class ProjectService
 
     public function syncProjectProperties(Project $project, ?int $sourcePropertyId = null): int
     {
+        $projectName = trim((string) $project->name);
+        if ($projectName === '') {
+            return 0;
+        }
+
         $sourceProperty = $sourcePropertyId ? Property::query()->find($sourcePropertyId) : null;
         $linkedCount = 0;
         $sourcePropertyRowId = null;
@@ -257,20 +262,17 @@ class ProjectService
             $linkedCount += Property::query()
                 ->where('id', $sourceProperty->id)
                 ->where('is_project', true)
-                ->update(['project_id' => $project->id]);
+                ->update([
+                    'project_id' => $project->id,
+                    'name' => $projectName,
+                ]);
 
-            $projectName = trim((string) $sourceProperty->name);
             $geo = $this->decodeGeoCoordinates($sourceProperty->geo_coordinates);
             $lat = $this->roundedCoordinateValue($geo['lat'] ?? null);
             $lng = $this->roundedCoordinateValue($geo['lng'] ?? null);
         } else {
-            $projectName = trim((string) $project->name);
             $lat = $this->roundedCoordinateValue($project->latitude);
             $lng = $this->roundedCoordinateValue($project->longitude);
-        }
-
-        if ($projectName === '') {
-            return 0;
         }
 
         $cityId = $project->city_id ? (int) $project->city_id : null;
@@ -279,6 +281,7 @@ class ProjectService
         $canMatchCoordinates = $lat !== null && $lng !== null;
 
         if (!$canMatchCityProvince && !$canMatchCoordinates) {
+            $this->syncProjectPropertyNames($project);
             return $linkedCount;
         }
 
@@ -307,7 +310,14 @@ class ProjectService
             }
         });
 
-        return $linkedCount + $query->update(['project_id' => $project->id]);
+        $linkedCount += $query->update([
+            'project_id' => $project->id,
+            'name' => $projectName,
+        ]);
+
+        $this->syncProjectPropertyNames($project);
+
+        return $linkedCount;
     }
 
     public function fetchDeletedProjectsPaginated(int $perPage = 10, int $page = 1, string $search = ""): LengthAwarePaginator
@@ -326,10 +336,35 @@ class ProjectService
 
     public function relinkDeletedProjectProperties(Project $deletedProject, Project $destinationProject): int
     {
-        return Property::query()
+        $linkedCount = Property::query()
             ->where('is_project', true)
             ->where('project_id', $deletedProject->id)
-            ->update(['project_id' => $destinationProject->id]);
+            ->update([
+                'project_id' => $destinationProject->id,
+                'name' => $destinationProject->name,
+            ]);
+
+        $this->syncProjectPropertyNames($destinationProject);
+
+        return $linkedCount;
+    }
+
+    private function syncProjectPropertyNames(Project $project): int
+    {
+        $projectName = trim((string) $project->name);
+
+        if ($projectName === '') {
+            return 0;
+        }
+
+        return Property::query()
+            ->where('is_project', true)
+            ->where('project_id', $project->id)
+            ->where(function ($query) use ($projectName) {
+                $query->whereNull('name')
+                    ->orWhere('name', '!=', $projectName);
+            })
+            ->update(['name' => $projectName]);
     }
 
     public function fetchProjectsWithListingsPaginated(
