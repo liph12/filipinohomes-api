@@ -167,13 +167,40 @@ class AgentController extends Controller
         ]);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $agent = Agent::with('user')
             ->withCount('listings')
             ->findOrFail($id);
 
-        $agent->setRelation('listings', $agent->listings()->paginate(12));
+        $listingsQuery = $agent->listings()
+            ->with([
+                'property.propertyAttribute.subtype.type',
+                'property.furnishing',
+                'property.barangay.city.province',
+                'category',
+            ])
+            ->orderByDesc('created_at');
+
+        if ($search = trim((string) $request->query('search', ''))) {
+            $term = "%{$search}%";
+
+            $listingsQuery->where(function ($q) use ($term) {
+                $q->where('name', 'LIKE', $term)
+                    ->orWhere('code', 'LIKE', $term)
+                    ->orWhereHas('property', function ($propertyQuery) use ($term) {
+                        $propertyQuery
+                            ->orWhere('address', 'LIKE', $term);
+                    });
+            });
+        }
+
+        $agent->setRelation(
+            'listings',
+            $listingsQuery
+                ->paginate(12)
+                ->appends($request->only(['search']))
+        );
 
         return new AgentResource($agent);
     }
