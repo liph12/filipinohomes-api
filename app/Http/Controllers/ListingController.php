@@ -12,10 +12,18 @@ use Illuminate\Support\Facades\DB;
 use App\Models\PropertySubtype;
 use App\Models\Property;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Gate;
 
 class ListingController extends Controller
 {
+    private function dashboardBucketLabel(string $bucketStart, string $granularity): string
+    {
+        return match ($granularity) {
+            'year' => substr($bucketStart, 0, 4),
+            'month' => date('M Y', strtotime($bucketStart)),
+            default => date('M j, Y', strtotime($bucketStart)),
+        };
+    }
+
     public function __construct()
     {
         $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug', 'listingsByLocationAll', 'listingByCityAll']);
@@ -560,7 +568,9 @@ class ListingController extends Controller
         ]);
 
         $user    = $request->user();
-        $isAdmin = Gate::forUser($user)->allows('view-all-dashboard');
+        $user->loadMissing('role', 'agent');
+        $isAdmin = $user->role?->name === 'admin';
+        $agentId = $user->agent?->id;
         $start   = $validated['date_start'] ?? now()->startOfYear()->toDateString();
         $end     = $validated['date_end']   ?? now()->toDateString();
         $gran    = $validated['granularity'] ?? 'day';
@@ -568,30 +578,18 @@ class ListingController extends Controller
 
         $emptyResponse = fn() => response()->json([
             'data'   => [],
-            'totals' => array_fill_keys($statuses, 0),
+            'totals' => array_merge(array_fill_keys($statuses, 0), ['total' => 0]),
             'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
         ]);
 
         if (!$isAdmin) {
-            $user->loadMissing('agent');
-            $agentId = $user->agent?->id;
             if (!$agentId) return $emptyResponse();
         }
 
-        if ($gran === 'month') {
-            $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m-01') as date");
-            $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-%m-01'), properties.status";
-        } elseif ($gran === 'year') {
-            $dateExpr   = DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-01-01') as date");
-            $groupByRaw = "DATE_FORMAT(properties.status_change_date, '%Y-01-01'), properties.status";
-        } else {
-            $dateExpr   = DB::raw('DATE(properties.status_change_date) as date');
-            $groupByRaw = "DATE(properties.status_change_date), properties.status";
-        }
+        $dateExpr   = DB::raw('properties.status_change_date as date');
+        $groupByRaw = 'properties.status_change_date, properties.status';
 
-        $cacheKey = 'dashboard_status:' . ($isAdmin ? 'admin' : "agent_{$agentId}") . ":{$user->id}:{$gran}:{$start}:{$end}";
-
-        $rows = Cache::remember($cacheKey, now()->addMinutes(15), function () use (
+        $rows = (function () use (
             $dateExpr,
             $groupByRaw,
             $statuses,
@@ -600,40 +598,57 @@ class ListingController extends Controller
             $isAdmin,
             $agentId
         ) {
-            $query = DB::table('properties')
+            $query = Property::query()
                 ->select([$dateExpr, 'properties.status', DB::raw('COUNT(*) as count')])
                 ->whereIn('properties.status', $statuses)
                 ->whereNotNull('properties.status_change_date')
-                ->whereBetween(DB::raw('DATE(properties.status_change_date)'), [$start, $end]);
+                ->whereBetween('properties.status_change_date', [$start, $end]);
 
             if (!$isAdmin) {
-                $query->join('listings', 'listings.property_id', '=', 'properties.id')
-                    ->where('listings.agent_id', $agentId);
+                $query->whereHas('listings', fn($sub) => $sub->where('agent_id', $agentId));
             }
 
             return $query
                 ->groupByRaw($groupByRaw)
                 ->orderByRaw($groupByRaw)
                 ->get();
-        });
+        })();
 
         $byDate = [];
         $totals = array_fill_keys($statuses, 0);
 
         foreach ($rows as $row) {
-            $date   = (string) $row->date;
+            $bucketStart   = match ($gran) {
+                'year' => substr((string) $row->date, 0, 4) . '-01-01',
+                'month' => substr((string) $row->date, 0, 7) . '-01',
+                default => (string) $row->date,
+            };
             $status = (string) $row->status;
             $count  = (int)    $row->count;
 
-            $byDate[$date] ??= array_merge(['date' => $date], array_fill_keys($statuses, 0), ['total' => 0]);
-            $byDate[$date][$status] += $count;
-            $byDate[$date]['total'] += $count;
-            $totals[$status]        += $count;
+            $byDate[$bucketStart] ??= array_merge([
+                'bucket_start' => $bucketStart,
+                'bucket_label' => $this->dashboardBucketLabel($bucketStart, $gran),
+            ], array_fill_keys($statuses, 0), ['total' => 0]);
+            $byDate[$bucketStart][$status] += $count;
+            $byDate[$bucketStart]['total'] += $count;
+            $totals[$status]               += $count;
         }
 
         return response()->json([
-            'data'   => array_values($byDate),
-            'totals' => $totals,
+            'data'   => array_values(array_map(function ($bucket) use ($statuses) {
+                $counts = ['total' => $bucket['total']];
+                foreach ($statuses as $status) {
+                    $counts[$status] = $bucket[$status];
+                }
+
+                return [
+                    'bucket_start' => $bucket['bucket_start'],
+                    'bucket_label' => $bucket['bucket_label'],
+                    'counts'       => $counts,
+                ];
+            }, $byDate)),
+            'totals' => array_merge($totals, ['total' => array_sum($totals)]),
             'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end],
         ]);
     }
