@@ -71,14 +71,23 @@ class SendMessageNotification implements ShouldQueue
             return;
         }
 
-        // Only send on the sender's first message in this conversation
+        // Send email if:
+        // 1. Sender's first message in this conversation, OR
+        // 2. Last message in conversation was sent 24+ hours ago (re-notification)
         $hasEarlierMessages = Message::where('conversation_id', $conversation->id)
             ->where('user_id', $this->senderId)
             ->where('id', '!=', $message->id)
             ->exists();
 
         if ($hasEarlierMessages) {
-            return;
+            $lastMessage = Message::where('conversation_id', $conversation->id)
+                ->where('id', '!=', $message->id)
+                ->latest('created_at')
+                ->first();
+
+            if (!$lastMessage || $lastMessage->created_at->gt(now()->subHours(24))) {
+                return; // Last message within 24h — skip notification
+            }
         }
 
         // Build slug for the email link
@@ -93,5 +102,10 @@ class SendMessageNotification implements ShouldQueue
         Mail::to($recipient->email)->send(
             new MessageNotificationMailer($sender, $recipient, $message->body, $slug, $recipientRole)
         );
+
+        // Update last_notified_at for the recipient
+        $conversation->users()->updateExistingPivot($recipient->id, [
+            'last_notified_at' => now(),
+        ]);
     }
 }
