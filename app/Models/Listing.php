@@ -245,13 +245,15 @@ class Listing extends Model
     public function scopeSorted(Builder $query, ?string $sortBy): Builder
     {
         return match ($sortBy) {
-            'most-viewed' => $query->orderBy('clicks', 'desc'),
-            'newest'      => $query->orderBy('created_at', 'desc'),
+            'featured'    => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
+            'most-viewed' => $query->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
+            'newest'      => $query->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
+            'oldest'      => $query->orderBy('updated_at', 'asc')->orderBy('id', 'asc'),
             'latest'      => $query->orderBy('updated_at', 'desc'),
             'price-low'   => $query->orderBy('price', 'asc'),
             'price-high'  => $query->orderBy('price', 'desc'),
             'sqm-low', 'sqm-high' => $this->applySqmSort($query, $sortBy),
-            default       => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc'),
+            default       => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
         };
     }
 

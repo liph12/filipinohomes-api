@@ -311,7 +311,7 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function show(string $slug): JsonResponse
+    public function show(Request $request, string $slug): JsonResponse
     {
         $project = Project::query()
             ->withCount([
@@ -333,7 +333,17 @@ class ProjectController extends Controller
             ]
             : null;
 
-        $listings = Listing::where('visibility', 'public')
+        $sortBy = match ((string) $request->query('sort_by', 'featured')) {
+            'newest' => 'newest',
+            'oldest' => 'oldest',
+            'views' => 'most-viewed',
+            'price_asc' => 'price-low',
+            'price_desc' => 'price-high',
+            default => 'featured',
+        };
+
+        $baseListingsQuery = Listing::query()
+            ->where('visibility', 'public')
             ->whereHas('property', fn ($q) =>
                 $q->where('is_project', true)
                   ->where('project_id', $project->id)
@@ -343,8 +353,34 @@ class ProjectController extends Controller
                 'property.nearbyFacility',
                 'category',
                 'agent' => fn ($q) => $q->withCount('listings'),
-            ])
-            ->latest()
+            ]);
+
+        $filteredListingsQuery = (clone $baseListingsQuery)->filter($request);
+
+        $listingsBreakdown = [
+            'total' => (clone $filteredListingsQuery)->count(),
+            'sale' => (clone $filteredListingsQuery)
+                ->whereHas('category', fn ($query) => $query->where('name', 'For Sale'))
+                ->count(),
+            'rent' => (clone $filteredListingsQuery)
+                ->whereHas('category', fn ($query) => $query->where('name', 'For Rent'))
+                ->count(),
+            'foreclosure' => (clone $filteredListingsQuery)
+                ->whereHas('category', fn ($query) => $query->where('name', 'Foreclosure'))
+                ->count(),
+        ];
+
+        $activeUnitType = (string) $request->query('active_unit_type', 'all');
+        if ($activeUnitType === 'sale') {
+            $filteredListingsQuery->whereHas('category', fn ($query) => $query->where('name', 'For Sale'));
+        } elseif ($activeUnitType === 'rent') {
+            $filteredListingsQuery->whereHas('category', fn ($query) => $query->where('name', 'For Rent'));
+        } elseif ($activeUnitType === 'foreclosure') {
+            $filteredListingsQuery->whereHas('category', fn ($query) => $query->where('name', 'Foreclosure'));
+        }
+
+        $listings = $filteredListingsQuery
+            ->sorted($sortBy)
             ->paginate(12);
 
         $projectData = ProjectResource::make($project);
@@ -357,8 +393,10 @@ class ProjectController extends Controller
             'listings_meta' => [
                 'current_page' => $listings->currentPage(),
                 'last_page' => $listings->lastPage(),
+                'per_page' => $listings->perPage(),
                 'total' => $listings->total(),
             ],
+            'listings_breakdown' => $listingsBreakdown,
         ]);
     }
 }
