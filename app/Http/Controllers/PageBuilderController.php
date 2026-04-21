@@ -29,9 +29,11 @@ class PageBuilderController extends Controller
         $ip = (string) $request->ip();
         return 'guest_' . substr(hash('sha256', $ip . '|' . $ua), 0, 32);
     }
-    public function index()
+    public function index(Request $request)
     {
-        return PageBuilderResource::collection(PageBuilder::paginate(10));
+        $perPage = (int) ($request->input('per_page', 12));
+
+        return PageBuilderResource::collection(PageBuilder::paginate($perPage));
     }
 
     public function checkSlug(Request $request): JsonResponse
@@ -148,7 +150,7 @@ public function store(Request $request)
     {
         $this->authorize('viewDeleted', PageBuilder::class);
 
-        $perPage = (int)($request->input('per_page', 10));
+        $perPage = (int)($request->input('per_page', 12));
         $q = PageBuilder::onlyTrashed()->orderByDesc('deleted_at');
         return PageBuilderResource::collection($q->paginate($perPage));
     }
