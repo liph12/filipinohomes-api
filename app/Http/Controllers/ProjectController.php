@@ -246,7 +246,6 @@ class ProjectController extends Controller
         $publicProjectListingCategories = DB::table('listings')
             ->select('listings.property_id', 'listings.category_id')
             ->whereNull('listings.deleted_at')
-            ->where('listings.visibility', '=', 'public')
             ->distinct();
 
         $categoryRows = DB::table('properties')
