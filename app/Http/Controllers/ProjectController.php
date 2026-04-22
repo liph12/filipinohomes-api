@@ -249,25 +249,36 @@ class ProjectController extends Controller
             ->distinct();
 
         $categoryRows = DB::table('properties')
-            ->join('projects', function ($join) {
+            ->leftJoin('projects', function ($join) {
                 $join->on('projects.id', '=', 'properties.project_id')
-                    ->whereNull('projects.deleted_at')
-                    ->whereNotNull('projects.prov_id');
+                    ->whereNull('projects.deleted_at');
             })
+            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->leftJoin('cities', 'cities.id', '=', 'barangays.city_id')
             ->joinSub($publicProjectListingCategories, 'project_listing_categories', function ($join) {
                 $join->on('project_listing_categories.property_id', '=', 'properties.id');
             })
             ->join('categories', 'categories.id', '=', 'project_listing_categories.category_id')
             ->whereNull('properties.deleted_at')
             ->where('properties.is_project', '=', 1)
-            ->whereNotNull('properties.project_id')
+            ->where(function ($query) {
+                $query->whereNotNull('projects.prov_id')
+                    ->orWhereNotNull('cities.province_id');
+            })
             ->whereIn('categories.name', ['For Sale', 'For Rent', 'Foreclosure'])
             ->select(
-                'projects.prov_id as province_id',
+                DB::raw('COALESCE(projects.prov_id, cities.province_id) as province_id'),
                 'categories.name as category_name',
-                DB::raw('COUNT(DISTINCT properties.project_id) as project_count')
+                DB::raw("
+                    COUNT(DISTINCT
+                        CASE
+                            WHEN properties.project_id IS NULL THEN CONCAT('property:', properties.id)
+                            ELSE CONCAT('project:', properties.project_id)
+                        END
+                    ) as project_count
+                ")
             )
-            ->groupBy('projects.prov_id', 'categories.name')
+            ->groupByRaw('COALESCE(projects.prov_id, cities.province_id), categories.name')
             ->get();
 
         $categoryCountsByProvince = [];
