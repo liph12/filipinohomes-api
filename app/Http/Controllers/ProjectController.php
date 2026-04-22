@@ -324,6 +324,13 @@ class ProjectController extends Controller
 
         $provinceData = array_values($provinces);
 
+        foreach ($provinceData as &$province) {
+            usort($province['cities'], function (array $a, array $b) {
+                return [$b['project_count'], $a['city_name']] <=> [$a['project_count'], $b['city_name']];
+            });
+        }
+        unset($province);
+
         usort($provinceData, function (array $a, array $b) {
             return [$b['project_count'], $a['province_name']] <=> [$a['project_count'], $b['province_name']];
         });
