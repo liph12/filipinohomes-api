@@ -16,6 +16,9 @@ class ProjectService
         'projects.id',
         'projects.name',
         'projects.slug',
+        'projects.prov_id',
+        'projects.city_id',
+        'projects.brgy_id',
         'projects.complete_address',
         'projects.featured_photo',
         'projects.photos_url',
@@ -93,7 +96,7 @@ class ProjectService
         return is_numeric($value) ? round((float) $value, 4) : null;
     }
 
-    private function applyProjectSearch($query, string $search)
+    private function applyProjectSearch($query, string $search, string $searchField = 'all')
     {
         $search = trim($search);
         if ($search === '') {
@@ -106,6 +109,10 @@ class ProjectService
             ->filter(fn ($term) => $term !== '' && Str::length($term) >= 3)
             ->map(fn ($term) => $term . '*')
             ->implode(' ');
+
+        if ($searchField === 'name') {
+            return $query->where('projects.name', 'like', $searchTerm);
+        }
 
         return $query->where(function ($q) use ($searchTerm, $booleanSearch) {
             if ($booleanSearch !== '') {
@@ -179,13 +186,14 @@ class ProjectService
     public function fetchProjectsPaginated(
         int $perPage = 12,
         string $search = "",
-        string $sortBy = self::DEFAULT_SORT
+        string $sortBy = self::DEFAULT_SORT,
+        string $searchField = 'all'
     ): LengthAwarePaginator
     {
         $paginator = $this->baseProjectListQuery();
 
         $paginator = $this->applyProjectSort(
-            $this->applyProjectSearch($paginator, $search),
+            $this->applyProjectSearch($paginator, $search, $searchField),
             $sortBy
         )->paginate($perPage);
 

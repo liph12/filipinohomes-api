@@ -196,7 +196,8 @@ class ProjectController extends Controller
         $page = (int) $request->query('page', 1);
         $search = (string) $request->query('search', '');
         $sortBy = (string) $request->query('sort_by', 'properties');
-        $projects = $service->fetchProjectsPaginated(12, $search, $sortBy);
+        $searchField = (string) $request->query('search_field', 'all');
+        $projects = $service->fetchProjectsPaginated(12, $search, $sortBy, $searchField);
 
         return response()->json([
             'message' => 'Projects fetched successfully',
