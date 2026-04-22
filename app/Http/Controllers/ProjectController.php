@@ -213,6 +213,7 @@ class ProjectController extends Controller
     public function byProvince(Request $request): JsonResponse
     {
         $user = $request->user();
+        $sortBy = (string) $request->query('sort_by', 'city_count');
 
         if (($user->role->name ?? null) !== 'admin') {
             abort(403);
@@ -331,8 +332,15 @@ class ProjectController extends Controller
         }
         unset($province);
 
-        usort($provinceData, function (array $a, array $b) {
-            return [$b['project_count'], $a['province_name']] <=> [$a['project_count'], $b['province_name']];
+        usort($provinceData, function (array $a, array $b) use ($sortBy) {
+            return match ($sortBy) {
+                'project_count' => [$b['project_count'], $b['city_count'], $a['province_name']] <=> [$a['project_count'], $a['city_count'], $b['province_name']],
+                'for_sale' => [$b['listing_breakdown']['for_sale'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_sale'], $a['city_count'], $b['province_name']],
+                'for_rent' => [$b['listing_breakdown']['for_rent'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_rent'], $a['city_count'], $b['province_name']],
+                'foreclosure' => [$b['listing_breakdown']['foreclosure'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['foreclosure'], $a['city_count'], $b['province_name']],
+                'province_name' => [$a['province_name'], $b['project_count']] <=> [$b['province_name'], $a['project_count']],
+                default => [$b['city_count'], $b['project_count'], $a['province_name']] <=> [$a['city_count'], $a['project_count'], $b['province_name']],
+            };
         });
 
         return response()->json([
@@ -340,6 +348,7 @@ class ProjectController extends Controller
             'meta' => [
                 'total_provinces' => count($provinceData),
                 'total_projects' => array_sum(array_column($provinceData, 'project_count')),
+                'sort_by' => $sortBy,
             ],
         ]);
     }
