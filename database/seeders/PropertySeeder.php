@@ -172,9 +172,9 @@ public function run(): void
                 ];
             }
 
-            if (!empty($attributeData)) DB::table('property_attributes')->insertOrIgnore($attributeData);
-            if (!empty($propertyData))  DB::table('properties')->insertOrIgnore($propertyData);
-            if (!empty($listingData))   DB::table('listings')->insertOrIgnore($listingData);
+            // if (!empty($attributeData)) DB::table('property_attributes')->insertOrIgnore($attributeData);
+            // if (!empty($propertyData))  DB::table('properties')->insertOrIgnore($propertyData);
+            // if (!empty($listingData))   DB::table('listings')->insertOrIgnore($listingData);
         });
 }
 }

@@ -109,11 +109,11 @@ class UserAgentSeeder extends Seeder
 
             // Bulk insert users and agents
             if (!empty($userData)) {
-                DB::table('users')->insertOrIgnore($userData);
+                // DB::table('users')->insertOrIgnore($userData);
             }
 
             if (!empty($agentData)) {
-                DB::table('agents')->insertOrIgnore($agentData);
+                // DB::table('agents')->insertOrIgnore($agentData);
             }
         });
     }
