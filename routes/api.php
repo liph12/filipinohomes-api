@@ -150,6 +150,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::get('/project-list', [ProjectController::class, 'projects']);
+            Route::get('/projects/by-province', [ProjectController::class, 'byProvince']);
             Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);

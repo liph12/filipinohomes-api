@@ -10,6 +10,7 @@ use App\Http\Resources\ProjectResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class ProjectController extends Controller
 {
@@ -205,6 +206,133 @@ class ProjectController extends Controller
                 'last_page' => $projects->lastPage(),
                 'per_page' => $projects->perPage(),
                 'total' => $projects->total(),
+            ],
+        ]);
+    }
+
+    public function byProvince(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (($user->role->name ?? null) !== 'admin') {
+            abort(403);
+        }
+
+        $cityRows = DB::table('projects')
+            ->join('provinces', 'provinces.id', '=', 'projects.prov_id')
+            ->join('cities', 'cities.id', '=', 'projects.city_id')
+            ->whereNull('projects.deleted_at')
+            ->whereNotNull('projects.prov_id')
+            ->whereNotNull('projects.city_id')
+            ->select(
+                'projects.prov_id as province_id',
+                'provinces.name as province_name',
+                'projects.city_id as city_id',
+                'cities.name as city_name',
+                DB::raw('COUNT(*) as project_count')
+            )
+            ->groupBy(
+                'projects.prov_id',
+                'provinces.name',
+                'projects.city_id',
+                'cities.name'
+            )
+            ->orderBy('provinces.name')
+            ->orderByDesc('project_count')
+            ->orderBy('cities.name')
+            ->get();
+
+        $publicProjectListingCategories = DB::table('listings')
+            ->select('listings.property_id', 'listings.category_id')
+            ->whereNull('listings.deleted_at')
+            ->where('listings.visibility', '=', 'public')
+            ->distinct();
+
+        $categoryRows = DB::table('properties')
+            ->join('projects', function ($join) {
+                $join->on('projects.id', '=', 'properties.project_id')
+                    ->whereNull('projects.deleted_at')
+                    ->whereNotNull('projects.prov_id');
+            })
+            ->joinSub($publicProjectListingCategories, 'project_listing_categories', function ($join) {
+                $join->on('project_listing_categories.property_id', '=', 'properties.id');
+            })
+            ->join('categories', 'categories.id', '=', 'project_listing_categories.category_id')
+            ->whereNull('properties.deleted_at')
+            ->where('properties.is_project', '=', 1)
+            ->whereNotNull('properties.project_id')
+            ->whereIn('categories.name', ['For Sale', 'For Rent', 'Foreclosure'])
+            ->select(
+                'projects.prov_id as province_id',
+                'categories.name as category_name',
+                DB::raw('COUNT(DISTINCT properties.project_id) as project_count')
+            )
+            ->groupBy('projects.prov_id', 'categories.name')
+            ->get();
+
+        $categoryCountsByProvince = [];
+
+        foreach ($categoryRows as $row) {
+            $provinceId = (int) $row->province_id;
+            $categoryName = (string) $row->category_name;
+            $count = (int) $row->project_count;
+
+            $categoryCountsByProvince[$provinceId] ??= [
+                'for_sale' => 0,
+                'for_rent' => 0,
+                'foreclosure' => 0,
+            ];
+
+            if ($categoryName === 'For Sale') {
+                $categoryCountsByProvince[$provinceId]['for_sale'] = $count;
+            } elseif ($categoryName === 'For Rent') {
+                $categoryCountsByProvince[$provinceId]['for_rent'] = $count;
+            } elseif ($categoryName === 'Foreclosure') {
+                $categoryCountsByProvince[$provinceId]['foreclosure'] = $count;
+            }
+        }
+
+        $provinces = [];
+
+        foreach ($cityRows as $row) {
+            $provinceId = (int) $row->province_id;
+            $projectCount = (int) $row->project_count;
+
+            if (!isset($provinces[$provinceId])) {
+                $provinces[$provinceId] = [
+                    'province_id' => $provinceId,
+                    'province_name' => (string) $row->province_name,
+                    'project_count' => 0,
+                    'city_count' => 0,
+                    'listing_breakdown' => $categoryCountsByProvince[$provinceId] ?? [
+                        'for_sale' => 0,
+                        'for_rent' => 0,
+                        'foreclosure' => 0,
+                    ],
+                    'cities' => [],
+                ];
+            }
+
+            $provinces[$provinceId]['project_count'] += $projectCount;
+            $provinces[$provinceId]['city_count'] += 1;
+            $provinces[$provinceId]['cities'][] = [
+                'city_id' => (int) $row->city_id,
+                'city_name' => (string) $row->city_name,
+                'project_count' => $projectCount,
+            ];
+        }
+
+        $provinceData = array_values($provinces);
+
+        usort($provinceData, function (array $a, array $b) {
+            return [$b['project_count'], $a['province_name']] <=> [$a['project_count'], $b['province_name']];
+        });
+
+        return response()->json([
+            'data' => $provinceData,
+            'meta' => [
+                'total_provinces' => count($provinceData),
+                'total_projects' => array_sum(array_column($provinceData, 'project_count')),
             ],
         ]);
     }
