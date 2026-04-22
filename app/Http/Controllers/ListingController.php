@@ -151,7 +151,7 @@ class ListingController extends Controller
     {
         $listing = null;
         if ($slug = $request->input('slug')) {
-            $currListing = Listing::where('slug', $slug)->first();
+            $currListing = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])->first();
 
             if ($currListing) {
                 $deviceId = $request->input('device_id');
@@ -164,7 +164,7 @@ class ListingController extends Controller
                     Cache::put($cacheKey, true, now()->addDay());
                 }
 
-                $listing = Listing::where('slug', $slug)->where('visibility', 'public')
+                $listing = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])->where('visibility', 'public')
                     ->with([
                         'property.propertyAttribute.subtype',
                         'property.nearbyFacility',
@@ -703,7 +703,7 @@ class ListingController extends Controller
 
     public function show(string $slug)
     {
-        $listing = Listing::where('slug', $slug)
+        $listing = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
