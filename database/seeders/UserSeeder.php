@@ -6057,7 +6057,7 @@ class UserSeeder extends Seeder
   ];
 
         foreach (array_chunk($users, 100) as $chunk) {
-            DB::table('users')->insert($chunk);
+            // DB::table('users')->insert($chunk);
         }
     }
 }
