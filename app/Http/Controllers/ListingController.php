@@ -108,6 +108,36 @@ class ListingController extends Controller
         return response()->json($locations);
     }
 
+    public function sitemapSearchLocations(Request $request)
+    {
+        $perPage = (int) $request->input('per_page', 1000);
+
+        $locations = Property::select(
+            'properties.address',
+            DB::raw('COUNT(*) as total_properties')
+        )->whereHas('publicListing')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->groupBy('properties.address')
+            ->having('total_properties', '>=', 1)
+            ->orderByDesc('total_properties')
+            ->paginate($perPage);
+
+        return response()->json([
+            'data' => collect($locations->items())->map(fn($row) => [
+                'address' => $row->address,
+                'slug'    => \Illuminate\Support\Str::slug($row->address),
+                'total'   => $row->total_properties,
+            ]),
+            'meta' => [
+                'current_page' => $locations->currentPage(),
+                'last_page'    => $locations->lastPage(),
+                'total'        => $locations->total(),
+            ],
+        ]);
+    }
+
     public function listingByCityAll()
     {
         $cities = Property::select(
