@@ -18,6 +18,7 @@ use App\Models\Agent;
 use Illuminate\Support\Facades\DB;
 use App\Models\UserInfo;
 use App\Models\Inquiry;
+use App\Services\LeuterioreRealty\TeamSyncService;
 
 class UserController extends Controller
 {
@@ -346,6 +347,9 @@ class UserController extends Controller
         $verified->verification = "verified";
         $verified->save();
 
+        // Sync team assignment from LR API if not yet in team_agents
+        (new TeamSyncService())->syncForUser($verified);
+
         return response()->json([
             'user' => $verified,
             'token' => $token
@@ -390,6 +394,9 @@ class UserController extends Controller
         } else {
             $token = $user->remember_token;
         }
+
+        // Sync team assignment from LR API if not yet in team_agents
+        (new TeamSyncService())->syncForUser($user);
 
         return response()->json([
             'message' => 'Dev login successful.',
