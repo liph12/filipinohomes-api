@@ -27,37 +27,28 @@ class TeamSyncService
             return;
         }
 
+        $isLeader = ($lrData['team']['isleader'] ?? 0) == 1;
         $existing = TeamAgent::where('agent_id', $agent->id)->first();
 
         if ($existing) {
-            // Already on same team — skip
-            if ($existing->team_id === $team->id) {
+            // Same team and same leader status — skip
+            if ($existing->team_id === $team->id && $existing->is_leader === $isLeader) {
                 return;
             }
 
-            // Team changed — update record
+            // Team or leader status changed — update record
             $existing->update([
-                'team_id' => $team->id,
-                'name'    => $user->name,
+                'team_id'   => $team->id,
+                'is_leader' => $isLeader,
             ]);
-
-            // Remove leader_id from old team if this agent was the leader
-            Team::where('id', $existing->getOriginal('team_id'))
-                ->where('leader_id', $agent->id)
-                ->update(['leader_id' => null]);
         } else {
             // New entry
             TeamAgent::create([
-                'name'     => $user->name,
-                'team_id'  => $team->id,
-                'agent_id' => $agent->id,
-                'status'   => 'active',
+                'team_id'   => $team->id,
+                'agent_id'  => $agent->id,
+                'is_leader' => $isLeader,
+                'status'    => 'active',
             ]);
-        }
-
-        // If team leader, update team's leader_id
-        if (($lrData['team']['isleader'] ?? 0) == 1) {
-            $team->update(['leader_id' => $agent->id]);
         }
     }
 }
