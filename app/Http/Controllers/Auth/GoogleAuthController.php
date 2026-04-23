@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Models\UserInfo;
+use App\Services\LeuterioreRealty\TeamSyncService;
 
 class GoogleAuthController extends Controller
 {
@@ -44,6 +45,9 @@ class GoogleAuthController extends Controller
             $user->save();
 
             $token = $this->getOrCreateToken($user);
+
+            // Sync team assignment from LR API if not yet in team_agents
+            (new TeamSyncService())->syncForUser($user);
 
             return response()->json([
                 'message' => 'Login successful.',
@@ -112,6 +116,9 @@ class GoogleAuthController extends Controller
         );
 
         $token = $this->getOrCreateToken($user);
+
+        // Sync team assignment from LR API if not yet in team_agents
+        (new TeamSyncService())->syncForUser($user);
 
         return response()->json([
             'message' => 'Account created and login successful.',
