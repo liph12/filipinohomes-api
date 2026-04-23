@@ -18,6 +18,8 @@ class TeamAgentResource extends JsonResource
             'id' => $this->id,
             'team_id' => $this->team_id,
             'agent_id' => $this->agent_id,
+            'agent_name' => $this->agent?->user?->name,
+            'team_name' => $this->team?->name,
             'is_leader' => $this->is_leader,
             'status' => $this->status,
         ];
