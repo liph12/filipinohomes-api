@@ -3,15 +3,57 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\OfficeResource;
+use App\Http\Resources\OfficeResourceCollection;
 use App\Models\Office;
 use Illuminate\Http\Request;
 
 class OfficeController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        return response()->json(
-            Office::latest()->get()
+        $validated = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'per_page' => 'nullable|integer|min:1|max:1000',
+        ]);
+
+        $query = Office::query();
+
+        if ($search = trim((string) ($validated['search'] ?? ''))) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('title', 'like', "%{$search}%")
+                    ->orWhere('contact', 'like', "%{$search}%")
+                    ->orWhere('address', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = (int) ($validated['per_page'] ?? 12);
+
+        return new OfficeResourceCollection(
+            $query
+                ->orderByRaw("
+                    CASE
+                        WHEN LOWER(COALESCE(title, '')) = 'headquarters' THEN 0
+                        ELSE 1
+                    END
+                ")
+                ->orderByRaw("
+                    LOWER(
+                        TRIM(
+                            REGEXP_REPLACE(COALESCE(name, ''), '[[:space:]]+[0-9]+$', '')
+                        )
+                    )
+                ")
+                ->orderByRaw("
+                    CASE
+                        WHEN COALESCE(name, '') REGEXP '[0-9]+$'
+                            THEN CAST(REGEXP_SUBSTR(name, '[0-9]+$') AS UNSIGNED)
+                        ELSE 0
+                    END
+                ")
+                ->orderBy('name')
+                ->paginate($perPage)
+                ->withQueryString()
         );
     }
 
