@@ -24,5 +24,7 @@ class DatabaseSeeder extends Seeder
         $this->call(OfficeSeeder::class);
         $this->call(PostSeeder::class);
         $this->call(SettingsSeeder::class);
+        $this->call(TeamSeeder::class);
+
     }
 }
