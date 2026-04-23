@@ -15,11 +15,6 @@ class TeamSyncService
             return;
         }
 
-        // Already in team_agents — skip
-        if (TeamAgent::where('agent_id', $agent->id)->exists()) {
-            return;
-        }
-
         // Fetch from LR API
         $lrData = (new LrApiService())->fetchAgentByEmail($user->email);
         if (!$lrData || !isset($lrData['team']['sales_team']['teamname'])) {
@@ -32,13 +27,33 @@ class TeamSyncService
             return;
         }
 
-        // Add agent to team
-        TeamAgent::create([
-            'name'     => $user->name,
-            'team_id'  => $team->id,
-            'agent_id' => $agent->id,
-            'status'   => 'active',
-        ]);
+        $existing = TeamAgent::where('agent_id', $agent->id)->first();
+
+        if ($existing) {
+            // Already on same team — skip
+            if ($existing->team_id === $team->id) {
+                return;
+            }
+
+            // Team changed — update record
+            $existing->update([
+                'team_id' => $team->id,
+                'name'    => $user->name,
+            ]);
+
+            // Remove leader_id from old team if this agent was the leader
+            Team::where('id', $existing->getOriginal('team_id'))
+                ->where('leader_id', $agent->id)
+                ->update(['leader_id' => null]);
+        } else {
+            // New entry
+            TeamAgent::create([
+                'name'     => $user->name,
+                'team_id'  => $team->id,
+                'agent_id' => $agent->id,
+                'status'   => 'active',
+            ]);
+        }
 
         // If team leader, update team's leader_id
         if (($lrData['team']['isleader'] ?? 0) == 1) {
