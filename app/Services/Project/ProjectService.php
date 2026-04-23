@@ -116,14 +116,19 @@ class ProjectService
 
         return $query->where(function ($q) use ($searchTerm, $booleanSearch) {
             if ($booleanSearch !== '') {
-                $q->whereRaw(
-                    'MATCH(projects.name, projects.complete_address) AGAINST (? IN BOOLEAN MODE)',
-                    [$booleanSearch]
-                );
-            } else {
-                $q->where('projects.name', 'like', $searchTerm)
+                $q->where(function ($fullTextQuery) use ($booleanSearch, $searchTerm) {
+                    $fullTextQuery->whereRaw(
+                        'MATCH(projects.name, projects.complete_address) AGAINST (? IN BOOLEAN MODE)',
+                        [$booleanSearch]
+                    )
+                    ->orWhere('projects.name', 'like', $searchTerm)
                     ->orWhere('projects.complete_address', 'like', $searchTerm);
+                });
+                return;
             }
+
+            $q->where('projects.name', 'like', $searchTerm)
+                ->orWhere('projects.complete_address', 'like', $searchTerm);
         });
     }
 
