@@ -40,4 +40,15 @@ class Agent extends Model
     {
         return $this->hasOne(PageBuilder::class, 'agent_id');
     }
+
+    public function teamMembers()
+    {
+        return $this->hasMany(TeamAgent::class, 'agent_id');
+    }
+
+    public function teamLeader()
+    {
+        return $this->hasOne(TeamAgent::class, 'agent_id')
+            ->where('is_leader', true);
+    }
 }

@@ -37,6 +37,8 @@ use App\Http\Controllers\{
     AdPlacementController,
     PublicAdController,
     BlockedUserController,
+    TeamController,
+    TeamAgentController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -134,6 +136,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
             Route::apiResource('users', UserController::class);
+            Route::apiResource('teams', TeamController::class);
+            Route::apiResource('team-agents', TeamAgentController::class);
             Route::apiResource('property_attributes', PropertyAttributesController::class);
             Route::apiResource('properties', PropertyController::class);
             Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
