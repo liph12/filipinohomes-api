@@ -242,7 +242,12 @@ class OpenAIController extends Controller
         }
 
         try {
-            $context = $request->only(['property_type', 'property_subtype', 'category']);
+            $context = $request->only([
+                'property_type', 'property_subtype', 'category',
+                'project_name', 'project_location',
+                'bedrooms', 'bathrooms', 'floor_area', 'lot_area',
+                'description',
+            ]);
             $result = $this->listingService->analyzeTitle($title, $context);
 
             return response()->json($result);
