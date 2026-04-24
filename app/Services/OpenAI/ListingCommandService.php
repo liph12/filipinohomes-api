@@ -172,6 +172,79 @@ class ListingCommandService
         return $this->extractToolResponse($response);
     }
 
+    public function analyzeTitle(string $title, array $context = []): ?array
+    {
+        $contextInfo = '';
+        if (!empty($context['property_type'])) {
+            $contextInfo .= "Property type: {$context['property_type']}. ";
+        }
+        if (!empty($context['property_subtype'])) {
+            $contextInfo .= "Property subtype: {$context['property_subtype']}. ";
+        }
+        if (!empty($context['category'])) {
+            $contextInfo .= "Category: {$context['category']}. ";
+        }
+
+        $prompt = <<<PROMPT
+        You are an SEO expert for Philippine real estate listings, specifically for Cebu and surrounding areas.
+
+        Analyze the given listing title and:
+        1. Score it from 0-100 based on SEO effectiveness
+        2. Give brief feedback on what's good or bad about it
+        3. Suggest 3 improved title alternatives
+
+        Scoring criteria:
+        - Follows keyword-rich formula: [Status] + [Size/Type] + [Location] + [Key Benefit] (e.g. "For Sale: 3BR House & Lot in Talamban Cebu – Near USC, Ready for Occupancy")
+        - Highlights 1-2 strong selling points, not generic details (e.g. "Walking distance to Ayala", "Near IT Park", "Preselling, low monthly DP")
+        - 10-15 words, no ALL CAPS, readable on mobile
+        - Uses clear buyer keywords: "3BR", "parking", "near mall", "RFO", "with views", "fully furnished"
+        - Avoids generic/spammy language like "Nice Affordable House" or "SUPER CHEAP!!! HURRY!!!"
+
+        {$contextInfo}
+
+        Return function call ONLY with structured JSON.
+        PROMPT;
+
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => [
+                ['role' => 'system', 'content' => $prompt],
+                ['role' => 'user', 'content' => "Analyze this listing title: \"{$title}\""],
+            ],
+            'functions' => [$this->getTitleAnalysisToolDefinition()],
+            'function_call' => ['name' => 'analyze_listing_title'],
+        ]);
+
+        return $this->extractToolResponse($response);
+    }
+
+    protected function getTitleAnalysisToolDefinition(): array
+    {
+        return [
+            'name' => 'analyze_listing_title',
+            'description' => 'Analyze a real estate listing title for SEO quality and suggest improvements',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'score' => [
+                        'type' => 'integer',
+                        'description' => 'SEO score from 0 to 100'
+                    ],
+                    'feedback' => [
+                        'type' => 'string',
+                        'description' => 'Brief feedback on the title quality (2-3 sentences max)'
+                    ],
+                    'suggestions' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                        'description' => 'Exactly 3 improved title suggestions following the SEO formula'
+                    ],
+                ],
+                'required' => ['score', 'feedback', 'suggestions']
+            ]
+        ];
+    }
+
     protected function getImageClassificationToolDefinition(): array
     {
         return [

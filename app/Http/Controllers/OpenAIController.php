@@ -227,6 +227,26 @@ class OpenAIController extends Controller
         return response()->json($data);
     }
 
+    public function analyzeListingTitle(Request $request)
+    {
+        $title = $request->input('title', '');
+
+        if (strlen(trim($title)) < 3) {
+            return response()->json(['error' => 'Title is too short to analyze.'], 422);
+        }
+
+        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
+        }
+
+        $context = $request->only(['property_type', 'property_subtype', 'category']);
+        $result = $this->listingService->analyzeTitle($title, $context);
+
+        return response()->json($result);
+    }
+
     public function classifyListingPhotos(Request $request)
     {
         $photos = $request->input('photos', []);

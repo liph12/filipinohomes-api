@@ -135,6 +135,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/users/search', [UserController::class, 'searchUsers']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
+            Route::post('/openai/analyze-title', [OpenAIController::class, 'analyzeListingTitle']);
             Route::apiResource('users', UserController::class);
             Route::apiResource('teams', TeamController::class);
             Route::apiResource('team-agents', TeamAgentController::class);
