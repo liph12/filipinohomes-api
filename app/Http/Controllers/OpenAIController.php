@@ -241,10 +241,20 @@ class OpenAIController extends Controller
             return $limitResponse;
         }
 
-        $context = $request->only(['property_type', 'property_subtype', 'category']);
-        $result = $this->listingService->analyzeTitle($title, $context);
+        try {
+            $context = $request->only(['property_type', 'property_subtype', 'category']);
+            $result = $this->listingService->analyzeTitle($title, $context);
 
-        return response()->json($result);
+            return response()->json($result);
+        } catch (\OpenAI\Exceptions\RateLimitException $e) {
+            return response()->json([
+                'message' => 'AI service is temporarily busy. Please try again in a moment.',
+            ], 429);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to analyze title. Please try again.',
+            ], 500);
+        }
     }
 
     public function classifyListingPhotos(Request $request)
