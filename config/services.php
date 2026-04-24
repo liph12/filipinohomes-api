@@ -39,6 +39,10 @@ return [
         'client_id' => env('GOOGLE_CLIENT_ID'),
     ],
 
+    'google_maps' => [
+        'geocoding_key' => env('GOOGLE_MAPS_API_KEY', env('NEXT_PUBLIC_GOOGLE_MAPS_API_KEY')),
+    ],
+
     'homesphnews' => [
         'base_url' => env('HOMESPHNEWS_BASE_URL', 'https://homesphnews-api-394504332858.asia-southeast1.run.app/api'),
         'key' => env('HOMESPHNEWS_API_KEY'),
