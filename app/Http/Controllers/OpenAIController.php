@@ -227,6 +227,41 @@ class OpenAIController extends Controller
         return response()->json($data);
     }
 
+    public function analyzeListingTitle(Request $request)
+    {
+        $title = $request->input('title', '');
+
+        if (strlen(trim($title)) < 3) {
+            return response()->json(['error' => 'Title is too short to analyze.'], 422);
+        }
+
+        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
+        }
+
+        try {
+            $context = $request->only([
+                'property_type', 'property_subtype', 'category',
+                'project_name', 'project_location',
+                'bedrooms', 'bathrooms', 'floor_area', 'lot_area',
+                'description',
+            ]);
+            $result = $this->listingService->analyzeTitle($title, $context);
+
+            return response()->json($result);
+        } catch (\OpenAI\Exceptions\RateLimitException $e) {
+            return response()->json([
+                'message' => 'AI service is temporarily busy. Please try again in a moment.',
+            ], 429);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to analyze title. Please try again.',
+            ], 500);
+        }
+    }
+
     public function classifyListingPhotos(Request $request)
     {
         $photos = $request->input('photos', []);

@@ -172,6 +172,120 @@ class ListingCommandService
         return $this->extractToolResponse($response);
     }
 
+    public function analyzeTitle(string $title, array $context = []): ?array
+    {
+        // Build rich context from all available listing data
+        $contextLines = [];
+
+        if (!empty($context['category'])) {
+            $contextLines[] = "Listing category: {$context['category']}";
+        }
+        if (!empty($context['property_type'])) {
+            $contextLines[] = "Property type: {$context['property_type']}";
+        }
+        if (!empty($context['property_subtype'])) {
+            $contextLines[] = "Property subtype: {$context['property_subtype']}";
+        }
+        if (!empty($context['project_name'])) {
+            $contextLines[] = "Project/Development name: {$context['project_name']}";
+        }
+        if (!empty($context['project_location'])) {
+            $contextLines[] = "Project location: {$context['project_location']}";
+        }
+        if (!empty($context['bedrooms'])) {
+            $contextLines[] = "Bedrooms: {$context['bedrooms']}";
+        }
+        if (!empty($context['bathrooms'])) {
+            $contextLines[] = "Bathrooms: {$context['bathrooms']}";
+        }
+        if (!empty($context['floor_area'])) {
+            $contextLines[] = "Floor area: {$context['floor_area']} sqm";
+        }
+        if (!empty($context['lot_area'])) {
+            $contextLines[] = "Lot area: {$context['lot_area']} sqm";
+        }
+        if (!empty($context['description'])) {
+            // Truncate long descriptions to keep prompt manageable
+            $desc = mb_substr($context['description'], 0, 300);
+            $contextLines[] = "Description excerpt: {$desc}";
+        }
+
+        $contextBlock = !empty($contextLines)
+            ? "KNOWN LISTING DETAILS (use these for accurate suggestions):\n" . implode("\n", $contextLines)
+            : "No additional listing details provided.";
+
+        $prompt = <<<PROMPT
+        You are an SEO expert for Philippine real estate listings.
+
+        CRITICAL RULES:
+        1. NEVER assume or invent a location. If no location is provided in the title or context, do NOT add any city/area name to suggestions. Instead, note in the feedback that adding a location would improve SEO.
+        2. If a project name or location IS provided (e.g. "Mavesa" in Davao, "Solinea" in Cebu), your suggestions MUST use that exact project name and its correct location. NEVER substitute with a different city or area.
+        3. If the title mentions a project or place name you recognize, use the correct associated location. If you don't recognize it, check the context fields below. If still unknown, keep the name as-is without guessing a location.
+
+        ANALYSIS TASK:
+        1. Score the title from 0-100 based on SEO effectiveness
+        2. Give brief, specific feedback (2-3 sentences) on what to fix
+        3. Suggest exactly 3 improved alternatives
+
+        SCORING CRITERIA:
+        - Follows keyword-rich formula: [Status] + [Size/Type] + [Location] + [Key Benefit]
+          Example: "For Sale: 3BR House & Lot in Talamban Cebu – Near USC, Ready for Occupancy"
+        - Highlights 1-2 strong selling points (not generic fluff)
+          Good hooks: "Walking distance to Ayala", "Near IT Park", "Preselling, low monthly DP", "with parking"
+        - 10-15 words, no ALL CAPS, readable on mobile
+        - Uses clear buyer search keywords: "3BR", "parking", "near mall", "RFO", "fully furnished", "with views"
+        - Penalize heavily:
+          * Generic/vague titles: "Nice House in Cebu", "Beautiful Property"
+          * Spammy language: "SUPER CHEAP!!! HURRY!!!", all caps, excessive punctuation
+          * Too short (under 5 words) or too long (over 20 words)
+          * Missing category status (For Sale/For Rent) when the listing category is known
+          * Wrong location — mentioning a city/area that contradicts the actual project location
+
+        {$contextBlock}
+
+        Return function call ONLY with structured JSON.
+        PROMPT;
+
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => [
+                ['role' => 'system', 'content' => $prompt],
+                ['role' => 'user', 'content' => "Analyze this listing title: \"{$title}\""],
+            ],
+            'functions' => [$this->getTitleAnalysisToolDefinition()],
+            'function_call' => ['name' => 'analyze_listing_title'],
+        ]);
+
+        return $this->extractToolResponse($response);
+    }
+
+    protected function getTitleAnalysisToolDefinition(): array
+    {
+        return [
+            'name' => 'analyze_listing_title',
+            'description' => 'Analyze a real estate listing title for SEO quality and suggest improvements',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'score' => [
+                        'type' => 'integer',
+                        'description' => 'SEO score from 0 to 100'
+                    ],
+                    'feedback' => [
+                        'type' => 'string',
+                        'description' => 'Brief feedback on the title quality (2-3 sentences max)'
+                    ],
+                    'suggestions' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                        'description' => 'Exactly 3 improved title suggestions following the SEO formula'
+                    ],
+                ],
+                'required' => ['score', 'feedback', 'suggestions']
+            ]
+        ];
+    }
+
     protected function getImageClassificationToolDefinition(): array
     {
         return [
