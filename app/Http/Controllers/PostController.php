@@ -3,16 +3,26 @@
 namespace App\Http\Controllers;
 
 use App\Models\Post;
+use Illuminate\Http\Request;
 
 class PostController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $sort = $request->query('sort');
+
+        $query = Post::with('category')
+            ->whereNotNull('published_at');
+
+        if ($sort === 'views') {
+            $query->orderByDesc('views')
+                ->orderByDesc('published_at');
+        } else {
+            $query->orderByDesc('published_at');
+        }
+
         return response()->json(
-            Post::with('category')
-                ->whereNotNull('published_at')
-                ->orderByDesc('published_at')
-                ->paginate(10)  
+            $query->paginate(10)
         );
     }
 
