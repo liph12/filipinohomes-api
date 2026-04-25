@@ -60,6 +60,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
         Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
         Route::get('/posts/{slug}', [PostController::class, 'show']);
+        Route::post('/posts/{slug}/view', [PostController::class, 'trackView']);
         Route::get('/offices', [OfficeController::class, 'index']);
         Route::get('/projects/unassociated', [ProjectController::class, 'unassociatedProjects']);
         Route::get('/project/{slug}', [ProjectController::class, 'show'])->where('slug', '.*');
@@ -117,6 +118,8 @@ Route::middleware('strip.tags')->group(function(){
         // Public HomesPhNews proxy (server-side X-Site-Key, avoids CORS for browsers)
         Route::get('news', [HomesPhNewsController::class, 'index']);
         Route::get('news/{identifier}', [HomesPhNewsController::class, 'show']);
+        Route::post('news/{identifier}/impression', [HomesPhNewsController::class, 'trackImpression']);
+        Route::post('news/{identifier}/click', [HomesPhNewsController::class, 'trackClick']);
 
         // Public magazine routes
         Route::get('magazines', [MagazineController::class, 'index']);

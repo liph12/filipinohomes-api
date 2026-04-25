@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\NewsAnalytics;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -68,7 +69,12 @@ class HomesPhNewsController extends Controller
             }
         });
 
-        return response()->json($cached['body'], $cached['status']);
+        $body = $cached['body'];
+        if (is_array($body)) {
+            $this->applyMetricsToListResponse($body);
+        }
+
+        return response()->json($body, $cached['status']);
     }
 
     /**
@@ -114,6 +120,182 @@ class HomesPhNewsController extends Controller
             }
         });
 
-        return response()->json($cached['body'], $cached['status']);
+        $body = $cached['body'];
+        if (is_array($body)) {
+            $this->applyMetricsToSingleResponse($body, $identifier);
+        }
+
+        return response()->json($body, $cached['status']);
+    }
+
+    /**
+     * Track an impression (once per device per day).
+     */
+    public function trackImpression(Request $request, string $identifier): JsonResponse
+    {
+        $recorded = $this->recordEvent($request, $identifier, 'impression');
+        $stats = $this->getCurrentStats($identifier);
+
+        return response()->json([
+            'success' => true,
+            'recorded' => $recorded,
+            'identifier' => $identifier,
+            'impressions' => $stats['impressions'],
+            'clicks' => $stats['clicks'],
+        ]);
+    }
+
+    /**
+     * Track a click (once per device per day).
+     */
+    public function trackClick(Request $request, string $identifier): JsonResponse
+    {
+        $clickRecorded = $this->recordEvent($request, $identifier, 'click');
+        // A click implies visibility; ensure at least one daily impression is tracked too.
+        $this->recordEvent($request, $identifier, 'impression');
+
+        $stats = $this->getCurrentStats($identifier);
+
+        return response()->json([
+            'success' => true,
+            'recorded' => $clickRecorded,
+            'identifier' => $identifier,
+            'impressions' => $stats['impressions'],
+            'clicks' => $stats['clicks'],
+        ]);
+    }
+
+    private function applyMetricsToListResponse(array &$body): void
+    {
+        $articles = null;
+
+        if (isset($body['data']) && is_array($body['data']) && isset($body['data']['data']) && is_array($body['data']['data'])) {
+            $articles = &$body['data']['data'];
+        } elseif (isset($body['data']) && is_array($body['data']) && array_is_list($body['data'])) {
+            $articles = &$body['data'];
+        } elseif (array_is_list($body)) {
+            $articles = &$body;
+        }
+
+        if (!is_array($articles)) {
+            return;
+        }
+
+        $identifiers = [];
+        foreach ($articles as $article) {
+            if (!is_array($article)) continue;
+            $identifier = $this->extractIdentifier($article);
+            if ($identifier !== null) {
+                $identifiers[] = $identifier;
+            }
+        }
+
+        if (empty($identifiers)) {
+            return;
+        }
+
+        $metrics = NewsAnalytics::query()
+            ->whereIn('identifier', array_values(array_unique($identifiers)))
+            ->get()
+            ->keyBy('identifier');
+
+        foreach ($articles as &$article) {
+            if (!is_array($article)) continue;
+            $identifier = $this->extractIdentifier($article);
+            if ($identifier === null) continue;
+
+            /** @var NewsAnalytics|null $metric */
+            $metric = $metrics->get($identifier);
+            if ($metric === null) {
+                continue;
+            }
+
+            $article['views'] = number_format((int) $metric->impressions) . ' views';
+            $article['views_count'] = (int) $metric->clicks;
+        }
+    }
+
+    private function applyMetricsToSingleResponse(array &$body, string $fallbackIdentifier): void
+    {
+        if (!isset($body['article']) || !is_array($body['article'])) {
+            return;
+        }
+
+        $article = &$body['article'];
+        $identifier = $this->extractIdentifier($article) ?? $fallbackIdentifier;
+        $metric = NewsAnalytics::query()->where('identifier', $identifier)->first();
+
+        if (!$metric) return;
+
+        $article['views'] = number_format((int) $metric->impressions) . ' views';
+        $article['views_count'] = (int) $metric->clicks;
+    }
+
+    private function extractIdentifier(array $article): ?string
+    {
+        $slug = isset($article['slug']) ? trim((string) $article['slug']) : '';
+        if ($slug !== '') return $slug;
+
+        $id = isset($article['id']) ? trim((string) $article['id']) : '';
+        return $id !== '' ? $id : null;
+    }
+
+    private function getDeviceId(Request $request): string
+    {
+        $headerDeviceId = trim((string) $request->header('X-Device-Id', ''));
+        if ($headerDeviceId !== '') {
+            return $headerDeviceId;
+        }
+
+        $bodyDeviceId = trim((string) $request->input('device_id', ''));
+        if ($bodyDeviceId !== '') {
+            return $bodyDeviceId;
+        }
+
+        $fallback = ($request->ip() ?? 'unknown') . '|' . ((string) $request->userAgent() ?: 'ua');
+        return hash('sha256', $fallback);
+    }
+
+    private function recordEvent(Request $request, string $identifier, string $type): bool
+    {
+        $normalizedIdentifier = trim((string) $identifier);
+        if ($normalizedIdentifier === '') {
+            return false;
+        }
+
+        $deviceId = $this->getDeviceId($request);
+        $today = now('Asia/Manila')->toDateString();
+        $cacheKey = "homesphnews:{$type}:{$normalizedIdentifier}:{$deviceId}:{$today}";
+
+        if (Cache::has($cacheKey)) {
+            return false;
+        }
+
+        $metric = NewsAnalytics::query()->firstOrCreate(
+            ['identifier' => $normalizedIdentifier],
+            ['impressions' => 0, 'clicks' => 0],
+        );
+
+        if ($type === 'impression') {
+            $metric->increment('impressions');
+        } else {
+            $metric->increment('clicks');
+        }
+
+        Cache::put($cacheKey, true, now('Asia/Manila')->endOfDay());
+        return true;
+    }
+
+    private function getCurrentStats(string $identifier): array
+    {
+        $metric = NewsAnalytics::query()->where('identifier', $identifier)->first();
+        if (!$metric) {
+            return ['impressions' => 0, 'clicks' => 0];
+        }
+
+        return [
+            'impressions' => (int) $metric->impressions,
+            'clicks' => (int) $metric->clicks,
+        ];
     }
 }
