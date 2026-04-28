@@ -7,6 +7,7 @@ use App\Models\Listing;
 use App\Models\Post;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SitemapController extends Controller
 {
@@ -123,6 +124,38 @@ class SitemapController extends Controller
                 'total'        => $paginator->total(),
             ],
         ]);
+    }
+
+    /**
+     * Listing counts grouped by city, province, category, and property type.
+     * Used by the frontend sitemap to only include location URLs that have data.
+     */
+    public function locationCounts(): JsonResponse
+    {
+        $rows = DB::table('listings')
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+            ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+            ->where('listings.visibility', 'public')
+            ->where('properties.status', 'active')
+            ->select(
+                'cities.name as city',
+                'provinces.name as province',
+                'categories.name as category',
+                'property_types.name as type',
+                'property_subtypes.name as subtype',
+                DB::raw('COUNT(*) as total')
+            )
+            ->groupBy('cities.name', 'provinces.name', 'categories.name', 'property_types.name', 'property_subtypes.name')
+            ->having('total', '>=', 1)
+            ->get();
+
+        return response()->json($rows);
     }
 
     /**
