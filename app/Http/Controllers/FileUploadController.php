@@ -21,7 +21,11 @@ class FileUploadController extends Controller
 
             try {
                 $file = $request->file('file');
-                $uploadResult = $this->handleS3Upload($file, "/magazines/pdfs");
+                $subfolder = $request->input('folder');
+                $dir = $subfolder
+                    ? "/filipinohomes-new/pdf/" . trim($subfolder, '/')
+                    : "/filipinohomes-new/pdf";
+                $uploadResult = $this->handleS3Upload($file, $dir);
 
                 return response()->json([
                     'success' => true,
