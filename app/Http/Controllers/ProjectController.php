@@ -528,23 +528,35 @@ class ProjectController extends Controller
             ->with([
                 'property.propertyAttribute.subtype',
                 'property.nearbyFacility',
+                'property.barangay.city.province',
                 'category',
-                'agent' => fn ($q) => $q->withCount('listings'),
+                'agent' => fn ($q) => $q->withCount('listings')->with(['user', 'pageBuilder']),
             ]);
 
         $filteredListingsQuery = (clone $baseListingsQuery)->filter($request);
 
+        // Single aggregation query instead of 4 separate COUNTs
+        $breakdown = Listing::query()
+            ->where('visibility', 'public')
+            ->whereHas('property', fn ($q) =>
+                $q->where('is_project', true)
+                  ->where('project_id', $project->id)
+            )
+            ->filter($request)
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->selectRaw("
+                COUNT(*) as total,
+                SUM(categories.name = 'For Sale') as sale,
+                SUM(categories.name = 'For Rent') as rent,
+                SUM(categories.name = 'Foreclosure') as foreclosure
+            ")
+            ->first();
+
         $listingsBreakdown = [
-            'total' => (clone $filteredListingsQuery)->count(),
-            'sale' => (clone $filteredListingsQuery)
-                ->whereHas('category', fn ($query) => $query->where('name', 'For Sale'))
-                ->count(),
-            'rent' => (clone $filteredListingsQuery)
-                ->whereHas('category', fn ($query) => $query->where('name', 'For Rent'))
-                ->count(),
-            'foreclosure' => (clone $filteredListingsQuery)
-                ->whereHas('category', fn ($query) => $query->where('name', 'Foreclosure'))
-                ->count(),
+            'total'       => (int) ($breakdown->total ?? 0),
+            'sale'        => (int) ($breakdown->sale ?? 0),
+            'rent'        => (int) ($breakdown->rent ?? 0),
+            'foreclosure' => (int) ($breakdown->foreclosure ?? 0),
         ];
 
         $activeUnitType = (string) $request->query('active_unit_type', 'all');
