@@ -52,8 +52,8 @@ class ImageUploadController extends Controller
 
         $manager = new ImageManager(new Driver());
         $encoded = $manager->read($file->getRealPath())
-            ->scaleDown(width: 1920)
-            ->toWebp(quality: 85);
+            ->scaleDown(width: 1200)
+            ->toWebp(quality: 72);
 
         Storage::disk('s3')->put($fileName, (string) $encoded, 'public');
 
