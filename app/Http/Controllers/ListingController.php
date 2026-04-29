@@ -111,6 +111,7 @@ class ListingController extends Controller
     public function sitemapSearchLocations(Request $request)
     {
         $perPage = (int) $request->input('per_page', 1000);
+        $minTotal = max(1, (int) $request->input('min_total', 1));
 
         $locations = Property::select(
             'properties.address',
@@ -120,7 +121,7 @@ class ListingController extends Controller
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
             ->groupBy('properties.address')
-            ->having('total_properties', '>=', 1)
+            ->having('total_properties', '>=', $minTotal)
             ->orderByDesc('total_properties')
             ->paginate($perPage);
 
