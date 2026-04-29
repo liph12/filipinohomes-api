@@ -64,14 +64,14 @@ class CompressLegacyImages extends Command
         $this->logFile = fopen($logPath, 'w');
         $this->info("Logging to: {$logPath}");
 
-        $this->awsUrl = rtrim(env('AWS_OLD_URL', ''), '/');
+        $this->awsUrl = rtrim(env('AWS_URL', ''), '/');
         $this->dest   = trim((string) $this->option('dest'), '/');
         $threshold    = (int) $this->option('kb') * 1024;
         $chunk        = (int) $this->option('chunk');
         $dryRun       = (bool) $this->option('dry-run');
 
         if (! $this->awsUrl) {
-            $this->error('AWS_OLD_URL is not set in .env');
+            $this->error('AWS_URL is not set in .env');
             if ($this->logFile) fclose($this->logFile);
             return 1;
         }
