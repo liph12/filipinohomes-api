@@ -19,6 +19,8 @@ class ProjectService
         'projects.prov_id',
         'projects.city_id',
         'projects.brgy_id',
+        'projects.street',
+        'projects.mapaddress',
         'projects.complete_address',
         'projects.featured_photo',
         'projects.photos_url',
