@@ -212,9 +212,22 @@ class ListingController extends Controller
             }
         }
 
+        // Serialize the paginated index() result through ->response() so we
+        // get both data + Laravel's default paginator meta (current_page,
+        // last_page, per_page, total). Embedding the ResourceCollection
+        // directly drops the meta and only exposes the items array.
+        $indexResponse = $this->index($request)->response()->getData(true);
+        $indexMeta = $indexResponse['meta'] ?? [];
+
         return [
             'property' => $listing === null ? null : new ListingResource($listing),
-            'resource' => $this->index($request),
+            'resource' => $indexResponse['data'] ?? [],
+            'meta' => [
+                'page'      => $indexMeta['current_page'] ?? 1,
+                'per_page'  => $indexMeta['per_page'] ?? 12,
+                'total'     => $indexMeta['total'] ?? 0,
+                'last_page' => $indexMeta['last_page'] ?? 1,
+            ],
         ];
     }
 
