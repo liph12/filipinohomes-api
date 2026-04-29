@@ -61,6 +61,19 @@ return [
             // 'visibility' => 'public',
         ],
 
+        's3_new' => [
+            'driver' => 's3',
+            'key' => env('AWS2_ACCESS_KEY_ID'),
+            'secret' => env('AWS2_SECRET_ACCESS_KEY'),
+            'region' => env('AWS2_DEFAULT_REGION'),
+            'bucket' => env('AWS2_BUCKET'),
+            'url' => env('AWS2_URL'),
+            'endpoint' => env('AWS2_ENDPOINT'),
+            'use_path_style_endpoint' => env('AWS2_USE_PATH_STYLE_ENDPOINT', false),
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*

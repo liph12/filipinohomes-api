@@ -26,7 +26,8 @@ class CompressLegacyImages extends Command
 
     protected $description = 'Re-upload existing S3 images > --kb threshold as compressed WebP copies (originals untouched)';
 
-    private string $awsUrl;
+    private string $awsUrl;     // source bucket URL  (AWS  / old)
+    private string $destAwsUrl; // destination bucket URL (AWS2 / new)
     private string $dest;
     private int $checked    = 0;
     private int $compressed = 0;
@@ -64,14 +65,21 @@ class CompressLegacyImages extends Command
         $this->logFile = fopen($logPath, 'w');
         $this->info("Logging to: {$logPath}");
 
-        $this->awsUrl = rtrim(env('AWS_URL', ''), '/');
-        $this->dest   = trim((string) $this->option('dest'), '/');
-        $threshold    = (int) $this->option('kb') * 1024;
-        $chunk        = (int) $this->option('chunk');
-        $dryRun       = (bool) $this->option('dry-run');
+        $this->awsUrl     = rtrim(env('AWS_URL', ''), '/');
+        $this->destAwsUrl = rtrim(env('AWS2_URL', ''), '/');
+        $this->dest       = trim((string) $this->option('dest'), '/');
+        $threshold        = (int) $this->option('kb') * 1024;
+        $chunk            = (int) $this->option('chunk');
+        $dryRun           = (bool) $this->option('dry-run');
 
         if (! $this->awsUrl) {
             $this->error('AWS_URL is not set in .env');
+            if ($this->logFile) fclose($this->logFile);
+            return 1;
+        }
+
+        if (! $this->destAwsUrl) {
+            $this->error('AWS2_URL is not set in .env');
             if ($this->logFile) fclose($this->logFile);
             return 1;
         }
@@ -218,9 +226,8 @@ class CompressLegacyImages extends Command
             return $url;
         }
 
-        // Already lives in the destination folder — was compressed in a previous run.
-        // Skip to avoid re-processing and orphaning the old compressed file.
-        if (str_starts_with($srcPath, '/' . $this->dest . '/')) {
+        // Already lives in the new bucket — was migrated in a previous run.
+        if (str_starts_with($url, $this->destAwsUrl)) {
             $this->skipped++;
             return $url;
         }
@@ -239,10 +246,10 @@ class CompressLegacyImages extends Command
             $sizeKb    = round($sizeBytes / 1024);
 
             if ($sizeBytes <= $threshold) {
-                // Small file — copy as-is to migrate it to the new path (no re-encoding).
+                // Small file — download from old bucket, upload as-is to new bucket.
                 $ext      = strtolower(pathinfo($srcPath, PATHINFO_EXTENSION) ?: 'jpg');
                 $destPath = '/' . $this->dest . '/' . Str::uuid() . '.' . $ext;
-                $destUrl  = $this->awsUrl . $destPath;
+                $destUrl  = $this->destAwsUrl . $destPath;
 
                 $msg = "  copy      {$sizeKb}KB  {$srcPath}";
                 $this->line($msg);
@@ -253,17 +260,11 @@ class CompressLegacyImages extends Command
                     return $url;
                 }
 
-                $ok = Storage::disk('s3')->copy($srcPath, $destPath);
+                $contents = Storage::disk('s3')->get($srcPath);
+                $ok       = Storage::disk('s3_new')->put($destPath, $contents, 'public');
+                unset($contents);
+
                 if ($ok) {
-                    $visible = Storage::disk('s3')->setVisibility($destPath, 'public');
-                    if (! $visible) {
-                        Storage::disk('s3')->delete($destPath);
-                        $msg = "  FAIL (visibility)  {$destPath}";
-                        $this->error($msg);
-                        $this->log($msg);
-                        $this->failed++;
-                        return $url;
-                    }
                     $this->log("            → {$destPath}");
                     $this->copied++;
                     return $destUrl;
@@ -277,7 +278,7 @@ class CompressLegacyImages extends Command
             }
 
             $destPath = '/' . $this->dest . '/' . Str::uuid() . '.webp';
-            $destUrl  = $this->awsUrl . $destPath;
+            $destUrl  = $this->destAwsUrl . $destPath;
 
             $this->warn("  COMPRESS  {$sizeKb}KB  {$srcPath}");
             $this->line("            → {$destPath}");
@@ -304,7 +305,7 @@ class CompressLegacyImages extends Command
                 $quality = max(30, $quality - 4);
             } while (true);
 
-            $uploaded = Storage::disk('s3')->put($destPath, $encodedStr, 'public');
+            $uploaded = Storage::disk('s3_new')->put($destPath, $encodedStr, 'public');
 
             // Free memory immediately — critical for 20k image runs
             unset($contents, $manager, $image, $encodedStr);
