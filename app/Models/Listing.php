@@ -148,8 +148,23 @@ class Listing extends Model
 
             if(!empty($address))
             {
-                $query->whereHas('property', function($q) use($address){
-                    $q->where('address', 'LIKE', "%{$address}%");
+                // Tokenize the address string and AND-match each term as a
+                // LIKE substring — same approach the `search` branch below
+                // already uses. The single-LIKE form was breaking
+                // multi-word locations: "liloan cebu" was being matched
+                // against the raw address column ("Liloan, Cebu,
+                // Philippines") with a literal "%liloan cebu%" pattern,
+                // so the comma between tokens caused zero results on
+                // /for-sale/house/in-liloan-cebu while /in-liloan
+                // returned 136. Tokenizing makes both forms match the
+                // same listings.
+                $terms = array_filter(explode(' ', $address));
+                $query->whereHas('property', function($q) use($terms){
+                    $q->where(function ($q) use ($terms) {
+                        foreach ($terms as $w) {
+                            $q->where('address', 'LIKE', "%{$w}%");
+                        }
+                    });
                 });
             }else{
                 if (!empty($search)) {
