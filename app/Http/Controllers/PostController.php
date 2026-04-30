@@ -27,7 +27,7 @@ class PostController extends Controller
         );
     }
 
-    public function show($slug)
+    public function show(string $slug)
     {
         $post = Post::with('category')
             ->where('slug', $slug)
@@ -36,23 +36,17 @@ class PostController extends Controller
         return response()->json($post);
     }
 
-    public function trackView(Request $request, $slug)
+    public function trackView(Request $request, string $slug)
     {
         $post = Post::where('slug', $slug)->firstOrFail();
+        $deviceId = $this->resolveDeviceId($request);
 
-        $headerDeviceId = trim((string) $request->header('X-Device-Id', ''));
-        $bodyDeviceId = trim((string) $request->input('device_id', ''));
-        $deviceId = $headerDeviceId !== ''
-            ? $headerDeviceId
-            : ($bodyDeviceId !== '' ? $bodyDeviceId : hash('sha256', ($request->ip() ?? 'unknown') . '|' . ((string) $request->userAgent() ?: 'ua')));
-
-        $today = now('Asia/Manila')->toDateString();
-        $cacheKey = "blogs:view:{$post->id}:{$deviceId}:{$today}";
+        $cacheKey = "blogs:view:{$post->id}:{$deviceId}";
 
         $recorded = false;
         if (!Cache::has($cacheKey)) {
             $post->increment('views');
-            Cache::put($cacheKey, true, now('Asia/Manila')->endOfDay());
+            Cache::put($cacheKey, true, now()->addYear());
             $recorded = true;
         }
 
@@ -61,5 +55,37 @@ class PostController extends Controller
             'recorded' => $recorded,
             'views' => (int) $post->fresh()->views,
         ]);
+    }
+
+    public function trackImpression(Request $request, string $slug)
+    {
+        $post = Post::where('slug', $slug)->firstOrFail();
+        $deviceId = $this->resolveDeviceId($request);
+
+        $cacheKey = "blogs:impression:{$post->id}:{$deviceId}";
+
+        $recorded = false;
+        if (!Cache::has($cacheKey)) {
+            $post->increment('impressions');
+            Cache::put($cacheKey, true, now()->addYear());
+            $recorded = true;
+        }
+
+        return response()->json([
+            'success' => true,
+            'recorded' => $recorded,
+            'impressions' => (int) $post->fresh()->impressions,
+        ]);
+    }
+
+    private function resolveDeviceId(Request $request): string
+    {
+        $header = trim((string) $request->header('X-Device-Id', ''));
+        if ($header !== '') return $header;
+
+        $body = trim((string) $request->input('device_id', ''));
+        if ($body !== '') return $body;
+
+        return hash('sha256', ($request->ip() ?? 'unknown') . '|' . ((string) $request->userAgent() ?: 'ua'));
     }
 }

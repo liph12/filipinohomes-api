@@ -264,8 +264,7 @@ class HomesPhNewsController extends Controller
         }
 
         $deviceId = $this->getDeviceId($request);
-        $today = now('Asia/Manila')->toDateString();
-        $cacheKey = "homesphnews:{$type}:{$normalizedIdentifier}:{$deviceId}:{$today}";
+        $cacheKey = "homesphnews:{$type}:{$normalizedIdentifier}:{$deviceId}";
 
         if (Cache::has($cacheKey)) {
             return false;
@@ -282,7 +281,7 @@ class HomesPhNewsController extends Controller
             $metric->increment('clicks');
         }
 
-        Cache::put($cacheKey, true, now('Asia/Manila')->endOfDay());
+        Cache::put($cacheKey, true, now()->addYear());
         return true;
     }
 

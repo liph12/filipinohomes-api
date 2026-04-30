@@ -61,6 +61,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
         Route::get('/posts/{slug}', [PostController::class, 'show']);
         Route::post('/posts/{slug}/view', [PostController::class, 'trackView']);
+        Route::post('/posts/{slug}/impression', [PostController::class, 'trackImpression']);
         Route::get('/offices', [OfficeController::class, 'index']);
         Route::get('/projects/unassociated', [ProjectController::class, 'unassociatedProjects']);
         Route::get('/project/{slug}', [ProjectController::class, 'show'])->where('slug', '.*');
