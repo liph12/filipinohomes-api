@@ -22,7 +22,7 @@ class CompressLegacyImages extends Command
                             {--dry-run      : Show what would be compressed without making changes}
                             {--chunk=100    : DB records per chunk}
                             {--kb=50        : Compress images larger than this KB (smaller ones are copied as-is)}
-                            {--dest=fh-compressed : Destination folder in S3 for compressed copies}';
+                            {--dest=filipinohomes-compressed-from-old : Destination folder in S3 for compressed copies}';
 
     protected $description = 'Re-upload existing S3 images > --kb threshold as compressed WebP copies (originals untouched)';
 
