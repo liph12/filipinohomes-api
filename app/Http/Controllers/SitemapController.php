@@ -42,7 +42,8 @@ class SitemapController extends Controller
         $perPage = min((int) $request->input('per_page', 500), 1000);
 
         $paginator = Agent::query()
-            ->select('id', 'created_at') 
+            ->select('id', 'first_name', 'middle_name', 'last_name', 'created_at')
+            ->has('listings')
             ->orderBy('id')
             ->paginate($perPage);
 
@@ -152,7 +153,7 @@ class SitemapController extends Controller
                 DB::raw('COUNT(*) as total')
             )
             ->groupBy('cities.name', 'provinces.name', 'categories.name', 'property_types.name', 'property_subtypes.name')
-            ->having('total', '>=', 1)
+            ->having    ('total', '>=', 1)
             ->get();
 
         return response()->json($rows);
