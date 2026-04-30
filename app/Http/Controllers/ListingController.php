@@ -111,6 +111,7 @@ class ListingController extends Controller
     public function sitemapSearchLocations(Request $request)
     {
         $perPage = (int) $request->input('per_page', 1000);
+        $minTotal = max(1, (int) $request->input('min_total', 1));
 
         $locations = Property::select(
             'properties.address',
@@ -120,7 +121,7 @@ class ListingController extends Controller
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
             ->groupBy('properties.address')
-            ->having('total_properties', '>=', 1)
+            ->having('total_properties', '>=', $minTotal)
             ->orderByDesc('total_properties')
             ->paginate($perPage);
 
@@ -211,9 +212,22 @@ class ListingController extends Controller
             }
         }
 
+        // Serialize the paginated index() result through ->response() so we
+        // get both data + Laravel's default paginator meta (current_page,
+        // last_page, per_page, total). Embedding the ResourceCollection
+        // directly drops the meta and only exposes the items array.
+        $indexResponse = $this->index($request)->response()->getData(true);
+        $indexMeta = $indexResponse['meta'] ?? [];
+
         return [
             'property' => $listing === null ? null : new ListingResource($listing),
-            'resource' => $this->index($request),
+            'resource' => $indexResponse['data'] ?? [],
+            'meta' => [
+                'page'      => $indexMeta['current_page'] ?? 1,
+                'per_page'  => $indexMeta['per_page'] ?? 12,
+                'total'     => $indexMeta['total'] ?? 0,
+                'last_page' => $indexMeta['last_page'] ?? 1,
+            ],
         ];
     }
 
