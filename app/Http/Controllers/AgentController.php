@@ -88,26 +88,31 @@ class AgentController extends Controller
 
         // Sold chart — last 12 months grouped by month
         $twelveMonthsAgo = Carbon::now()->subMonths(11)->startOfMonth();
-        $soldByMonth = $agent->listings()
-            ->join('properties', 'listings.property_id', '=', 'properties.id')
-            ->where('properties.status', 'sold')
-            ->where('properties.status_change_date', '>=', $twelveMonthsAgo)
-            ->select(
-                DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m') as month"),
-                DB::raw('COUNT(*) as count')
-            )
-            ->groupBy('month')
-            ->orderBy('month')
-            ->pluck('count', 'month');
 
-        $soldChart = [];
-        for ($i = 0; $i < 12; $i++) {
-            $month = Carbon::now()->subMonths(11 - $i)->format('Y-m');
-            $soldChart[] = [
-                'month' => $month,
-                'count' => $soldByMonth[$month] ?? 0,
-            ];
-        }
+        $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): array {
+            $byMonth = $agent->listings()
+                ->join('properties', 'listings.property_id', '=', 'properties.id')
+                ->where('properties.status', $status)
+                ->where('properties.status_change_date', '>=', $twelveMonthsAgo)
+                ->select(
+                    DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m') as month"),
+                    DB::raw('COUNT(*) as count')
+                )
+                ->groupBy('month')
+                ->orderBy('month')
+                ->pluck('count', 'month');
+
+            $chart = [];
+            for ($i = 0; $i < 12; $i++) {
+                $month = Carbon::now()->subMonths(11 - $i)->format('Y-m');
+                $chart[] = ['month' => $month, 'count' => $byMonth[$month] ?? 0];
+            }
+            return $chart;
+        };
+
+        $soldChart   = $buildMonthlyChart('sold');
+        $rentedChart = $buildMonthlyChart('rented');
+        $leasedChart = $buildMonthlyChart('leased');
 
         // Recent inquiries
         $recentInquiries = ListingInquiry::where('agent_id', $agent->id)
@@ -162,6 +167,8 @@ class AgentController extends Controller
                 'pending_inquiries' => $pendingInquiries,
             ],
             'sold_chart'        => $soldChart,
+            'rented_chart'      => $rentedChart,
+            'leased_chart'      => $leasedChart,
             'recent_inquiries'  => $recentInquiries,
             'login_history'     => $loginHistory,
         ]);
