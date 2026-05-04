@@ -21,17 +21,18 @@ class CompressLegacyImages extends Command
     protected $signature = 'images:compress-legacy
                             {--dry-run      : Show what would be compressed without making changes}
                             {--chunk=100    : DB records per chunk}
-                            {--kb=50        : Compress images larger than this KB (smaller ones are copied as-is)}
-                            {--dest=filipinohomes-compressed-from-old : Destination folder in S3 for compressed copies}';
+                            {--kb=50        : Target output size in KB; quality steps down until met or floor (q30) is reached}
+                            {--dest=filipinohomes-compressed-from-old : Destination folder in S3 for compressed copies}
+                            {--external=    : Additional URL prefix to process (e.g. https://storage.googleapis.com)}';
 
-    protected $description = 'Re-upload existing S3 images > --kb threshold as compressed WebP copies (originals untouched)';
+    protected $description = 'Convert all S3/external images to compressed WebP and re-upload to the new bucket (originals untouched)';
 
-    private string $awsUrl;     // source bucket URL  (AWS  / old)
-    private string $destAwsUrl; // destination bucket URL (AWS2 / new)
+    private string $awsUrl;          // source bucket URL  (AWS  / old)
+    private string $destAwsUrl;      // destination bucket URL (AWS2 / new)
     private string $dest;
+    private string $externalPrefix = ''; // optional extra URL prefix (e.g. googleapis)
     private int $checked    = 0;
     private int $compressed = 0;
-    private int $copied     = 0;
     private int $skipped    = 0;
     private int $failed     = 0;
 
@@ -58,19 +59,20 @@ class CompressLegacyImages extends Command
 
     public function handle(): int
     {
-        ini_set('memory_limit', '512M');
+        ini_set('memory_limit', '1G');
         set_time_limit(0);
 
         $logPath       = storage_path('logs/compress-legacy-' . date('Y-m-d-His') . '.log');
         $this->logFile = fopen($logPath, 'w');
         $this->info("Logging to: {$logPath}");
 
-        $this->awsUrl     = rtrim(env('AWS_URL', ''), '/');
-        $this->destAwsUrl = rtrim(env('AWS2_URL', ''), '/');
-        $this->dest       = trim((string) $this->option('dest'), '/');
-        $threshold        = (int) $this->option('kb') * 1024;
-        $chunk            = (int) $this->option('chunk');
-        $dryRun           = (bool) $this->option('dry-run');
+        $this->awsUrl        = rtrim(env('AWS_URL', ''), '/');
+        $this->destAwsUrl    = rtrim(env('AWS2_URL', ''), '/');
+        $this->dest          = trim((string) $this->option('dest'), '/');
+        $this->externalPrefix = rtrim((string) $this->option('external'), '/');
+        $threshold           = (int) $this->option('kb') * 1024;
+        $chunk               = (int) $this->option('chunk');
+        $dryRun              = (bool) $this->option('dry-run');
 
         if (! $this->awsUrl) {
             $this->error('AWS_URL is not set in .env');
@@ -84,39 +86,71 @@ class CompressLegacyImages extends Command
             return 1;
         }
 
+        if ($this->awsUrl === $this->destAwsUrl) {
+            $this->error('AWS_URL and AWS2_URL are identical — source and destination cannot be the same bucket.');
+            if ($this->logFile) fclose($this->logFile);
+            return 1;
+        }
+
+        if (! extension_loaded('gd')) {
+            $this->error('The GD PHP extension is required but not loaded.');
+            if ($this->logFile) fclose($this->logFile);
+            return 1;
+        }
+
+        if ($this->externalPrefix && ! ini_get('allow_url_fopen')) {
+            $this->error('allow_url_fopen is disabled in php.ini — external URL downloads will fail. Enable it or remove --external.');
+            if ($this->logFile) fclose($this->logFile);
+            return 1;
+        }
+
         $header = sprintf(
-            '%sThreshold: %dKB | Dest: /%s | Chunk: %d',
+            '%sThreshold: %dKB | Dest: /%s | Chunk: %d%s',
             $dryRun ? '[DRY RUN] ' : '',
             $this->option('kb'),
             $this->dest,
-            $chunk
+            $chunk,
+            $this->externalPrefix ? ' | External: ' . $this->externalPrefix : ''
         );
         $this->info($header);
         $this->log($header);
         $this->newLine();
 
-        // Suppress model observers on Property for all Property-touching loops so
-        // retrieved observers (e.g. ATS expiry sync) don't fire on every chunk row.
-        Property::withoutEvents(function () use ($threshold, $chunk, $dryRun) {
+        // Collect every model class touched so we can suppress their observers.
+        // withoutEvents() is scoped per-class — calling it only on Property would
+        // leave retrieved/updated observers firing on Listing, Agent, etc.
+        $allModels = array_unique(array_merge(
+            array_column($this->arrayColumns, 0),
+            array_column($this->stringColumns, 0),
+            [Property::class]
+        ));
+
+        $run = function () use ($threshold, $chunk, $dryRun) {
             foreach ($this->arrayColumns as [$model, $column]) {
                 $this->processArrayColumn($model, $column, $threshold, $chunk, $dryRun);
             }
-
             foreach ($this->stringColumns as [$model, $column]) {
                 $this->processStringColumn($model, $column, $threshold, $chunk, $dryRun);
             }
-
             $this->processAtsAttachments($threshold, $chunk, $dryRun);
-        });
+        };
+
+        // Nest withoutEvents for each model so all observers are suppressed.
+        foreach (array_reverse($allModels) as $modelClass) {
+            $inner = $run;
+            $run   = fn () => $modelClass::withoutEvents($inner);
+        }
+
+        $run();
 
         $this->newLine();
         $summary = sprintf(
-            'Checked: %d | Compressed: %d | Copied: %d | Skipped: %d | Failed: %d',
-            $this->checked, $this->compressed, $this->copied, $this->skipped, $this->failed
+            'Checked: %d | Converted: %d | Skipped: %d | Failed: %d',
+            $this->checked, $this->compressed, $this->skipped, $this->failed
         );
         $this->table(
-            ['Checked', 'Compressed (> threshold)', 'Copied (≤ threshold)', 'Skipped', 'Failed'],
-            [[$this->checked, $this->compressed, $this->copied, $this->skipped, $this->failed]]
+            ['Checked', 'Converted to WebP', 'Skipped', 'Failed'],
+            [[$this->checked, $this->compressed, $this->skipped, $this->failed]]
         );
         $this->log($summary);
 
@@ -124,7 +158,7 @@ class CompressLegacyImages extends Command
             fclose($this->logFile);
         }
 
-        return 0;
+        return $this->failed > 0 ? 1 : 0;
     }
 
     private function processArrayColumn(
@@ -187,7 +221,7 @@ class CompressLegacyImages extends Command
 
     private function processAtsAttachments(int $threshold, int $chunk, bool $dryRun): void
     {
-        $label = '→ properties.ats_attachments (photos only)';
+        $label = '→ properties.ats_attachments (photos only — documents/PDFs are skipped intentionally)';
         $this->line("<fg=cyan>{$label}</>");
         $this->log($label);
 
@@ -219,85 +253,92 @@ class CompressLegacyImages extends Command
 
     private function processUrl(string $url, int $threshold, bool $dryRun): string
     {
-        $srcPath = $this->urlToS3Path($url);
-
-        if (! $srcPath) {
-            $this->skipped++;
-            return $url;
-        }
-
-        // Already lives in the new bucket — was migrated in a previous run.
+        // Already lives in the destination bucket — migrated in a previous run.
         if (str_starts_with($url, $this->destAwsUrl)) {
             $this->skipped++;
             return $url;
         }
 
+        $srcPath    = $this->urlToS3Path($url);
+        $isS3       = $srcPath !== null;
+        $isExternal = ! $isS3
+            && $this->externalPrefix !== ''
+            && str_starts_with($url, $this->externalPrefix);
+
+        if (! $isS3 && ! $isExternal) {
+            $msg = "  SKIP (unrecognized host)  {$url}";
+            $this->line($msg);
+            $this->log($msg);
+            $this->skipped++;
+            return $url;
+        }
+
+        $srcLabel  = $isS3 ? $srcPath : $url;
+        $contents  = '';
+
         try {
-            if (! Storage::disk('s3')->exists($srcPath)) {
-                $msg = "  MISSING   {$srcPath}";
-                $this->warn($msg);
-                $this->log($msg);
-                $this->skipped++;
-                return $url;
-            }
-
-            $this->checked++;
-            $sizeBytes = Storage::disk('s3')->size($srcPath);
-            $sizeKb    = round($sizeBytes / 1024);
-
-            if ($sizeBytes <= $threshold) {
-                // Small file — download from old bucket, upload as-is to new bucket.
-                $ext      = strtolower(pathinfo($srcPath, PATHINFO_EXTENSION) ?: 'jpg');
-                $destPath = '/' . $this->dest . '/' . Str::uuid() . '.' . $ext;
-                $destUrl  = $this->destAwsUrl . $destPath;
-
-                $msg = "  copy      {$sizeKb}KB  {$srcPath}";
+            // --- Dry run: log intent without downloading anything ---
+            if ($dryRun) {
+                $this->checked++;
+                $msg = "  DRY-RUN   {$srcLabel}";
                 $this->line($msg);
                 $this->log($msg);
-
-                if ($dryRun) {
-                    $this->copied++;
-                    return $url;
-                }
-
-                $contents = Storage::disk('s3')->get($srcPath);
-                $ok       = Storage::disk('s3_new')->put($destPath, $contents, 'public');
-                unset($contents);
-
-                if ($ok) {
-                    $this->log("            → {$destPath}");
-                    $this->copied++;
-                    return $destUrl;
-                }
-
-                $msg = "  FAIL (copy)  {$srcPath}";
-                $this->error($msg);
-                $this->log($msg);
-                $this->failed++;
-                return $url;
-            }
-
-            $destPath = '/' . $this->dest . '/' . Str::uuid() . '.webp';
-            $destUrl  = $this->destAwsUrl . $destPath;
-
-            $this->warn("  COMPRESS  {$sizeKb}KB  {$srcPath}");
-            $this->line("            → {$destPath}");
-
-            if ($dryRun) {
-                $this->log("  DRY-RUN   {$sizeKb}KB  {$srcPath}  → {$destPath}");
                 $this->compressed++;
                 return $url;
             }
 
-            $contents = Storage::disk('s3')->get($srcPath);
-            $manager  = new ImageManager(new Driver());
-            $image    = $manager->read($contents)->scaleDown(width: 1200);
+            // --- Download content (S3 or external) ---
+            if ($isS3) {
+                $contents = Storage::disk('s3')->get($srcPath);
+                if ($contents === null) {
+                    $msg = "  MISSING   {$srcPath}";
+                    $this->warn($msg);
+                    $this->log($msg);
+                    $this->skipped++;
+                    return $url;
+                }
+            } else {
+                // Public HTTP download — no API key needed for googleapis public images
+                $ctx      = stream_context_create(['http' => ['timeout' => 30, 'follow_location' => 1]]);
+                $contents = @file_get_contents($url, false, $ctx);
+                if ($contents === false) {
+                    $msg = "  FAIL (connection error)  {$url}";
+                    $this->error($msg);
+                    $this->log($msg);
+                    $this->failed++;
+                    return $url;
+                }
+                // file_get_contents returns the body even for 4xx/5xx — check status explicitly
+                preg_match('/HTTP\/\S+ (\d+)/', $http_response_header[0] ?? '', $m);
+                $httpStatus = (int) ($m[1] ?? 200);
+                if ($httpStatus >= 400) {
+                    $msg = "  FAIL (HTTP {$httpStatus})  {$url}";
+                    $this->warn($msg);
+                    $this->log($msg);
+                    $this->failed++;
+                    return $url;
+                }
+            }
+            $sizeBytes = strlen($contents);
+
+            $this->checked++;
+            $sizeKb = round($sizeBytes / 1024);
+
+            // --- All files: convert to WebP ---
+            $destPath = '/' . $this->dest . '/' . Str::uuid() . '.webp';
+            $destUrl  = $this->destAwsUrl . $destPath;
+
+            $this->line("  → webp    {$sizeKb}KB  {$srcLabel}");
+            $this->log("  → webp    {$sizeKb}KB  {$srcLabel}");
+
+            $manager = new ImageManager(new Driver());
+            $image   = $manager->read($contents)->scaleDown(width: 1200);
+            unset($contents); // free raw download — decoded pixel data is now in $image
 
             // Reduce quality until output is under threshold or floor (30) is reached.
-            // Step of 4 covers: 72,68,64,60,56,52,48,44,40,36,32,30
-            $quality     = 72;
-            $encodedStr  = '';
-            $outputSize  = 0;
+            $quality    = 72;
+            $encodedStr = '';
+            $outputSize = 0;
             do {
                 $encodedStr = (string) $image->toWebp($quality);
                 $outputSize = strlen($encodedStr);
@@ -305,10 +346,10 @@ class CompressLegacyImages extends Command
                 $quality = max(30, $quality - 4);
             } while (true);
 
-            $uploaded = Storage::disk('s3_new')->put($destPath, $encodedStr, 'public');
+            unset($manager, $image); // free decoded pixel data before S3 upload
 
-            // Free memory immediately — critical for 20k image runs
-            unset($contents, $manager, $image, $encodedStr);
+            $uploaded = Storage::disk('s3_new')->put($destPath, $encodedStr, 'public');
+            unset($encodedStr);
 
             if (! $uploaded) {
                 $msg = "  FAIL (S3 put returned false)  {$destPath}";
@@ -327,7 +368,7 @@ class CompressLegacyImages extends Command
             return $destUrl;
 
         } catch (\Throwable $e) {
-            $msg = "  FAIL  {$srcPath}: {$e->getMessage()}";
+            $msg = "  FAIL  {$srcLabel}: {$e->getMessage()}";
             $this->error($msg);
             $this->log($msg);
             $this->failed++;
