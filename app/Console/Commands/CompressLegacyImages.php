@@ -23,7 +23,7 @@ class CompressLegacyImages extends Command
                             {--chunk=100    : DB records per chunk}
                             {--kb=50        : Target output size in KB; quality steps down until met or floor (q30) is reached}
                             {--dest=filipinohomes-compressed-from-old : Destination folder in S3 for compressed copies}
-                            {--external=    : Additional URL prefix to process (e.g. https://storage.googleapis.com)}';
+                            {--external=    : Additional URL prefix to process (e.g. https://lh3.googleusercontent.com)}';
 
     protected $description = 'Convert all S3/external images to compressed WebP and re-upload to the new bucket (originals untouched)';
 
