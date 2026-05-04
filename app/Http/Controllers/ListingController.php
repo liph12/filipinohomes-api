@@ -328,6 +328,9 @@ class ListingController extends Controller
             ->groupBy('visibility')
             ->pluck('count', 'visibility')
             ->toArray();
+        // Featured count: respects status/category/ats filters, not featured/visibility
+        $visibilityCounts['featured'] = $applyAtsStatus($applyCategory($applyStatus(clone $query)))
+            ->where('listings.is_featured', 1)->count();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
         $categoryBase = $applyAtsStatus($applyFeatured($applyStatus($applyVisibility(clone $query))));
@@ -337,6 +340,15 @@ class ListingController extends Controller
             ->groupBy('categories.id', 'categories.name')
             ->pluck('count', 'category_name')
             ->toArray();
+
+        // ── ATS counts: respect status + visibility + category filters, NOT ats_status ──
+        $atsBase   = $applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query))));
+        $atsCounts = [
+            'pending'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'pending'))->count(),
+            'approved' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'approve'))->count(),
+            'expired'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'expired'))->count(),
+            'rejected' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'rejected'))->count(),
+        ];
 
         // ── Apply ALL filters for pagination ─────────────────────────────────
         $query = $applyStatus($query);
@@ -368,6 +380,7 @@ class ListingController extends Controller
                 'status'     => $statusCounts,
                 'visibility' => $visibilityCounts,
                 'category'   => $categoryCounts,
+                'ats'        => $atsCounts,
             ],
         ]);
     }
@@ -454,6 +467,9 @@ class ListingController extends Controller
             ->groupBy('visibility')
             ->pluck('count', 'visibility')
             ->toArray();
+        // Featured count: respects status/category/subtypes filters, not featured/visibility
+        $visibilityCounts['featured'] = $applySubtypes($applyCategory($applyStatus(clone $query)))
+            ->where('listings.is_featured', 1)->count();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
         $categoryBase = $applySubtypes($applyFeatured($applyStatus($applyVisibility(clone $query))));
@@ -463,6 +479,15 @@ class ListingController extends Controller
             ->groupBy('categories.id', 'categories.name')
             ->pluck('count', 'category_name')
             ->toArray();
+
+        // ── ATS counts: respect status + visibility + category filters, NOT ats_status ──
+        $atsBase   = $applySubtypes($applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query)))));
+        $atsCounts = [
+            'pending'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'pending'))->count(),
+            'approved' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'approve'))->count(),
+            'expired'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'expired'))->count(),
+            'rejected' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'rejected'))->count(),
+        ];
 
         // ── Apply ALL filters for pagination ─────────────────────────────────
         $query = $applyStatus($query);
@@ -494,6 +519,7 @@ class ListingController extends Controller
                 'status'     => $statusCounts,
                 'visibility' => $visibilityCounts,
                 'category'   => $categoryCounts,
+                'ats'        => $atsCounts,
             ],
         ]);
     }
