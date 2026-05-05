@@ -797,6 +797,9 @@ class ListingController extends Controller
     public function featured(Request $request): ListingResourceCollection
     {
         $listings = Listing::where('is_featured', true)
+            ->where(function ($q) {
+                $q->whereNull('featured_until')->orWhere('featured_until', '>=', now());
+            })
             ->where('visibility', 'public')
             ->with([
                 'property.propertyAttribute.subtype',

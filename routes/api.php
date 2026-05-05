@@ -39,6 +39,7 @@ use App\Http\Controllers\{
     BlockedUserController,
     TeamController,
     TeamAgentController,
+    FeatureTokenController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -151,6 +152,13 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
+
+            // Feature tokens
+            Route::post('/feature-tokens/issue', [FeatureTokenController::class, 'issue']);
+            Route::get('/feature-tokens/agent/{agentId}', [FeatureTokenController::class, 'indexForAgent']);
+            Route::delete('/feature-tokens/{id}', [FeatureTokenController::class, 'revoke']);
+            Route::get('/feature-tokens/my', [FeatureTokenController::class, 'myTokens']);
+            Route::post('/feature-tokens/{id}/apply', [FeatureTokenController::class, 'apply']);
             Route::get('/my-listings', [ListingController::class, 'myListings']);
             Route::get('/all-listings', [ListingController::class, 'allListings']);
             Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
