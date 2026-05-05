@@ -19,16 +19,22 @@ class FeatureTokenController extends Controller
         $data = $request->validate([
             'agent_id'   => 'required|exists:agents,id',
             'expires_at' => 'required|date|after:now',
+            'quantity'   => 'sometimes|integer|min:1|max:50',
         ]);
 
-        $token = FeatureToken::create([
-            'agent_id'   => $data['agent_id'],
-            'created_by' => $user->id,
-            'token'      => Str::upper(Str::random(12)),
-            'expires_at' => $data['expires_at'],
-        ]);
+        $quantity = $data['quantity'] ?? 1;
+        $tokens   = [];
 
-        return response()->json($this->formatToken($token), 201);
+        for ($i = 0; $i < $quantity; $i++) {
+            $tokens[] = $this->formatToken(FeatureToken::create([
+                'agent_id'   => $data['agent_id'],
+                'created_by' => $user->id,
+                'token'      => Str::upper(Str::random(12)),
+                'expires_at' => $data['expires_at'],
+            ]));
+        }
+
+        return response()->json($tokens, 201);
     }
 
     // ─── Admin: list all tokens for a given agent ──────────────────────────────

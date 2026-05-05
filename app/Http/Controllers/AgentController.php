@@ -81,8 +81,9 @@ class AgentController extends Controller
             ->whereHas('property', fn($q) => $q->where('status', 'leased'))
             ->count();
 
-        $totalInquiries = ListingInquiry::where('agent_id', $agent->id)->count();
-        $pendingInquiries = ListingInquiry::where('agent_id', $agent->id)
+        $agentListingIds = $agent->listings()->pluck('listings.id');
+        $totalInquiries   = ListingInquiry::whereIn('listing_id', $agentListingIds)->count();
+        $pendingInquiries = ListingInquiry::whereIn('listing_id', $agentListingIds)
             ->where('status', 'pending')
             ->count();
 
@@ -115,7 +116,7 @@ class AgentController extends Controller
         $leasedChart = $buildMonthlyChart('leased');
 
         // Recent inquiries
-        $recentInquiries = ListingInquiry::where('agent_id', $agent->id)
+        $recentInquiries = ListingInquiry::whereIn('listing_id', $agentListingIds)
             ->with(['listing:id,name,slug', 'client:id,name,email'])
             ->orderByDesc('created_at')
             ->limit(10)

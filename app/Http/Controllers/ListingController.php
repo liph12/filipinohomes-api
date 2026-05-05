@@ -334,12 +334,18 @@ class ListingController extends Controller
 
         // ── Category counts: respect status + visibility filters, NOT category ──
         $categoryBase = $applyAtsStatus($applyFeatured($applyStatus($applyVisibility(clone $query))));
-        $categoryCounts = (clone $categoryBase)
+        $categoryCountsRaw = (clone $categoryBase)
             ->selectRaw('categories.name as category_name, COUNT(*) as count')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->groupBy('categories.id', 'categories.name')
             ->pluck('count', 'category_name')
             ->toArray();
+        // Always include all categories (even those with 0 for this agent/filter)
+        $allCategoryNames = \App\Models\Category::orderBy('name')->pluck('name');
+        $categoryCounts = [];
+        foreach ($allCategoryNames as $catName) {
+            $categoryCounts[$catName] = $categoryCountsRaw[$catName] ?? 0;
+        }
 
         // ── ATS counts: respect status + visibility + category filters, NOT ats_status ──
         $atsBase   = $applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query))));
@@ -363,6 +369,8 @@ class ListingController extends Controller
         };
         $query = $applyAtsStatus($query);
 
+        $perPage = min((int) $request->input('per_page', 12), 500);
+
         $listings = $query
             ->with([
                 'property.propertyAttribute.subtype',
@@ -373,7 +381,7 @@ class ListingController extends Controller
                 }
             ])
             ->orderBy('created_at', 'desc')
-            ->paginate(12);
+            ->paginate($perPage);
 
         return (new ListingResourceCollection($listings))->additional([
             'counts' => [
@@ -607,7 +615,8 @@ class ListingController extends Controller
 
             return [
                 'agents' => $agentCount,
-                'properties' => $propertyStatistics
+                'properties' => $propertyStatistics,
+                'private_listings' => Listing::where('visibility', 'private')->count(),
             ];
         }
 
@@ -621,9 +630,10 @@ class ListingController extends Controller
             (clone $baseQuery)->select('id')
         )->count();
 
-        $statistics['rented'] = (clone $baseQuery)->rented()->count();
-        $statistics['sold']   = (clone $baseQuery)->sold()->count();
-        $statistics['leased'] = (clone $baseQuery)->leased()->count();
+        $statistics['rented']           = (clone $baseQuery)->rented()->count();
+        $statistics['sold']             = (clone $baseQuery)->sold()->count();
+        $statistics['leased']           = (clone $baseQuery)->leased()->count();
+        $statistics['private_listings'] = (clone $baseQuery)->where('visibility', 'private')->count();
         $statistics['agent'] = 1;
 
         return response()->json($statistics);
