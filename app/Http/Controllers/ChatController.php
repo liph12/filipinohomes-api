@@ -13,18 +13,30 @@ use Illuminate\Support\Facades\DB;
 
 class ChatController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
         $user = Auth::user();
         $roleName = $user->role?->name;
 
-        $query = Chat::with(['user', 'listing.property', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
+        // Compact eager load — no users[] / agent_user / property eager join.
+        // Show endpoint hydrates the rest on demand.
+        $query = Chat::with([
+            'user.role',
+            'user.agent:id,user_id,mobile_no',
+            'listing:id,name,slug,price,featured_photo,property_id',
+            'listing.property:id,status',
+            'activeConversation',
+            'activeConversation.users.role',
+            'activeConversation.users.agent:id,user_id,mobile_no',
+            'activeConversation.agentUser.role',
+            'activeConversation.agentUser.agent:id,user_id,mobile_no',
+            'activeConversation.latestMessage.user.role',
+            'activeConversation.latestMessage.user.agent:id,user_id,mobile_no',
+        ]);
 
         if ($roleName === 'admin') {
             // admin sees all
         } elseif ($roleName === 'agent') {
-            // Agent only sees conversations where they are a participant
-            // AND the conversation status is 'accepted' or 'closed' (not 'pending')
             $query->where(function ($q) use ($user) {
                 $q->where('user_id', $user->id)
                     ->orWhereHas('conversations', function ($sub) use ($user) {
@@ -36,24 +48,60 @@ class ChatController extends Controller
             $query->where('user_id', $user->id);
         }
 
-        $perPage = (int) request()->query('per_page', 100);
-        $chats = $query->latest()->paginate(min($perPage, 200));
+        // Optional filters used by both the inquiries-page chips and the
+        // single-row lookup callers (ContactForm / AgentDetailPage / useInquiry).
+        if ($type = $request->query('type')) {
+            $query->where('type', $type);
+        }
+        if ($typeId = $request->query('type_id')) {
+            $query->where('type_id', (int) $typeId);
+        }
+        if ($status = $request->query('status')) {
+            if ($status !== 'all') {
+                $query->whereHas('activeConversation', fn ($c) => $c->where('status', $status));
+            }
+        }
+        if ($q = trim((string) $request->query('q'))) {
+            $like = '%' . $q . '%';
+            $query->where(function ($outer) use ($like) {
+                $outer->whereHas('user', fn ($u) => $u->where('name', 'like', $like))
+                    ->orWhereHas('listing', fn ($l) => $l->where('name', 'like', $like))
+                    ->orWhereHas('activeConversation.users', fn ($u) => $u->where('users.name', 'like', $like));
+            });
+        }
 
-        // Compute unread counts for each conversation
-        foreach ($chats as $chat) {
-            if ($chat->relationLoaded('activeConversation') && $chat->activeConversation) {
+        $perPage = (int) $request->query('per_page', 10);
+        $chats = $query->latest()->paginate(min(max($perPage, 1), 50));
+
+        // Single aggregate query — no per-row COUNT.
+        $conversationIds = $chats->getCollection()
+            ->map(fn ($chat) => $chat->activeConversation?->id)
+            ->filter()
+            ->values()
+            ->all();
+
+        if (!empty($conversationIds)) {
+            $unreadByConversation = DB::table('messages')
+                ->select('messages.conversation_id', DB::raw('COUNT(*) as unread'))
+                ->join('conversation_users', function ($join) use ($user) {
+                    $join->on('conversation_users.conversation_id', '=', 'messages.conversation_id')
+                        ->where('conversation_users.user_id', '=', $user->id);
+                })
+                ->whereIn('messages.conversation_id', $conversationIds)
+                ->where('messages.user_id', '!=', $user->id)
+                ->whereIn('messages.status', ['active', 'updated'])
+                ->where(function ($w) {
+                    $w->whereNull('conversation_users.last_read_at')
+                        ->orWhereColumn('messages.created_at', '>', 'conversation_users.last_read_at');
+                })
+                ->groupBy('messages.conversation_id')
+                ->pluck('unread', 'messages.conversation_id');
+
+            foreach ($chats as $chat) {
                 $conv = $chat->activeConversation;
-                $pivot = $conv->users->firstWhere('id', $user->id)?->pivot;
-                $lastReadAt = $pivot?->last_read_at;
-
-                $unreadQuery = $conv->messages()
-                    ->where('user_id', '!=', $user->id);
-
-                if ($lastReadAt) {
-                    $unreadQuery->where('created_at', '>', $lastReadAt);
+                if ($conv) {
+                    $conv->setAttribute('computed_unread_count', (int) ($unreadByConversation[$conv->id] ?? 0));
                 }
-
-                $conv->setAttribute('computed_unread_count', $unreadQuery->count());
             }
         }
 
@@ -182,7 +230,31 @@ class ChatController extends Controller
     {
         $this->authorize('view', $chat);
 
-        $chat->load(['user', 'listing', 'conversations.latestMessage.user', 'conversations.users']);
+        $chat->load([
+            'user',
+            'listing.property',
+            'conversations.latestMessage.user',
+            'conversations.users',
+            'activeConversation.agentUser',
+            'activeConversation.users',
+            'activeConversation.latestMessage.user',
+        ]);
+
+        // Compute unread for the active conversation so the show response
+        // matches the list shape.
+        $user = Auth::user();
+        $conv = $chat->activeConversation;
+        if ($conv) {
+            $pivot = $conv->users->firstWhere('id', $user->id)?->pivot;
+            $lastReadAt = $pivot?->last_read_at;
+            $unreadQuery = $conv->messages()
+                ->where('user_id', '!=', $user->id)
+                ->whereIn('status', ['active', 'updated']);
+            if ($lastReadAt) {
+                $unreadQuery->where('created_at', '>', $lastReadAt);
+            }
+            $conv->setAttribute('computed_unread_count', $unreadQuery->count());
+        }
 
         return new ChatResource($chat);
     }
