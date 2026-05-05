@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Agent;
+use App\Models\Conversation;
 use App\Models\ListingInquiry;
 use App\Models\LoginLog;
 use App\Http\Resources\AgentResourceCollection;
@@ -81,11 +82,19 @@ class AgentController extends Controller
             ->whereHas('property', fn($q) => $q->where('status', 'leased'))
             ->count();
 
-        $agentListingIds = $agent->listings()->pluck('listings.id');
-        $totalInquiries   = ListingInquiry::whereIn('listing_id', $agentListingIds)->count();
-        $pendingInquiries = ListingInquiry::whereIn('listing_id', $agentListingIds)
-            ->where('status', 'pending')
-            ->count();
+        $agentUserId = $agent->user_id;
+
+        // Inquiries are tracked in conversations.agent_user_id (a users.id),
+        // not the legacy listing_inquiries table — match what the agent
+        // sees on /agent/listing-inquiries.
+        $totalInquiries = $agentUserId
+            ? Conversation::where('agent_user_id', $agentUserId)->count()
+            : 0;
+        $pendingInquiries = $agentUserId
+            ? Conversation::where('agent_user_id', $agentUserId)
+                ->where('status', 'pending')
+                ->count()
+            : 0;
 
         // Sold chart — last 12 months grouped by month
         $twelveMonthsAgo = Carbon::now()->subMonths(11)->startOfMonth();
@@ -120,21 +129,29 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         $rentedChart = $buildMonthlyChart('rented');
         $leasedChart = $buildMonthlyChart('leased');
 
-        // Recent inquiries
-        $recentInquiries = ListingInquiry::whereIn('listing_id', $agentListingIds)
-            ->with(['listing:id,name,slug', 'client:id,name,email'])
-            ->orderByDesc('created_at')
-            ->limit(10)
-            ->get()
-            ->map(fn($inq) => [
-                'id'           => $inq->id,
-                'listing_name' => $inq->listing?->name ?? 'N/A',
-                'listing_slug' => $inq->listing?->slug ?? '',
-                'client_name'  => $inq->client?->name ?? 'N/A',
-                'client_email' => $inq->client?->email ?? '',
-                'status'       => $inq->status,
-                'created_at'   => $inq->created_at?->toDateTimeString(),
-            ]);
+        // Recent inquiries — pulled from conversations.agent_user_id, joining
+        // chat → listing (the inquired-on listing) and chat → user (the client).
+        $recentInquiries = $agentUserId
+            ? Conversation::query()
+                ->where('agent_user_id', $agentUserId)
+                ->with([
+                    'chat:id,user_id,type,type_id',
+                    'chat.user:id,name,email',
+                    'chat.listing:id,name,slug',
+                ])
+                ->orderByDesc('created_at')
+                ->limit(10)
+                ->get()
+                ->map(fn ($conv) => [
+                    'id'           => $conv->id,
+                    'listing_name' => $conv->chat?->listing?->name ?? 'N/A',
+                    'listing_slug' => $conv->chat?->listing?->slug ?? '',
+                    'client_name'  => $conv->chat?->user?->name ?? 'N/A',
+                    'client_email' => $conv->chat?->user?->email ?? '',
+                    'status'       => $conv->status,
+                    'created_at'   => $conv->created_at?->toDateTimeString(),
+                ])
+            : collect();
 
         // Login history
         $loginHistory = $user
