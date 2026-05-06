@@ -77,8 +77,8 @@ class AgentController extends Controller
                 'transactions_count' => $query->orderByRaw("(sold_count + rented_count + leased_count) $sortDir"),
                 'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
                 'response_speed'     => $query
-                    ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL THEN 0 ELSE 1 END ASC")
-                    ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL THEN median_first_response_seconds ELSE NULL END ASC")
+                    ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN 0 ELSE 1 END ASC")
+                    ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN median_first_response_seconds ELSE NULL END ASC")
                     ->orderByDesc('listings_count'),
             };
         } else {
