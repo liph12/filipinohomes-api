@@ -24,8 +24,15 @@ class AgentController extends Controller
         $query = Agent::query()
             ->select([
                 'agents.*',
-                DB::raw("(SELECT COUNT(*) FROM conversations WHERE agent_user_id = agents.user_id AND status = 'accepted') as ongoing_inquiries_count"),
-                DB::raw("(SELECT COUNT(*) FROM conversations WHERE agent_user_id = agents.user_id AND status = 'closed') as closed_inquiries_count"),
+                // flat COUNT subqueries — no nested EXISTS, JOIN for property status
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.visibility = 'public') as public_listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.visibility = 'private') as private_listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'sold') as sold_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'rented') as rented_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'leased') as leased_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
             ])
             ->with([
                 'user',
@@ -33,15 +40,7 @@ class AgentController extends Controller
             ])
             ->whereHas('user.role', function($q){
                 $q->where('name', 'agent');
-            })
-            ->withCount([
-                'listings',
-                'listings as public_listings_count'  => fn($q) => $q->where('visibility', 'public'),
-                'listings as private_listings_count' => fn($q) => $q->where('visibility', 'private'),
-                'listings as sold_count'   => fn($q) => $q->whereHas('property', fn($pq) => $pq->where('status', 'sold')),
-                'listings as rented_count' => fn($q) => $q->whereHas('property', fn($pq) => $pq->where('status', 'rented')),
-                'listings as leased_count' => fn($q) => $q->whereHas('property', fn($pq) => $pq->where('status', 'leased')),
-            ]);
+            });
 
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
