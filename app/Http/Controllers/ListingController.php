@@ -522,7 +522,7 @@ class ListingController extends Controller
                 }
             ])
             ->orderBy('created_at', 'desc')
-            ->paginate($request->query('per_page', 10));
+            ->paginate($request->query('per_page', 12));
 
         return (new ListingResourceCollection($listings))->additional([
             'counts' => [
