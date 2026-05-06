@@ -22,7 +22,11 @@ class AgentController extends Controller
         $perPage = max(1, min((int) $request->query('per_page', 12), 24));
 
         $query = Agent::query()
-            ->select('agents.*')
+            ->select([
+                'agents.*',
+                DB::raw("(SELECT COUNT(*) FROM conversations WHERE agent_user_id = agents.user_id AND status = 'accepted') as ongoing_inquiries_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations WHERE agent_user_id = agents.user_id AND status = 'closed') as closed_inquiries_count"),
+            ])
             ->with([
                 'user',
                 'pageBuilder:id,agent_id,slug',
@@ -30,7 +34,14 @@ class AgentController extends Controller
             ->whereHas('user.role', function($q){
                 $q->where('name', 'agent');
             })
-            ->withCount('listings');
+            ->withCount([
+                'listings',
+                'listings as public_listings_count'  => fn($q) => $q->where('visibility', 'public'),
+                'listings as private_listings_count' => fn($q) => $q->where('visibility', 'private'),
+                'listings as sold_count'   => fn($q) => $q->whereHas('property', fn($pq) => $pq->where('status', 'sold')),
+                'listings as rented_count' => fn($q) => $q->whereHas('property', fn($pq) => $pq->where('status', 'rented')),
+                'listings as leased_count' => fn($q) => $q->whereHas('property', fn($pq) => $pq->where('status', 'leased')),
+            ]);
 
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
@@ -47,10 +58,27 @@ class AgentController extends Controller
             });
         }
 
+        $sortBy  = $request->query('sort_by');
+        $sortDir = strtolower($request->query('sort_dir', 'desc'));
+        if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
+
+        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count'];
+
+        if (in_array($sortBy, $allowed)) {
+            match ($sortBy) {
+                'full_name'          => $query->orderByRaw("CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) $sortDir"),
+                'email'              => $query->orderByRaw("(SELECT email FROM users WHERE users.id = agents.user_id) $sortDir"),
+                'member_since'       => $query->orderBy('member_since', $sortDir),
+                'listings_count'     => $query->orderBy('listings_count', $sortDir),
+                'transactions_count' => $query->orderByRaw("(sold_count + rented_count + leased_count) $sortDir"),
+                'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
+            };
+        } else {
+            $query->orderByDesc('listings_count');
+        }
+
         return new AgentResourceCollection(
-            $query
-                ->orderByDesc('listings_count')
-                ->paginate($perPage)
+            $query->paginate($perPage)
         );
     }
 
