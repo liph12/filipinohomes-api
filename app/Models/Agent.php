@@ -24,6 +24,9 @@ class Agent extends Model
         'socials' => 'array',
         'avatar' => 'array',
         'geo_location' => 'array',
+        'response_metrics_updated_at' => 'datetime',
+        'within_1h_response_pct' => 'float',
+        'unanswered_response_pct' => 'float',
     ];
 
     public function user()

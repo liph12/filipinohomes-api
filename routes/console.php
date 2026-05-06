@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('listings:expire-featured')->daily();
+Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlapping();

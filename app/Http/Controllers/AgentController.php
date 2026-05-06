@@ -33,6 +33,11 @@ class AgentController extends Controller
                 DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'leased') as leased_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
+                'agents.median_first_response_seconds',
+                'agents.within_1h_response_pct',
+                'agents.unanswered_response_pct',
+                'agents.response_sample_size',
+                'agents.response_metrics_window_days',
             ])
             ->with([
                 'user',
@@ -61,7 +66,7 @@ class AgentController extends Controller
         $sortDir = strtolower($request->query('sort_dir', 'desc'));
         if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
 
-        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count'];
+        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count', 'response_speed'];
 
         if (in_array($sortBy, $allowed)) {
             match ($sortBy) {
@@ -71,6 +76,7 @@ class AgentController extends Controller
                 'listings_count'     => $query->orderBy('listings_count', $sortDir),
                 'transactions_count' => $query->orderByRaw("(sold_count + rented_count + leased_count) $sortDir"),
                 'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
+                'response_speed'     => $query->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL THEN median_first_response_seconds ELSE 2147483647 END ASC"),
             };
         } else {
             $query->orderByDesc('listings_count');
@@ -221,6 +227,18 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             'leased_chart'      => $leasedChart,
             'recent_inquiries'  => $recentInquiries,
             'login_history'     => $loginHistory,
+            'response_metrics'  => [
+                'median_first_response_seconds' => $agent->median_first_response_seconds,
+                'within_1h_response_pct'        => $agent->within_1h_response_pct !== null
+                    ? (float) $agent->within_1h_response_pct
+                    : null,
+                'unanswered_response_pct'       => $agent->unanswered_response_pct !== null
+                    ? (float) $agent->unanswered_response_pct
+                    : null,
+                'sample_size'                   => $agent->response_sample_size,
+                'window_days'                   => $agent->response_metrics_window_days,
+                'updated_at'                    => $agent->response_metrics_updated_at?->toDateTimeString(),
+            ],
         ]);
     }
 
