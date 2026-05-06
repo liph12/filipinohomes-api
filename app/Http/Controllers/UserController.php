@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use App\Models\LoginLog;
 use App\Models\User;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
@@ -350,6 +351,13 @@ class UserController extends Controller
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($verified);
 
+        LoginLog::create([
+            'user_id'      => $verified->id,
+            'ip_address'   => $request->ip(),
+            'user_agent'   => $request->userAgent(),
+            'logged_in_at' => now(),
+        ]);
+
         return response()->json([
             'user' => $verified,
             'token' => $token
@@ -397,6 +405,13 @@ class UserController extends Controller
 
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($user);
+
+        LoginLog::create([
+            'user_id'      => $user->id,
+            'ip_address'   => $request->ip(),
+            'user_agent'   => $request->userAgent(),
+            'logged_in_at' => now(),
+        ]);
 
         return response()->json([
             'message' => 'Dev login successful.',

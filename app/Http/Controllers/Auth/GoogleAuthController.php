@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\Agent;
+use App\Models\LoginLog;
 use App\Models\User;
 use App\Services\Auth\GoogleTokenService;
 use App\Services\LeuterioreRealty\LrApiService;
@@ -48,6 +49,8 @@ class GoogleAuthController extends Controller
 
             // Sync team assignment from LR API if not yet in team_agents
             (new TeamSyncService())->syncForUser($user);
+
+            $this->recordLogin($user, $request);
 
             return response()->json([
                 'message' => 'Login successful.',
@@ -120,6 +123,8 @@ class GoogleAuthController extends Controller
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($user);
 
+        $this->recordLogin($user, $request);
+
         return response()->json([
             'message' => 'Account created and login successful.',
             'token' => $token,
@@ -138,5 +143,15 @@ class GoogleAuthController extends Controller
         $user->save();
 
         return $token;
+    }
+
+    private function recordLogin(User $user, Request $request): void
+    {
+        LoginLog::create([
+            'user_id'      => $user->id,
+            'ip_address'   => $request->ip(),
+            'user_agent'   => $request->userAgent(),
+            'logged_in_at' => now(),
+        ]);
     }
 }
