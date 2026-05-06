@@ -510,6 +510,8 @@ class ListingController extends Controller
         };
         $query = $applyAtsStatus($query);
 
+        $totalViews = (int) (clone $query)->sum('clicks');
+
         $listings = $query
             ->with([
                 'property.propertyAttribute.subtype',
@@ -528,6 +530,7 @@ class ListingController extends Controller
                 'visibility' => $visibilityCounts,
                 'category'   => $categoryCounts,
                 'ats'        => $atsCounts,
+                'views'      => $totalViews,
             ],
         ]);
     }
