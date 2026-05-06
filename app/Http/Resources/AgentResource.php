@@ -37,6 +37,15 @@ class AgentResource extends JsonResource
             'leased_count'            => $this->leased_count            ?? 0,
             'ongoing_inquiries_count' => $this->ongoing_inquiries_count ?? 0,
             'closed_inquiries_count'  => $this->closed_inquiries_count  ?? 0,
+            'median_first_response_seconds' => $this->median_first_response_seconds,
+            'within_1h_response_pct'        => $this->within_1h_response_pct !== null
+                ? (float) $this->within_1h_response_pct
+                : null,
+            'unanswered_response_pct'       => $this->unanswered_response_pct !== null
+                ? (float) $this->unanswered_response_pct
+                : null,
+            'response_sample_size'          => $this->response_sample_size,
+            'response_metrics_window_days'  => $this->response_metrics_window_days,
             'page_slug'    => $this->pageBuilder?->slug,
             'user'         => new UserResource($user),
             'listings' => AgentListingResource::collection($this->whenLoaded('listings')),
