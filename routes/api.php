@@ -40,6 +40,7 @@ use App\Http\Controllers\{
     TeamController,
     TeamAgentController,
     FeatureTokenController,
+    GuestTokenController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -56,8 +57,11 @@ Route::middleware('strip.tags')->group(function(){
     });
     
     Route::middleware('throttle:api')->group(function(){
+        // Issues a short-lived HMAC guest token for public API access
+        Route::post('/guest-token', [GuestTokenController::class, 'issue']);
+
         Route::post('/inquiry', [UserController::class, 'sendInquiry']);
-        Route::get('/blogs', [PostController::class, 'index']); 
+        Route::get('/blogs', [PostController::class, 'index']);
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
         Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
         Route::get('/posts/{slug}', [PostController::class, 'show']);
@@ -68,21 +72,26 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/project/{slug}', [ProjectController::class, 'show'])->where('slug', '.*');
         Route::get('/project-list-with-listings', [ProjectController::class, 'projectsWithListings']);
         Route::post('/project/{slug}/view', [ProjectController::class, 'trackView']);
-        Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
-        Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
-        Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
-        Route::get('/listings', [ListingController::class, 'index']); 
-        Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
-        Route::get('/listings/featured', [ListingController::class, 'featured']);
-        Route::get('/listings/{slug}', [ListingController::class, 'show']);
-        Route::get('/categories', [CategoryController::class, 'index']);
-        Route::get('/property_types', [PropertyTypeController::class, 'index']);
-        Route::get('/property_subtypes', [PropertySubtypeController::class, 'index']);
-        Route::get('/furnishings', [FurnishingController::class, 'index']);
-        Route::get('/amenities', [AmenityController::class, 'index']);
-        Route::get('agents', [AgentController::class, 'index']);
-        Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
-        Route::get('agents/{id}', [AgentController::class, 'show']);
+
+        // Guest-token-protected public routes
+        Route::middleware('verify.guest.token')->group(function () {
+            Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
+            Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
+            Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
+            Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
+            Route::get('/listings/featured', [ListingController::class, 'featured']);
+            Route::get('/listings/{slug}', [ListingController::class, 'show']);
+            Route::get('/listings', [ListingController::class, 'index']);
+            Route::get('/categories', [CategoryController::class, 'index']);
+            Route::get('/property_types', [PropertyTypeController::class, 'index']);
+            Route::get('/property_subtypes', [PropertySubtypeController::class, 'index']);
+            Route::get('/furnishings', [FurnishingController::class, 'index']);
+            Route::get('/amenities', [AmenityController::class, 'index']);
+            Route::get('agents', [AgentController::class, 'index']);
+            Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
+            Route::get('agents/{id}', [AgentController::class, 'show']);
+            Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
+        });
         Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
         Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);
         Route::post('/openai/search-agents', [OpenAIController::class, 'searchAgents']);
@@ -106,8 +115,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::post('/page/agents/{slug}/click', [PageBuilderController::class, 'trackClick']);
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
-        Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
-        
+
         // Lightweight sitemap endpoints
         Route::get('sitemap/listings', [SitemapController::class, 'listings']);
         Route::get('sitemap/agents', [SitemapController::class, 'agents']);

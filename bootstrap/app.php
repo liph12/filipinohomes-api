@@ -13,7 +13,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'strip.tags' => \App\Http\Middleware\StripHtmlTags::class,
+            'strip.tags'         => \App\Http\Middleware\StripHtmlTags::class,
+            'verify.guest.token' => \App\Http\Middleware\VerifyGuestToken::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
