@@ -8,11 +8,27 @@ use Illuminate\Support\Facades\Cache;
 
 class PostController extends Controller
 {
+    /**
+     * Whitelist the user columns surfaced via the `author` relation
+     * on every blog response. Keep password / OTP / role internals
+     * out of the public API surface; expose only what the frontend
+     * BlogPosting `author: Person` schema and the rendered byline
+     * card need.
+     */
+    private const AUTHOR_COLUMNS = [
+        'id',
+        'name',
+        'slug',
+        'avatar',
+        'bio',
+        'credentials',
+    ];
+
     public function index(Request $request)
     {
         $sort = $request->query('sort');
 
-        $query = Post::with('category')
+        $query = Post::with(['category', 'author:' . implode(',', self::AUTHOR_COLUMNS)])
             ->whereNotNull('published_at');
 
         if ($sort === 'views') {
@@ -29,7 +45,7 @@ class PostController extends Controller
 
     public function show(string $slug)
     {
-        $post = Post::with('category')
+        $post = Post::with(['category', 'author:' . implode(',', self::AUTHOR_COLUMNS)])
             ->where('slug', $slug)
             ->firstOrFail();
 

@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Jobs\PingIndexNow;
+use App\Services\IndexNowService;
 
 class Project extends Model
 {
@@ -159,6 +161,26 @@ class Project extends Model
                 $project->save();
             }
         });
+
+        // IndexNow pings for /projects/[slug]. Same fire-and-forget
+        // pattern as Listing — afterCommit so the queue job only
+        // runs once the row is durably written.
+        $dispatchPing = function (Project $project): void {
+            if (!config('services.indexnow.enabled')) {
+                return;
+            }
+            $slug = (string) $project->slug;
+            if ($slug === '') {
+                return;
+            }
+            $url = app(IndexNowService::class)->projectUrl($slug);
+            PingIndexNow::dispatch([$url])->afterCommit();
+        };
+
+        static::created($dispatchPing);
+        static::updated($dispatchPing);
+        static::deleted($dispatchPing);
+        static::restored($dispatchPing);
     }
 
     public function properties()

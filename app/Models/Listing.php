@@ -9,7 +9,9 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
+use App\Jobs\PingIndexNow;
 use App\Models\Province;
+use App\Services\IndexNowService;
 class Listing extends Model
 {
     use HasFactory;
@@ -55,6 +57,12 @@ class Listing extends Model
                 'slug' => $finalSlug,
                 'code' => $provinceCode . '-' . str_pad((string) $listing->id, 4, '0', STR_PAD_LEFT),
             ]);
+
+            // The slug is only canonical after this updateQuietly,
+            // which bypasses model events — so dispatch the IndexNow
+            // ping here explicitly. `saved` further down skips the
+            // tmp-* slug for the same reason.
+            self::dispatchIndexNowFor($listing->fresh() ?? $listing);
         });
 
         static::creating(function ($model) {
@@ -77,6 +85,35 @@ class Listing extends Model
                 $model->save();
             }
         });
+
+        // IndexNow notification — fire-and-forget queued job on
+        // every meaningful lifecycle event so search engines pick
+        // up new inventory faster than the sitemap revalidate
+        // window. The `created` hook above already dispatches once
+        // the canonical slug is in place; here we cover `updated`,
+        // `deleted`, and `restored`.
+        static::updated(fn (Listing $listing) => self::dispatchIndexNowFor($listing));
+        static::deleted(fn (Listing $listing) => self::dispatchIndexNowFor($listing));
+        static::restored(fn (Listing $listing) => self::dispatchIndexNowFor($listing));
+    }
+
+    /**
+     * Dispatch a queued IndexNow ping for this listing's public
+     * URL. Skips when the integration is disabled or the slug is
+     * still the throwaway `tmp-*` placeholder from the `creating`
+     * hook.
+     */
+    private static function dispatchIndexNowFor(self $listing): void
+    {
+        if (!config('services.indexnow.enabled')) {
+            return;
+        }
+        $slug = (string) $listing->slug;
+        if ($slug === '' || str_starts_with($slug, 'tmp-')) {
+            return;
+        }
+        $url = app(IndexNowService::class)->listingUrl($slug);
+        PingIndexNow::dispatch([$url])->afterCommit();
     }
 
     private static function provinceCodeFromAddress(?string $address): string

@@ -48,4 +48,21 @@ return [
         'key' => env('HOMESPHNEWS_API_KEY'),
     ],
 
+    /*
+    | IndexNow integration. The Next.js frontend hosts the IndexNow
+    | key file and exposes a POST /api/indexnow/submit endpoint
+    | guarded by INDEXNOW_SUBMIT_SECRET. This service config tells
+    | the Laravel side where to POST and what shared secret to send
+    | when a listing / agent / blog post / project is created,
+    | updated, or deleted.
+    */
+    'indexnow' => [
+        'enabled' => env('INDEXNOW_ENABLED', false),
+        'submit_endpoint' => env('INDEXNOW_SUBMIT_URL', 'https://filipinohomes.com/api/indexnow/submit'),
+        'submit_secret' => env('INDEXNOW_SUBMIT_SECRET'),
+        'site_url' => env('INDEXNOW_SITE_URL', env('FRONTEND_URL', 'https://filipinohomes.com')),
+        'timeout' => (int) env('INDEXNOW_TIMEOUT', 8),
+        'queue' => env('INDEXNOW_QUEUE', 'default'),
+    ],
+
 ];
