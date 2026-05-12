@@ -39,7 +39,7 @@
                                     <td align="left" valign="top"
                                         style="background-color:#ffffff;padding:32px 40px 16px;">
                                         <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;text-transform:capitalize;">
-                                            Hello {{ $agentName }},
+                                            Hello <span style="text-transform:none !important;">{{ $agentName }}</span>,
                                             <br /><br />
                                             Our team has reviewed your listing and found that some information needs to be updated before it can be verified. Please log in and make the necessary corrections as soon as possible.
                                         </span>
