@@ -20,7 +20,7 @@ class SitemapController extends Controller
 
         $paginator = Listing::query()
             ->where('visibility', 'public')
-            ->select('id', 'slug', 'created_at')
+            ->select('id', 'slug', 'created_at', 'updated_at')
             ->orderBy('id')
             ->paginate($perPage);
 
@@ -42,7 +42,7 @@ class SitemapController extends Controller
         $perPage = min((int) $request->input('per_page', 500), 1000);
 
         $paginator = Agent::query()
-            ->select('id', 'first_name', 'middle_name', 'last_name', 'created_at')
+            ->select('id', 'first_name', 'middle_name', 'last_name', 'created_at', 'updated_at')
             ->has('listings')
             ->orderBy('id')
             ->paginate($perPage);
@@ -66,7 +66,7 @@ class SitemapController extends Controller
 
         $paginator = Post::query()
             ->whereNotNull('published_at')
-            ->select('id', 'slug', 'published_at')
+            ->select('id', 'slug', 'published_at', 'updated_at')
             ->orderBy('id')
             ->paginate($perPage);
 
@@ -89,7 +89,7 @@ class SitemapController extends Controller
 
         $paginator = Listing::query()
             ->where('visibility', 'public')
-            ->select('id', 'slug', 'name', 'featured_photo', 'property_id')
+            ->select('id', 'slug', 'name', 'featured_photo', 'property_id', 'updated_at')
             ->with('property:id,photos')
             ->orderBy('id')
             ->paginate($perPage);
@@ -113,7 +113,7 @@ class SitemapController extends Controller
 
         $paginator = Post::query()
             ->whereNotNull('published_at')
-            ->select('id', 'slug', 'title', 'featured_image')
+            ->select('id', 'slug', 'title', 'featured_image', 'updated_at')
             ->orderBy('id')
             ->paginate($perPage);
 
@@ -167,7 +167,7 @@ class SitemapController extends Controller
         $perPage = min((int) $request->input('per_page', 500), 1000);
 
         $paginator = Agent::query()
-            ->select('id', 'first_name', 'middle_name', 'last_name', 'avatar')
+            ->select('id', 'first_name', 'middle_name', 'last_name', 'avatar', 'updated_at')
             ->orderBy('id')
             ->paginate($perPage);
 

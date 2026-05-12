@@ -22,6 +22,12 @@ class User extends Authenticatable
         'mobile_no',
         'password',
         'avatar',
+        // Editorial / Person-schema author fields. Optional on every
+        // user — only populated for staff writers whose posts need
+        // BlogPosting `author: Person` schema for E-E-A-T.
+        'bio',
+        'slug',
+        'credentials',
         "role_id",
         'verification',
         'active_at',

@@ -17,6 +17,7 @@ class Post extends Model
         'featured_image',
         'views',
         'category_id',
+        'author_id',
         'published_at',
     ];
 
@@ -27,5 +28,16 @@ class Post extends Model
     public function category()
     {
         return $this->belongsTo(BlogCategory::class, 'category_id');
+    }
+
+    /**
+     * Named human author (Person). Optional — older posts without an
+     * author_id fall back to Organization authorship in the frontend
+     * BlogPosting JSON-LD. Foreign key uses nullOnDelete so deleting
+     * a staff writer keeps the post visible instead of cascading.
+     */
+    public function author()
+    {
+        return $this->belongsTo(User::class, 'author_id');
     }
 }
