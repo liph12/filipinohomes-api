@@ -37,7 +37,7 @@
 
                                 <tr>
                                     <td align="left" valign="top"
-                                        style="background-color:#ffffff;padding:32px 40px 16px;">
+                                        style="background-color:#ffffff;padding:32px 40px 16px;text-transform:capitalize;">
                                         <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;text-transform:capitalize;">
                                             Hello {{ $agentName }},
                                             <br /><br />
