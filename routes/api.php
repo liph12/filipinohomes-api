@@ -160,6 +160,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
+            Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);
 
             // Feature tokens
             Route::post('/feature-tokens/issue', [FeatureTokenController::class, 'issue']);

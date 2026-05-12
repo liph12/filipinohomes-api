@@ -235,10 +235,12 @@ class OpenAIController extends Controller
             return response()->json(['error' => 'Title is too short to analyze.'], 422);
         }
 
-        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
-
-        if ($limitResponse->getStatusCode() !== 200) {
-            return $limitResponse;
+        $user = Auth::guard('sanctum')->user();
+        if (!$user || optional($user->role)->name !== 'admin') {
+            $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+            if ($limitResponse->getStatusCode() !== 200) {
+                return $limitResponse;
+            }
         }
 
         try {
@@ -266,10 +268,12 @@ class OpenAIController extends Controller
     {
         $photos = $request->input('photos', []);
 
-        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
-
-        if ($limitResponse->getStatusCode() !== 200) {
-            return $limitResponse;
+        $user = Auth::guard('sanctum')->user();
+        if (!$user || optional($user->role)->name !== 'admin') {
+            $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+            if ($limitResponse->getStatusCode() !== 200) {
+                return $limitResponse;
+            }
         }
 
         $classifications = $this->listingService->classifyImages($photos);

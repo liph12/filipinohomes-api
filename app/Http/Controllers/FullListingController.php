@@ -47,6 +47,7 @@ class FullListingController extends Controller
             'property.propertyAttribute.subtype.type',
             'property.furnishing',
             'property.barangay.city.province',
+            'property.nearbyFacility',
             'category',
             'agent',
         ]);

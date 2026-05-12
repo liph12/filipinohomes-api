@@ -18,15 +18,18 @@ class Listing extends Model
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
         'featured_photo', 'is_featured', 'clicks','impressions',
-        'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at'
+        'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at',
+        'verification_status', 'audit_notes', 'audit_checklist', 'audited_by', 'audited_at',
     ];
 
     protected $casts = [
-        'price'          => 'decimal:2',
-        'is_featured'    => 'boolean',
-        'clicks'         => 'integer',
-        'featured_photo' => 'array',
-        'seo_tags'       => 'array',
+        'price'           => 'decimal:2',
+        'is_featured'     => 'boolean',
+        'clicks'          => 'integer',
+        'featured_photo'  => 'array',
+        'seo_tags'        => 'array',
+        'audit_checklist' => 'array',
+        'audited_at'      => 'datetime',
     ];
 
     protected static function booted()

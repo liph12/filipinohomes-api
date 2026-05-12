@@ -25,11 +25,15 @@ class ListingResource extends JsonResource
             'is_featured'    => $this->is_featured,
             'clicks'         => $this->clicks,
             'seo_tags'       => $this->seo_tags,
-            'created_at'     => $this->updated_at->diffForHumans(),
-            'date_added'     => $this->created_at->toDateString(),
-            'property'       => new PropertyResource($this->property),
-            'category'       => new CategoryResource($this->category),
-            'agent'          => new AgentResource($this->agent)
+            'created_at'          => $this->updated_at->diffForHumans(),
+            'date_added'          => $this->created_at->toDateString(),
+            'verification_status' => $this->verification_status,
+            'audit_notes'         => $this->audit_notes,
+            'audit_checklist'     => $this->audit_checklist,
+            'audited_at'          => $this->audited_at?->toDateTimeString(),
+            'property'            => new PropertyResource($this->property),
+            'category'            => new CategoryResource($this->category),
+            'agent'               => new AgentResource($this->agent)
         ];
     }
 }

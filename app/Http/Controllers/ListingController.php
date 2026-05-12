@@ -497,12 +497,32 @@ class ListingController extends Controller
             'rejected' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'rejected'))->count(),
         ];
 
+        // ── Verification status filter ────────────────────────────────────────
+        $verificationStatus = $request->input('verification_status');
+        $applyVerification = function ($q) use ($verificationStatus) {
+            if (!$verificationStatus) return $q;
+            if ($verificationStatus === 'unverified') {
+                return $q->whereNull('verification_status');
+            }
+            return $q->where('verification_status', $verificationStatus);
+        };
+
+        // ── Verification counts (independent of verification_status filter) ──
+        $verificationBase = $applySubtypes($applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query)))));
+        $verificationCounts = [
+            'unverified'     => (clone $verificationBase)->whereNull('verification_status')->count(),
+            'verified'       => (clone $verificationBase)->where('verification_status', 'verified')->count(),
+            'fully_verified' => (clone $verificationBase)->where('verification_status', 'fully_verified')->count(),
+            'flagged'        => (clone $verificationBase)->where('verification_status', 'flagged')->count(),
+        ];
+
         // ── Apply ALL filters for pagination ─────────────────────────────────
         $query = $applyStatus($query);
         $query = $applyVisibility($query);
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
         $query = $applySubtypes($query);
+        $query = $applyVerification($query);
         $atsStatus = $request->input('ats_status');
         $applyAtsStatus = function ($q) use ($atsStatus) {
             if (!$atsStatus) return $q;
@@ -526,11 +546,12 @@ class ListingController extends Controller
 
         return (new ListingResourceCollection($listings))->additional([
             'counts' => [
-                'status'     => $statusCounts,
-                'visibility' => $visibilityCounts,
-                'category'   => $categoryCounts,
-                'ats'        => $atsCounts,
-                'views'      => $totalViews,
+                'status'       => $statusCounts,
+                'visibility'   => $visibilityCounts,
+                'category'     => $categoryCounts,
+                'ats'          => $atsCounts,
+                'views'        => $totalViews,
+                'verification' => $verificationCounts,
             ],
         ]);
     }
@@ -782,6 +803,25 @@ class ListingController extends Controller
         return response()->json([
             'is_featured'    => (bool) $listing->is_featured,
         ]);
+    }
+
+    public function updateVerification(Request $request, Listing $listing)
+    {
+        if ($request->user()->role->name !== 'admin') abort(403);
+
+        $validated = $request->validate([
+            'verification_status' => 'nullable|in:verified,fully_verified,flagged',
+            'audit_notes'         => 'nullable|string|max:2000',
+            'audit_checklist'     => 'nullable|array',
+        ]);
+
+        $listing->update([
+            ...$validated,
+            'audited_by' => $request->user()->id,
+            'audited_at' => now(),
+        ]);
+
+        return response()->json(['data' => $listing->fresh()]);
     }
 
     public function show(string $slug)
