@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\DB;
 use App\Models\PropertySubtype;
 use App\Models\Property;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
+use App\Mail\ListingFlaggedMailer;
 
 class ListingController extends Controller
 {
@@ -820,6 +823,28 @@ class ListingController extends Controller
             'audited_by' => $request->user()->id,
             'audited_at' => now(),
         ]);
+
+        // Notify agent by email when their listing is flagged
+        if (($validated['verification_status'] ?? null) === 'flagged') {
+            try {
+                $listing->load('agent.user');
+                $agentUser = optional($listing->agent)->user;
+                if ($agentUser && $agentUser->email) {
+                    $listingUrl = 'https://filipinohomes.com/agent/create-listing'
+                        . '?edit=' . $listing->id;
+                    Mail::to($agentUser->email)->send(new ListingFlaggedMailer(
+                        agentName:    $agentUser->name ?? 'Agent',
+                        listingTitle: $listing->name,
+                        listingCode:  $listing->code,
+                        auditNotes:   $validated['audit_notes'] ?? '',
+                        listingUrl:   $listingUrl,
+                    ));
+                }
+            } catch (\Throwable $e) {
+                // Non-fatal — audit status was saved, mail failure should not roll it back
+                Log::warning('ListingFlaggedMailer failed: ' . $e->getMessage());
+            }
+        }
 
         return response()->json(['data' => $listing->fresh()]);
     }
