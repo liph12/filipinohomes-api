@@ -24,6 +24,11 @@ class TeamResource extends JsonResource
                 'teamAgents',
                 fn () => new TeamAgentResourceCollection($this->teamAgents)
             ),
+            'login_count'        => (int) ($this->login_count ?? 0),
+            'listings_count'     => (int) ($this->listings_count ?? 0),
+            'transactions_count' => (int) ($this->transactions_count ?? 0),
+            'inquiries_count'    => (int) ($this->inquiries_count ?? 0),
+            'members_count'      => $this->teamAgents ? $this->teamAgents->count() : 0,
         ];
     }
 }

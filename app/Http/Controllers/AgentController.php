@@ -66,7 +66,7 @@ class AgentController extends Controller
         $sortDir = strtolower($request->query('sort_dir', 'desc'));
         if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
 
-        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count', 'response_speed', 'last_online', 'status'];
+        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count', 'response_speed', 'last_online', 'status', 'login_count'];
 
         if (in_array($sortBy, $allowed)) {
             match ($sortBy) {
@@ -78,6 +78,7 @@ class AgentController extends Controller
                 'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
                 'last_online'        => $query->orderByRaw("(SELECT last_online_at FROM users WHERE users.id = agents.user_id) $sortDir"),
                 'status'             => $query->orderBy('agents.status', $sortDir),
+                'login_count'        => $query->orderByRaw("(SELECT COUNT(*) FROM login_logs WHERE login_logs.user_id = agents.user_id) $sortDir"),
                 'response_speed'     => $query
                     ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN 0 ELSE 1 END ASC")
                     ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN median_first_response_seconds ELSE NULL END ASC")

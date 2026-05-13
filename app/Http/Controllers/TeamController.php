@@ -6,13 +6,33 @@ use App\Http\Resources\TeamResource;
 use App\Http\Resources\TeamResourceCollection;
 use App\Models\Team;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class TeamController extends Controller
 {
     public function index(Request $request)
     {
         $query = Team::query()
-            ->with(['leader.agent', 'teamAgents.agent']);
+            ->select([
+                'teams.*',
+                DB::raw("(SELECT COUNT(*) FROM login_logs ll
+                          INNER JOIN team_agents ta ON ta.team_id = teams.id
+                          INNER JOIN agents a ON a.id = ta.agent_id
+                          WHERE ll.user_id = a.user_id) as login_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings l
+                          INNER JOIN team_agents ta ON ta.team_id = teams.id
+                          WHERE l.agent_id = ta.agent_id) as listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings l
+                          INNER JOIN team_agents ta ON ta.team_id = teams.id
+                          INNER JOIN properties p ON p.id = l.property_id
+                          WHERE l.agent_id = ta.agent_id
+                            AND p.status IN ('sold','rented','leased')) as transactions_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations c
+                          INNER JOIN team_agents ta ON ta.team_id = teams.id
+                          INNER JOIN agents a ON a.id = ta.agent_id
+                          WHERE c.agent_user_id = a.user_id) as inquiries_count"),
+            ])
+            ->with(['leader.agent', 'teamAgents.agent.user']);
 
         if ($search = trim((string) $request->input('search', ''))) {
             $query->where('name', 'like', "%{$search}%");
