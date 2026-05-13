@@ -440,6 +440,7 @@ class UserController extends Controller
         $user = Auth::user();
         $_user = User::find($user->id);
         $_user->active_at = now();
+        $_user->last_online_at = now();
         $_user->save();
 
         return response()->json(new UserResource($user));
@@ -447,8 +448,11 @@ class UserController extends Controller
 
     public function sessionPing(Request $request)
     {
+        $user = $request->user();
+        User::where('id', $user->id)->update(['last_online_at' => now()]);
+
         LoginLog::create([
-            'user_id'      => $request->user()->id,
+            'user_id'      => $user->id,
             'ip_address'   => $request->ip(),
             'user_agent'   => $request->userAgent(),
             'logged_in_at' => now(),

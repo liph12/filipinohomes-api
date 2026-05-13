@@ -66,7 +66,7 @@ class AgentController extends Controller
         $sortDir = strtolower($request->query('sort_dir', 'desc'));
         if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
 
-        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count', 'response_speed'];
+        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count', 'response_speed', 'last_online', 'status'];
 
         if (in_array($sortBy, $allowed)) {
             match ($sortBy) {
@@ -76,6 +76,8 @@ class AgentController extends Controller
                 'listings_count'     => $query->orderBy('listings_count', $sortDir),
                 'transactions_count' => $query->orderByRaw("(sold_count + rented_count + leased_count) $sortDir"),
                 'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
+                'last_online'        => $query->orderByRaw("(SELECT last_online_at FROM users WHERE users.id = agents.user_id) $sortDir"),
+                'status'             => $query->orderBy('agents.status', $sortDir),
                 'response_speed'     => $query
                     ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN 0 ELSE 1 END ASC")
                     ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN median_first_response_seconds ELSE NULL END ASC")
@@ -374,5 +376,87 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         );
 
         return new AgentResource($agent);
+    }
+
+    public function updateStatus(Request $request, $id)
+    {
+        $user = $request->user();
+        if ($user->role?->name !== 'admin') abort(403);
+
+        $agent = Agent::withTrashed()->findOrFail($id);
+        $validated = $request->validate([
+            'status' => 'required|in:active,inactive,resigned',
+        ]);
+        $agent->update(['status' => $validated['status']]);
+
+        return response()->json(['data' => new AgentResource($agent)]);
+    }
+
+    public function destroy(Request $request, $id)
+    {
+        $user = $request->user();
+        if ($user->role?->name !== 'admin') abort(403);
+
+        $agent = Agent::findOrFail($id);
+        $agent->delete();
+
+        return response()->json(['message' => 'Agent removed.']);
+    }
+
+    public function restore(Request $request, $id)
+    {
+        $user = $request->user();
+        if ($user->role?->name !== 'admin') abort(403);
+
+        $agent = Agent::onlyTrashed()->findOrFail($id);
+        $agent->restore();
+
+        return response()->json(['data' => new AgentResource($agent)]);
+    }
+
+
+    public function deletedAgents(Request $request)
+    {
+        $user = $request->user();
+        if ($user->role?->name !== 'admin') abort(403);
+
+        $perPage = max(1, min((int) $request->query('per_page', 12), 24));
+
+        $query = Agent::onlyTrashed()
+            ->select([
+                'agents.*',
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count"),
+            ])
+            ->with(['user'])
+            ->whereHas('user.role', function ($q) {
+                $q->where('name', 'agent');
+            });
+
+        if ($search = $request->query('search')) {
+            $term = '%' . $search . '%';
+            $query->where(function ($q) use ($term) {
+                $q->where('first_name', 'LIKE', $term)
+                  ->orWhere('last_name', 'LIKE', $term)
+                  ->orWhere('mobile_no', 'LIKE', $term)
+                  ->orWhereHas('user', function ($uq) use ($term) {
+                      $uq->where('email', 'LIKE', $term)->orWhere('name', 'LIKE', $term);
+                  });
+            });
+        }
+
+        $sortBy  = $request->query('sort_by');
+        $sortDir = strtolower($request->query('sort_dir', 'asc'));
+        if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'asc';
+
+        match ($sortBy) {
+            'full_name'      => $query->orderByRaw("CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) $sortDir"),
+            'deleted_at'     => $query->orderBy('deleted_at', $sortDir),
+            'listings_count' => $query->orderBy('listings_count', $sortDir),
+            default          => $query->orderByDesc('deleted_at'),
+        };
+
+        return new AgentResourceCollection(
+            $query->paginate($perPage)
+        );
     }
 }

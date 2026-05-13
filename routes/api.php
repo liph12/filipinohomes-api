@@ -88,8 +88,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/furnishings', [FurnishingController::class, 'index']);
             Route::get('/amenities', [AmenityController::class, 'index']);
             Route::get('agents', [AgentController::class, 'index']);
+            Route::get('agents/deleted', [AgentController::class, 'deletedAgents'])->middleware('auth:sanctum');
             Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
             Route::get('agents/{id}', [AgentController::class, 'show']);
+
             Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
         });
         Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
@@ -177,6 +179,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/user/settings', [UserController::class, 'userSettings']);
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
+            Route::patch('agents/{id}/status', [AgentController::class, 'updateStatus']);
+            Route::delete('agents/{id}', [AgentController::class, 'destroy']);
+            Route::post('agents/{id}/restore', [AgentController::class, 'restore']);
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::get('/project-list', [ProjectController::class, 'projects']);
             Route::get('/projects/by-province', [ProjectController::class, 'byProvince']);

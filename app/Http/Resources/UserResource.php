@@ -28,6 +28,7 @@ class UserResource extends JsonResource
             'avatar'    => $this->avatar,
             'role'      => $this->role?->name,
             'active_at' => $lastSeen,
+            'last_online_at' => $this->last_online_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
