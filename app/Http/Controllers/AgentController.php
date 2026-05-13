@@ -189,7 +189,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 ])
             : collect();
 
-        // Login history
+        // Login history + stats
         $loginHistory = $user
             ? LoginLog::where('user_id', $user->id)
                 ->orderByDesc('logged_in_at')
@@ -202,6 +202,25 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                     'logged_in_at' => $log->logged_in_at?->toDateTimeString(),
                 ])
             : [];
+
+        $loginCount = $user ? LoginLog::where('user_id', $user->id)->count() : 0;
+
+        $loginByMonth = $user
+            ? LoginLog::where('user_id', $user->id)
+                ->where('logged_in_at', '>=', $twelveMonthsAgo)
+                ->select(
+                    DB::raw("DATE_FORMAT(logged_in_at, '%Y-%m') as month"),
+                    DB::raw('COUNT(*) as count')
+                )
+                ->groupBy('month')
+                ->pluck('count', 'month')
+            : collect();
+
+        $loginChart = [];
+        for ($i = 0; $i < 12; $i++) {
+            $key = Carbon::now()->subMonths(11 - $i)->format('Y-m');
+            $loginChart[] = ['month' => $key, 'count' => (int) ($loginByMonth[$key] ?? 0)];
+        }
 
         $fullName = collect([$agent->first_name, $agent->middle_name, $agent->last_name])
             ->filter()->join(' ') ?: $user?->name ?: 'Guest User';
@@ -230,6 +249,8 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             'leased_chart'      => $leasedChart,
             'recent_inquiries'  => $recentInquiries,
             'login_history'     => $loginHistory,
+            'login_count'       => $loginCount,
+            'login_chart'       => $loginChart,
             'response_metrics'  => [
                 'median_first_response_seconds' => $agent->median_first_response_seconds,
                 'within_1h_response_pct'        => $agent->within_1h_response_pct !== null
