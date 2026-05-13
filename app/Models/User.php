@@ -54,6 +54,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'avatar' => 'string',
             'active_at' => 'datetime',
+            'last_online_at' => 'datetime',
         ];
     }
 
