@@ -146,6 +146,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::middleware('auth:sanctum')->group(function(){
             Route::get('/client-logins', [UserController::class, 'getClients']);
             Route::get('/authenticate', [UserController::class, 'authenticate']);
+            Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
             Route::get('/users/search', [UserController::class, 'searchUsers']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);

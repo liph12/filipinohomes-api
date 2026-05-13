@@ -47,6 +47,7 @@ class AgentResource extends JsonResource
             'response_sample_size'          => $this->response_sample_size,
             'response_metrics_window_days'  => $this->response_metrics_window_days,
             'page_slug'    => $this->pageBuilder?->slug,
+            'last_login_at' => optional($user?->loginLogs()->latest('logged_in_at')->first())->logged_in_at?->toISOString(),
             'user'         => new UserResource($user),
             'listings' => AgentListingResource::collection($this->whenLoaded('listings')),
             'listings_pagination' => $this->when(

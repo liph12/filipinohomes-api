@@ -444,6 +444,17 @@ class UserController extends Controller
 
         return response()->json(new UserResource($user));
     }
+
+    public function sessionPing(Request $request)
+    {
+        LoginLog::create([
+            'user_id'      => $request->user()->id,
+            'ip_address'   => $request->ip(),
+            'user_agent'   => $request->userAgent(),
+            'logged_in_at' => now(),
+        ]);
+        return response()->json(['ok' => true]);
+    }
     
     public function getClients()
     {
