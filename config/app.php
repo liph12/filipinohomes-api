@@ -123,6 +123,10 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    // Trusted token sent by the Next.js build server to bypass the API
+    // rate limiter during SSG pre-rendering. Never exposed to browsers.
+    'build_token' => env('BUILD_API_TOKEN'),
+
     'providers' => [
         /*
         * Laravel Framework Service Providers...
