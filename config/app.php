@@ -127,6 +127,13 @@ return [
     // rate limiter during SSG pre-rendering. Never exposed to browsers.
     'build_token' => env('BUILD_API_TOKEN'),
 
+    // HMAC secret used to issue + verify short-lived guest tokens for
+    // public API access. Must be read via config() (not env()) so the
+    // value survives `php artisan config:cache`. After config is cached,
+    // env() returns null outside config files — every /listings request
+    // 401s because VerifyGuestToken can't HMAC-verify without the secret.
+    'guest_api_secret' => env('GUEST_API_SECRET'),
+
     'providers' => [
         /*
         * Laravel Framework Service Providers...

@@ -8,7 +8,9 @@ class GuestTokenController extends Controller
 {
     public function issue(): JsonResponse
     {
-        $secret = env('GUEST_API_SECRET', '');
+        // Read via config() so the value survives `php artisan config:cache`.
+        // env() returns null outside config files once the cache is built.
+        $secret = config('app.guest_api_secret', '');
 
         if (!$secret) {
             return response()->json(['error' => 'Not configured'], 500);

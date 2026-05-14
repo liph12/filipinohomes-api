@@ -42,7 +42,10 @@ class VerifyGuestToken
             return false;
         }
 
-        $secret = env('GUEST_API_SECRET', '');
+        // Read via config() so the value survives `php artisan config:cache`.
+        // env() returns null outside config files once the cache is built —
+        // that caused every /listings request to 401 in production.
+        $secret = config('app.guest_api_secret', '');
         if (!$secret) {
             return false;
         }
