@@ -49,7 +49,7 @@ class FullListingController extends Controller
             'property.barangay.city.province',
             'property.nearbyFacility',
             'category',
-            'agent',
+            'agent.user',
         ]);
 
         // Transform response so property.address_id contains barangay + city + province info

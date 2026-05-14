@@ -526,6 +526,10 @@ class ListingController extends Controller
         $query = $applyFeatured($query);
         $query = $applySubtypes($query);
         $query = $applyVerification($query);
+        // Date-from filter (audit queue: April 2026+)
+        if ($dateFrom = $request->input('date_from')) {
+            $query->where('listings.created_at', '>=', $dateFrom . ' 00:00:00');
+        }
         $atsStatus = $request->input('ats_status');
         $applyAtsStatus = function ($q) use ($atsStatus) {
             if (!$atsStatus) return $q;
@@ -816,6 +820,7 @@ class ListingController extends Controller
             'verification_status' => 'nullable|in:verified,fully_verified,flagged',
             'audit_notes'         => 'nullable|string|max:2000',
             'audit_checklist'     => 'nullable|array',
+            'edited_fields'       => 'nullable|array',
         ]);
 
         $listing->update([
@@ -825,6 +830,7 @@ class ListingController extends Controller
         ]);
 
         // Notify agent by email when their listing is flagged
+        $emailSent = false;
         if (($validated['verification_status'] ?? null) === 'flagged') {
             try {
                 $listing->load('agent.user');
@@ -833,12 +839,15 @@ class ListingController extends Controller
                     $listingUrl = 'https://filipinohomes.com/agent/create-listing'
                         . '?edit=' . $listing->id;
                     Mail::to($agentUser->email)->send(new ListingFlaggedMailer(
-                        agentName:    $agentUser->name ?? 'Agent',
-                        listingTitle: $listing->name,
-                        listingCode:  $listing->code,
-                        auditNotes:   $validated['audit_notes'] ?? '',
-                        listingUrl:   $listingUrl,
+                        agentName:      $agentUser->name ?? 'Agent',
+                        listingTitle:   $listing->name,
+                        listingCode:    $listing->code,
+                        auditNotes:     $validated['audit_notes'] ?? '',
+                        auditChecklist: $validated['audit_checklist'] ?? null,
+                        listingUrl:     $listingUrl,
+                        editedFields:   $validated['edited_fields'] ?? null,
                     ));
+                    $emailSent = true;
                 }
             } catch (\Throwable $e) {
                 // Non-fatal — audit status was saved, mail failure should not roll it back
@@ -846,7 +855,7 @@ class ListingController extends Controller
             }
         }
 
-        return response()->json(['data' => $listing->fresh()]);
+        return response()->json(['data' => $listing->fresh(), 'email_sent' => $emailSent]);
     }
 
     public function show(string $slug)

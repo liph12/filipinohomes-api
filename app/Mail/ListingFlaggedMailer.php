@@ -15,11 +15,13 @@ class ListingFlaggedMailer extends Mailable
     use Queueable, SerializesModels;
 
     public function __construct(
-        public string $agentName,
-        public string $listingTitle,
-        public string $listingCode,
-        public string $auditNotes,
-        public string $listingUrl,
+        public string  $agentName,
+        public string  $listingTitle,
+        public string  $listingCode,
+        public string  $auditNotes,
+        public ?array  $auditChecklist,
+        public string  $listingUrl,
+        public ?array  $editedFields = null,
     ) {}
 
     public function envelope(): Envelope

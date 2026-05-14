@@ -58,6 +58,55 @@
                                     </td>
                                 </tr>
 
+                                @php
+                                    // Map checklist keys to human-readable labels (mirrors frontend CHECKLIST_ITEMS)
+                                    $checklistLabels = [
+                                        'agent_verified'   => 'Agent contact (email, mobile & whatsapp)',
+                                        'photos'           => 'Photos are good',
+                                        'title_seo'        => 'Title is already good for SEO',
+                                        'description'      => 'Description',
+                                        'seo_tags'         => 'SEO Tags',
+                                        'ats_correct'      => 'ATS is correct',
+                                        'price_realistic'  => 'Price is realistic',
+                                        'specs_correct'    => 'Property attributes are correct',
+                                        'location_accurate'=> 'Location / address is correct',
+                                        'nearby_facilities'=> 'Nearby facilities are present',
+                                    ];
+                                    $passingItems = [];
+                                    $failingItems = [];
+                                    if (is_array($auditChecklist)) {
+                                        foreach ($checklistLabels as $key => $label) {
+                                            if (!empty($auditChecklist[$key])) {
+                                                $passingItems[] = $label;
+                                            } else {
+                                                $failingItems[] = $label;
+                                            }
+                                        }
+                                    }
+                                @endphp
+                                @if(!empty($failingItems) || !empty($passingItems))
+                                <tr>
+                                    <td align="left" valign="top"
+                                        style="background-color:#ffffff;padding:8px 40px 16px;">
+                                        <div style="padding:20px 24px;background:#f8fafc;border:1px solid #d6dee8;border-radius:16px;box-sizing:border-box;">
+                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#334155;display:block;font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Audit Checklist</span>
+                                            @foreach($failingItems as $item)
+                                            <div style="display:flex;align-items:flex-start;margin-bottom:8px;">
+                                                <span style="color:#c53030;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✗</span>
+                                                <span style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#7f1d1d;font-weight:600;">{{ $item }}</span>
+                                            </div>
+                                            @endforeach
+                                            @foreach($passingItems as $item)
+                                            <div style="display:flex;align-items:flex-start;margin-bottom:8px;">
+                                                <span style="color:#16a34a;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✓</span>
+                                                <span style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#166534;">{{ $item }}</span>
+                                            </div>
+                                            @endforeach
+                                        </div>
+                                    </td>
+                                </tr>
+                                @endif
+
                                 @if($auditNotes)
                                 <!-- Audit notes box -->
                                 <tr>
@@ -66,6 +115,35 @@
                                         <div style="padding:20px 24px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);border:1px solid #fde68a;border-radius:16px;box-sizing:border-box;">
                                             <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#92400e;display:block;font-weight:700;margin-bottom:8px;">Notes from our team:</span>
                                             <span style="font-size:15px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#78350f;display:block;white-space:pre-line;">{{ $auditNotes }}</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                                @endif
+
+                                @if(!empty($editedFields))
+                                <tr>
+                                    <td align="left" valign="top"
+                                        style="background-color:#ffffff;padding:8px 40px 16px;">
+                                        <div style="padding:20px 24px;background:#f0f7ff;border:1px solid #bfdbfe;border-radius:16px;box-sizing:border-box;">
+                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#1e40af;display:block;font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Changes Made by Admin</span>
+                                            @foreach($editedFields as $field)
+                                            <div style="margin-bottom:16px;">
+                                                <span style="font-size:12px;font-family:Helvetica,Arial,sans-serif;color:#3b82f6;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">{{ $field['label'] ?? '' }}</span>
+                                                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-top:6px;">
+                                                    <tr>
+                                                        <td width="48%" valign="top" style="padding:8px 10px;background:#fff;border:1px solid #fca5a5;border-radius:8px;">
+                                                            <span style="font-size:11px;color:#9ca3af;display:block;margin-bottom:3px;">Before</span>
+                                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#374151;word-break:break-word;">{{ $field['original'] ?? '—' }}</span>
+                                                        </td>
+                                                        <td width="4%" style="padding:0;"></td>
+                                                        <td width="48%" valign="top" style="padding:8px 10px;background:#fff;border:1px solid #86efac;border-radius:8px;">
+                                                            <span style="font-size:11px;color:#9ca3af;display:block;margin-bottom:3px;">After</span>
+                                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#374151;word-break:break-word;">{{ $field['current'] ?? '—' }}</span>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            @endforeach
                                         </div>
                                     </td>
                                 </tr>
