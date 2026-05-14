@@ -517,6 +517,7 @@ class ListingController extends Controller
             'verified'       => (clone $verificationBase)->where('verification_status', 'verified')->count(),
             'fully_verified' => (clone $verificationBase)->where('verification_status', 'fully_verified')->count(),
             'flagged'        => (clone $verificationBase)->where('verification_status', 'flagged')->count(),
+            'pending_review' => (clone $verificationBase)->where('verification_status', 'pending_review')->count(),
         ];
 
         // ── Apply ALL filters for pagination ─────────────────────────────────
@@ -817,16 +818,19 @@ class ListingController extends Controller
         if ($request->user()->role->name !== 'admin') abort(403);
 
         $validated = $request->validate([
-            'verification_status' => 'nullable|in:verified,fully_verified,flagged',
+            'verification_status' => 'nullable|in:verified,fully_verified,flagged,pending_review',
             'audit_notes'         => 'nullable|string|max:2000',
             'audit_checklist'     => 'nullable|array',
             'edited_fields'       => 'nullable|array',
         ]);
 
         $listing->update([
-            ...$validated,
-            'audited_by' => $request->user()->id,
-            'audited_at' => now(),
+            'verification_status' => $validated['verification_status'] ?? null,
+            'audit_notes'         => $validated['audit_notes'] ?? null,
+            'audit_checklist'     => $validated['audit_checklist'] ?? null,
+            'audit_edited_fields' => $validated['edited_fields'] ?? null,
+            'audited_by'          => $request->user()->id,
+            'audited_at'          => now(),
         ]);
 
         // Notify agent by email when their listing is flagged

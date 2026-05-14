@@ -22,6 +22,7 @@ class Listing extends Model
         'featured_photo', 'is_featured', 'clicks','impressions',
         'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at',
         'verification_status', 'audit_notes', 'audit_checklist', 'audited_by', 'audited_at',
+        'agent_edited_fields', 'audit_edited_fields', 're_submitted_at',
     ];
 
     protected $casts = [
@@ -30,8 +31,11 @@ class Listing extends Model
         'clicks'          => 'integer',
         'featured_photo'  => 'array',
         'seo_tags'        => 'array',
-        'audit_checklist' => 'array',
-        'audited_at'      => 'datetime',
+        'audit_checklist'    => 'array',
+        'audited_at'         => 'datetime',
+        'agent_edited_fields'=> 'array',
+        'audit_edited_fields'=> 'array',
+        're_submitted_at'    => 'datetime',
     ];
 
     protected static function booted()
