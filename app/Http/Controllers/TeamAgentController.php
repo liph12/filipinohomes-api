@@ -13,6 +13,17 @@ class TeamAgentController extends Controller
     public function index(Request $request)
     {
         $query = TeamAgent::query()
+            ->select([
+                'team_agents.*',
+                DB::raw("(SELECT COUNT(*) FROM login_logs ll
+                          JOIN agents a ON a.id = team_agents.agent_id
+                          WHERE ll.user_id = a.user_id) as agent_login_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings l
+                          WHERE l.agent_id = team_agents.agent_id) as agent_listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations c
+                          JOIN agents a ON a.id = team_agents.agent_id
+                          WHERE c.agent_user_id = a.user_id) as agent_inquiries_count"),
+            ])
             ->with(['agent.user', 'team']);
 
         if ($teamId = $request->input('team_id')) {

@@ -12,6 +12,17 @@ class TeamController extends Controller
 {
     public function index(Request $request)
     {
+        $agentStatsSql = [
+            DB::raw("(SELECT COUNT(*) FROM login_logs ll
+                      JOIN agents a ON a.id = team_agents.agent_id
+                      WHERE ll.user_id = a.user_id) as agent_login_count"),
+            DB::raw("(SELECT COUNT(*) FROM listings l
+                      WHERE l.agent_id = team_agents.agent_id) as agent_listings_count"),
+            DB::raw("(SELECT COUNT(*) FROM conversations c
+                      JOIN agents a ON a.id = team_agents.agent_id
+                      WHERE c.agent_user_id = a.user_id) as agent_inquiries_count"),
+        ];
+
         $query = Team::query()
             ->select([
                 'teams.*',
@@ -32,7 +43,13 @@ class TeamController extends Controller
                           INNER JOIN agents a ON a.id = ta.agent_id
                           WHERE c.agent_user_id = a.user_id) as inquiries_count"),
             ])
-            ->with(['leader.agent', 'teamAgents.agent.user']);
+            ->with([
+                'leader.agent',
+                'teamAgents' => function ($q) use ($agentStatsSql) {
+                    $q->select(array_merge(['team_agents.*'], $agentStatsSql))
+                      ->with(['agent.user']);
+                },
+            ]);
 
         if ($search = trim((string) $request->input('search', ''))) {
             $query->where('name', 'like', "%{$search}%");
