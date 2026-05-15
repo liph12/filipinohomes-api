@@ -57,6 +57,6 @@ class ImageUploadController extends Controller
 
         Storage::disk('s3')->put($fileName, (string) $encoded, 'public');
 
-        return env("AWS_URL") . $fileName;
+        return config('filesystems.disks.s3.url') . $fileName;
     }
 }

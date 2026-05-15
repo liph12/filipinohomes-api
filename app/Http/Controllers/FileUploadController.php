@@ -72,7 +72,7 @@ class FileUploadController extends Controller
         Storage::disk('s3')->put($fileName, $fileContents, 'public');
 
         return [
-            'filePath' => env("AWS_URL") . $fileName,
+            'filePath' => config('filesystems.disks.s3.url') . $fileName,
             'compression' => [
                 'status' => $compressionResult['status'] ?? 'original_fallback',
                 'reason' => $compressionResult['reason'] ?? null,
