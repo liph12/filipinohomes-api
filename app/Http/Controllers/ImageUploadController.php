@@ -51,11 +51,18 @@ class ImageUploadController extends Controller
         $fileName = $dir . "/" . Str::uuid() . ".webp";
 
         $manager = new ImageManager(new Driver());
-        $encoded = $manager->read($file->getRealPath())
-            ->scaleDown(width: 1200)
-            ->toWebp(quality: 72);
+        $image = $manager->read($file->getRealPath())->scaleDown(width: 1200);
 
-        Storage::disk('s3')->put($fileName, (string) $encoded, 'public');
+        $targetBytes = 50 * 1024;
+        $q = 92;
+        $encoded = '';
+        do {
+            $encoded = (string) $image->toWebp($q);
+            if (strlen($encoded) <= $targetBytes || $q <= 4) break;
+            $q -= 4;
+        } while (true);
+
+        Storage::disk('s3')->put($fileName, $encoded, 'public');
 
         return config('filesystems.disks.s3.url') . $fileName;
     }
