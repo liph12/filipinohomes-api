@@ -48,6 +48,10 @@ return [
         'key' => env('HOMESPHNEWS_API_KEY'),
     ],
 
+    'openai' => [
+        'key' => env('OPENAI_API_KEY'),
+    ],
+
     /*
     | IndexNow integration. The Next.js frontend hosts the IndexNow
     | key file and exposes a POST /api/indexnow/submit endpoint

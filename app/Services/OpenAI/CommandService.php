@@ -11,7 +11,7 @@ class CommandService extends CacheService
     private $client;
     public function __construct()
     {
-        $this->client = OpenAI::client(env('OPENAI_API_KEY'));
+        $this->client = OpenAI::client(config('services.openai.key'));
     }
 
     public function streamMessage(string $message)

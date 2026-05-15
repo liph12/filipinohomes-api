@@ -11,7 +11,7 @@ class ListingCommandService
 
     public function __construct()
     {
-        $this->client = OpenAI::client(env('OPENAI_API_KEY'));
+        $this->client = OpenAI::client(config('services.openai.key'));
 
         $this->taxonomy = [
             'categories' => ["For Sale", "For Rent", "Foreclosure"],
