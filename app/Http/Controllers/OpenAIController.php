@@ -10,6 +10,7 @@ use App\Services\OpenAI\ListingCommandService;
 use Illuminate\Support\Facades\Http;
 use App\Models\AiSearchLog;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 
 class OpenAIController extends Controller
 {
@@ -36,6 +37,13 @@ class OpenAIController extends Controller
     public function getDailyLimitCreate(Request $request)
     {
         $data = $this->cacheService->dailyLimit($request, 'create');
+
+        return response()->json($data);
+    }
+
+    public function getDailyLimitCreateText(Request $request)
+    {
+        $data = $this->cacheService->dailyLimit($request, 'create_text');
 
         return response()->json($data);
     }
@@ -235,9 +243,8 @@ class OpenAIController extends Controller
             return response()->json(['error' => 'Title is too short to analyze.'], 422);
         }
 
-        $user = Auth::guard('sanctum')->user();
-        if (!$user || optional($user->role)->name !== 'admin') {
-            $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+        if (! Gate::allows('bypass-ai-daily-limit')) {
+            $limitResponse = $this->cacheService->updateDailyLimit($request, 'create_text');
             if ($limitResponse->getStatusCode() !== 200) {
                 return $limitResponse;
             }
@@ -268,8 +275,7 @@ class OpenAIController extends Controller
     {
         $photos = $request->input('photos', []);
 
-        $user = Auth::guard('sanctum')->user();
-        if (!$user || optional($user->role)->name !== 'admin') {
+        if (! Gate::allows('bypass-ai-daily-limit')) {
             $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
             if ($limitResponse->getStatusCode() !== 200) {
                 return $limitResponse;

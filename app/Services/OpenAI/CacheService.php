@@ -22,7 +22,11 @@ class CacheService extends DataLayerService
         $guestIdentifier = 'guest_' . $deviceId . '|' . $ip;
         $user = Auth::guard('sanctum')->user();
         $guestLimit = config('openai.guest_limit');
-        $authLimit = $type === 'user' ? config('openai.auth_limit') : config('openai.auth_limit_create');
+        $authLimit = match ($type) {
+            'create'      => config('openai.auth_limit_create'),
+            'create_text' => config('openai.auth_limit_create_text'),
+            default       => config('openai.auth_limit'),
+        };
     
         if ($user) {
             $identifier = $type.'_' . $user->id;
@@ -108,7 +112,23 @@ class CacheService extends DataLayerService
     public function dailyLimit(Request $request, $type = 'user')
     {
         $guestLimit = config('openai.guest_limit');
-        $authLimit = $type === 'user' ? config('openai.auth_limit') : config('openai.auth_limit_create');
+        $authLimit = match ($type) {
+            'create'      => config('openai.auth_limit_create'),
+            'create_text' => config('openai.auth_limit_create_text'),
+            default       => config('openai.auth_limit'),
+        };
+
+        // Admins bypass every AI daily limit. Surface the configured limit so the
+        // UI can show the same numbers a regular user would see, with an
+        // `unlimited: true` flag indicating the limit doesn't apply.
+        if (\Illuminate\Support\Facades\Gate::allows('bypass-ai-daily-limit')) {
+            return [
+                'limit' => $authLimit,
+                'used' => 0,
+                'remaining' => $authLimit,
+                'unlimited' => true,
+            ];
+        }
         $user = Auth::guard('sanctum')->user();
     
         if ($user) {
