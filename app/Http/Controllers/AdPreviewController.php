@@ -10,7 +10,7 @@ class AdPreviewController extends Controller
 {
     public function generateToken(Request $request)
     {
-        $token = Str::random(64);
+        $token = Str::random(64); 
 
         Cache::put("ad_preview_token:{$token}", true, now()->addMinutes(30));
 
