@@ -12,7 +12,7 @@ class FavoriteController extends Controller
     {
         $favorite = Favorite::firstOrCreate([
             'user_id'    => Auth::id(),
-            'listing_id' => $listingId,
+            'listing_id' => $listingId, 
         ]);
 
         if (!$favorite->wasRecentlyCreated) {
