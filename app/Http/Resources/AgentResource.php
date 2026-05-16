@@ -39,6 +39,15 @@ class AgentResource extends JsonResource
             'leased_count'            => $this->leased_count            ?? 0,
             'ongoing_inquiries_count' => $this->ongoing_inquiries_count ?? 0,
             'closed_inquiries_count'  => $this->closed_inquiries_count  ?? 0,
+            'listings_in_range_count' => (int) ($this->listings_in_range_count ?? 0),
+            'team' => $this->whenLoaded('teamMembers', function () {
+                $tm = $this->teamMembers->first();
+                if (!$tm || !$tm->team) return null;
+                return [
+                    'id'   => $tm->team->id,
+                    'name' => $tm->team->name,
+                ];
+            }),
             'median_first_response_seconds' => $this->median_first_response_seconds,
             'within_1h_response_pct'        => $this->within_1h_response_pct !== null
                 ? (float) $this->within_1h_response_pct
