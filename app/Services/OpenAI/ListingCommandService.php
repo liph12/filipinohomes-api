@@ -3,6 +3,7 @@
 namespace App\Services\OpenAI;
 
 use OpenAI;
+use Illuminate\Support\Facades\Log;
 
 class ListingCommandService
 {
@@ -85,7 +86,8 @@ class ListingCommandService
             'functions' => [$this->getToolDefinition()],
             'function_call' => ['name' => 'parse_listing_query'],
         ]);
-    
+
+        $this->logUsage('parse_query', $response);
         $data = $this->extractToolResponse($response);
     
         if ($data) {
@@ -169,50 +171,13 @@ class ListingCommandService
             ],
         ]);
 
+        $this->logUsage('classify_images', $response);
         return $this->extractToolResponse($response);
     }
 
     public function analyzeTitle(string $title, array $context = []): ?array
     {
-        // Build rich context from all available listing data
-        $contextLines = [];
-
-        if (!empty($context['category'])) {
-            $contextLines[] = "Listing category: {$context['category']}";
-        }
-        if (!empty($context['property_type'])) {
-            $contextLines[] = "Property type: {$context['property_type']}";
-        }
-        if (!empty($context['property_subtype'])) {
-            $contextLines[] = "Property subtype: {$context['property_subtype']}";
-        }
-        if (!empty($context['project_name'])) {
-            $contextLines[] = "Project/Development name: {$context['project_name']}";
-        }
-        if (!empty($context['project_location'])) {
-            $contextLines[] = "Project location: {$context['project_location']}";
-        }
-        if (!empty($context['bedrooms'])) {
-            $contextLines[] = "Bedrooms: {$context['bedrooms']}";
-        }
-        if (!empty($context['bathrooms'])) {
-            $contextLines[] = "Bathrooms: {$context['bathrooms']}";
-        }
-        if (!empty($context['floor_area'])) {
-            $contextLines[] = "Floor area: {$context['floor_area']} sqm";
-        }
-        if (!empty($context['lot_area'])) {
-            $contextLines[] = "Lot area: {$context['lot_area']} sqm";
-        }
-        if (!empty($context['description'])) {
-            // Truncate long descriptions to keep prompt manageable
-            $desc = mb_substr($context['description'], 0, 300);
-            $contextLines[] = "Description excerpt: {$desc}";
-        }
-
-        $contextBlock = !empty($contextLines)
-            ? "KNOWN LISTING DETAILS (use these for accurate suggestions):\n" . implode("\n", $contextLines)
-            : "No additional listing details provided.";
+        $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
         You are an SEO expert for Philippine real estate listings.
@@ -228,7 +193,8 @@ class ListingCommandService
         3. Suggest exactly 3 improved alternatives
 
         SCORING CRITERIA:
-        - Follows keyword-rich formula: [Status] + [Size/Type] + [Location] + [Key Benefit]
+        - Follows keyword-rich formula: [Category] + [Size/Type] + [Location] + [Key Benefit]
+          (Category = "For Sale" / "For Rent" / "Foreclosure" — the listing's transaction intent.)
           Example: "For Sale: 3BR House & Lot in Talamban Cebu – Near USC, Ready for Occupancy"
         - Highlights 1-2 strong selling points (not generic fluff)
           Good hooks: "Walking distance to Ayala", "Near IT Park", "Preselling, low monthly DP", "with parking"
@@ -238,7 +204,7 @@ class ListingCommandService
           * Generic/vague titles: "Nice House in Cebu", "Beautiful Property"
           * Spammy language: "SUPER CHEAP!!! HURRY!!!", all caps, excessive punctuation
           * Too short (under 5 words) or too long (over 20 words)
-          * Missing category status (For Sale/For Rent) when the listing category is known
+          * Missing category (For Sale / For Rent / Foreclosure) when the listing category is known from context
           * Wrong location — mentioning a city/area that contradicts the actual project location
 
         {$contextBlock}
@@ -256,6 +222,7 @@ class ListingCommandService
             'function_call' => ['name' => 'analyze_listing_title'],
         ]);
 
+        $this->logUsage('analyze_title', $response);
         return $this->extractToolResponse($response);
     }
 
@@ -283,6 +250,74 @@ class ListingCommandService
                 ],
                 'required' => ['score', 'feedback', 'suggestions']
             ]
+        ];
+    }
+
+    /**
+     * Suggest titles from listing context only — used when the agent hasn't
+     * typed a title yet and wants the AI to draft 3 candidates from the
+     * structured data they've already filled in (category, type, project,
+     * location, beds/baths, area, amenities, photo keywords).
+     */
+    public function suggestTitles(array $context = []): ?array
+    {
+        $contextBlock = $this->buildListingContextBlock($context);
+
+        $prompt = <<<PROMPT
+        You are an SEO expert for Philippine real estate listings.
+
+        TASK:
+        Generate 3 title candidates the agent can pick from. Each title should
+        follow the SEO formula: [Category] + [Size/Type] + [Location] + [Key Benefit].
+        (Category = "For Sale" / "For Rent" / "Foreclosure" — the listing's transaction intent.)
+
+        RULES:
+        - 10-15 words each. No ALL CAPS. No spammy punctuation. No emojis.
+        - Use ONLY the facts in the context — never invent locations, prices, sizes, or features.
+        - If a project name is provided, use it verbatim in every title.
+        - Vary the structure between the 3 titles so the agent has real choice.
+          - Title 1: keyword-rich, formula-led
+          - Title 2: benefit-first hook
+          - Title 3: location-led
+        - Each title must include the property type (or subtype) and the city or barangay when available.
+        - Photo keywords (if provided) describe real visible features — feel free to use one as a distinctive selling point.
+        - Bad outputs to avoid: "Nice House in Cebu", "Beautiful Property For Sale", "AMAZING UNIT!!!", "Must-See Home"
+
+        {$contextBlock}
+
+        Return ONLY the function call.
+        PROMPT;
+
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => [
+                ['role' => 'system', 'content' => $prompt],
+                ['role' => 'user', 'content' => 'Suggest 3 SEO-strong listing titles using the context.'],
+            ],
+            'functions' => [$this->getTitleSuggestionToolDefinition()],
+            'function_call' => ['name' => 'suggest_listing_titles'],
+        ]);
+
+        $this->logUsage('suggest_titles', $response);
+        return $this->extractToolResponse($response);
+    }
+
+    protected function getTitleSuggestionToolDefinition(): array
+    {
+        return [
+            'name' => 'suggest_listing_titles',
+            'description' => 'Suggest 3 SEO-strong real estate listing titles from structured listing context.',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'titles' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                        'description' => 'Exactly 3 listing title candidates, each 10-15 words, following the SEO formula.',
+                    ],
+                ],
+                'required' => ['titles'],
+            ],
         ];
     }
 
@@ -420,6 +455,153 @@ class ListingCommandService
         ];
     }
 
+    public function generateDescription(string $title, array $context = []): ?array
+    {
+        $contextBlock = $this->buildListingContextBlock($context);
+
+        $prompt = <<<PROMPT
+        You are an SEO-focused real-estate copywriter for the Philippine market. Write listings that rank well on Google for organic property search.
+
+        TONE & STYLE:
+        - Natural, professional prose. No bullet lists. No section headers. No emojis. No hype phrases ("dream home", "once in a lifetime", "must see").
+        - Write for a real buyer who will read the listing on a phone.
+        - Lead with the strongest factual hook (price + size + location + type), then specifics, then neighborhood/lifestyle.
+
+        SEO RULES (Google ranks unique factual content):
+        - Google pulls the first ~155 characters as the search snippet. The FIRST SENTENCE must include the category (For Sale / For Rent / Foreclosure), the property type, and the location (barangay or city) — but NOT in any fixed order. Vary the opener structure between listings. NEVER start two listings with the same phrase, especially not "For Sale: …". If a project name is provided, include it verbatim in the first or second sentence. Lead with what makes THIS listing distinctive (a specific amenity, view, photo keyword, or location detail) — not a generic template.
+        - Photo keywords (if any) are real visible features from the listing's photos. Weave 2-3 of them naturally into the description so the prose reflects what buyers will see.
+        - Use the actual numbers from the context: square meters, bed/bath/parking counts, price, project name, exact barangay/city/province.
+        - Mention 1-2 nearby landmarks or facilities if provided (school, hospital, mall) — these are strong organic-search signals.
+        - Never invent locations, prices, sizes, or amenities not present in the title or context.
+        - If a project name is provided, use it verbatim.
+        - Keep sentences readable (avg 12-18 words). Avoid keyword stuffing.
+
+        OUTPUT:
+        A single description of 100-170 words in flowing prose. The first sentence must satisfy the snippet rule above while opening with this listing's distinctive feature, not a fixed template.
+
+        {$contextBlock}
+
+        Return ONLY the function call.
+        PROMPT;
+
+        $response = $this->client->chat()->create([
+            'model' => 'gpt-5.4-mini',
+            'messages' => [
+                ['role' => 'system', 'content' => $prompt],
+                ['role' => 'user', 'content' => "Listing title: \"{$title}\""],
+            ],
+            'functions' => [$this->getDescriptionToolDefinition()],
+            'function_call' => ['name' => 'generate_description'],
+        ]);
+
+        $this->logUsage('generate_description', $response);
+        return $this->extractToolResponse($response);
+    }
+
+    /**
+     * Build the shared "known listing details" context block used by both
+     * analyzeTitle and generateDescription. Keeps prompt construction
+     * consistent — when more fields are added, both flows pick them up.
+     */
+    protected function buildListingContextBlock(array $context): string
+    {
+        $lines = [];
+
+        $simple = [
+            'category'         => 'Listing category',
+            'property_type'    => 'Property type',
+            'property_subtype' => 'Property subtype',
+            'project_name'     => 'Project/Development name',
+            'project_location' => 'Project location',
+            'bedrooms'         => 'Bedrooms',
+            'bathrooms'        => 'Bathrooms',
+            'parking'          => 'Parking/Garage',
+            'furnishing'       => 'Furnishing',
+        ];
+        foreach ($simple as $key => $label) {
+            if (!empty($context[$key])) {
+                $lines[] = "{$label}: {$context[$key]}";
+            }
+        }
+
+        if (!empty($context['price'])) {
+            $price = is_numeric($context['price']) ? number_format((float) $context['price']) : $context['price'];
+            $lines[] = "Price: PHP {$price}";
+        }
+        if (!empty($context['floor_area'])) {
+            $lines[] = "Floor area: {$context['floor_area']} sqm";
+        }
+        if (!empty($context['lot_area'])) {
+            $lines[] = "Lot area: {$context['lot_area']} sqm";
+        }
+
+        $loc = array_filter([
+            $context['barangay']  ?? null,
+            $context['city']      ?? null,
+            $context['province']  ?? null,
+        ]);
+        if (!empty($loc)) {
+            $lines[] = "Location: " . implode(", ", $loc);
+        } elseif (!empty($context['address'])) {
+            $lines[] = "Address: {$context['address']}";
+        }
+
+        if (!empty($context['amenities']) && is_array($context['amenities'])) {
+            $names = array_slice(array_filter($context['amenities']), 0, 20);
+            if (!empty($names)) {
+                $lines[] = "Amenities: " . implode(", ", $names);
+            }
+        }
+
+        if (!empty($context['nearby_facilities']) && is_array($context['nearby_facilities'])) {
+            $highlights = [];
+            foreach ($context['nearby_facilities'] as $kind => $items) {
+                if (!is_array($items) || empty($items)) continue;
+                $names = collect($items)->pluck('name')->filter()->take(2)->all();
+                if (!empty($names)) {
+                    $highlights[] = ucfirst(str_replace('_', ' ', $kind)) . ": " . implode(", ", $names);
+                }
+            }
+            if (!empty($highlights)) {
+                $lines[] = "Nearby: " . implode("; ", $highlights);
+            }
+        }
+
+        if (!empty($context['photo_keywords'])) {
+            $kw = is_array($context['photo_keywords'])
+                ? implode(", ", array_slice($context['photo_keywords'], 0, 15))
+                : (string) $context['photo_keywords'];
+            $lines[] = "Photo keywords (from classified images): {$kw}";
+        }
+
+        if (!empty($context['description'])) {
+            $desc = mb_substr($context['description'], 0, 300);
+            $lines[] = "Existing description excerpt: {$desc}";
+        }
+
+        return empty($lines)
+            ? "No additional listing details provided."
+            : "KNOWN LISTING DETAILS (use these verbatim — never invent or substitute):\n" . implode("\n", $lines);
+    }
+
+    protected function getDescriptionToolDefinition(): array
+    {
+        return [
+            'name' => 'generate_description',
+            'description' => 'Generate a real-estate listing description from a title plus context (attributes, location, amenities, photo keywords).',
+            'parameters' => [
+                'type' => 'object',
+                'properties' => [
+                    'description' => [
+                        'type' => 'string',
+                        'description' => 'Natural-sounding real-estate description, 100-170 words, flowing prose, no bullet lists, no hype phrases.',
+                    ],
+                ],
+                'required' => ['description'],
+            ],
+        ];
+    }
+
     protected function extractToolResponse($response): ?array
     {
         $toolCall = $response->choices[0]->message->functionCall ?? null;
@@ -427,6 +609,28 @@ class ListingCommandService
         if (!$toolCall) return null;
 
         return json_decode($toolCall->arguments, true);
+    }
+
+    /**
+     * Log token usage from an OpenAI chat completion. Captures the model,
+     * the called function, and prompt/completion/total tokens so we can
+     * track cost per AI feature over time and catch sudden token-burn
+     * regressions in a prompt change. Never throws — wrapped in try/catch
+     * so a missing field never breaks the AI flow itself.
+     */
+    protected function logUsage(string $flow, $response): void
+    {
+        try {
+            $usage = $response->usage ?? null;
+            Log::info("openai.{$flow}", [
+                'model'             => $response->model ?? null,
+                'prompt_tokens'     => $usage?->promptTokens,
+                'completion_tokens' => $usage?->completionTokens,
+                'total_tokens'      => $usage?->totalTokens,
+            ]);
+        } catch (\Throwable $e) {
+            // never let logging break the request
+        }
     }
 
     protected function normalize(array $data): array

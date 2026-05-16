@@ -249,9 +249,15 @@ class OpenAIController extends Controller
 
         try {
             $context = $request->only([
-                'property_type', 'property_subtype', 'category',
+                'category', 'property_type', 'property_subtype',
                 'project_name', 'project_location',
-                'bedrooms', 'bathrooms', 'floor_area', 'lot_area',
+                'bedrooms', 'bathrooms', 'parking',
+                'floor_area', 'lot_area',
+                'price', 'furnishing',
+                'amenities',
+                'address', 'barangay', 'city', 'province',
+                'nearby_facilities',
+                'photo_keywords',
                 'description',
             ]);
             $result = $this->listingService->analyzeTitle($title, $context);
@@ -264,6 +270,43 @@ class OpenAIController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Failed to analyze title. Please try again.',
+            ], 500);
+        }
+    }
+
+    public function suggestListingTitles(Request $request)
+    {
+        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create_text');
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
+        }
+
+        try {
+            $context = $request->only([
+                'category', 'property_type', 'property_subtype',
+                'project_name', 'project_location',
+                'bedrooms', 'bathrooms', 'parking',
+                'floor_area', 'lot_area',
+                'price', 'furnishing',
+                'amenities',
+                'address', 'barangay', 'city', 'province',
+                'nearby_facilities',
+                'photo_keywords',
+            ]);
+            $result = $this->listingService->suggestTitles($context);
+
+            if (!$result || empty($result['titles'])) {
+                return response()->json(['message' => 'Failed to generate title suggestions.'], 502);
+            }
+
+            return response()->json(['titles' => $result['titles']]);
+        } catch (\OpenAI\Exceptions\RateLimitException $e) {
+            return response()->json([
+                'message' => 'AI service is temporarily busy. Please try again in a moment.',
+            ], 429);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to suggest titles. Please try again.',
             ], 500);
         }
     }

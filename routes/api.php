@@ -154,6 +154,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
             Route::post('/openai/analyze-title', [OpenAIController::class, 'analyzeListingTitle']);
+            Route::post('/openai/suggest-titles', [OpenAIController::class, 'suggestListingTitles']);
             Route::apiResource('users', UserController::class);
             Route::apiResource('teams', TeamController::class);
             Route::apiResource('team-agents', TeamAgentController::class);
@@ -196,7 +197,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/upload', [ImageUploadController::class, 'upload']);
             Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
             Route::post('/logout', [UserController::class, 'logout']);
-            Route::get('/generate-description-tags/{name}', [GenerateDescriptionController::class, 'generate'])->where('name', '.*');
+            Route::post('/generate-description', [GenerateDescriptionController::class, 'generate']);
             Route::post('/agent/profile', [AgentController::class, 'store']);
             Route::post('/favorites/sync', [FavoriteController::class, 'sync']);
             Route::post('/favorites/{listingId}', [FavoriteController::class, 'toggle']);
