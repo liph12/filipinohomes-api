@@ -19,7 +19,26 @@ class AgentController extends Controller
 {
     public function index(Request $request)
     {
-        $perPage = max(1, min((int) $request->query('per_page', 12), 24));
+        $perPage = max(1, min((int) $request->query('per_page', 12), 50));
+
+        // Optional date-range filter for the "listings created in range" subquery.
+        // Used by the admin Top Agents table. When absent, listings_in_range_count
+        // falls back to the all-time count so existing callers keep working.
+        $dateFrom = $request->query('date_from'); // 'YYYY-MM-DD' or null
+        $dateTo   = $request->query('date_to');
+        $teamId   = $request->query('team_id');
+
+        $rangeSql = "(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id";
+        $rangeBindings = [];
+        if ($dateFrom) {
+            $rangeSql .= " AND listings.created_at >= ?";
+            $rangeBindings[] = $dateFrom . ' 00:00:00';
+        }
+        if ($dateTo) {
+            $rangeSql .= " AND listings.created_at <= ?";
+            $rangeBindings[] = $dateTo . ' 23:59:59';
+        }
+        $rangeSql .= ") as listings_in_range_count";
 
         $query = Agent::query()
             ->select([
@@ -33,19 +52,28 @@ class AgentController extends Controller
                 DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'leased') as leased_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
+                DB::raw($rangeSql),
                 'agents.median_first_response_seconds',
                 'agents.within_1h_response_pct',
                 'agents.unanswered_response_pct',
                 'agents.response_sample_size',
                 'agents.response_metrics_window_days',
             ])
+            ->addBinding($rangeBindings, 'select')
             ->with([
                 'user',
                 'pageBuilder:id,agent_id,slug',
+                'teamMembers.team',
             ])
             ->whereHas('user.role', function($q){
                 $q->where('name', 'agent');
             });
+
+        if ($teamId) {
+            $query->whereHas('teamMembers', function ($q) use ($teamId) {
+                $q->where('team_id', $teamId);
+            });
+        }
 
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
@@ -66,7 +94,7 @@ class AgentController extends Controller
         $sortDir = strtolower($request->query('sort_dir', 'desc'));
         if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
 
-        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'transactions_count', 'inquiries_count', 'response_speed', 'last_online', 'status', 'login_count'];
+        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'listings_in_range', 'transactions_count', 'inquiries_count', 'response_speed', 'last_online', 'status', 'login_count'];
 
         if (in_array($sortBy, $allowed)) {
             match ($sortBy) {
@@ -74,6 +102,7 @@ class AgentController extends Controller
                 'email'              => $query->orderByRaw("(SELECT email FROM users WHERE users.id = agents.user_id) $sortDir"),
                 'member_since'       => $query->orderBy('member_since', $sortDir),
                 'listings_count'     => $query->orderBy('listings_count', $sortDir),
+                'listings_in_range'  => $query->orderBy('listings_in_range_count', $sortDir),
                 'transactions_count' => $query->orderByRaw("(sold_count + rented_count + leased_count) $sortDir"),
                 'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
                 'last_online'        => $query->orderByRaw("(SELECT last_online_at FROM users WHERE users.id = agents.user_id) $sortDir"),
