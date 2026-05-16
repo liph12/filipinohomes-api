@@ -277,8 +277,17 @@ class OpenAIController extends Controller
             return $limitResponse;
         }
 
-        $classifications = $this->listingService->classifyImages($photos);
-
-        return response()->json($classifications);
+        try {
+            $classifications = $this->listingService->classifyImages($photos);
+            return response()->json($classifications);
+        } catch (\OpenAI\Exceptions\RateLimitException $e) {
+            return response()->json([
+                'message' => 'AI service is temporarily busy. Please try again in a moment.',
+            ], 429);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to classify photos. Please try again.',
+            ], 500);
+        }
     }
 }
