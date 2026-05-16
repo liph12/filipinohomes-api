@@ -3,8 +3,6 @@
 namespace App\Providers;
 
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
-use Illuminate\Support\Facades\Gate;
-use App\Policies\AiUsagePolicy;
 use App\Models\Listing;
 use App\Policies\ListingPolicy;
 use App\Models\ListingInquiry;
@@ -41,7 +39,5 @@ class AuthServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerPolicies();
-
-        Gate::define('bypass-ai-daily-limit', [AiUsagePolicy::class, 'bypassDailyLimit']);
     }
 }

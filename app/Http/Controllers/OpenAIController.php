@@ -10,7 +10,6 @@ use App\Services\OpenAI\ListingCommandService;
 use Illuminate\Support\Facades\Http;
 use App\Models\AiSearchLog;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Gate;
 
 class OpenAIController extends Controller
 {
@@ -243,11 +242,9 @@ class OpenAIController extends Controller
             return response()->json(['error' => 'Title is too short to analyze.'], 422);
         }
 
-        if (! Gate::allows('bypass-ai-daily-limit')) {
-            $limitResponse = $this->cacheService->updateDailyLimit($request, 'create_text');
-            if ($limitResponse->getStatusCode() !== 200) {
-                return $limitResponse;
-            }
+        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create_text');
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
         }
 
         try {
@@ -275,11 +272,9 @@ class OpenAIController extends Controller
     {
         $photos = $request->input('photos', []);
 
-        if (! Gate::allows('bypass-ai-daily-limit')) {
-            $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
-            if ($limitResponse->getStatusCode() !== 200) {
-                return $limitResponse;
-            }
+        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create');
+        if ($limitResponse->getStatusCode() !== 200) {
+            return $limitResponse;
         }
 
         $classifications = $this->listingService->classifyImages($photos);

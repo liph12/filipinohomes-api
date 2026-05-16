@@ -62,9 +62,23 @@ class CacheService extends DataLayerService
         if (!cache()->has($dailyKey)) {
             cache()->put($dailyKey, 0, now()->endOfDay());
         }
-    
+
         $dailyCount = cache()->increment($dailyKey);
-    
+
+        // Admins bypass every limit (daily cap, cooldown, spam-block). Counter
+        // still increments so the UI shows their real usage; the `unlimited`
+        // flag tells the frontend the cap doesn't apply.
+        if ($this->isAdmin($request)) {
+            return response()->json([
+                'status' => 'ok',
+                'message' => 'Request allowed (admin bypass).',
+                'limit' => $dailyLimit,
+                'used' => $dailyCount,
+                'remaining' => max(0, $dailyLimit - $dailyCount),
+                'unlimited' => true,
+            ], 200);
+        }
+
         if ($dailyCount > $dailyLimit) {
             return response()->json([
                 'status' => 'limit_exceeded',
@@ -73,7 +87,7 @@ class CacheService extends DataLayerService
                 'used' => $dailyCount,
             ], 429);
         }
-    
+
         if (cache()->has($cooldownKey)) {
             $attempts = cache()->increment($attemptsKey);
     
@@ -118,17 +132,6 @@ class CacheService extends DataLayerService
             default       => config('openai.auth_limit'),
         };
 
-        // Admins bypass every AI daily limit. Surface the configured limit so the
-        // UI can show the same numbers a regular user would see, with an
-        // `unlimited: true` flag indicating the limit doesn't apply.
-        if (\Illuminate\Support\Facades\Gate::allows('bypass-ai-daily-limit')) {
-            return [
-                'limit' => $authLimit,
-                'used' => 0,
-                'remaining' => $authLimit,
-                'unlimited' => true,
-            ];
-        }
         $user = Auth::guard('sanctum')->user();
     
         if ($user) {
@@ -142,15 +145,33 @@ class CacheService extends DataLayerService
         }
     
         $dailyKey = 'daily_requests_' . $identifier;
-    
+
         $currentCount = cache()->get($dailyKey, 0);
         $remaining = max($dailyLimit - $currentCount, 0);
-    
+        $isAdmin = $this->isAdmin($request);
+
         return [
             'limit' => $dailyLimit,
-            'used' => $currentCount > $dailyLimit ? $dailyLimit : $currentCount,
+            // Admins see their real usage past the cap; everyone else gets clamped
+            // so the pill doesn't display values like "12/5".
+            'used' => $isAdmin ? $currentCount : ($currentCount > $dailyLimit ? $dailyLimit : $currentCount),
             'remaining' => $remaining,
+            'unlimited' => $isAdmin,
         ];
+    }
+
+    /**
+     * Resolve the request user (via Sanctum guard, default guard, or by parsing
+     * the Bearer token from `personal_access_tokens` for routes outside
+     * `auth:sanctum` middleware) and check if they're an admin.
+     */
+    private function isAdmin(Request $request): bool
+    {
+        $user = $request->user('sanctum') ?? $request->user();
+        if (!$user && $token = $request->bearerToken()) {
+            $user = \Laravel\Sanctum\PersonalAccessToken::findToken($token)?->tokenable;
+        }
+        return $user?->role?->name === 'admin';
     }
 
     public function getDailyMessages(Request $request)
