@@ -837,10 +837,11 @@ class ListingController extends Controller
         $emailSent = false;
         if (($validated['verification_status'] ?? null) === 'flagged') {
             try {
-                $listing->load('agent.user');
+                $listing->load('agent.user.role');
                 $agentUser = optional($listing->agent)->user;
                 if ($agentUser && $agentUser->email) {
-                    $listingUrl = 'https://filipinohomes.com/agent/create-listing'
+                    $roleSegment = optional($agentUser->role)->name === 'admin' ? 'admin' : 'agent';
+                    $listingUrl = 'https://filipinohomes.com/' . $roleSegment . '/create-listing'
                         . '?edit=' . $listing->id;
                     Mail::to($agentUser->email)->send(new ListingFlaggedMailer(
                         agentName:      $agentUser->name ?? 'Agent',
