@@ -190,6 +190,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/projects/insights/by-name', [ProjectController::class, 'byName']);
             Route::get('/projects/insights/detail/{projectKey}', [ProjectController::class, 'insightsDetail'])
                 ->where('projectKey', '(project|property):\d+');
+            Route::get('/listings/insights/by-province', [ListingController::class, 'insightsByProvince']);
+            Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
+            Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
+                ->where('status', '[a-z_-]+');
             Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);

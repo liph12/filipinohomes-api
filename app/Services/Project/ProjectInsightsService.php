@@ -216,6 +216,95 @@ class ProjectInsightsService
             ->groupByRaw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id), properties.status')
             ->get();
 
+        // === Per-city pivots ===
+        // Same shape as the province-level rows above but grouped one level
+        // deeper. Powers the per-city breakdown chips in the UI.
+        $cityCategoryRows = $this->baseProjectDashboardQuery()
+            ->joinSub($projectListingCategories, 'project_listing_categories', function ($join) {
+                $join->on('project_listing_categories.property_id', '=', 'properties.id');
+            })
+            ->join('categories', 'categories.id', '=', 'project_listing_categories.category_id')
+            ->whereIn('categories.name', self::STANDARD_CATEGORIES)
+            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
+            ->whereNotNull(DB::raw('COALESCE(projects.city_id, property_cities.id)'))
+            ->select(
+                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
+                DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id'),
+                'categories.name as category_name',
+                DB::raw("COUNT(DISTINCT {$projectKey}) as project_count")
+            )
+            ->groupByRaw('
+                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
+                COALESCE(projects.city_id, property_cities.id),
+                categories.name
+            ')
+            ->get();
+
+        $cityTransactionRows = $this->baseProjectDashboardQuery()
+            ->joinSub($projectListingProperties, 'project_listing_properties', function ($join) {
+                $join->on('project_listing_properties.property_id', '=', 'properties.id');
+            })
+            ->whereIn('properties.status', self::TRANSACTION_STATUSES)
+            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
+            ->whereNotNull(DB::raw('COALESCE(projects.city_id, property_cities.id)'))
+            ->select(
+                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
+                DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id'),
+                'properties.status as status',
+                DB::raw("COUNT(DISTINCT {$projectKey}) as transaction_count")
+            )
+            ->groupByRaw('
+                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
+                COALESCE(projects.city_id, property_cities.id),
+                properties.status
+            ')
+            ->get();
+
+        $cityCategoryRawRows = $this->baseProjectDashboardQuery()
+            ->join('listings', function ($join) {
+                $join->on('listings.property_id', '=', 'properties.id')
+                    ->whereNull('listings.deleted_at');
+            })
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->whereIn('categories.name', self::STANDARD_CATEGORIES)
+            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
+            ->whereNotNull(DB::raw('COALESCE(projects.city_id, property_cities.id)'))
+            ->select(
+                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
+                DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id'),
+                'categories.name as category_name',
+                DB::raw('COUNT(listings.id) as listing_count')
+            )
+            ->groupByRaw('
+                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
+                COALESCE(projects.city_id, property_cities.id),
+                categories.name
+            ')
+            ->get();
+
+        $cityTransactionRawRows = $this->baseProjectDashboardQuery()
+            ->join('listings', function ($join) {
+                $join->on('listings.property_id', '=', 'properties.id')
+                    ->whereNull('listings.deleted_at');
+            })
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->whereIn('categories.name', self::STANDARD_CATEGORIES)
+            ->whereIn('properties.status', self::TRANSACTION_STATUSES)
+            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
+            ->whereNotNull(DB::raw('COALESCE(projects.city_id, property_cities.id)'))
+            ->select(
+                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
+                DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id'),
+                'properties.status as status',
+                DB::raw('COUNT(listings.id) as listing_count')
+            )
+            ->groupByRaw('
+                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
+                COALESCE(projects.city_id, property_cities.id),
+                properties.status
+            ')
+            ->get();
+
         // Pivot per-row results into per-province maps.
         $transactionCountsByProvince = [];
         foreach ($transactionRows as $row) {
@@ -257,6 +346,47 @@ class ProjectInsightsService
             }
         }
 
+        // Per-city pivots — keyed by "provinceId:cityId" for fast merge below.
+        $categoryByCity = [];
+        foreach ($cityCategoryRows as $row) {
+            $key = (int) $row->province_id . ':' . (int) $row->city_id;
+            $categoryByCity[$key] ??= ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0];
+            $catKey = $this->categoryKey((string) $row->category_name);
+            if ($catKey !== null) {
+                $categoryByCity[$key][$catKey] = (int) $row->project_count;
+            }
+        }
+
+        $transactionByCity = [];
+        foreach ($cityTransactionRows as $row) {
+            $key = (int) $row->province_id . ':' . (int) $row->city_id;
+            $status = (string) $row->status;
+            $transactionByCity[$key] ??= ['sold' => 0, 'rented' => 0, 'leased' => 0];
+            if (in_array($status, self::TRANSACTION_STATUSES, true)) {
+                $transactionByCity[$key][$status] = (int) $row->transaction_count;
+            }
+        }
+
+        $categoryRawByCity = [];
+        foreach ($cityCategoryRawRows as $row) {
+            $key = (int) $row->province_id . ':' . (int) $row->city_id;
+            $categoryRawByCity[$key] ??= ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0];
+            $catKey = $this->categoryKey((string) $row->category_name);
+            if ($catKey !== null) {
+                $categoryRawByCity[$key][$catKey] = (int) $row->listing_count;
+            }
+        }
+
+        $transactionRawByCity = [];
+        foreach ($cityTransactionRawRows as $row) {
+            $key = (int) $row->province_id . ':' . (int) $row->city_id;
+            $status = (string) $row->status;
+            $transactionRawByCity[$key] ??= ['sold' => 0, 'rented' => 0, 'leased' => 0];
+            if (in_array($status, self::TRANSACTION_STATUSES, true)) {
+                $transactionRawByCity[$key][$status] = (int) $row->listing_count;
+            }
+        }
+
         // Build the province array.
         $provinces = [];
         foreach ($cityRows as $row) {
@@ -277,12 +407,17 @@ class ProjectInsightsService
                 ];
             }
 
+            $cityKey = $provinceId . ':' . (int) $row->city_id;
             $provinces[$provinceId]['project_count'] += $projectCount;
             $provinces[$provinceId]['city_count'] += 1;
             $provinces[$provinceId]['cities'][] = [
                 'city_id' => (int) $row->city_id,
                 'city_name' => (string) $row->city_name,
                 'project_count' => $projectCount,
+                'listing_breakdown' => $categoryByCity[$cityKey] ?? ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
+                'listing_breakdown_raw' => $categoryRawByCity[$cityKey] ?? ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
+                'transaction_breakdown' => $transactionByCity[$cityKey] ?? ['sold' => 0, 'rented' => 0, 'leased' => 0],
+                'transaction_breakdown_raw' => $transactionRawByCity[$cityKey] ?? ['sold' => 0, 'rented' => 0, 'leased' => 0],
             ];
         }
 
@@ -301,6 +436,9 @@ class ProjectInsightsService
                 'for_sale'      => [$b['listing_breakdown']['for_sale'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_sale'], $a['city_count'], $b['province_name']],
                 'for_rent'      => [$b['listing_breakdown']['for_rent'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_rent'], $a['city_count'], $b['province_name']],
                 'foreclosure'   => [$b['listing_breakdown']['foreclosure'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['foreclosure'], $a['city_count'], $b['province_name']],
+                'sold'          => [$b['transaction_breakdown']['sold'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['sold'], $a['city_count'], $b['province_name']],
+                'rented'        => [$b['transaction_breakdown']['rented'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['rented'], $a['city_count'], $b['province_name']],
+                'leased'        => [$b['transaction_breakdown']['leased'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['leased'], $a['city_count'], $b['province_name']],
                 'province_name' => [$a['province_name'], $b['project_count']] <=> [$b['province_name'], $a['project_count']],
                 default         => [$b['city_count'], $b['project_count'], $a['province_name']] <=> [$a['city_count'], $a['project_count'], $b['province_name']],
             };
@@ -333,6 +471,9 @@ class ProjectInsightsService
             'data' => $provinceData,
             'meta' => [
                 'total_provinces'              => count($provinceData),
+                // Each city belongs to exactly one province, so summing the
+                // per-province city_count gives the unique city total.
+                'total_cities'                 => array_sum(array_column($provinceData, 'city_count')),
                 'total_projects'               => array_sum(array_column($provinceData, 'project_count')),
                 'total_listings'               => $totalListings,
                 'total_for_sale'               => $totals['for_sale'],

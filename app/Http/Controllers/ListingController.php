@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Mail\ListingFlaggedMailer;
+use App\Services\Listing\ListingInsightsService;
 
 class ListingController extends Controller
 {
@@ -951,5 +952,54 @@ class ListingController extends Controller
         });
 
         return response()->json(['message' => 'Listing and related rows soft-deleted: listings, properties, property_attributes']);
+    }
+
+    /**
+     * Listing Insights — province breakdown. Mirrors ProjectController::byProvince
+     * but counts ALL listings (project + standalone) and uses listing-row counts.
+     */
+    public function insightsByProvince(Request $request, ListingInsightsService $insights): JsonResponse
+    {
+        if (($request->user()->role->name ?? null) !== 'admin') {
+            abort(403);
+        }
+
+        $sortBy = (string) $request->query('sort_by', 'city_count');
+        return response()->json($insights->provinceBreakdown($sortBy));
+    }
+
+    /**
+     * Listing Insights — status breakdown. One row per properties.status with
+     * category mix + top provinces.
+     */
+    public function insightsByStatus(Request $request, ListingInsightsService $insights): JsonResponse
+    {
+        if (($request->user()->role->name ?? null) !== 'admin') {
+            abort(403);
+        }
+
+        $sortBy = (string) $request->query('sort_by', 'priority');
+        return response()->json($insights->statusBreakdown($sortBy));
+    }
+
+    /**
+     * Listing Insights — paginated listings for a single status. Used by the
+     * "Listings by Status" drawer drill-down.
+     */
+    public function insightsListingsForStatus(Request $request, ListingInsightsService $insights, string $status): JsonResponse
+    {
+        if (($request->user()->role->name ?? null) !== 'admin') {
+            abort(403);
+        }
+
+        return response()->json($insights->listingsForStatus($status, [
+            'page'        => (int) $request->query('page', 1),
+            'per_page'    => (int) $request->query('per_page', 20),
+            'category'    => (string) $request->query('category', ''),
+            'visibility'  => (string) $request->query('visibility', ''),
+            'province_id' => $request->query('province_id') !== null
+                ? (int) $request->query('province_id')
+                : null,
+        ]));
     }
 }
