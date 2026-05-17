@@ -247,6 +247,11 @@ class ProjectController extends Controller
                 ->where('properties.is_project', '=', 1);
         };
 
+        // INNER join with the listing-properties subquery: a property only
+        // counts when it has at least one active listing in For Sale /
+        // For Rent / Foreclosure. Orphan is_project=1 properties (no listing,
+        // soft-deleted listing, or non-standard category) are intentionally
+        // excluded. Visibility (public/private) is NOT filtered — both count.
         $cityRows = $baseProjectDashboardQuery()
             ->joinSub($projectListingProperties, 'project_listing_properties', function ($join) {
                 $join->on('project_listing_properties.property_id', '=', 'properties.id');
@@ -376,12 +381,27 @@ class ProjectController extends Controller
             };
         });
 
+        // Aggregate per-province category breakdowns into global totals.
+        // Same approach as total_projects (sum per-province). Spans-province
+        // projects are rare in PH RE and don't materially affect these.
+        $totalForSale = 0;
+        $totalForRent = 0;
+        $totalForeclosure = 0;
+        foreach ($provinceData as $province) {
+            $totalForSale     += $province['listing_breakdown']['for_sale']     ?? 0;
+            $totalForRent     += $province['listing_breakdown']['for_rent']     ?? 0;
+            $totalForeclosure += $province['listing_breakdown']['foreclosure']  ?? 0;
+        }
+
         return response()->json([
             'data' => $provinceData,
             'meta' => [
-                'total_provinces' => count($provinceData),
-                'total_projects' => array_sum(array_column($provinceData, 'project_count')),
-                'sort_by' => $sortBy,
+                'total_provinces'    => count($provinceData),
+                'total_projects'     => array_sum(array_column($provinceData, 'project_count')),
+                'total_for_sale'     => $totalForSale,
+                'total_for_rent'     => $totalForRent,
+                'total_foreclosure'  => $totalForeclosure,
+                'sort_by'            => $sortBy,
             ],
         ]);
     }
