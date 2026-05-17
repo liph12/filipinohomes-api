@@ -187,6 +187,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::get('/project-list', [ProjectController::class, 'projects']);
             Route::get('/projects/by-province', [ProjectController::class, 'byProvince']);
+            Route::get('/projects/insights/by-name', [ProjectController::class, 'byName']);
+            Route::get('/projects/insights/detail/{projectKey}', [ProjectController::class, 'insightsDetail'])
+                ->where('projectKey', '(project|property):\d+');
             Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);

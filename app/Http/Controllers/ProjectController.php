@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\Project\ProjectService;
+use App\Services\Project\ProjectInsightsService;
 use App\Models\Project;
 use App\Models\Listing;
 use App\Http\Resources\ListingResourceCollection;
@@ -10,7 +11,6 @@ use App\Http\Resources\ProjectResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 
 class ProjectController extends Controller
 {
@@ -206,204 +206,73 @@ class ProjectController extends Controller
                 'current_page' => $projects->currentPage(),
                 'last_page' => $projects->lastPage(),
                 'per_page' => $projects->perPage(),
-                'total' => $projects->total(),
+                'total' => $projects->total(), 
             ],
         ]);
     }
 
-    public function byProvince(Request $request): JsonResponse
+    public function byProvince(Request $request, ProjectInsightsService $insights): JsonResponse
     {
         $user = $request->user();
-        $sortBy = (string) $request->query('sort_by', 'city_count');
-
         if (($user->role->name ?? null) !== 'admin') {
             abort(403);
         }
 
-        $projectListingCategories = DB::table('listings')
-            ->select('listings.property_id', 'listings.category_id')
-            ->whereNull('listings.deleted_at')
-            ->distinct();
+        $sortBy = (string) $request->query('sort_by', 'city_count');
+        return response()->json($insights->provinceBreakdown($sortBy));
+    }
 
-        $projectListingProperties = DB::table('listings')
-            ->join('categories', 'categories.id', '=', 'listings.category_id')
-            ->select('listings.property_id')
-            ->whereNull('listings.deleted_at')
-            ->whereIn('categories.name', ['For Sale', 'For Rent', 'Foreclosure'])
-            ->distinct();
-
-        $baseProjectDashboardQuery = function () {
-            return DB::table('properties')
-                ->leftJoin('projects', function ($join) {
-                    $join->on('projects.id', '=', 'properties.project_id')
-                        ->whereNull('projects.deleted_at');
-                })
-                ->leftJoin('cities as project_cities', 'project_cities.id', '=', 'projects.city_id')
-                ->leftJoin('provinces as project_provinces', 'project_provinces.id', '=', 'projects.prov_id')
-                ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
-                ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
-                ->leftJoin('provinces as property_provinces', 'property_provinces.id', '=', 'property_cities.province_id')
-                ->whereNull('properties.deleted_at')
-                ->where('properties.is_project', '=', 1);
-        };
-
-        // INNER join with the listing-properties subquery: a property only
-        // counts when it has at least one active listing in For Sale /
-        // For Rent / Foreclosure. Orphan is_project=1 properties (no listing,
-        // soft-deleted listing, or non-standard category) are intentionally
-        // excluded. Visibility (public/private) is NOT filtered — both count.
-        $cityRows = $baseProjectDashboardQuery()
-            ->joinSub($projectListingProperties, 'project_listing_properties', function ($join) {
-                $join->on('project_listing_properties.property_id', '=', 'properties.id');
-            })
-            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
-            ->whereNotNull(DB::raw('COALESCE(projects.city_id, property_cities.id)'))
-            ->select(
-                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
-                DB::raw('COALESCE(project_provinces.name, property_provinces.name) as province_name'),
-                DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id'),
-                DB::raw('COALESCE(project_cities.name, property_cities.name) as city_name'),
-                DB::raw("
-                    COUNT(DISTINCT
-                        CASE
-                            WHEN properties.project_id IS NULL THEN CONCAT('property:', properties.id)
-                            ELSE CONCAT('project:', properties.project_id)
-                        END
-                    ) as project_count
-                ")
-            )
-            ->groupByRaw('
-                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
-                COALESCE(project_provinces.name, property_provinces.name),
-                COALESCE(projects.city_id, property_cities.id),
-                COALESCE(project_cities.name, property_cities.name)
-            ')
-            ->orderBy('province_name')
-            ->orderByDesc('project_count')
-            ->orderBy('city_name')
-            ->get();
-
-        $categoryRows = $baseProjectDashboardQuery()
-            ->joinSub($projectListingCategories, 'project_listing_categories', function ($join) {
-                $join->on('project_listing_categories.property_id', '=', 'properties.id');
-            })
-            ->join('categories', 'categories.id', '=', 'project_listing_categories.category_id')
-            ->where(function ($query) {
-                $query->whereNotNull('projects.prov_id')
-                    ->orWhereNotNull('project_cities.province_id')
-                    ->orWhereNotNull('property_cities.province_id');
-            })
-            ->whereIn('categories.name', ['For Sale', 'For Rent', 'Foreclosure'])
-            ->select(
-                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
-                'categories.name as category_name',
-                DB::raw("
-                    COUNT(DISTINCT
-                        CASE
-                            WHEN properties.project_id IS NULL THEN CONCAT('property:', properties.id)
-                            ELSE CONCAT('project:', properties.project_id)
-                        END
-                    ) as project_count
-                ")
-            )
-            ->groupByRaw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id), categories.name')
-            ->get();
-
-        $categoryCountsByProvince = [];
-
-        foreach ($categoryRows as $row) {
-            $provinceId = (int) $row->province_id;
-            $categoryName = (string) $row->category_name;
-            $count = (int) $row->project_count;
-
-            $categoryCountsByProvince[$provinceId] ??= [
-                'for_sale' => 0,
-                'for_rent' => 0,
-                'foreclosure' => 0,
-            ];
-
-            if ($categoryName === 'For Sale') {
-                $categoryCountsByProvince[$provinceId]['for_sale'] = $count;
-            } elseif ($categoryName === 'For Rent') {
-                $categoryCountsByProvince[$provinceId]['for_rent'] = $count;
-            } elseif ($categoryName === 'Foreclosure') {
-                $categoryCountsByProvince[$provinceId]['foreclosure'] = $count;
-            }
+    /**
+     * Paginated list of every project (and standalone is_project=1 property
+     * with no project_id) with its full stat breakdown. One row per project
+     * entity. Used by the new "Projects by Name" dashboard section.
+     *
+     * Query params:
+     *   page         (int, default 1)
+     *   per_page     (int, default 20)
+     *   search       (string, matches projects.name or properties.name LIKE)
+     *   sort_by      ('name' | 'total_listings' | 'recent', default 'total_listings')
+     *   category     (optional: 'for-sale' | 'for-rent' | 'foreclosure')
+     */
+    public function byName(Request $request, ProjectInsightsService $insights): JsonResponse
+    {
+        $user = $request->user();
+        if (($user->role->name ?? null) !== 'admin') {
+            abort(403);
         }
 
-        $provinces = [];
-
-        foreach ($cityRows as $row) {
-            $provinceId = (int) $row->province_id;
-            $projectCount = (int) $row->project_count;
-
-            if (!isset($provinces[$provinceId])) {
-                $provinces[$provinceId] = [
-                    'province_id' => $provinceId,
-                    'province_name' => (string) $row->province_name,
-                    'project_count' => 0,
-                    'city_count' => 0,
-                    'listing_breakdown' => $categoryCountsByProvince[$provinceId] ?? [
-                        'for_sale' => 0,
-                        'for_rent' => 0,
-                        'foreclosure' => 0,
-                    ],
-                    'cities' => [],
-                ];
-            }
-
-            $provinces[$provinceId]['project_count'] += $projectCount;
-            $provinces[$provinceId]['city_count'] += 1;
-            $provinces[$provinceId]['cities'][] = [
-                'city_id' => (int) $row->city_id,
-                'city_name' => (string) $row->city_name,
-                'project_count' => $projectCount,
-            ];
+        return response()->json($insights->projectsByName([
+            'page'     => (int) $request->query('page', 1),
+            'per_page' => (int) $request->query('per_page', 20),
+            'search'   => (string) $request->query('search', ''),
+            'sort_by'  => (string) $request->query('sort_by', 'total_listings'),
+            'category' => (string) $request->query('category', ''),
+        ]));
+    }
+    /**
+     * Single-project drill-down. Project key is either "project:{id}" or
+     * "property:{id}" (the latter for standalone is_project=1 properties).
+     * Returns the project entity + aggregate totals + a paginated list of
+     * its listings.
+     */
+    public function insightsDetail(Request $request, ProjectInsightsService $insights, string $projectKey): JsonResponse
+    {
+        $user = $request->user();
+        if (($user->role->name ?? null) !== 'admin') {
+            abort(403);
         }
 
-        $provinceData = array_values($provinces);
-
-        foreach ($provinceData as &$province) {
-            usort($province['cities'], function (array $a, array $b) {
-                return [$b['project_count'], $a['city_name']] <=> [$a['project_count'], $b['city_name']];
-            });
-        }
-        unset($province);
-
-        usort($provinceData, function (array $a, array $b) use ($sortBy) {
-            return match ($sortBy) {
-                'project_count' => [$b['project_count'], $b['city_count'], $a['province_name']] <=> [$a['project_count'], $a['city_count'], $b['province_name']],
-                'for_sale' => [$b['listing_breakdown']['for_sale'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_sale'], $a['city_count'], $b['province_name']],
-                'for_rent' => [$b['listing_breakdown']['for_rent'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_rent'], $a['city_count'], $b['province_name']],
-                'foreclosure' => [$b['listing_breakdown']['foreclosure'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['foreclosure'], $a['city_count'], $b['province_name']],
-                'province_name' => [$a['province_name'], $b['project_count']] <=> [$b['province_name'], $a['project_count']],
-                default => [$b['city_count'], $b['project_count'], $a['province_name']] <=> [$a['city_count'], $a['project_count'], $b['province_name']],
-            };
-        });
-
-        // Aggregate per-province category breakdowns into global totals.
-        // Same approach as total_projects (sum per-province). Spans-province
-        // projects are rare in PH RE and don't materially affect these.
-        $totalForSale = 0;
-        $totalForRent = 0;
-        $totalForeclosure = 0;
-        foreach ($provinceData as $province) {
-            $totalForSale     += $province['listing_breakdown']['for_sale']     ?? 0;
-            $totalForRent     += $province['listing_breakdown']['for_rent']     ?? 0;
-            $totalForeclosure += $province['listing_breakdown']['foreclosure']  ?? 0;
-        }
-
-        return response()->json([
-            'data' => $provinceData,
-            'meta' => [
-                'total_provinces'    => count($provinceData),
-                'total_projects'     => array_sum(array_column($provinceData, 'project_count')),
-                'total_for_sale'     => $totalForSale,
-                'total_for_rent'     => $totalForRent,
-                'total_foreclosure'  => $totalForeclosure,
-                'sort_by'            => $sortBy,
-            ],
+        $result = $insights->projectDetail($projectKey, [
+            'page'     => (int) $request->query('page', 1),
+            'per_page' => (int) $request->query('per_page', 50),
+            'status'   => (string) $request->query('status', ''),
+            'category' => (string) $request->query('category', ''),
         ]);
+
+        if ($result === null) {
+            return response()->json(['message' => 'Project not found.'], 404);
+        }
+        return response()->json($result);
     }
 
     public function unassociatedProjects(Request $request, ProjectService $service): JsonResponse
