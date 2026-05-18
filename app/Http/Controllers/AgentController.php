@@ -426,6 +426,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         return response()->json([
             'data' => $page->getCollection()->map(fn ($conv) => [
                 'id'           => $conv->id,
+                'chat_id'      => $conv->chat?->id,
                 'status'       => $conv->status,
                 'created_at'   => $conv->created_at?->toDateTimeString(),
                 'client_name'  => $conv->chat?->user?->name,
