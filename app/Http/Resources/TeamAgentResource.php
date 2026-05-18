@@ -25,9 +25,10 @@ class TeamAgentResource extends JsonResource
             'team_name'    => $this->team?->name,
             'is_leader'             => $this->is_leader,
             'status'                => $this->status,
-            'agent_login_count'     => (int) ($this->agent_login_count     ?? 0),
-            'agent_listings_count'  => (int) ($this->agent_listings_count  ?? 0),
-            'agent_inquiries_count' => (int) ($this->agent_inquiries_count ?? 0),
+            'agent_login_count'        => (int) ($this->agent_login_count        ?? 0),
+            'agent_listings_count'     => (int) ($this->agent_listings_count     ?? 0),
+            'agent_transactions_count' => (int) ($this->agent_transactions_count ?? 0),
+            'agent_inquiries_count'    => (int) ($this->agent_inquiries_count    ?? 0),
         ];
     }
 }

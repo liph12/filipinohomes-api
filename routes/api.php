@@ -156,6 +156,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/openai/analyze-title', [OpenAIController::class, 'analyzeListingTitle']);
             Route::post('/openai/suggest-titles', [OpenAIController::class, 'suggestListingTitles']);
             Route::apiResource('users', UserController::class);
+            Route::get('/teams/monthly-listings', [TeamController::class, 'monthlyListings']);
             Route::apiResource('teams', TeamController::class);
             Route::apiResource('team-agents', TeamAgentController::class);
             Route::apiResource('property_attributes', PropertyAttributesController::class);
