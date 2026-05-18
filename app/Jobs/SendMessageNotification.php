@@ -103,6 +103,7 @@ class SendMessageNotification implements ShouldQueue
         // listing skip this entirely.
         if ($listing) {
             $listing->load([
+                'agent',
                 'category',
                 'property.barangay.city.province',
                 'property.propertyAttribute.subtype.type',

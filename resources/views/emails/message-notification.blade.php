@@ -42,7 +42,7 @@
                                         style="background-color:#ffffff;padding:12px 40px 24px;">
                                         <span
                                             style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
-                                            Hello {{ ucwords(strtolower($receiverName)) }},
+                                            Hello {{ ucwords(strtolower($greetingName)) }},
                                             <br /><br />
                                             A new message has been submitted through Filipino Homes. Please review below and respond at your earliest convenience.
                                         </span>
@@ -55,22 +55,27 @@
                                         <div style="font-size:11px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:#667085;letter-spacing:0.06em;text-transform:uppercase;font-weight:700;margin-bottom:8px;">
                                             Inquiry is about
                                         </div>
-                                        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;width:100%;border:1px solid #d6dee8;border-radius:14px;overflow:hidden;background:#ffffff;">
+                                        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;width:100%;min-height:160px;border:1px solid #a3c3ea;border-radius:14px;overflow:hidden;background:#ffffff;">
                                             <tbody>
-                                                <tr>
+                                                <tr style="height:160px;">
                                                     @if (!empty($listing['image']))
-                                                    <td valign="top" width="160" height="100%" ; style="width:160px;padding:0;background:#f1f5f9;">
-                                                        <a href="{{ $listing['public_url'] ?? '#' }}" target="_blank" style="display:block; line-height:0; margin:0; padding:0;">
+                                                    {{-- Fixed-width image cell. valign=middle keeps the photo
+                                                         centered when the right column wraps taller than 160px.
+                                                         `height` attribute is what gives the row its min-height
+                                                         in Outlook (CSS min-height is stripped there). --}}
+                                                    <td valign="middle" align="center" width="160" height="160"
+                                                        style="width:160px;height:160px;min-height:160px;padding:0;background:#f1f5f9;">
+                                                        <a href="{{ $listing['public_url'] ?? '#' }}" target="_blank" style="display:block;line-height:0;margin:0;padding:0;">
                                                             <img src="{{ $listing['image'] }}"
                                                                 alt="{{ $listing['name'] ?? 'Listing' }}"
-                                                                width="160"
-                                                                style="display:block; width:160px;Height:160px;  object-fit:cover; border:0; border-bottom-left-radius: 12px; border-top-left-radius: 12px;" />
+                                                                width="160" height="160"
+                                                                style="display:block;width:160px;height:160px;object-fit:cover;object-position:center;border:0;outline:none;text-decoration:none;" />
                                                         </a>
                                                     </td>
                                                     @endif
-                                                    <td valign="top" style="padding:14px 16px;">
+                                                    <td valign="middle" style="padding:18px 20px;min-height:160px;">
                                                         @if (!empty($listing['category']) || !empty($listing['subtype']))
-                                                        <div style="font-size:11px;line-height:16px;font-family:Helvetica,Arial,sans-serif;color:#1d4ed8;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">
+                                                        <div style="font-size:11px;line-height:16px;font-family:Helvetica,Arial,sans-serif;color:#1d4ed8;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">
                                                             {{ trim(($listing['category'] ?? '') . (!empty($listing['category']) && !empty($listing['subtype']) ? ' · ' : '') . ($listing['subtype'] ?? '')) }}
                                                         </div>
                                                         @endif

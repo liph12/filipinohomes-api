@@ -34,6 +34,13 @@ class MessageNotificationMailer extends Mailable
      * is used to compose role-aware deep links in the blade.
      */
     public $frontendUrl;
+    /**
+     * Display name for the greeting line. When a listing is attached we use
+     * the listing's owning agent's full name (so admins BCC'd on inquiries
+     * see "Hello Agent X" — the person responsible). Falls back to the
+     * recipient's name for non-listing direct messages.
+     */
+    public $greetingName;
     public $agentUserId;
 
     public function __construct(
@@ -63,6 +70,11 @@ class MessageNotificationMailer extends Mailable
         // Falls back to prod when FRONTEND_URL isn't set in .env.
         $this->frontendUrl = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
         $this->agentUserId = $agentUserId;
+        // Foreground the listing's owning agent in the greeting line — that's
+        // the person responsible for the inquiry, which matters when admins
+        // and team-leaders are BCC'd. Falls back to the recipient's name when
+        // the chat isn't tied to a listing (direct messages).
+        $this->greetingName = $listing['owner_name'] ?? $this->receiverName;
     }
 
     public function build()
@@ -146,6 +158,14 @@ class MessageNotificationMailer extends Mailable
         $typeName = $subtype?->type?->name;
         $subtypeName = $subtype?->name;
 
+        // Owning agent of THIS listing (Listing belongsTo Agent). Used as the
+        // greeting name in the email so it foregrounds the responsible party.
+        $agent = $listing->agent ?? null;
+        $ownerName = null;
+        if ($agent) {
+            $ownerName = trim(($agent->first_name ?? '') . ' ' . ($agent->last_name ?? '')) ?: null;
+        }
+
         $frontend = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
         $publicUrl = !empty($listing->slug) ? "{$frontend}/listings/{$listing->slug}" : null;
 
@@ -157,6 +177,7 @@ class MessageNotificationMailer extends Mailable
             'category'   => $listing->category?->name ?? null,
             'subtype'    => $subtypeName ? trim(($typeName ? "{$typeName} · " : '') . $subtypeName) : $typeName,
             'public_url' => $publicUrl,
+            'owner_name' => $ownerName,
         ];
     }
 }

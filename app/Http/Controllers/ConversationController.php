@@ -76,6 +76,7 @@ class ConversationController extends Controller
         // trigger N+1 queries inside the mailer payload builder.
         if ($type) {
             $type->load([
+                'agent',
                 'category',
                 'property.barangay.city.province',
                 'property.propertyAttribute.subtype.type',
