@@ -7,6 +7,7 @@ use App\Services\OpenAI\CommandService;
 use App\Services\OpenAI\CacheService;
 use App\Services\OpenAI\DataLayerService;
 use App\Services\OpenAI\ListingCommandService;
+use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
 use App\Models\AiSearchLog;
 use Illuminate\Support\Facades\Auth;
@@ -234,20 +235,23 @@ class OpenAIController extends Controller
         return response()->json($data);
     }
 
-    public function analyzeListingTitle(Request $request)
+    /**
+     * Unified "Improve Title" endpoint. Replaces the separate analyze-title
+     * and suggest-titles endpoints — the frontend calls this with an optional
+     * `title` and the service picks the right mode based on word count.
+     *
+     * Response shape (always):
+     *   { suggestions: string[], mode: 'analyze'|'generate', score?: number, feedback?: string }
+     */
+    public function improveListingTitle(Request $request)
     {
-        $title = $request->input('title', '');
-
-        if (strlen(trim($title)) < 3) {
-            return response()->json(['error' => 'Title is too short to analyze.'], 422);
-        }
-
         $limitResponse = $this->cacheService->updateDailyLimit($request, 'create_text');
         if ($limitResponse->getStatusCode() !== 200) {
             return $limitResponse;
         }
 
         try {
+            $title = $request->input('title', '');
             $context = $request->only([
                 'category', 'property_type', 'property_subtype',
                 'project_name', 'project_location',
@@ -255,12 +259,32 @@ class OpenAIController extends Controller
                 'floor_area', 'lot_area',
                 'price', 'furnishing',
                 'amenities',
-                'address', 'barangay', 'city', 'province',
+                'address', 'address_id', 'barangay', 'city', 'province',
                 'nearby_facilities',
                 'photo_keywords',
                 'description',
             ]);
-            $result = $this->listingService->analyzeTitle($title, $context);
+
+            // Resolve structured location from address_id (the barangay FK)
+            // when the frontend can't supply names directly. The wizard's
+            // formData stores only the barangay ID, so without this fallback
+            // the title scorer would only get the raw address string and the
+            // location_strength axis would underscore by ~22 points.
+            $addressId = $request->input('address_id');
+            if ($addressId && (empty($context['barangay']) || empty($context['city']) || empty($context['province']))) {
+                $barangay = Barangay::with('city.province')->find($addressId);
+                if ($barangay) {
+                    if (empty($context['barangay']) && $barangay->name) $context['barangay'] = $barangay->name;
+                    if (empty($context['city']) && $barangay->city?->name) $context['city'] = $barangay->city->name;
+                    if (empty($context['province']) && $barangay->city?->province?->name) $context['province'] = $barangay->city->province->name;
+                }
+            }
+
+            $result = $this->listingService->improveTitle($title, $context);
+
+            if (!$result || empty($result['suggestions'])) {
+                return response()->json(['message' => 'Failed to generate title suggestions.'], 502);
+            }
 
             return response()->json($result);
         } catch (\OpenAI\Exceptions\RateLimitException $e) {
@@ -269,44 +293,7 @@ class OpenAIController extends Controller
             ], 429);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Failed to analyze title. Please try again.',
-            ], 500);
-        }
-    }
-
-    public function suggestListingTitles(Request $request)
-    {
-        $limitResponse = $this->cacheService->updateDailyLimit($request, 'create_text');
-        if ($limitResponse->getStatusCode() !== 200) {
-            return $limitResponse;
-        }
-
-        try {
-            $context = $request->only([
-                'category', 'property_type', 'property_subtype',
-                'project_name', 'project_location',
-                'bedrooms', 'bathrooms', 'parking',
-                'floor_area', 'lot_area',
-                'price', 'furnishing',
-                'amenities',
-                'address', 'barangay', 'city', 'province',
-                'nearby_facilities',
-                'photo_keywords',
-            ]);
-            $result = $this->listingService->suggestTitles($context);
-
-            if (!$result || empty($result['titles'])) {
-                return response()->json(['message' => 'Failed to generate title suggestions.'], 502);
-            }
-
-            return response()->json(['titles' => $result['titles']]);
-        } catch (\OpenAI\Exceptions\RateLimitException $e) {
-            return response()->json([
-                'message' => 'AI service is temporarily busy. Please try again in a moment.',
-            ], 429);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Failed to suggest titles. Please try again.',
+                'message' => 'Failed to improve title. Please try again.',
             ], 500);
         }
     }
