@@ -289,4 +289,290 @@ class ChatController extends Controller
 
         return response()->json(['message' => 'Chat deleted.']);
     }
+
+    /**
+     * Aggregate counts for the /admin/chat-statistics page.
+     *
+     * Returns:
+     *   - totals.{all,listing,agent,blog,reel} — overall chat counts per type
+     *   - listing_inquiries — totals + agent_replied + by_status + reply_rate
+     *     (a listing inquiry is "agent_replied" when the assigned agent has
+     *     authored at least one non-deleted/unsent message in the conversation)
+     *   - per_team — same shape per team (joined via team_agents on the
+     *     assigned agent's user_id)
+     *   - per_agent — same shape per agent_user_id, enriched with display info
+     *
+     * Each chat is represented by its LATEST conversation only (matches the
+     * frontend's `active_conversation` semantic) so a closed-then-re-inquired
+     * chat is never double-counted.
+     */
+    public function stats(Request $request)
+    {
+        $this->authorize('viewStats', Chat::class);
+
+        // Optional date-range filter. Applies to the LATEST conversation per
+        // chat (the same conversation the rest of this method aggregates over)
+        // — "inquiries with activity in this window". Both bounds optional;
+        // missing dates mean "no lower / no upper bound". Accepts YYYY-MM-DD.
+        $validated = $request->validate([
+            'date_from' => 'sometimes|nullable|date',
+            'date_to'   => 'sometimes|nullable|date|after_or_equal:date_from',
+        ]);
+        $dateFrom = !empty($validated['date_from'])
+            ? \Carbon\Carbon::parse($validated['date_from'])->startOfDay()
+            : null;
+        $dateTo = !empty($validated['date_to'])
+            ? \Carbon\Carbon::parse($validated['date_to'])->endOfDay()
+            : null;
+
+        $applyDateFilter = function ($q) use ($dateFrom, $dateTo) {
+            if ($dateFrom) {
+                $q->where('c.created_at', '>=', $dateFrom);
+            }
+            if ($dateTo) {
+                $q->where('c.created_at', '<=', $dateTo);
+            }
+        };
+
+        // 1) Chat totals by type — respect the date filter when present so the
+        //    tab counts stay consistent with listing_inquiries.total.
+        //    Anchor: a chat is "in this window" if its latest conversation's
+        //    created_at falls inside [date_from, date_to].
+        $byTypeQuery = DB::table('chats')
+            ->whereNull('chats.deleted_at')
+            ->select('chats.type', DB::raw('COUNT(*) as n'))
+            ->groupBy('chats.type');
+
+        if ($dateFrom || $dateTo) {
+            $byTypeQuery->whereExists(function ($q) use ($dateFrom, $dateTo) {
+                $q->select(DB::raw(1))
+                  ->from('conversations as c')
+                  ->whereColumn('c.chat_id', 'chats.id')
+                  ->whereNull('c.deleted_at')
+                  ->whereRaw('c.id = (SELECT MAX(c2.id) FROM conversations c2 WHERE c2.chat_id = chats.id AND c2.deleted_at IS NULL)');
+                if ($dateFrom) {
+                    $q->where('c.created_at', '>=', $dateFrom);
+                }
+                if ($dateTo) {
+                    $q->where('c.created_at', '<=', $dateTo);
+                }
+            });
+        }
+
+        $byType = $byTypeQuery->pluck('n', 'type')->toArray();
+
+        $totals = [
+            'all'     => (int) array_sum($byType),
+            'listing' => (int) ($byType['listing'] ?? 0),
+            'agent'   => (int) ($byType['agent']   ?? 0),
+            'blog'    => (int) ($byType['blog']    ?? 0),
+            'reel'    => (int) ($byType['reel']    ?? 0),
+        ];
+
+        // Subquery: "latest conversation per chat" — same scope the chat list
+        // uses for `active_conversation`. Soft-deleted conversations are
+        // excluded so a deleted re-inquiry doesn't bubble up as latest.
+        $latestConvSub = DB::table('conversations')
+            ->select(DB::raw('MAX(id) as id'))
+            ->whereNull('deleted_at')
+            ->groupBy('chat_id');
+
+        // Shared SQL fragment: the conversation is "agent_replied" when the
+        // assigned agent has authored a non-removed message in it. Used in
+        // multiple aggregate sums below.
+        $agentRepliedExists = "EXISTS (
+            SELECT 1 FROM messages m
+            WHERE m.conversation_id = c.id
+              AND m.user_id = c.agent_user_id
+              AND m.status NOT IN ('deleted', 'unsent')
+        )";
+
+        // 2) Listing-inquiry rollup (single grouped query)
+        $listingAgg = DB::table('conversations as c')
+            ->joinSub($latestConvSub, 'lc', 'lc.id', '=', 'c.id')
+            ->join('chats', 'chats.id', '=', 'c.chat_id')
+            ->whereNull('chats.deleted_at')
+            ->where('chats.type', 'listing')
+            ->tap($applyDateFilter)
+            ->select(
+                DB::raw('COUNT(*) as total'),
+                DB::raw("SUM(CASE WHEN c.status = 'pending'  THEN 1 ELSE 0 END) as s_pending"),
+                DB::raw("SUM(CASE WHEN c.status = 'accepted' THEN 1 ELSE 0 END) as s_accepted"),
+                DB::raw("SUM(CASE WHEN c.status = 'rejected' THEN 1 ELSE 0 END) as s_rejected"),
+                DB::raw("SUM(CASE WHEN c.status = 'closed'   THEN 1 ELSE 0 END) as s_closed"),
+                DB::raw("SUM(CASE WHEN c.agent_user_id IS NOT NULL AND {$agentRepliedExists} THEN 1 ELSE 0 END) as agent_replied")
+            )
+            ->first();
+
+        $listingTotal = (int) ($listingAgg->total ?? 0);
+        $agentReplied = (int) ($listingAgg->agent_replied ?? 0);
+        $notReplied   = max(0, $listingTotal - $agentReplied);
+
+        $listingInquiries = [
+            'total'         => $listingTotal,
+            'agent_replied' => $agentReplied,
+            'not_replied'   => $notReplied,
+            'by_status'     => [
+                'pending'  => (int) ($listingAgg->s_pending  ?? 0),
+                'accepted' => (int) ($listingAgg->s_accepted ?? 0),
+                'rejected' => (int) ($listingAgg->s_rejected ?? 0),
+                'closed'   => (int) ($listingAgg->s_closed   ?? 0),
+            ],
+            'reply_rate'    => $listingTotal > 0
+                ? round(($agentReplied / $listingTotal) * 100, 1)
+                : 0.0,
+        ];
+
+        // 3) Per-agent rollup (listing chats, latest conversation, agent assigned)
+        $perAgentRows = DB::table('conversations as c')
+            ->joinSub($latestConvSub, 'lc', 'lc.id', '=', 'c.id')
+            ->join('chats', 'chats.id', '=', 'c.chat_id')
+            ->whereNull('chats.deleted_at')
+            ->where('chats.type', 'listing')
+            ->whereNotNull('c.agent_user_id')
+            ->tap($applyDateFilter)
+            ->groupBy('c.agent_user_id')
+            ->select(
+                'c.agent_user_id',
+                DB::raw('COUNT(*) as total'),
+                DB::raw("SUM(CASE WHEN c.status = 'pending'  THEN 1 ELSE 0 END) as s_pending"),
+                DB::raw("SUM(CASE WHEN c.status = 'accepted' THEN 1 ELSE 0 END) as s_accepted"),
+                DB::raw("SUM(CASE WHEN c.status = 'rejected' THEN 1 ELSE 0 END) as s_rejected"),
+                DB::raw("SUM(CASE WHEN c.status = 'closed'   THEN 1 ELSE 0 END) as s_closed"),
+                DB::raw("SUM(CASE WHEN {$agentRepliedExists} THEN 1 ELSE 0 END) as agent_replied")
+            )
+            ->get();
+
+        // Enrich each agent_user_id with display info (name / avatar / team).
+        $agentUserIds = $perAgentRows->pluck('agent_user_id')->all();
+        $userInfo = collect();
+        if (!empty($agentUserIds)) {
+            $userInfo = DB::table('users as u')
+                ->leftJoin('agents as a', 'a.user_id', '=', 'u.id')
+                ->leftJoin('team_agents as ta', function ($j) {
+                    $j->on('ta.agent_id', '=', 'a.id')
+                      ->where('ta.status', '=', 'active');
+                })
+                ->leftJoin('teams as t', 't.id', '=', 'ta.team_id')
+                ->whereIn('u.id', $agentUserIds)
+                ->select(
+                    'u.id as user_id',
+                    'u.name as name',
+                    'u.avatar as avatar',
+                    't.id as team_id',
+                    't.name as team_name'
+                )
+                ->get()
+                ->keyBy('user_id');
+        }
+
+        $perAgent = $perAgentRows->map(function ($row) use ($userInfo) {
+            $info = $userInfo[$row->agent_user_id] ?? null;
+            $total = (int) $row->total;
+            $replied = (int) $row->agent_replied;
+            return [
+                'agent_user_id' => (int) $row->agent_user_id,
+                'name'          => $info?->name ?? ('Agent #' . $row->agent_user_id),
+                'avatar'        => $info?->avatar,
+                'team_id'       => isset($info->team_id) ? (int) $info->team_id : null,
+                'team_name'     => $info?->team_name,
+                'total'         => $total,
+                'agent_replied' => $replied,
+                'not_replied'   => max(0, $total - $replied),
+                'by_status'     => [
+                    'pending'  => (int) $row->s_pending,
+                    'accepted' => (int) $row->s_accepted,
+                    'rejected' => (int) $row->s_rejected,
+                    'closed'   => (int) $row->s_closed,
+                ],
+                'reply_rate'    => $total > 0
+                    ? round(($replied / $total) * 100, 1)
+                    : 0.0,
+            ];
+        })->values()->toArray();
+
+        // 4) Per-team meta: team display info + leader name + active agent count.
+        $teamMeta = DB::table('teams as t')
+            ->leftJoin('team_agents as la', function ($j) {
+                $j->on('la.team_id', '=', 't.id')
+                  ->where('la.status', '=', 'active')
+                  ->where('la.is_leader', '=', true);
+            })
+            ->leftJoin('agents as la_a', 'la_a.id', '=', 'la.agent_id')
+            ->leftJoin('users as la_u', 'la_u.id', '=', 'la_a.user_id')
+            ->leftJoin('team_agents as ag', function ($j) {
+                $j->on('ag.team_id', '=', 't.id')
+                  ->where('ag.status', '=', 'active');
+            })
+            ->select(
+                't.id as team_id',
+                't.name as team_name',
+                'la_u.name as leader_name',
+                DB::raw('COUNT(DISTINCT ag.agent_id) as agent_count')
+            )
+            ->groupBy('t.id', 't.name', 'la_u.name')
+            ->get();
+
+        // Aggregate the per_agent rollups by team for the per_team payload.
+        $teamRollup = [];
+        foreach ($perAgent as $agent) {
+            $tid = $agent['team_id'];
+            if (!$tid) {
+                continue;
+            }
+            if (!isset($teamRollup[$tid])) {
+                $teamRollup[$tid] = [
+                    'total'         => 0,
+                    'agent_replied' => 0,
+                    'by_status'     => [
+                        'pending'  => 0,
+                        'accepted' => 0,
+                        'rejected' => 0,
+                        'closed'   => 0,
+                    ],
+                ];
+            }
+            $teamRollup[$tid]['total']         += $agent['total'];
+            $teamRollup[$tid]['agent_replied'] += $agent['agent_replied'];
+            foreach ($agent['by_status'] as $s => $n) {
+                $teamRollup[$tid]['by_status'][$s] += $n;
+            }
+        }
+
+        $perTeam = $teamMeta->map(function ($t) use ($teamRollup) {
+            $tid = (int) $t->team_id;
+            $r = $teamRollup[$tid] ?? [
+                'total'         => 0,
+                'agent_replied' => 0,
+                'by_status'     => [
+                    'pending'  => 0,
+                    'accepted' => 0,
+                    'rejected' => 0,
+                    'closed'   => 0,
+                ],
+            ];
+            $total = (int) $r['total'];
+            $replied = (int) $r['agent_replied'];
+            return [
+                'team_id'       => $tid,
+                'team_name'     => (string) $t->team_name,
+                'leader_name'   => $t->leader_name,
+                'agent_count'   => (int) $t->agent_count,
+                'total'         => $total,
+                'agent_replied' => $replied,
+                'not_replied'   => max(0, $total - $replied),
+                'by_status'     => $r['by_status'],
+                'reply_rate'    => $total > 0
+                    ? round(($replied / $total) * 100, 1)
+                    : 0.0,
+            ];
+        })->values()->toArray();
+
+        return response()->json([
+            'totals'            => $totals,
+            'listing_inquiries' => $listingInquiries,
+            'per_team'          => $perTeam,
+            'per_agent'         => $perAgent,
+        ]);
+    }
 }

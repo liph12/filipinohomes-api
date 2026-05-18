@@ -238,6 +238,10 @@ Route::middleware('strip.tags')->group(function(){
     
     Route::middleware('throttle:chat')->group(function(){
         Route::middleware('auth:sanctum')->group(function(){
+            // Aggregate counts for /admin/chat-statistics. Must precede the
+            // chats apiResource — otherwise `/chats/stats` matches `show`
+            // and tries to bind `stats` as a Chat model id.
+            Route::get('chats/stats', [ChatController::class, 'stats']);
             Route::apiResource('chats', ChatController::class)->only(['index', 'store', 'show', 'destroy']);
             Route::apiResource('conversations', ConversationController::class)->only(['index', 'show']);
             Route::post('conversations/{conversation}/mark-read', [ConversationController::class, 'markRead']);
