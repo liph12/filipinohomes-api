@@ -7,12 +7,13 @@ use Illuminate\Database\Eloquent\Model;
 class Message extends Model
 {
 
-    protected $fillable = ['conversation_id', 'user_id', 'reply_to_id', 'type', 'body', 'read_at', 'status'];
+    protected $fillable = ['conversation_id', 'user_id', 'reply_to_id', 'type', 'body', 'attachments', 'read_at', 'status'];
 
     protected function casts(): array
     {
         return [
             'read_at' => 'datetime',
+            'attachments' => 'array',
         ];
     }
 

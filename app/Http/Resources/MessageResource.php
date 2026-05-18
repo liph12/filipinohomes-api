@@ -28,6 +28,7 @@ class MessageResource extends JsonResource
             'user' => new UserResource($this->whenLoaded('user')),
             'type' => $this->type,
             'body' => $this->body,
+            'attachments' => $this->attachments ?? [],
             'read_at' => $this->read_at,
             'status' => $this->status,
             'reply_to' => $this->whenLoaded('replyTo', function () {
