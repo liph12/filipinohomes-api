@@ -39,4 +39,15 @@ class ChatPolicy
     {
         return $chat->user_id === $user->id;
     }
+
+    /**
+     * Admin-only access to the chat/inquiry statistics aggregate endpoint.
+     * The `before()` hook above grants admins access globally, so this
+     * method only fires for non-admins — denying them by default.
+     * Team-leader scoping is a follow-up.
+     */
+    public function viewStats(User $user): bool
+    {
+        return false;
+    }
 }
