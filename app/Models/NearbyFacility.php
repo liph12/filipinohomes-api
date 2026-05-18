@@ -17,6 +17,9 @@ class NearbyFacility extends Model
         'pharmacy',
         'fire_station',
         'police_station',
+        'mall',
+        'park',
+        'attraction',
     ];
 
     protected $casts = [
@@ -26,6 +29,9 @@ class NearbyFacility extends Model
         'pharmacy'       => 'array',
         'fire_station'   => 'array',
         'police_station' => 'array',
+        'mall'           => 'array',
+        'park'           => 'array',
+        'attraction'     => 'array',
     ];
 
     public function property()

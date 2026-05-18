@@ -160,7 +160,10 @@ class ListingService
     protected function buildNearbyFacilitiesPayload(array $data): array
     {
         $allowed = [
-            'school', 'hospital', 'clinic', 'pharmacy', 'fire_station', 'police_station'
+            'school', 'hospital', 'clinic', 'pharmacy', 'fire_station', 'police_station',
+            // Popular-place keys — surfaced to the listing AI so it can mention
+            // recognizable landmarks (Ayala Center, Ayala Triangle, etc.).
+            'mall', 'park', 'attraction',
         ];
 
         // New flexible format handling under 'nearby_facilities'

@@ -23,6 +23,9 @@ class NearbyFacilityResource extends JsonResource
             'pharmacy'       => $this->pharmacy ?? [],
             'fire_station'   => $this->fire_station ?? [],
             'police_station' => $this->police_station ?? [],
+            'mall'           => $this->mall ?? [],
+            'park'           => $this->park ?? [],
+            'attraction'     => $this->attraction ?? [],
         ];
     }
 }

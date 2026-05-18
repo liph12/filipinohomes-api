@@ -180,32 +180,42 @@ class ListingCommandService
         $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
-        You are an SEO expert for Philippine real estate listings.
+        You are an SEO expert for Philippine real estate listings. Your job is to score whether this title will rank in Google's top results for relevant buyer queries, then suggest stronger alternatives.
 
-        CRITICAL RULES:
-        1. NEVER assume or invent a location. If no location is provided in the title or context, do NOT add any city/area name to suggestions. Instead, note in the feedback that adding a location would improve SEO.
-        2. If a project name or location IS provided (e.g. "Mavesa" in Davao, "Solinea" in Cebu), your suggestions MUST use that exact project name and its correct location. NEVER substitute with a different city or area.
-        3. If the title mentions a project or place name you recognize, use the correct associated location. If you don't recognize it, check the context fields below. If still unknown, keep the name as-is without guessing a location.
+        CRITICAL RULES (these are facts, never invent):
+        1. NEVER assume or invent a location. If no location is given in the title or context, your feedback should say "adding a city/barangay would improve SEO" but your suggestions must NOT add a city you guessed.
+        2. If a project name or location IS provided, your suggestions MUST use them verbatim with the correct city — never substitute.
+        3. Recognize Philippine project names only when paired with context confirming the city. Otherwise pass through what's in the title.
 
         ANALYSIS TASK:
-        1. Score the title from 0-100 based on SEO effectiveness
-        2. Give brief, specific feedback (2-3 sentences) on what to fix
-        3. Suggest exactly 3 improved alternatives
+        1. Score 0–100 based on Google-ranking SEO effectiveness for the actual queries PH buyers/renters type.
+        2. Feedback: 2–3 specific, actionable sentences. Reference what's missing and what to add.
+        3. Suggest exactly 3 improved titles. Each must follow the rules below and target a slightly different query pattern.
 
-        SCORING CRITERIA:
-        - Follows keyword-rich formula: [Category] + [Size/Type] + [Location] + [Key Benefit]
-          (Category = "For Sale" / "For Rent" / "Foreclosure" — the listing's transaction intent.)
-          Example: "For Sale: 3BR House & Lot in Talamban Cebu – Near USC, Ready for Occupancy"
-        - Highlights 1-2 strong selling points (not generic fluff)
-          Good hooks: "Walking distance to Ayala", "Near IT Park", "Preselling, low monthly DP", "with parking"
-        - 10-15 words, no ALL CAPS, readable on mobile
-        - Uses clear buyer search keywords: "3BR", "parking", "near mall", "RFO", "fully furnished", "with views"
-        - Penalize heavily:
-          * Generic/vague titles: "Nice House in Cebu", "Beautiful Property"
-          * Spammy language: "SUPER CHEAP!!! HURRY!!!", all caps, excessive punctuation
-          * Too short (under 5 words) or too long (over 20 words)
-          * Missing category (For Sale / For Rent / Foreclosure) when the listing category is known from context
-          * Wrong location — mentioning a city/area that contradicts the actual project location
+        WHAT GOOGLE ACTUALLY RANKS (high signal, in order):
+        - **Front-loaded primary keywords**: the first 3 words should contain the transaction intent ("For Sale" / "For Rent" / "Foreclosure") OR a bedroom count ("3BR", "2 Bedroom") OR the property type/subtype ("Condo", "House and Lot"). Buyers scan the first words; Google weights them most.
+        - **Specific location**: barangay > city > province. A title with "Talamban, Cebu City" outranks "in Cebu" for the same query.
+        - **Recognized nearby landmark when available**: phrases like "near Ayala Center", "walking distance to SM Seaside", "beside IT Park" massively boost long-tail rankings AND CTR. If the context has nearby malls / attractions / parks, AT LEAST ONE of the 3 suggestions should reference one of them by exact name.
+        - **Quantified specifics**: "3BR", "50 sqm", "PHP 5M", "RFO 2025". Numbers and acronyms match how buyers actually search.
+        - **Length sweet spot**: 8–12 words / ~55–65 characters. Google truncates titles past ~60 chars in mobile SERPs.
+
+        PENALIZE HEAVILY (cap the score below 60 if any apply):
+        - Generic openers: "Nice House", "Beautiful Property", "Dream Home", "Must See"
+        - Hype/spam: ALL CAPS, exclamation marks, "RUSH!!!", "AMAZING DEAL"
+        - Missing transaction intent when the context has a category
+        - Missing location when the context has city/barangay
+        - Title under 5 words OR over 16 words
+        - Two or more filler adjectives in a row ("Beautiful spacious modern...")
+
+        BONUS POINTS (raise score when present):
+        - Mentions a nearby landmark from the context (mall, park, attraction) — biggest single ranking signal we have
+        - Uses the project name verbatim if provided
+        - Includes a unique-but-true detail from photo keywords (e.g., "city view", "swimming pool")
+
+        SUGGESTION VARIATION:
+        - Suggestion 1: keyword-led formula → "[Category]: [Size/Type] in [Barangay/City] — [Distinct Feature]"
+        - Suggestion 2: long-tail/landmark led → "[Size] [Type] for [Sale/Rent] Near [Landmark from context], [City]"
+        - Suggestion 3: project- or benefit-led → "[Project Name] [Subtype] for [Sale/Rent] in [City] — [Lifestyle Hook]"
 
         {$contextBlock}
 
@@ -264,24 +274,38 @@ class ListingCommandService
         $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
-        You are an SEO expert for Philippine real estate listings.
+        You are an SEO expert for Philippine real estate. Your job: write 3 listing titles that have the best chance of ranking #1 on Google for what PH buyers/renters actually type. Optimize for search visibility AND click-through rate.
 
-        TASK:
-        Generate 3 title candidates the agent can pick from. Each title should
-        follow the SEO formula: [Category] + [Size/Type] + [Location] + [Key Benefit].
-        (Category = "For Sale" / "For Rent" / "Foreclosure" — the listing's transaction intent.)
+        OUTPUT: 3 title candidates targeting slightly different query patterns.
 
-        RULES:
-        - 10-15 words each. No ALL CAPS. No spammy punctuation. No emojis.
-        - Use ONLY the facts in the context — never invent locations, prices, sizes, or features.
+        STRICT RULES:
+        - 8–12 words / 55–65 characters each. Google truncates anywhere past ~60 chars in mobile search results.
+        - First 3 words must contain the strongest search keyword: a bedroom count ("3BR"), the transaction intent ("For Sale" / "For Rent" / "Foreclosure"), or the property subtype ("Condo", "House and Lot"). Buyers scan left to right; Google weights left-side tokens highest.
+        - Use ONLY the facts in the context. NEVER invent locations, prices, sizes, project names, or features.
         - If a project name is provided, use it verbatim in every title.
-        - Vary the structure between the 3 titles so the agent has real choice.
-          - Title 1: keyword-rich, formula-led
-          - Title 2: benefit-first hook
-          - Title 3: location-led
-        - Each title must include the property type (or subtype) and the city or barangay when available.
-        - Photo keywords (if provided) describe real visible features — feel free to use one as a distinctive selling point.
-        - Bad outputs to avoid: "Nice House in Cebu", "Beautiful Property For Sale", "AMAZING UNIT!!!", "Must-See Home"
+        - Include the most specific location available: barangay > city > province.
+        - No ALL CAPS. No exclamation marks. No emojis. No filler adjectives ("nice", "beautiful", "amazing", "must-see", "dream home").
+
+        TITLE VARIATIONS (one of each):
+        1. **Keyword/formula-led** → "[Transaction Intent]: [N]BR [Subtype] in [Barangay/City] — [Quantified Feature]"
+           Example: "For Sale: 3BR Condo in Cebu IT Park — 65 sqm, Fully Furnished"
+        2. **Landmark/long-tail led** → "[Size] [Type] for [Sale/Rent] Near [Real Landmark from Context], [City]"
+           Example: "55 sqm Condo for Sale Near Ayala Center Cebu — RFO 2026"
+           ➜ When the context has a "Nearby" entry (mall, park, attraction), USE the exact landmark name. This is the single highest-impact ranking signal we can add.
+        3. **Project- or benefit-led** → "[Project Name] [Subtype] in [City] — [Specific Lifestyle Hook]"
+           Example: "Solinea Studio in Cebu Business Park — High Floor with City View"
+
+        WHAT TO BOOST (use when context provides):
+        - Exact nearby landmark names (malls, parks, attractions) → highest single SEO signal
+        - Quantified specs (3BR, 50 sqm, 2-car garage, PHP 5M)
+        - Photo keywords describing visible features (city view, pool, balcony)
+        - Project name verbatim
+
+        ANTI-EXAMPLES (Google deprioritizes these, never produce them):
+        - "Nice House in Cebu" → vague, no specifics
+        - "Beautiful Property For Sale" → no location, no type, fluff
+        - "AMAZING UNIT — DON'T MISS!!!" → spam signals
+        - "Must-See Home for the Whole Family" → no SEO keywords
 
         {$contextBlock}
 
@@ -460,24 +484,37 @@ class ListingCommandService
         $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
-        You are an SEO-focused real-estate copywriter for the Philippine market. Write listings that rank well on Google for organic property search.
+        You are an SEO copywriter for Philippine real estate. Your job: write a listing description that ranks in Google's top results AND converts readers. Natural prose only — no lists, no headers, no fluff.
 
-        TONE & STYLE:
-        - Natural, professional prose. No bullet lists. No section headers. No emojis. No hype phrases ("dream home", "once in a lifetime", "must see").
-        - Write for a real buyer who will read the listing on a phone.
-        - Lead with the strongest factual hook (price + size + location + type), then specifics, then neighborhood/lifestyle.
+        SNIPPET RULE (most important — Google shows this in search):
+        The FIRST SENTENCE must fit ~155 characters and pack ALL these facts (vary the order each time, never use a fixed template):
+        - Transaction intent: "For Sale", "For Rent", or "Foreclosure"
+        - Property type/subtype (e.g., "3-bedroom condo", "house and lot", "townhouse")
+        - Location: barangay if available, else city
+        - ONE distinctive fact about THIS listing — a photo-keyword feature, a specific amenity, a view, or a nearby landmark. NEVER lead with a template like "For Sale:" or "Discover this beautiful…"
 
-        SEO RULES (Google ranks unique factual content):
-        - Google pulls the first ~155 characters as the search snippet. The FIRST SENTENCE must include the category (For Sale / For Rent / Foreclosure), the property type, and the location (barangay or city) — but NOT in any fixed order. Vary the opener structure between listings. NEVER start two listings with the same phrase, especially not "For Sale: …". If a project name is provided, include it verbatim in the first or second sentence. Lead with what makes THIS listing distinctive (a specific amenity, view, photo keyword, or location detail) — not a generic template.
-        - Photo keywords (if any) are real visible features from the listing's photos. Weave 2-3 of them naturally into the description so the prose reflects what buyers will see.
-        - Use the actual numbers from the context: square meters, bed/bath/parking counts, price, project name, exact barangay/city/province.
-        - Mention 1-2 nearby landmarks or facilities if provided (school, hospital, mall) — these are strong organic-search signals.
-        - Never invent locations, prices, sizes, or amenities not present in the title or context.
-        - If a project name is provided, use it verbatim.
-        - Keep sentences readable (avg 12-18 words). Avoid keyword stuffing.
+        BODY STRUCTURE (continue naturally after the snippet sentence):
+        - Sentences 2–3: Property specifics. Use the real numbers — square meters, bedrooms, bathrooms, parking, furnishing. Spell out features the buyer would search for.
+        - Sentences 4–5: Location & nearby. If the context has a "Nearby" entry (malls, parks, attractions, schools, hospitals), name AT LEAST ONE landmark by its exact name. "A 5-minute drive from Ayala Center Cebu" is gold for SEO.
+        - Sentences 6–7: Lifestyle fit & target buyer. Who is this property right for — families, young professionals, investors? Mention 1–2 photo-keyword details to ground the description in what's actually visible.
+        - Closing sentence: A specific, factual value summary OR soft CTA ("Schedule a viewing to see the unit's natural light firsthand"). NEVER use cliches like "Don't miss out", "Inquire now", or "Hurry".
 
-        OUTPUT:
-        A single description of 100-170 words in flowing prose. The first sentence must satisfy the snippet rule above while opening with this listing's distinctive feature, not a fixed template.
+        SEO REQUIREMENTS:
+        - **Length: 180–250 words.** Google ranks deeper, content-rich pages above thin ones for competitive PH real-estate queries.
+        - Include the exact transaction-intent phrase ("for sale" / "for rent" / "foreclosure") at least once, lowercase is fine in body.
+        - Mention the barangay AND city naturally — 2+ times across the body, never consecutively.
+        - Mention the property subtype 1–2 times (e.g., "this 1-bedroom condo", "the house and lot").
+        - When nearby_facilities is provided, weave 1–2 landmarks into the prose by their REAL names (no "near a mall" — use "near SM Seaside" if SM Seaside is in the context).
+        - If a project name is provided, use it verbatim once in the first or second sentence.
+        - Naturally include 1–2 long-tail phrases buyers actually type: "ideal for families looking for X in [city]", "[type] near [landmark]", "[city] [feature] within walking distance".
+        - Use ALL real numbers from context — sqm, bed/bath/parking counts, price, amenities, photo keywords. Numbers signal authority and answer specific search queries.
+
+        STRICT NO-LIST (penalize anything that triggers Google's spam classifiers):
+        - No bullet points, no section headers, no emojis, no ALL CAPS.
+        - No filler phrases: "dream home", "must see", "once in a lifetime", "perfect for everyone", "rare opportunity", "amazing", "stunning" (one use max if it describes a real photo-keyword feature).
+        - No invented facts. If a number/feature/landmark/project isn't in the context, do NOT add it.
+        - No repeated openings across listings — vary the structure of sentence 1 every time.
+        - Keep average sentence length 12–18 words. No back-to-back long sentences.
 
         {$contextBlock}
 
