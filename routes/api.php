@@ -90,6 +90,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('agents', [AgentController::class, 'index']);
             Route::get('agents/deleted', [AgentController::class, 'deletedAgents'])->middleware('auth:sanctum');
             Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
+            Route::get('agents/{id}/activity', [AgentController::class, 'activity']);
             Route::get('agents/{id}', [AgentController::class, 'show']);
 
             Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
@@ -156,6 +157,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/openai/analyze-title', [OpenAIController::class, 'analyzeListingTitle']);
             Route::post('/openai/suggest-titles', [OpenAIController::class, 'suggestListingTitles']);
             Route::apiResource('users', UserController::class);
+            Route::get('/teams/monthly-listings', [TeamController::class, 'monthlyListings']);
             Route::apiResource('teams', TeamController::class);
             Route::apiResource('team-agents', TeamAgentController::class);
             Route::apiResource('property_attributes', PropertyAttributesController::class);
