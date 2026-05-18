@@ -28,6 +28,12 @@ class MessageNotificationMailer extends Mailable
      */
     public $listing;
     /**
+     * Frontend base URL (e.g. https://filipinohomes.com or a staging host).
+     * Driven by FRONTEND_URL env so emails don't hardcode prod — same value
+     * is used to compose role-aware deep links in the blade.
+     */
+    public $frontendUrl;
+    /**
      * Create a new message instance.
      *
      * @return void
@@ -47,6 +53,10 @@ class MessageNotificationMailer extends Mailable
         $this->slug = $slug;
         $this->roleName = $roleName;
         $this->listing = $listing;
+        // Resolve once so the blade can compose deep links for any role:
+        //   {$frontendUrl}/{role}/listing-inquiries/{$slug}
+        // Falls back to prod when FRONTEND_URL isn't set in .env.
+        $this->frontendUrl = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
     }
 
     /**

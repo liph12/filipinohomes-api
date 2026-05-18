@@ -42,7 +42,7 @@
                                         style="background-color:#ffffff;padding:12px 40px 24px;">
                                         <span
                                             style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
-                                            eiverName)) }},
+                                            Hello {{ ucwords(strtolower($receiverName)) }},
                                             <br /><br />
                                             A new message has been submitted through Filipino Homes. Please review below and respond at your earliest convenience.
                                         </span>
@@ -88,7 +88,7 @@
                                             </tbody>
                                         </table>
                                     </td>
-                                </tr> Hello {{ ucwords(strtolower($rec
+                                </tr>
                                 @endif
 
                                 <tr>
@@ -106,7 +106,7 @@
                         <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
                             From:<br />
                             <strong style="color:#162033;">{{ $senderName }}</strong><br />
-                            <a href="mailto:{{ $senderEmail }}" style="color:#1d4ed8;text-decoration:none;">{{ $senderEmail }}</a>
+                            <a href="mailto:{{ $senderEmail }}" style="color:#1d4ed8;text-decoration:none;">✉️ {{ $senderEmail }}</a>
                             @if (!empty($senderMobile))
                             <br /><a href="tel:{{ $senderMobile }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $senderMobile }}</a>
                             @endif
@@ -132,7 +132,10 @@
                                     </td>
                                     @endif
                                     <td align="center" valign="middle" style="padding:0 6px;">
-                                        <a href="https://filipinohomes.com/{{ $roleName }}/listing-inquiries/{{ $slug }}"
+                                        {{-- Role-aware deep link. $roleName resolves to admin / agent / client
+                                             at runtime, and $frontendUrl is driven by FRONTEND_URL env so the
+                                             host adapts to local/staging/prod without code changes. --}}
+                                        <a href="{{ $frontendUrl }}/{{ $roleName }}/listing-inquiries/{{ $slug }}"
                                             style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
                                             View Message
                                         </a>
