@@ -57,8 +57,25 @@ class ConversationController extends Controller
         $message = $conversation->latestMessage->body;
         $agent = $conversation->agentUser;
         $sender = $conversation->chat->user;
+        // Load the sender's agent profile so the email can surface their
+        // WhatsApp number when they're an agent. Skipped silently for
+        // regular clients (the relation just returns null).
+        $sender?->loadMissing('agent');
         $type = $conversation->chat->listing;
-        $slug = Str::slug($type->name)."-".$conversation->id;
+        // Load the relations the email's property card needs so we don't
+        // trigger N+1 queries inside the mailer payload builder.
+        if ($type) {
+            $type->load([
+                'category',
+                'property.barangay.city.province',
+                'property.propertyAttribute.subtype.type',
+            ]);
+        }
+        // Slug trailer must be the chat_id — the frontend's ListingInquiries
+        // component matches `{slug}-{chat.id}` to find the right inquiry.
+        // Using conversation.id here would render the page with no inquiry
+        // selected (slugError = "invalid").
+        $slug = Str::slug($type->name)."-".$conversation->chat_id;
 
         if ($conversation->status !== 'pending') {
             return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
@@ -84,7 +101,14 @@ class ConversationController extends Controller
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
-        Mail::to($agent->email)->send(new MessageNotificationMailer($sender, $agent, $message, $slug));
+        Mail::to($agent->email)->send(new MessageNotificationMailer(
+            $sender,
+            $agent,
+            $message,
+            $slug,
+            'agent',
+            MessageNotificationMailer::buildListingPayload($type),
+        ));
 
         return new ConversationResource($conversation);
     }

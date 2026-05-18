@@ -42,12 +42,15 @@ class FullListingController extends Controller
     }
     public function show(Listing $listing): JsonResponse
     {
-        // Load relations needed to resolve address hierarchy
+        // Load relations needed to resolve address hierarchy + AI context
+        // (category, project, amenities — the audit modal's AI prompts use
+        // these for richer title/description generation).
         $listing->load([
             'property.propertyAttribute.subtype.type',
             'property.furnishing',
             'property.barangay.city.province',
             'property.nearbyFacility',
+            'property.project',
             'category',
             'agent.user',
         ]);

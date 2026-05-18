@@ -15,23 +15,38 @@ class MessageNotificationMailer extends Mailable
     public $receiverName;
     public $senderEmail;
     public $senderName;
+    public $senderMobile;
+    public $senderWhatsapp;
     public $message;
     public $slug;
     public $roleName;
+    /**
+     * Optional listing payload shown as a property card in the email so the
+     * recipient knows which listing the inquiry/message refers to.
+     * Shape: ['name', 'price', 'image', 'location', 'category', 'subtype',
+     * 'public_url'] — all strings, all optional.
+     */
+    public $listing;
     /**
      * Create a new message instance.
      *
      * @return void
      */
-    public function __construct($sender, $receiver, $message, $slug, $roleName = 'agent')
+    public function __construct($sender, $receiver, $message, $slug, $roleName = 'agent', ?array $listing = null)
     {
         $this->receiverEmail = $receiver->email;
         $this->receiverName = $receiver->name;
         $this->senderEmail = $sender->email;
         $this->senderName = $sender->name;
+        // Mobile sits on the User row; WhatsApp lives on the related Agent
+        // profile (only present for users with role=agent). Both optional so
+        // direct-client senders just show what they have.
+        $this->senderMobile   = $sender->mobile_no ?? null;
+        $this->senderWhatsapp = $sender->agent?->whats_app_no ?? null;
         $this->message = $message;
         $this->slug = $slug;
         $this->roleName = $roleName;
+        $this->listing = $listing;
     }
 
     /**
@@ -49,5 +64,74 @@ class MessageNotificationMailer extends Mailable
         ->markdown('emails.message-notification');
 
         return $mail;
+    }
+
+    /**
+     * Build the property-card payload for the email template from a Listing
+     * Eloquent model. Pulls just the strings/URLs the blade renders so the
+     * queued job doesn't have to serialize the whole model graph.
+     *
+     * @param  mixed $listing  Listing model (loaded with property + category)
+     * @return array<string, mixed>|null
+     */
+    public static function buildListingPayload($listing): ?array
+    {
+        if (!$listing) {
+            return null;
+        }
+
+        // featured_photo is JSON-cast to array on the Listing model; take the
+        // first URL. Falls back to first property photo when missing.
+        $photo = null;
+        $raw = $listing->featured_photo ?? null;
+        if (is_array($raw) && !empty($raw[0])) {
+            $photo = (string) $raw[0];
+        } elseif (is_string($raw) && $raw !== '') {
+            $decoded = json_decode($raw, true);
+            $photo = is_array($decoded) && !empty($decoded[0]) ? (string) $decoded[0] : $raw;
+        }
+        if (!$photo) {
+            $propertyPhotos = $listing->property?->photos;
+            if (is_array($propertyPhotos) && !empty($propertyPhotos[0])) {
+                $photo = (string) $propertyPhotos[0];
+            }
+        }
+
+        // Compose location from the deepest available level — barangay > city
+        // > province > raw address.
+        $barangay = $listing->property?->barangay;
+        $city     = $barangay?->city;
+        $province = $city?->province;
+        $locParts = array_filter([
+            $barangay?->name,
+            $city?->name,
+            $province?->name,
+        ]);
+        $location = !empty($locParts)
+            ? implode(', ', $locParts)
+            : ($listing->property?->address ?? null);
+
+        // Format price as "PHP 12,345,678" when numeric, otherwise pass through.
+        $price = $listing->price ?? null;
+        if ($price !== null && is_numeric($price)) {
+            $price = 'PHP ' . number_format((float) $price);
+        }
+
+        $subtype = $listing->property?->propertyAttribute?->subtype;
+        $typeName = $subtype?->type?->name;
+        $subtypeName = $subtype?->name;
+
+        $frontend = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
+        $publicUrl = !empty($listing->slug) ? "{$frontend}/listings/{$listing->slug}" : null;
+
+        return [
+            'name'       => $listing->name ?? null,
+            'price'      => $price,
+            'image'      => $photo,
+            'location'   => $location,
+            'category'   => $listing->category?->name ?? null,
+            'subtype'    => $subtypeName ? trim(($typeName ? "{$typeName} · " : '') . $subtypeName) : $typeName,
+            'public_url' => $publicUrl,
+        ];
     }
 }

@@ -33,7 +33,9 @@ class SendMessageNotification implements ShouldQueue
             return;
         }
 
-        $sender = User::find($this->senderId);
+        // Eager-load the agent profile so the mailer can read
+        // $sender->agent?->whats_app_no when the sender is an agent.
+        $sender = User::with('agent')->find($this->senderId);
         if (!$sender) {
             return;
         }
@@ -96,11 +98,29 @@ class SendMessageNotification implements ShouldQueue
             ? Str::slug($listing->name) . '-' . $conversation->chat_id
             : 'chat-' . $conversation->chat_id;
 
+        // Load the relations the email's property card needs (category,
+        // location chain, property type/subtype). Direct messages without a
+        // listing skip this entirely.
+        if ($listing) {
+            $listing->load([
+                'category',
+                'property.barangay.city.province',
+                'property.propertyAttribute.subtype.type',
+            ]);
+        }
+
         $recipientRole = $recipient->role?->name ?? 'client';
 
         // Send email notification
         Mail::to($recipient->email)->send(
-            new MessageNotificationMailer($sender, $recipient, $message->body, $slug, $recipientRole)
+            new MessageNotificationMailer(
+                $sender,
+                $recipient,
+                $message->body,
+                $slug,
+                $recipientRole,
+                MessageNotificationMailer::buildListingPayload($listing),
+            )
         );
 
         // Update last_notified_at for the recipient
