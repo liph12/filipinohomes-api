@@ -110,7 +110,7 @@
                         style="background-color:#ffffff;padding:8px 40px 16px;">
                         <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
                             From:<br />
-                            <strong style="color:#162033;">{{ $senderName }}</strong><br />
+                            <strong style="color:#162033;">{{ ucwords(strtolower($senderName)) }}</strong><br />
                             <a href="mailto:{{ $senderEmail }}" style="color:#1d4ed8;text-decoration:none;">✉️ {{ $senderEmail }}</a>
                             @if (!empty($senderMobile))
                             <br /><a href="tel:{{ $senderMobile }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $senderMobile }}</a>
@@ -121,6 +121,31 @@
                         </span>
                     </td>
                 </tr>
+
+                @if (!empty($listing) && (!empty($listing['owner_name']) || !empty($listing['owner_mobile']) || !empty($listing['owner_whatsapp'])))
+                {{-- Owning-agent contact card. Mirrors the "From:" block so BCC'd
+                     admins / team-leaders can reach the responsible agent without
+                     digging through the dashboard. Only rendered when at least
+                     one owner field is present. --}}
+                <tr>
+                    <td align="left" valign="top"
+                        style="background-color:#ffffff;padding:0 40px 16px;">
+                        <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
+                            Listing Owner:<br />
+                            @if (!empty($listing['owner_name']))
+
+                            <strong style="color:#162033;">{{ ucwords(strtolower($listing['owner_name'])) }}</strong>
+                            @endif
+                            @if (!empty($listing['owner_mobile']))
+                            <br /><a href="tel:{{ $listing['owner_mobile'] }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $listing['owner_mobile'] }}</a>
+                            @endif
+                            @if (!empty($listing['owner_whatsapp']))
+                            <br /><a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $listing['owner_whatsapp']) }}" target="_blank" style="color:#1d4ed8;text-decoration:none;">💬 WhatsApp: {{ $listing['owner_whatsapp'] }}</a>
+                            @endif
+                        </span>
+                    </td>
+                </tr>
+                @endif
 
                 <!-- BUTTON SECTION -->
                 <tr>
@@ -137,12 +162,12 @@
                                     </td>
                                     @endif
                                     <td align="center" valign="middle" style="padding:0 6px;">
-                                        {{-- Role-aware redirect handled by the frontend at /inbox/[slug].
+                                        {{-- Role-aware inbox link. Matches the actual frontend route:
+                                             {frontendUrl}/{role}/main-dashboard/{slug}
+                                             $roleName resolves to admin/agent/client at send-time and
                                              $frontendUrl is driven by FRONTEND_URL env so the host adapts
-                                             to local/staging/prod, and the redirect page resolves each
-                                             viewer to /{role}/listing-inquiries/{slug} per their auth —
-                                             so BCC admins/team-leaders land on the right path too. --}}
-                                        <a href="{{ $frontendUrl }}/inbox/{{ $slug }}"
+                                             to local/staging/prod without code changes. --}}
+                                        <a href="{{ $frontendUrl }}/{{ $roleName }}/main-dashboard/{{ $slug }}"
                                             style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
                                             View Message
                                         </a>

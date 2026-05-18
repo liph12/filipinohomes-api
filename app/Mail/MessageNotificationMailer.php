@@ -159,25 +159,33 @@ class MessageNotificationMailer extends Mailable
         $subtypeName = $subtype?->name;
 
         // Owning agent of THIS listing (Listing belongsTo Agent). Used as the
-        // greeting name in the email so it foregrounds the responsible party.
+        // greeting name AND in the dedicated "Listing Owner" contact block in
+        // the email so recipients (especially BCC'd admins/team-leaders) know
+        // who's responsible and how to reach them directly.
         $agent = $listing->agent ?? null;
         $ownerName = null;
+        $ownerMobile = null;
+        $ownerWhatsapp = null;
         if ($agent) {
-            $ownerName = trim(($agent->first_name ?? '') . ' ' . ($agent->last_name ?? '')) ?: null;
+            $ownerName     = trim(($agent->first_name ?? '') . ' ' . ($agent->last_name ?? '')) ?: null;
+            $ownerMobile   = $agent->mobile_no    ?? null;
+            $ownerWhatsapp = $agent->whats_app_no ?? null;
         }
 
         $frontend = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
         $publicUrl = !empty($listing->slug) ? "{$frontend}/listings/{$listing->slug}" : null;
 
         return [
-            'name'       => $listing->name ?? null,
-            'price'      => $price,
-            'image'      => $photo,
-            'location'   => $location,
-            'category'   => $listing->category?->name ?? null,
-            'subtype'    => $subtypeName ? trim(($typeName ? "{$typeName} · " : '') . $subtypeName) : $typeName,
-            'public_url' => $publicUrl,
-            'owner_name' => $ownerName,
+            'name'           => $listing->name ?? null,
+            'price'          => $price,
+            'image'          => $photo,
+            'location'       => $location,
+            'category'       => $listing->category?->name ?? null,
+            'subtype'        => $subtypeName ? trim(($typeName ? "{$typeName} · " : '') . $subtypeName) : $typeName,
+            'public_url'     => $publicUrl,
+            'owner_name'     => $ownerName,
+            'owner_mobile'   => $ownerMobile,
+            'owner_whatsapp' => $ownerWhatsapp,
         ];
     }
 }
