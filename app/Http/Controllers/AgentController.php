@@ -298,6 +298,154 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         ]);
     }
 
+    /**
+     * Paginated detail rows for the admin Teams "view details" drill-down.
+     *
+     * Query params:
+     *   type      = logins | listings | transactions | inquiries (required)
+     *   date_from = YYYY-MM-DD (optional, inclusive)
+     *   date_to   = YYYY-MM-DD (optional, inclusive)
+     *   page      = 1-based page index (default 1)
+     *   per_page  = clamped to [1, 50] (default 10)
+     */
+    public function activity(Request $request, $id)
+    {
+        $agent = Agent::with('user')->findOrFail($id);
+        $userId = $agent->user_id;
+
+        $type = $request->query('type');
+        if (!in_array($type, ['logins', 'listings', 'transactions', 'inquiries'], true)) {
+            return response()->json(['message' => 'Invalid type.'], 422);
+        }
+
+        $perPage  = max(1, min((int) $request->query('per_page', 10), 50));
+        $dateFrom = $request->query('date_from');
+        $dateTo   = $request->query('date_to');
+        $from     = $dateFrom ? Carbon::parse($dateFrom)->startOfDay() : null;
+        $to       = $dateTo   ? Carbon::parse($dateTo)->endOfDay()     : null;
+
+        if ($type === 'logins') {
+            if (!$userId) return response()->json(['data' => [], 'meta' => ['total' => 0]]);
+            $q = LoginLog::where('user_id', $userId)->orderByDesc('logged_in_at');
+            if ($from) $q->where('logged_in_at', '>=', $from);
+            if ($to)   $q->where('logged_in_at', '<=', $to);
+            $page = $q->paginate($perPage);
+            return response()->json([
+                'data' => $page->getCollection()->map(fn ($l) => [
+                    'id'           => $l->id,
+                    'logged_in_at' => $l->logged_in_at?->toDateTimeString(),
+                    'ip_address'   => $l->ip_address,
+                    'user_agent'   => $l->user_agent,
+                ]),
+                'meta' => [
+                    'current_page' => $page->currentPage(),
+                    'last_page'    => $page->lastPage(),
+                    'per_page'     => $page->perPage(),
+                    'total'        => $page->total(),
+                    'from'         => $page->firstItem(),
+                    'to'           => $page->lastItem(),
+                ],
+            ]);
+        }
+
+        if ($type === 'listings') {
+            $q = $agent->listings()
+                ->with(['property:id,address,status,status_change_date', 'category:id,name'])
+                ->orderByDesc('created_at');
+            if ($from) $q->where('listings.created_at', '>=', $from);
+            if ($to)   $q->where('listings.created_at', '<=', $to);
+            $page = $q->paginate($perPage);
+            return response()->json([
+                'data' => $page->getCollection()->map(fn ($l) => [
+                    'id'         => $l->id,
+                    'name'       => $l->name,
+                    'code'       => $l->code,
+                    'slug'       => $l->slug,
+                    'visibility' => $l->visibility,
+                    'created_at' => $l->created_at?->toDateTimeString(),
+                    'category'   => $l->category?->name,
+                    'address'    => $l->property?->address,
+                    'status'     => $l->property?->status,
+                ]),
+                'meta' => [
+                    'current_page' => $page->currentPage(),
+                    'last_page'    => $page->lastPage(),
+                    'per_page'     => $page->perPage(),
+                    'total'        => $page->total(),
+                    'from'         => $page->firstItem(),
+                    'to'           => $page->lastItem(),
+                ],
+            ]);
+        }
+
+        if ($type === 'transactions') {
+            $q = $agent->listings()
+                ->whereHas('property', function ($pq) use ($from, $to) {
+                    $pq->whereIn('status', ['sold', 'rented', 'leased']);
+                    if ($from) $pq->where('status_change_date', '>=', $from);
+                    if ($to)   $pq->where('status_change_date', '<=', $to);
+                })
+                ->with(['property:id,address,status,status_change_date', 'category:id,name']);
+            $page = $q->paginate($perPage);
+            return response()->json([
+                'data' => $page->getCollection()->map(fn ($l) => [
+                    'id'                  => $l->id,
+                    'name'                => $l->name,
+                    'code'                => $l->code,
+                    'slug'                => $l->slug,
+                    'category'            => $l->category?->name,
+                    'address'             => $l->property?->address,
+                    'status'              => $l->property?->status,
+                    'status_change_date'  => $l->property?->status_change_date?->toDateTimeString(),
+                    'created_at'          => $l->created_at?->toDateTimeString(),
+                ]),
+                'meta' => [
+                    'current_page' => $page->currentPage(),
+                    'last_page'    => $page->lastPage(),
+                    'per_page'     => $page->perPage(),
+                    'total'        => $page->total(),
+                    'from'         => $page->firstItem(),
+                    'to'           => $page->lastItem(),
+                ],
+            ]);
+        }
+
+        // inquiries
+        if (!$userId) return response()->json(['data' => [], 'meta' => ['total' => 0]]);
+        $q = Conversation::query()
+            ->where('agent_user_id', $userId)
+            ->with([
+                'chat:id,user_id,type,type_id',
+                'chat.user:id,name,email,avatar',
+                'chat.listing:id,name,slug',
+            ])
+            ->orderByDesc('created_at');
+        if ($from) $q->where('conversations.created_at', '>=', $from);
+        if ($to)   $q->where('conversations.created_at', '<=', $to);
+        $page = $q->paginate($perPage);
+        return response()->json([
+            'data' => $page->getCollection()->map(fn ($conv) => [
+                'id'           => $conv->id,
+                'status'       => $conv->status,
+                'created_at'   => $conv->created_at?->toDateTimeString(),
+                'client_name'  => $conv->chat?->user?->name,
+                'client_email' => $conv->chat?->user?->email,
+                'client_avatar'=> $conv->chat?->user?->avatar,
+                'listing_name' => $conv->chat?->listing?->name,
+                'listing_slug' => $conv->chat?->listing?->slug,
+                'chat_type'    => $conv->chat?->type,
+            ]),
+            'meta' => [
+                'current_page' => $page->currentPage(),
+                'last_page'    => $page->lastPage(),
+                'per_page'     => $page->perPage(),
+                'total'        => $page->total(),
+                'from'         => $page->firstItem(),
+                'to'           => $page->lastItem(),
+            ],
+        ]);
+    }
+
     public function show(Request $request, $id)
     {
         $agent = Agent::with('user')

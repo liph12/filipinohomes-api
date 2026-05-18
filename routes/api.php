@@ -90,6 +90,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('agents', [AgentController::class, 'index']);
             Route::get('agents/deleted', [AgentController::class, 'deletedAgents'])->middleware('auth:sanctum');
             Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
+            Route::get('agents/{id}/activity', [AgentController::class, 'activity']);
             Route::get('agents/{id}', [AgentController::class, 'show']);
 
             Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
