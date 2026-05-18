@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Mail\ListingFlaggedMailer;
+use App\Mail\ListingVerifiedMailer;
 use App\Services\Listing\ListingInsightsService;
 
 class ListingController extends Controller
@@ -834,9 +835,13 @@ class ListingController extends Controller
             'audited_at'          => now(),
         ]);
 
-        // Notify agent by email when their listing is flagged
+        // Notify agent by email for flagged (action required) or verified
+        // (congrats + list what's still needed for Fully Verified). Fully-
+        // verified status does not email — there's nothing else for the agent
+        // to act on once everything is checked.
+        $status = $validated['verification_status'] ?? null;
         $emailSent = false;
-        if (($validated['verification_status'] ?? null) === 'flagged') {
+        if ($status === 'flagged' || $status === 'verified') {
             try {
                 $listing->load('agent.user.role');
                 $agentUser = optional($listing->agent)->user;
@@ -844,20 +849,32 @@ class ListingController extends Controller
                     $roleSegment = optional($agentUser->role)->name === 'admin' ? 'admin' : 'agent';
                     $listingUrl = 'https://filipinohomes.com/' . $roleSegment . '/create-listing'
                         . '?edit=' . $listing->id;
-                    Mail::to($agentUser->email)->send(new ListingFlaggedMailer(
-                        agentName:      $agentUser->name ?? 'Agent',
-                        listingTitle:   $listing->name,
-                        listingCode:    $listing->code,
-                        auditNotes:     $validated['audit_notes'] ?? '',
-                        auditChecklist: $validated['audit_checklist'] ?? null,
-                        listingUrl:     $listingUrl,
-                        editedFields:   $validated['edited_fields'] ?? null,
-                    ));
+
+                    $mailable = $status === 'flagged'
+                        ? new ListingFlaggedMailer(
+                            agentName:      $agentUser->name ?? 'Agent',
+                            listingTitle:   $listing->name,
+                            listingCode:    $listing->code,
+                            auditNotes:     $validated['audit_notes'] ?? '',
+                            auditChecklist: $validated['audit_checklist'] ?? null,
+                            listingUrl:     $listingUrl,
+                            editedFields:   $validated['edited_fields'] ?? null,
+                        )
+                        : new ListingVerifiedMailer(
+                            agentName:      $agentUser->name ?? 'Agent',
+                            listingTitle:   $listing->name,
+                            listingCode:    $listing->code,
+                            auditNotes:     $validated['audit_notes'] ?? '',
+                            auditChecklist: $validated['audit_checklist'] ?? null,
+                            listingUrl:     $listingUrl,
+                        );
+
+                    Mail::to($agentUser->email)->send($mailable);
                     $emailSent = true;
                 }
             } catch (\Throwable $e) {
                 // Non-fatal — audit status was saved, mail failure should not roll it back
-                Log::warning('ListingFlaggedMailer failed: ' . $e->getMessage());
+                Log::warning('Listing verification email failed: ' . $e->getMessage());
             }
         }
 

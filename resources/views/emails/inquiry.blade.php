@@ -40,10 +40,36 @@
                                         style="background-color:#ffffff;padding:12px 40px 24px;">
                                         <span
                                             style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
-                                            Hello Admin,
+                                            Hello Administrator,
                                             <br /><br />
                                             A new inquiry has been submitted through Filipino Homes. Please review the message below and follow up with the client at your earliest convenience.
                                         </span>
+                                    </td>
+                                </tr>
+
+                                @php
+                                    // Map the frontend source key to a human label. Keep keys here
+                                    // in sync with the frontend POST payloads:
+                                    //   - GetInTouchSection.tsx → 'home_get_in_touch'
+                                    //   - ContactPageContent → InquiryDialog source='contact_page'
+                                    $sourceLabels = [
+                                        'home_get_in_touch' => 'Get In Touch',
+                                        'contact_page'      => 'Contact Us',
+                                    ];
+                                    $sourceLabel = !empty($source) && isset($sourceLabels[$source])
+                                        ? $sourceLabels[$source]
+                                        : (!empty($source) ? ucwords(str_replace('_', ' ', $source)) : 'Website (source not specified)');
+                                @endphp
+
+                                {{-- Source-of-origin chip. Helps admins triage whether the inquiry
+                                     came from the homepage Get In Touch widget or the dedicated
+                                     Contact Us page. --}}
+                                <tr>
+                                    <td align="left" valign="top"
+                                        style="background-color:#ffffff;padding:0 40px 12px;">
+                                        <div style="display:inline-block;padding:6px 14px;background:#eef4ff;border:1px solid #c7d7f7;border-radius:999px;">
+                                            <span style="font-size:12px;font-family:Helvetica,Arial,sans-serif;color:#1e40af;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">📍 Submitted through: {{ $sourceLabel }}</span>
+                                        </div>
                                     </td>
                                 </tr>
 

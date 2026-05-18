@@ -13,7 +13,9 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
 use App\Mail\LoginOtpMailer;
 use App\Mail\InquiryMailer;
+use App\Mail\ContactUsMailer;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 use App\Services\LeuterioreRealty\LrApiService;
 use App\Models\Agent;
 use Illuminate\Support\Facades\DB;
@@ -60,16 +62,36 @@ class UserController extends Controller
             'name'    => 'required|string|max:255',
             'email'   => 'required|email',
             'message' => 'required|string|max:5000',
+            // Identifies which page submitted the form ('home_get_in_touch',
+            // 'contact_page'). Optional — older clients still post without it,
+            // and the blade falls back to a generic label.
+            'source'  => 'nullable|string|max:64',
         ]);
 
-        Mail::to('marklawrince730@gmail.com')->send(new InquiryMailer(
-            $validated['name'],
-            $validated['email'],
-            $validated['message'],
-            [
-                ['email' => env('MAIL_CC')],
-            ]
-        ));
+        // Notify every admin — role_id=1. Matches MessageNotificationMailer's
+        // admin lookup so the inquiry inbox stays in sync with admin team
+        // membership instead of pointing at a single hardcoded mailbox.
+        $adminEmails = User::where('role_id', 1)
+            ->whereNotNull('email')
+            ->pluck('email')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($adminEmails)) {
+            // Defensive — should never happen in prod, but a bad migration
+            // could leave the admin role empty. Log and bail so we don't
+            // silently swallow the inquiry.
+            Log::warning('sendInquiry: no admin recipients found (role_id=1)');
+        } else {
+            Mail::to($adminEmails)->send(new InquiryMailer(
+                clientName:    $validated['name'],
+                clientEmail:   $validated['email'],
+                clientMessage: $validated['message'],
+                source:        $validated['source'] ?? null,
+            ));
+        }
 
         Inquiry::create([
             'name' => $validated['name'],
@@ -85,7 +107,108 @@ class UserController extends Controller
             'message' => 'Inquiry sent successfully!'
         ]);
     }
-    
+
+    /**
+     * Handle the dedicated Contact Us form. Unlike sendInquiry (the generic
+     * /inquiry endpoint), this accepts the richer fields the public Contact
+     * Us page collects — phone, inquiry type, subject — and routes to the
+     * dedicated emails.contact-us blade so admins see them rendered nicely.
+     *
+     * Shares the same per-device rate limit as sendInquiry to stop someone
+     * spamming both endpoints from one machine.
+     */
+    public function sendContactUs(Request $request)
+    {
+        $deviceId = $request->input('device_id');
+
+        if (!$deviceId) {
+            return response()->json([
+                'message' => 'Device ID is required.'
+            ], 400);
+        }
+
+        $cacheKey = "inquiry_attempts:{$deviceId}";
+        $banKey   = "inquiry_ban:{$deviceId}";
+
+        if (Cache::has($banKey)) {
+            return response()->json([
+                'message' => 'Too many requests. Try again after 5 minutes.'
+            ], 429);
+        }
+
+        $attempts = Cache::get($cacheKey, 0);
+
+        if ($attempts >= 5) {
+            Cache::put($banKey, true, now()->addMinutes(5));
+            return response()->json([
+                'message' => 'You are temporarily blocked for 5 minutes.'
+            ], 429);
+        }
+
+        Cache::put($cacheKey, $attempts + 1, now()->addMinute());
+
+        $userInfo = $request->input('user_info');
+
+        $validated = $request->validate([
+            'name'        => 'required|string|max:255',
+            'email'       => 'required|email',
+            'message'     => 'required|string|max:5000',
+            'phone'       => 'nullable|string|max:64',
+            'inquiryType' => 'nullable|string|max:128',
+            'subject'     => 'nullable|string|max:255',
+        ]);
+
+        // Same admin fan-out as sendInquiry — every admin (role_id=1) gets
+        // the message so contact-form submissions don't sit in a single
+        // mailbox.
+        $adminEmails = User::where('role_id', 1)
+            ->whereNotNull('email')
+            ->pluck('email')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($adminEmails)) {
+            Log::warning('sendContactUs: no admin recipients found (role_id=1)');
+        } else {
+            Mail::to($adminEmails)->send(new ContactUsMailer(
+                clientName:    $validated['name'],
+                clientEmail:   $validated['email'],
+                clientMessage: $validated['message'],
+                clientPhone:   $validated['phone']       ?? null,
+                inquiryType:   $validated['inquiryType'] ?? null,
+                clientSubject: $validated['subject']     ?? null,
+            ));
+        }
+
+        // Persist via the same Inquiry table so submissions stay in one place.
+        // Subject + type + phone are appended to message body for the model.
+        $composedMessage = $validated['message'];
+        $metaLines = array_filter([
+            !empty($validated['inquiryType']) ? "Inquiry Type: {$validated['inquiryType']}" : null,
+            !empty($validated['subject'])     ? "Subject: {$validated['subject']}"         : null,
+            !empty($validated['phone'])       ? "Phone: {$validated['phone']}"             : null,
+        ]);
+        if (!empty($metaLines)) {
+            $composedMessage = implode("\n", $metaLines) . "\n\n" . $composedMessage;
+        }
+
+        Inquiry::create([
+            'name'    => $validated['name'],
+            'email'   => $validated['email'],
+            'message' => $composedMessage,
+            'device'  => $userInfo['device']  ?? null,
+            'country' => $userInfo['country'] ?? null,
+            'state'   => $userInfo['state']   ?? null,
+            'city'    => $userInfo['city']    ?? null,
+        ]);
+
+        return response()->json([
+            'message' => 'Message sent successfully!'
+        ]);
+    }
+
     public function registerWithOtp(Request $request)
     {
         $validated = $request->validate([

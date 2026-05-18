@@ -25,12 +25,12 @@
                                     </td>
                                 </tr>
 
-                                <!-- Red flag banner -->
+                                {{-- Green verified banner --}}
                                 <tr>
                                     <td align="center" valign="top"
-                                        style="background-color:#fff5f5;padding:28px 32px 20px;border-bottom:1px solid #fed7d7;">
-                                        <span style="font-size:28px;line-height:36px;font-family:Helvetica,Arial,sans-serif;font-weight:700;color:#c53030;display:block;">
-                                            ⚑ Listing Flagged for Update
+                                        style="background-color:#f0fdf4;padding:28px 32px 20px;border-bottom:1px solid #bbf7d0;">
+                                        <span style="font-size:28px;line-height:36px;font-family:Helvetica,Arial,sans-serif;font-weight:700;color:#15803d;display:block;">
+                                            ✓ Listing Verified
                                         </span>
                                     </td>
                                 </tr>
@@ -41,12 +41,12 @@
                                         <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
                                             Hello {{ ucwords(strtolower($agentName)) }},
                                             <br /><br />
-                                            Our team has reviewed your listing and found that some information needs to be updated before it can be verified. Please log in and make the necessary corrections as soon as possible.
+                                            Good news — your listing has passed our initial audit and is now marked as <strong style="color:#15803d;">Verified</strong>. Buyers will see a verified badge on your listing.
                                         </span>
                                     </td>
                                 </tr>
 
-                                <!-- Listing info box -->
+                                {{-- Listing info box --}}
                                 <tr>
                                     <td align="left" valign="top"
                                         style="background-color:#ffffff;padding:8px 40px 16px;">
@@ -59,42 +59,57 @@
                                 </tr>
 
                                 @php
-                                    // Map checklist keys to human-readable labels (mirrors frontend CHECKLIST_ITEMS)
+                                    // Mirror frontend CHECKLIST_ITEMS labels. Items missing from
+                                    // $auditChecklist (or false) are what's still needed for
+                                    // FULLY VERIFIED status.
                                     $checklistLabels = [
                                         'agent_verified'   => 'Agent contact (email, mobile & whatsapp)',
                                         'ats_correct'      => 'ATS is correct',
-                                        'specs_correct'    => 'Property attributes are good',
+                                        'specs_correct'    => 'Property attributes are correct',
                                         'price_realistic'  => 'Price is realistic',
                                         'location_accurate'=> 'Location / address is correct',
                                         'nearby_facilities'=> 'Nearby facilities are present',
                                         'photos'           => 'Photos are good',
                                         'title_seo'        => 'Title is already good for SEO',
-                                        'description'      => 'Description good for SEO',
+                                        'description'      => 'Description',
                                     ];
                                     $passingItems = [];
-                                    $failingItems = [];
-                                    if (is_array($auditChecklist)) {
-                                        foreach ($checklistLabels as $key => $label) {
-                                            if (!empty($auditChecklist[$key])) {
-                                                $passingItems[] = $label;
-                                            } else {
-                                                $failingItems[] = $label;
-                                            }
+                                    $pendingItems = [];
+                                    foreach ($checklistLabels as $key => $label) {
+                                        if (is_array($auditChecklist) && !empty($auditChecklist[$key])) {
+                                            $passingItems[] = $label;
+                                        } else {
+                                            $pendingItems[] = $label;
                                         }
                                     }
                                 @endphp
-                                @if(!empty($failingItems) || !empty($passingItems))
+
+                                {{-- Path to Fully Verified --}}
+                                @if(!empty($pendingItems))
                                 <tr>
                                     <td align="left" valign="top"
                                         style="background-color:#ffffff;padding:8px 40px 16px;">
-                                        <div style="padding:20px 24px;background:#f8fafc;border:1px solid #d6dee8;border-radius:16px;box-sizing:border-box;">
-                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#334155;display:block;font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Audit Checklist</span>
-                                            @foreach($failingItems as $item)
+                                        <div style="padding:20px 24px;background:#fffbeb;border:1px solid #fde68a;border-radius:16px;box-sizing:border-box;">
+                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#92400e;display:block;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Still Needed for Fully Verified</span>
+                                            <span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#78350f;display:block;margin-bottom:12px;">Complete the items below to upgrade your listing to <strong>Fully Verified.</strong> </br>Higher trust = better visibility.</span>
+                                            @foreach($pendingItems as $item)
                                             <div style="display:flex;align-items:flex-start;margin-bottom:8px;">
-                                                <span style="color:#c53030;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✗</span>
-                                                <span style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#7f1d1d;font-weight:600;">{{ $item }}</span>
+                                                <span style="color:#d97706;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✗</span>
+                                                <span style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#78350f;font-weight:600;">{{ $item }}</span>
                                             </div>
                                             @endforeach
+                                        </div>
+                                    </td>
+                                </tr>
+                                @endif
+
+                                {{-- What you already passed --}}
+                                @if(!empty($passingItems))
+                                <tr>
+                                    <td align="left" valign="top"
+                                        style="background-color:#ffffff;padding:8px 40px 16px;">
+                                        <div style="padding:20px 24px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:16px;box-sizing:border-box;">
+                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#166534;display:block;font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Already Passed</span>
                                             @foreach($passingItems as $item)
                                             <div style="display:flex;align-items:flex-start;margin-bottom:8px;">
                                                 <span style="color:#16a34a;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✓</span>
@@ -107,42 +122,13 @@
                                 @endif
 
                                 @if($auditNotes)
-                                <!-- Audit notes box -->
+                                {{-- Auditor notes --}}
                                 <tr>
                                     <td align="left" valign="top"
                                         style="background-color:#ffffff;padding:8px 40px 16px;">
-                                        <div style="padding:20px 24px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);border:1px solid #fde68a;border-radius:16px;box-sizing:border-box;">
-                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#92400e;display:block;font-weight:700;margin-bottom:8px;">Notes from our team:</span>
-                                            <span style="font-size:15px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#78350f;display:block;white-space:pre-line;">{{ $auditNotes }}</span>
-                                        </div>
-                                    </td>
-                                </tr>
-                                @endif
-
-                                @if(!empty($editedFields))
-                                <tr>
-                                    <td align="left" valign="top"
-                                        style="background-color:#ffffff;padding:8px 40px 16px;">
-                                        <div style="padding:20px 24px;background:#f0f7ff;border:1px solid #bfdbfe;border-radius:16px;box-sizing:border-box;">
-                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#1e40af;display:block;font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Changes Made by Admin</span>
-                                            @foreach($editedFields as $field)
-                                            <div style="margin-bottom:16px;">
-                                                <span style="font-size:12px;font-family:Helvetica,Arial,sans-serif;color:#3b82f6;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">{{ $field['label'] ?? '' }}</span>
-                                                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-top:6px;">
-                                                    <tr>
-                                                        <td width="48%" valign="top" style="padding:8px 10px;background:#fff;border:1px solid #fca5a5;border-radius:8px;">
-                                                            <span style="font-size:11px;color:#9ca3af;display:block;margin-bottom:3px;">Before</span>
-                                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#374151;word-break:break-word;">{{ $field['original'] ?? '—' }}</span>
-                                                        </td>
-                                                        <td width="4%" style="padding:0;"></td>
-                                                        <td width="48%" valign="top" style="padding:8px 10px;background:#fff;border:1px solid #86efac;border-radius:8px;">
-                                                            <span style="font-size:11px;color:#9ca3af;display:block;margin-bottom:3px;">After</span>
-                                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#374151;word-break:break-word;">{{ $field['current'] ?? '—' }}</span>
-                                                        </td>
-                                                    </tr>
-                                                </table>
-                                            </div>
-                                            @endforeach
+                                        <div style="padding:20px 24px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);border:1px solid #bfdbfe;border-radius:16px;box-sizing:border-box;">
+                                            <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#1e40af;display:block;font-weight:700;margin-bottom:8px;">Notes from our team:</span>
+                                            <span style="font-size:15px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#1e3a8a;display:block;white-space:pre-line;">{{ $auditNotes }}</span>
                                         </div>
                                     </td>
                                 </tr>
@@ -152,17 +138,17 @@
                                     <td align="left" valign="top"
                                         style="background-color:#ffffff;padding:8px 40px 16px;">
                                         <span style="font-size:15px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
-                                            Once you've made the necessary updates, our team will re-review your listing. If you have any questions, feel free to contact us.
+                                            Address the pending items at your convenience and our team will re-review the listing for the Fully Verified badge.
                                         </span>
                                     </td>
                                 </tr>
 
-                                <!-- CTA button -->
+                                {{-- CTA button --}}
                                 <tr>
                                     <td align="center" style="padding:24px 40px 40px;">
                                         <a href="{{ $listingUrl }}"
-                                           style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#c53030;border-radius:999px;text-decoration:none;font-weight:600;">
-                                            Update My Listing
+                                           style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#15803d;border-radius:999px;text-decoration:none;font-weight:600;">
+                                            View My Listing
                                         </a>
                                     </td>
                                 </tr>

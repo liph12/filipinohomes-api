@@ -61,6 +61,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::post('/guest-token', [GuestTokenController::class, 'issue']);
 
         Route::post('/inquiry', [UserController::class, 'sendInquiry']);
+        Route::post('/contact-us', [UserController::class, 'sendContactUs']);
         Route::get('/blogs', [PostController::class, 'index']);
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
         Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);

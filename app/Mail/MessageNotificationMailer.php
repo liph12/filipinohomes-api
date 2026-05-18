@@ -166,10 +166,15 @@ class MessageNotificationMailer extends Mailable
         $ownerName = null;
         $ownerMobile = null;
         $ownerWhatsapp = null;
+        $ownerEmail = null;
         if ($agent) {
             $ownerName     = trim(($agent->first_name ?? '') . ' ' . ($agent->last_name ?? '')) ?: null;
             $ownerMobile   = $agent->mobile_no    ?? null;
             $ownerWhatsapp = $agent->whats_app_no ?? null;
+            // Email lives on the related User row (Agent belongsTo User). Eager-
+            // load `agent.user` on the caller for free; falls back to lazy fetch
+            // here without crashing if the relation isn't preloaded.
+            $ownerEmail    = $agent->user?->email ?? null;
         }
 
         $frontend = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
@@ -186,6 +191,7 @@ class MessageNotificationMailer extends Mailable
             'owner_name'     => $ownerName,
             'owner_mobile'   => $ownerMobile,
             'owner_whatsapp' => $ownerWhatsapp,
+            'owner_email'    => $ownerEmail,
         ];
     }
 }

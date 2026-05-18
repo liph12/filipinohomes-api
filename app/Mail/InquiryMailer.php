@@ -18,6 +18,11 @@ class InquiryMailer extends Mailable
         public string $clientEmail,
         public string $clientMessage,
         public array $ccRecipients = [],
+        // Source key submitted from the frontend ('home_get_in_touch',
+        // 'contact_page'). Rendered as a "Submitted from:" indicator in the
+        // blade so admins can tell which page the message came from. Optional
+        // for backwards compatibility with older code paths.
+        public ?string $source = null,
     ) {}
 
     public function envelope(): Envelope

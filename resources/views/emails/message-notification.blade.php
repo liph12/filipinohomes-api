@@ -55,7 +55,7 @@
                                         <div style="font-size:11px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:#667085;letter-spacing:0.06em;text-transform:uppercase;font-weight:700;margin-bottom:8px;">
                                             Inquiry is about
                                         </div>
-                                        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;width:100%;min-height:160px;border:1px solid #a3c3ea;border-radius:14px;overflow:hidden;background:#ffffff;">
+                                        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;min-height:160px;border-radius:14px;overflow:hidden;background:#ffffff;">
                                             <tbody>
                                                 <tr style="height:160px;">
                                                     @if (!empty($listing['image']))
@@ -73,7 +73,11 @@
                                                         </a>
                                                     </td>
                                                     @endif
-                                                    <td valign="middle" style="padding:18px 20px;min-height:160px;">
+                                                    <td valign="middle" style="padding:18px 20px;min-height:160px;border-color:#3a88e7;border-width:1px;border-style:solid;    border-top-left-radius:0;
+    border-bottom-left-radius:0;
+
+    border-top-right-radius:14px;
+    border-bottom-right-radius:14px;">
                                                         @if (!empty($listing['category']) || !empty($listing['subtype']))
                                                         <div style="font-size:11px;line-height:16px;font-family:Helvetica,Arial,sans-serif;color:#1d4ed8;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">
                                                             {{ trim(($listing['category'] ?? '') . (!empty($listing['category']) && !empty($listing['subtype']) ? ' · ' : '') . ($listing['subtype'] ?? '')) }}
@@ -101,88 +105,105 @@
                                         style="background-color:#ffffff;padding:0 40px 16px;">
                                         <div style="padding:20px 24px;width:100%;background:linear-gradient(180deg,#f8fafc 0%,#e9eef5 100%);border:1px solid #d6dee8;border-radius:18px;box-sizing:border-box;">
                                             <span style="font-size:15px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#162033;display:block;white-space:pre-line;">{{ $message }}</span>
-                                </div>
-                    </td>
-                </tr>
+                                        </div>
+                                    </td>
+                                </tr>
 
-                <tr>
-                    <td align="left" valign="top"
-                        style="background-color:#ffffff;padding:8px 40px 16px;">
-                        <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
-                            From:<br />
-                            <strong style="color:#162033;">{{ ucwords(strtolower($senderName)) }}</strong><br />
-                            <a href="mailto:{{ $senderEmail }}" style="color:#1d4ed8;text-decoration:none;">✉️ {{ $senderEmail }}</a>
-                            @if (!empty($senderMobile))
-                            <br /><a href="tel:{{ $senderMobile }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $senderMobile }}</a>
-                            @endif
-                            @if (!empty($senderWhatsapp))
-                            <br /><a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $senderWhatsapp) }}" target="_blank" style="color:#1d4ed8;text-decoration:none;">💬 WhatsApp: {{ $senderWhatsapp }}</a>
-                            @endif
-                        </span>
-                    </td>
-                </tr>
+                                <tr>
+                                    <td align="left" valign="top"
+                                        style="background-color:#ffffff;padding:8px 40px 16px;">
+                                        <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
+                                            From:<br />
+                                            <strong style="color:#162033;">{{ ucwords(strtolower($senderName)) }}</strong><br />
+                                            <a href="mailto:{{ $senderEmail }}" style="color:#1d4ed8;text-decoration:none;">✉️ {{ $senderEmail }}</a>
+                                            @if (!empty($senderMobile))
+                                            <br /><a href="tel:{{ $senderMobile }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $senderMobile }}</a>
+                                            @endif
+                                            @if (!empty($senderWhatsapp))
+                                            <br /><a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $senderWhatsapp) }}" target="_blank" style="color:#1d4ed8;text-decoration:none;">💬 WhatsApp: {{ $senderWhatsapp }}</a>
+                                            @endif
+                                        </span>
+                                    </td>
+                                </tr>
 
-                @if (!empty($listing) && (!empty($listing['owner_name']) || !empty($listing['owner_mobile']) || !empty($listing['owner_whatsapp'])))
-                {{-- Owning-agent contact card. Mirrors the "From:" block so BCC'd
+                                @if (!empty($listing) && (!empty($listing['owner_name']) || !empty($listing['owner_mobile']) || !empty($listing['owner_whatsapp']) || !empty($listing['owner_email'])))
+                                {{-- Owning-agent contact card. Mirrors the "From:" block so BCC'd
                      admins / team-leaders can reach the responsible agent without
                      digging through the dashboard. Only rendered when at least
                      one owner field is present. --}}
-                <tr>
-                    <td align="left" valign="top"
-                        style="background-color:#ffffff;padding:0 40px 16px;">
-                        <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
-                            Listing Owner:<br />
-                            @if (!empty($listing['owner_name']))
-
-                            <strong style="color:#162033;">{{ ucwords(strtolower($listing['owner_name'])) }}</strong>
-                            @endif
-                            @if (!empty($listing['owner_mobile']))
-                            <br /><a href="tel:{{ $listing['owner_mobile'] }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $listing['owner_mobile'] }}</a>
-                            @endif
-                            @if (!empty($listing['owner_whatsapp']))
-                            <br /><a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $listing['owner_whatsapp']) }}" target="_blank" style="color:#1d4ed8;text-decoration:none;">💬 WhatsApp: {{ $listing['owner_whatsapp'] }}</a>
-                            @endif
-                        </span>
-                    </td>
-                </tr>
-                @endif
-
-                <!-- BUTTON SECTION -->
-                <tr>
-                    <td align="center" style="padding:24px 40px 40px;">
-                        <table border="0" cellpadding="0" cellspacing="0" align="center" style="border-collapse:collapse;margin:0 auto;">
-                            <tbody>
                                 <tr>
-                                    @if (!empty($listing['public_url']))
-                                    <td align="center" valign="middle" style="padding:0 6px;">
-                                        <a href="{{ $listing['public_url'] }}" target="_blank"
-                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
-                                            View Listing
-                                        </a>
+                                    <td align="left" valign="top"
+                                        style="background-color:#ffffff;padding:0 40px 16px;">
+                                        <span style="font-size:13px;line-height:22px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;">
+                                            Listing Owner:<br />
+                                            @if (!empty($listing['owner_name']))
+
+                                            <strong style="color:#162033;">{{ ucwords(strtolower($listing['owner_name'])) }}</strong>
+                                            @endif
+                                            @if (!empty($listing['owner_email']))
+                                            <br /><a href="mailto:{{ $listing['owner_email'] }}" style="color:#1d4ed8;text-decoration:none;">✉ {{ $listing['owner_email'] }}</a>
+                                            @endif
+                                            @if (!empty($listing['owner_mobile']))
+                                            <br /><a href="tel:{{ $listing['owner_mobile'] }}" style="color:#1d4ed8;text-decoration:none;">📞 {{ $listing['owner_mobile'] }}</a>
+                                            @endif
+                                            @if (!empty($listing['owner_whatsapp']))
+                                            <br /><a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $listing['owner_whatsapp']) }}" target="_blank" style="color:#1d4ed8;text-decoration:none;">💬 WhatsApp: {{ $listing['owner_whatsapp'] }}</a>
+                                            @endif
+                                        </span>
                                     </td>
-                                    @endif
-                                    <td align="center" valign="middle" style="padding:0 6px;">
-                                        {{-- Role-aware inbox link. Matches the actual frontend route:
+                                </tr>
+                                @endif
+
+                                <!-- BUTTON SECTION -->
+                                <tr>
+                                    <td align="center" style="padding:24px 40px 40px;">
+                                        <table border="0" cellpadding="0" cellspacing="0" align="center" style="border-collapse:collapse;margin:0 auto;">
+                                            <tbody>
+                                                <tr>
+                                                    @if (!empty($listing['public_url']))
+                                                    <td align="center" valign="middle" style="padding:0 6px;">
+                                                        <a href="{{ $listing['public_url'] }}" target="_blank"
+                                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
+                                                            View Listing
+                                                        </a>
+                                                    </td>
+                                                    @endif
+                                                    <td align="center" valign="middle" style="padding:0 6px;">
+                                                        {{-- Role-aware inbox link. Matches the actual frontend route:
                                              {frontendUrl}/{role}/main-dashboard/{slug}
                                              $roleName resolves to admin/agent/client at send-time and
                                              $frontendUrl is driven by FRONTEND_URL env so the host adapts
                                              to local/staging/prod without code changes. --}}
-                                        <a href="{{ $frontendUrl }}/{{ $roleName }}/main-dashboard/{{ $slug }}"
-                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
-                                            View Message
-                                        </a>
+                                                        <a href="{{ $frontendUrl }}/{{ $roleName }}/main-dashboard/{{ $slug }}"
+                                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
+                                                            View Message
+                                                        </a>
+                                                    </td>
+                                                    @if ($roleName !== 'admin')
+                                                    {{-- Admin-routed twin of the View Message button. Same thread,
+                                             admin dashboard. Rendered only when the primary recipient is
+                                             NOT an admin so admins BCC'd on the email (see
+                                             MessageNotificationMailer::build → User::where('role_id', 1))
+                                             land in /admin/... directly instead of /agent/... they
+                                             can't access. --}}
+                                                    <td align="center" valign="middle" style="padding:0 6px;">
+                                                        <a href="{{ $frontendUrl }}/admin/main-dashboard/{{ $slug }}"
+                                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#162033;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
+                                                            View as Admin
+                                                        </a>
+                                                    </td>
+                                                    @endif
+                                                </tr>
+                                            </tbody>
+                                        </table>
                                     </td>
                                 </tr>
+
                             </tbody>
                         </table>
                     </td>
                 </tr>
-
             </tbody>
-        </table>
-        </td>
-        </tr>
-        </tbody>
         </table>
     </center>
 </body>
