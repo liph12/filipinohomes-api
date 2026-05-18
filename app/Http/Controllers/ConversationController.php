@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Resources\ConversationResource;
 use App\Models\Chat;
 use App\Models\Conversation;
+use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Mail\MessageNotificationMailer;
@@ -25,9 +26,18 @@ class ConversationController extends Controller
         $user = Auth::user();
         $query = Conversation::where('chat_id', $validated['chat_id']);
 
-        // Agents should only see accepted/closed conversations, not pending ones
+        // Agents should only see accepted/closed conversations, not pending ones.
+        // Team leaders are an exception: they need to see pending inquiries for
+        // their team members so they can moderate them.
         if ($user->role?->name === 'agent') {
-            $query->whereIn('status', ['accepted', 'closed']);
+            $ledIds = app(TeamLeadershipService::class)->getLedTeamMemberUserIds($user->id);
+
+            $query->where(function ($q) use ($ledIds) {
+                $q->whereIn('status', ['accepted', 'closed']);
+                if (!empty($ledIds)) {
+                    $q->orWhereIn('agent_user_id', $ledIds);
+                }
+            });
         }
 
         $conversations = $query->with(['latestMessage.user', 'users'])
@@ -108,6 +118,7 @@ class ConversationController extends Controller
             $slug,
             'agent',
             MessageNotificationMailer::buildListingPayload($type),
+            $conversation->agent_user_id,
         ));
 
         return new ConversationResource($conversation);

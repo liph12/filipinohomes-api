@@ -120,6 +120,7 @@ class SendMessageNotification implements ShouldQueue
                 $slug,
                 $recipientRole,
                 MessageNotificationMailer::buildListingPayload($listing),
+                $conversation->agent_user_id,
             )
         );
 

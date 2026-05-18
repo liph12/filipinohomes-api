@@ -132,10 +132,12 @@
                                     </td>
                                     @endif
                                     <td align="center" valign="middle" style="padding:0 6px;">
-                                        {{-- Role-aware deep link. $roleName resolves to admin / agent / client
-                                             at runtime, and $frontendUrl is driven by FRONTEND_URL env so the
-                                             host adapts to local/staging/prod without code changes. --}}
-                                        <a href="{{ $frontendUrl }}/{{ $roleName }}/listing-inquiries/{{ $slug }}"
+                                        {{-- Role-aware redirect handled by the frontend at /inbox/[slug].
+                                             $frontendUrl is driven by FRONTEND_URL env so the host adapts
+                                             to local/staging/prod, and the redirect page resolves each
+                                             viewer to /{role}/listing-inquiries/{slug} per their auth —
+                                             so BCC admins/team-leaders land on the right path too. --}}
+                                        <a href="{{ $frontendUrl }}/inbox/{{ $slug }}"
                                             style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
                                             View Message
                                         </a>

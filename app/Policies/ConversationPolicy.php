@@ -4,6 +4,7 @@ namespace App\Policies;
 
 use App\Models\Conversation;
 use App\Models\User;
+use App\Services\TeamLeadershipService;
 use Illuminate\Auth\Access\HandlesAuthorization;
 
 class ConversationPolicy
@@ -26,7 +27,17 @@ class ConversationPolicy
 
     public function moderate(User $user, Conversation $conversation): bool
     {
-        return $user->role?->name === 'admin';
+        if ($user->role?->name === 'admin') {
+            return true;
+        }
+
+        if ($conversation->agent_user_id === null) {
+            return false;
+        }
+
+        $ledIds = app(TeamLeadershipService::class)->getLedTeamMemberUserIds($user->id);
+
+        return !empty($ledIds) && in_array($conversation->agent_user_id, $ledIds, true);
     }
 
     public function close(User $user, Conversation $conversation): bool

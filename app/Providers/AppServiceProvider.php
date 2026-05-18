@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\TeamLeadershipService;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -9,6 +10,11 @@ use Illuminate\Http\Request;
 
 class AppServiceProvider extends ServiceProvider
 {
+    public function register(): void
+    {
+        $this->app->singleton(TeamLeadershipService::class);
+    }
+
     public function boot(): void
     {
         // Define API limiter

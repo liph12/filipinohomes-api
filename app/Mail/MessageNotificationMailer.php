@@ -2,10 +2,11 @@
 
 namespace App\Mail;
 
+use App\Models\User;
+use App\Services\TeamLeadershipService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
-use App\Models\User;
 
 class MessageNotificationMailer extends Mailable
 {
@@ -33,13 +34,17 @@ class MessageNotificationMailer extends Mailable
      * is used to compose role-aware deep links in the blade.
      */
     public $frontendUrl;
-    /**
-     * Create a new message instance.
-     *
-     * @return void
-     */
-    public function __construct($sender, $receiver, $message, $slug, $roleName = 'agent', ?array $listing = null)
-    {
+    public $agentUserId;
+
+    public function __construct(
+        $sender,
+        $receiver,
+        $message,
+        $slug,
+        $roleName = 'agent',
+        ?array $listing = null,
+        ?int $agentUserId = null
+    ) {
         $this->receiverEmail = $receiver->email;
         $this->receiverName = $receiver->name;
         $this->senderEmail = $sender->email;
@@ -57,23 +62,33 @@ class MessageNotificationMailer extends Mailable
         //   {$frontendUrl}/{role}/listing-inquiries/{$slug}
         // Falls back to prod when FRONTEND_URL isn't set in .env.
         $this->frontendUrl = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
+        $this->agentUserId = $agentUserId;
     }
 
-    /**
-     * Build the message. 
-     *
-     * @return $this
-     */
     public function build()
     {
-        $adminEmails = User::where('role_id', 1)->pluck('email');
+        $bccEmails = User::where('role_id', 1)->pluck('email')->all();
 
-        $mail = $this->to($this->receiverEmail)->from(env('MAIL_FROM'), 'FH Support Team')
-        ->subject('Filipino Homes - New message received')
-        ->bcc($adminEmails)
-        ->markdown('emails.message-notification');
+        if ($this->agentUserId) {
+            $leaderUserId = app(TeamLeadershipService::class)->findTeamLeaderUserIdFor($this->agentUserId);
+            if ($leaderUserId) {
+                $leaderEmail = User::where('id', $leaderUserId)->value('email');
+                if ($leaderEmail) {
+                    $bccEmails[] = $leaderEmail;
+                }
+            }
+        }
 
-        return $mail;
+        $bccEmails = array_values(array_unique(array_filter(
+            $bccEmails,
+            fn ($email) => $email && strcasecmp($email, $this->receiverEmail) !== 0
+        )));
+
+        return $this->to($this->receiverEmail)
+            ->from(env('MAIL_FROM'), 'FH Support Team')
+            ->subject('Filipino Homes - New message received')
+            ->bcc($bccEmails)
+            ->markdown('emails.message-notification');
     }
 
     /**

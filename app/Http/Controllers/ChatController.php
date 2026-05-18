@@ -7,6 +7,7 @@ use App\Models\Chat;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +19,6 @@ class ChatController extends Controller
         $user = Auth::user();
         $roleName = $user->role?->name;
 
-        // Compact eager load — no users[] / agent_user / property eager join.
         // Show endpoint hydrates the rest on demand.
         $query = Chat::with([
             'user.role',
@@ -37,12 +37,20 @@ class ChatController extends Controller
         if ($roleName === 'admin') {
             // admin sees all
         } elseif ($roleName === 'agent') {
-            $query->where(function ($q) use ($user) {
+            $ledIds = app(TeamLeadershipService::class)->getLedTeamMemberUserIds($user->id);
+
+            $query->where(function ($q) use ($user, $ledIds) {
                 $q->where('user_id', $user->id)
                     ->orWhereHas('conversations', function ($sub) use ($user) {
                         $sub->whereHas('users', fn ($u) => $u->where('users.id', $user->id))
                             ->whereIn('status', ['accepted', 'closed']);
                     });
+
+                if (!empty($ledIds)) {
+                    $q->orWhereHas('conversations', function ($sub) use ($ledIds) {
+                        $sub->whereIn('agent_user_id', $ledIds);
+                    });
+                }
             });
         } else {
             $query->where('user_id', $user->id);
@@ -150,6 +158,13 @@ class ChatController extends Controller
                         foreach ($adminUserIds as $adminId) {
                             $attachments[$adminId] = ['last_read_at' => null];
                         }
+
+                        $leaderUserId = app(TeamLeadershipService::class)
+                            ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
+                        if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
+                            $attachments[$leaderUserId] = ['last_read_at' => null];
+                        }
+
                         $conversation->users()->attach($attachments);
                     } else {
                         $conversation->users()->attach([
@@ -191,7 +206,7 @@ class ChatController extends Controller
             ]);
 
             if ($isListing) {
-                // Attach client + all admin users (not the agent yet)
+                // Attach client + all admin users + team leader (not the agent yet)
                 $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
 
                 $attachments = [
@@ -200,6 +215,13 @@ class ChatController extends Controller
                 foreach ($adminUserIds as $adminId) {
                     $attachments[$adminId] = ['last_read_at' => null];
                 }
+
+                $leaderUserId = app(TeamLeadershipService::class)
+                    ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
+                if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
+                    $attachments[$leaderUserId] = ['last_read_at' => null];
+                }
+
                 $conversation->users()->attach($attachments);
             } else {
                 // Non-listing: attach client + target user directly (accepted)
