@@ -38,10 +38,28 @@ class MessageController extends Controller
     {
         $validated = $request->validate([
             'conversation_id' => 'required|exists:conversations,id',
-            'body' => 'required|string|max:5000',
-            'type' => 'sometimes|in:text,file,image,emoji',
-            'reply_to_id' => 'sometimes|nullable|exists:messages,id',
+            'body'            => 'nullable|string|max:5000',
+            'type'            => 'sometimes|in:text,file,image,emoji',
+            'reply_to_id'     => 'sometimes|nullable|exists:messages,id',
+            'attachments'     => 'sometimes|array|max:10',
+            'attachments.*'   => 'string|url|max:2048',
         ]);
+
+        $body = isset($validated['body']) ? trim($validated['body']) : null;
+        if ($body === '') {
+            $body = null;
+        }
+        $attachments = $validated['attachments'] ?? [];
+
+        // Require at least one of: body text or attachments. Empty bubbles
+        // would render as nothing in the thread.
+        if ($body === null && empty($attachments)) {
+            abort(422, 'A message must include text or at least one attachment.');
+        }
+
+        // Default the type to "image" when attachments are present and no type
+        // was explicitly sent. Keep "text" otherwise.
+        $type = $validated['type'] ?? (!empty($attachments) ? 'image' : 'text');
 
         $conversation = Conversation::findOrFail($validated['conversation_id']);
 
@@ -73,10 +91,11 @@ class MessageController extends Controller
 
         $message = Message::create([
             'conversation_id' => $validated['conversation_id'],
-            'user_id' => Auth::id(),
-            'body' => $validated['body'],
-            'type' => $validated['type'] ?? 'text',
-            'reply_to_id' => $validated['reply_to_id'] ?? null,
+            'user_id'         => Auth::id(),
+            'body'            => $body,
+            'type'            => $type,
+            'attachments'     => !empty($attachments) ? $attachments : null,
+            'reply_to_id'     => $validated['reply_to_id'] ?? null,
         ]);
 
         // Touch the parent chat so it sorts to the top of the list
