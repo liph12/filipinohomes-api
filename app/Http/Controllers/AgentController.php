@@ -28,7 +28,9 @@ class AgentController extends Controller
         $dateTo   = $request->query('date_to');
         $teamId   = $request->query('team_id');
 
-        $rangeSql = "(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id";
+        // Mirror Laravel's SoftDeletes scope so this matches the other
+        // listings counts and /all-listings.
+        $rangeSql = "(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL";
         $rangeBindings = [];
         if ($dateFrom) {
             $rangeSql .= " AND listings.created_at >= ?";
@@ -43,13 +45,17 @@ class AgentController extends Controller
         $query = Agent::query()
             ->select([
                 'agents.*',
-                // flat COUNT subqueries — no nested EXISTS, JOIN for property status
-                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count"),
-                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.visibility = 'public') as public_listings_count"),
-                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.visibility = 'private') as private_listings_count"),
-                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'sold') as sold_count"),
-                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'rented') as rented_count"),
-                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND properties.status = 'leased') as leased_count"),
+                // flat COUNT subqueries — no nested EXISTS, JOIN for property status.
+                // Every subquery must filter listings.deleted_at IS NULL to match
+                // Laravel's SoftDeletes scope, otherwise these counts include
+                // trashed rows and diverge from /all-listings (the View Listings
+                // grid). Same applies for the property-joined counts below.
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL) as listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND listings.visibility = 'public') as public_listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND listings.visibility = 'private') as private_listings_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'sold') as sold_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'rented') as rented_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'leased') as leased_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
                 DB::raw($rangeSql),

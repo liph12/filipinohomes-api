@@ -418,6 +418,18 @@ class ListingController extends Controller
             $query->whereIn('agent_id', $ledAgentIds);
         }
 
+        // Optional single-agent filter. Drives the "View Listings" dialog
+        // launched from the Agents directory — admins can scope to any
+        // agent, team leaders only to agents they lead. Anyone else is
+        // already blocked by the abort(403) above.
+        if ($request->filled('agent_id')) {
+            $aid = (int) $request->input('agent_id');
+            if (!$isAdmin && !in_array($aid, $ledAgentIds, true)) {
+                abort(403);
+            }
+            $query->where('agent_id', $aid);
+        }
+
         // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
