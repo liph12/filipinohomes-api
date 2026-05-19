@@ -27,8 +27,18 @@ class InquiryMailer extends Mailable
 
     public function envelope(): Envelope
     {
+        // Subject reads like "Get In Touch: Maria Santos" — consistent with
+        // ContactUsMailer's "Contact Us: …" pattern so admins can triage by
+        // origin at a glance. Maintenance page submissions get a clarifying
+        // suffix so they're distinguishable from home-page Get-in-Touch ones.
+        $subject = match ($this->source) {
+            'maintenance_page'  => 'Contact Us (Maintenance): ' . $this->clientName,
+            'home_get_in_touch' => 'Get In Touch: ' . $this->clientName,
+            default             => 'Get In Touch: ' . $this->clientName,
+        };
+
         return new Envelope(
-            subject: 'New Inquiry from ' . $this->clientName,
+            subject: $subject,
             replyTo: [
                 new Address($this->clientEmail, $this->clientName),
             ],
