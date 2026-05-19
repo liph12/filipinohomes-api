@@ -169,30 +169,25 @@
                                                     </td>
                                                     @endif
                                                     <td align="center" valign="middle" style="padding:0 6px;">
-                                                        {{-- Role-aware inbox link. Matches the actual frontend route:
-                                             {frontendUrl}/{role}/main-dashboard/{slug}
-                                             $roleName resolves to admin/agent/client at send-time and
-                                             $frontendUrl is driven by FRONTEND_URL env so the host adapts
-                                             to local/staging/prod without code changes. --}}
-                                                        <a href="{{ $frontendUrl }}/{{ $roleName }}/main-dashboard/{{ $slug }}"
+                                                        {{-- Single role-aware inbox link. The frontend handles the
+                                             role split via /inbox/[slug] — a tiny redirect page that
+                                             reads the viewer's stored auth role and replaces to
+                                             /{admin|agent|client}/listing-inquiries/{slug}. This means
+                                             one URL works for every recipient on the email (TO + BCC):
+                                             the TO recipient (an agent) lands on /agent/..., the
+                                             admin BCC'd lands on /admin/..., a team-leader BCC'd lands
+                                             on /agent/..., and a logged-out click bounces to
+                                             /login?next=... and resumes after sign-in. No
+                                             per-recipient {{ $roleName }} prefix needed; that one was
+                                             always wrong for BCC since the email is a single rendered
+                                             template per send.
+                                             $frontendUrl is driven by FRONTEND_URL env so the host
+                                             adapts to local/staging/prod without code changes. --}}
+                                                        <a href="{{ $frontendUrl }}/inbox/{{ $slug }}"
                                                             style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#245ee0;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
                                                             View Message
                                                         </a>
                                                     </td>
-                                                    @if ($roleName !== 'admin')
-                                                    {{-- Admin-routed twin of the View Message button. Same thread,
-                                             admin dashboard. Rendered only when the primary recipient is
-                                             NOT an admin so admins BCC'd on the email (see
-                                             MessageNotificationMailer::build → User::where('role_id', 1))
-                                             land in /admin/... directly instead of /agent/... they
-                                             can't access. --}}
-                                                    <td align="center" valign="middle" style="padding:0 6px;">
-                                                        <a href="{{ $frontendUrl }}/admin/main-dashboard/{{ $slug }}"
-                                                            style="display:inline-block;padding:14px 28px;font-size:16px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;background-color:#162033;border-radius:999px;text-decoration:none;font-weight:600;line-height:1;">
-                                                            View as Admin
-                                                        </a>
-                                                    </td>
-                                                    @endif
                                                 </tr>
                                             </tbody>
                                         </table>
