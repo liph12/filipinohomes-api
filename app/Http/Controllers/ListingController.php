@@ -880,10 +880,29 @@ class ListingController extends Controller
 
                     Mail::to($agentUser->email)->send($mailable);
                     $emailSent = true;
+                    // Positive log so we can confirm sends in storage/logs/laravel.log
+                    // without checking the inbox. Pairs with the warning below.
+                    Log::info('Listing verification email sent', [
+                        'listing_id' => $listing->id,
+                        'status'     => $status,
+                        'to'         => $agentUser->email,
+                        'is_land'    => $isLand,
+                    ]);
+                } else {
+                    Log::warning('Listing verification email skipped — no agent user/email', [
+                        'listing_id'    => $listing->id,
+                        'status'        => $status,
+                        'has_agent'     => (bool) $listing->agent,
+                        'has_user'      => (bool) $agentUser,
+                    ]);
                 }
             } catch (\Throwable $e) {
                 // Non-fatal — audit status was saved, mail failure should not roll it back
-                Log::warning('Listing verification email failed: ' . $e->getMessage());
+                Log::warning('Listing verification email failed', [
+                    'listing_id' => $listing->id,
+                    'status'     => $status,
+                    'error'      => $e->getMessage(),
+                ]);
             }
         }
 
