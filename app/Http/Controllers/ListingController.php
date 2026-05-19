@@ -843,8 +843,15 @@ class ListingController extends Controller
         $emailSent = false;
         if ($status === 'flagged' || $status === 'verified') {
             try {
-                $listing->load('agent.user.role');
+                $listing->load('agent.user.role', 'property.propertyAttribute.subtype.type');
                 $agentUser = optional($listing->agent)->user;
+                // Property type drives the amenities row in the email blade.
+                // Land has no amenities, so we hide that line from the checklist.
+                $typeName = strtolower((string) optional(optional(optional(
+                    optional($listing->property)->propertyAttribute
+                )->subtype)->type)->name);
+                $isLand = $typeName === 'land';
+
                 if ($agentUser && $agentUser->email) {
                     $roleSegment = optional($agentUser->role)->name === 'admin' ? 'admin' : 'agent';
                     $listingUrl = 'https://filipinohomes.com/' . $roleSegment . '/create-listing'
@@ -859,6 +866,7 @@ class ListingController extends Controller
                             auditChecklist: $validated['audit_checklist'] ?? null,
                             listingUrl:     $listingUrl,
                             editedFields:   $validated['edited_fields'] ?? null,
+                            isLand:         $isLand,
                         )
                         : new ListingVerifiedMailer(
                             agentName:      $agentUser->name ?? 'Agent',
@@ -867,6 +875,7 @@ class ListingController extends Controller
                             auditNotes:     $validated['audit_notes'] ?? '',
                             auditChecklist: $validated['audit_checklist'] ?? null,
                             listingUrl:     $listingUrl,
+                            isLand:         $isLand,
                         );
 
                     Mail::to($agentUser->email)->send($mailable);

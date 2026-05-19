@@ -34,6 +34,7 @@ if (config('app.debug')) {
             'price_realistic'   => true,
             'location_accurate' => true,
             'nearby_facilities' => false,
+            'amenities'         => false,
             'photos'            => false,
             'title_seo'         => false,
             'description'       => true,

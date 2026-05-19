@@ -62,15 +62,21 @@
                                     // Map checklist keys to human-readable labels (mirrors frontend CHECKLIST_ITEMS)
                                     $checklistLabels = [
                                         'agent_verified'   => 'Agent contact (email, mobile & whatsapp)',
-                                        'ats_correct'      => 'ATS is correct',
-                                        'specs_correct'    => 'Property attributes are good',
+                                        'specs_correct'    => 'Details, attributes are good',
                                         'price_realistic'  => 'Price is realistic',
+                                        'ats_correct'      => 'ATS is correct',
                                         'location_accurate'=> 'Location / address is correct',
                                         'nearby_facilities'=> 'Nearby facilities are present',
+                                        'amenities'        => 'Amenities are good',
                                         'photos'           => 'Photos are good',
                                         'title_seo'        => 'Title is already good for SEO',
                                         'description'      => 'Description good for SEO',
                                     ];
+                                    // Land listings have no amenities — drop the row so the
+                                    // checklist matches what the audit panel actually showed.
+                                    if (!empty($isLand)) {
+                                        unset($checklistLabels['amenities']);
+                                    }
                                     $passingItems = [];
                                     $failingItems = [];
                                     if (is_array($auditChecklist)) {

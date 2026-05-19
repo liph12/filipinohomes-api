@@ -22,6 +22,9 @@ class ListingFlaggedMailer extends Mailable
         public ?array  $auditChecklist,
         public string  $listingUrl,
         public ?array  $editedFields = null,
+        // True when property type is Land — blade hides the amenities row in
+        // the checklist (Land listings have no amenities to verify).
+        public bool    $isLand = false,
     ) {}
 
     public function envelope(): Envelope
