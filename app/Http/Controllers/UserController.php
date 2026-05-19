@@ -85,12 +85,17 @@ class UserController extends Controller
             // silently swallow the inquiry.
             Log::warning('sendInquiry: no admin recipients found (role_id=1)');
         } else {
-            Mail::to($adminEmails)->send(new InquiryMailer(
-                clientName:    $validated['name'],
-                clientEmail:   $validated['email'],
-                clientMessage: $validated['message'],
-                source:        $validated['source'] ?? null,
-            ));
+            // To: the shared public inbox (info@filipinohomes.com) so admins
+            // don't see each other's emails exposed in the recipient header.
+            // Actual delivery to every admin happens via BCC.
+            Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
+                ->bcc($adminEmails)
+                ->send(new InquiryMailer(
+                    clientName:    $validated['name'],
+                    clientEmail:   $validated['email'],
+                    clientMessage: $validated['message'],
+                    source:        $validated['source'] ?? null,
+                ));
         }
 
         Inquiry::create([
@@ -172,14 +177,18 @@ class UserController extends Controller
         if (empty($adminEmails)) {
             Log::warning('sendContactUs: no admin recipients found (role_id=1)');
         } else {
-            Mail::to($adminEmails)->send(new ContactUsMailer(
-                clientName:    $validated['name'],
-                clientEmail:   $validated['email'],
-                clientMessage: $validated['message'],
-                clientPhone:   $validated['phone']       ?? null,
-                inquiryType:   $validated['inquiryType'] ?? null,
-                clientSubject: $validated['subject']     ?? null,
-            ));
+            // BCC pattern (mirrors sendInquiry above) — admin emails stay
+            // hidden behind info@filipinohomes.com.
+            Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
+                ->bcc($adminEmails)
+                ->send(new ContactUsMailer(
+                    clientName:    $validated['name'],
+                    clientEmail:   $validated['email'],
+                    clientMessage: $validated['message'],
+                    clientPhone:   $validated['phone']       ?? null,
+                    inquiryType:   $validated['inquiryType'] ?? null,
+                    clientSubject: $validated['subject']     ?? null,
+                ));
         }
 
         // Persist via the same Inquiry table so submissions stay in one place.
