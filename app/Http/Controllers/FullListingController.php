@@ -93,7 +93,7 @@ class FullListingController extends Controller
             $user  = $request->user();
             $agent = $user->agent;
 
-            if ($user->role->name === 'agent' && $listing->agent_id !== $agent?->id) {
+            if ($user->role->name === 'agent' && (int) $listing->agent_id !== (int) ($agent?->id)) {
                 return response()->json(['message' => 'You do not own this listing.'], 403);
             }
 
@@ -113,9 +113,14 @@ class FullListingController extends Controller
             // admins who don't own this listing don't trigger the transition
             // here; their edits go through the audit modal and write to
             // audit_edited_fields instead.
+            // Cast both sides to int — depending on PDO settings, agent_id
+            // can come back as a string while $agent->id is int (because it's
+            // a model primary key). A strict === between "5" and 5 would
+            // silently fail and the listing would stay 'flagged' even after
+            // the owner edited it.
             $isFlaggedOwnerEdit = $listing->verification_status === 'flagged'
                 && $agent !== null
-                && $listing->agent_id === $agent->id;
+                && (int) $listing->agent_id === (int) $agent->id;
 
             $snapName          = $listing->name;
             $snapPrice         = (string) $listing->price;

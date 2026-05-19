@@ -17,6 +17,15 @@ class Listing extends Model
     use HasFactory;
     use SoftDeletes;
 
+    /**
+     * Service-layer flag set by ListingService::updateListing so the
+     * controller can short-circuit when nothing actually changed. Declared
+     * as a real PHP property (not an Eloquent attribute) so it doesn't get
+     * added to $attributes and get persisted by later update() calls —
+     * MySQL has no such column.
+     */
+    public ?bool $was_actually_updated = null;
+
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
         'featured_photo', 'is_featured', 'clicks','impressions',
