@@ -33,6 +33,10 @@ class UserResource extends JsonResource
             'role'      => $this->role?->name,
             'is_team_leader' => $isTeamLeader,
             'led_member_user_ids' => $isTeamLeader ? $teamService->getLedTeamMemberUserIds($this->id) : [],
+            // Team IDs the user leads — used client-side to filter /agents
+            // (and similar list endpoints) to "my team only" for the leader
+            // sidebar entries. Empty for non-leaders.
+            'led_team_ids' => $isTeamLeader ? $teamService->getLedTeamIds($this->id) : [],
             'active_at' => $lastSeen,
             'last_online_at' => $this->last_online_at,
             'created_at' => $this->created_at,

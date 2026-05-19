@@ -106,9 +106,16 @@ class FullListingController extends Controller
                 ], 403);
             }
 
-            // Capture snapshot before update if agent is editing a flagged listing
-            $isFlaggedAgentEdit = $user->role->name === 'agent'
-                && $listing->verification_status === 'flagged';
+            // Capture snapshot before update if the LISTING OWNER edits a
+            // flagged listing. Owner is whoever's agent.id matches the
+            // listing's agent_id — works for plain agents AND for admins who
+            // own listings (admins still have an Agent record). Auditor
+            // admins who don't own this listing don't trigger the transition
+            // here; their edits go through the audit modal and write to
+            // audit_edited_fields instead.
+            $isFlaggedOwnerEdit = $listing->verification_status === 'flagged'
+                && $agent !== null
+                && $listing->agent_id === $agent->id;
 
             $snapName          = $listing->name;
             $snapPrice         = (string) $listing->price;
@@ -122,7 +129,7 @@ class FullListingController extends Controller
             $snapFeaturedCount = 0;
             $snapPhotosCount   = 0;
 
-            if ($isFlaggedAgentEdit) {
+            if ($isFlaggedOwnerEdit) {
                 $listing->load('property.propertyAttribute');
                 $snapDescription   = (string) ($listing->property->description ?? '');
                 $snapAddress       = (string) ($listing->property->address ?? '');
@@ -149,8 +156,9 @@ class FullListingController extends Controller
                 ], 200);
             }
 
-            // If agent edited a flagged listing, compute diff and set pending_review
-            if ($isFlaggedAgentEdit) {
+            // If the listing owner edited a flagged listing, compute the diff
+            // and bump it back to pending_review for the audit team to look at.
+            if ($isFlaggedOwnerEdit) {
                 $updated->load('property.propertyAttribute');
                 $agentEdited = [];
 

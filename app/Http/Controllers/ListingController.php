@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 use App\Mail\ListingFlaggedMailer;
 use App\Mail\ListingVerifiedMailer;
 use App\Services\Listing\ListingInsightsService;
+use App\Services\TeamLeadershipService;
 
 class ListingController extends Controller
 {
@@ -401,8 +402,21 @@ class ListingController extends Controller
     public function allListings(Request $request)
     {
         $user = $request->user();
-        if ($user->role->name !== 'admin') abort(403);
+
+        // Admin sees every listing. A team leader (agent role + is_leader on
+        // some team) sees only listings owned by their own team — their own
+        // listings included. Anyone else is rejected.
+        $isAdmin = $user->role->name === 'admin';
+        $ledAgentIds = [];
+        if (!$isAdmin) {
+            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+            if (empty($ledAgentIds)) abort(403);
+        }
+
         $query = Listing::query();
+        if (!$isAdmin) {
+            $query->whereIn('agent_id', $ledAgentIds);
+        }
 
         // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
@@ -817,7 +831,17 @@ class ListingController extends Controller
 
     public function updateVerification(Request $request, Listing $listing)
     {
-        if ($request->user()->role->name !== 'admin') abort(403);
+        $user = $request->user();
+        // Admins audit anything. Team leaders audit listings owned by anyone
+        // on their team (their own listings included). Everyone else is
+        // rejected. Pattern mirrors ConversationPolicy::moderate().
+        $isAdmin = $user->role->name === 'admin';
+        if (!$isAdmin) {
+            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+            if (empty($ledAgentIds) || !in_array((int) $listing->agent_id, $ledAgentIds, true)) {
+                abort(403);
+            }
+        }
 
         $validated = $request->validate([
             'verification_status' => 'nullable|in:verified,fully_verified,flagged,pending_review',
@@ -907,6 +931,56 @@ class ListingController extends Controller
         }
 
         return response()->json(['data' => $listing->fresh(), 'email_sent' => $emailSent]);
+    }
+
+    /**
+     * Audit activity feed. Surfaces listings that have any kind of
+     * audit-related change recorded — agent edits on a flagged listing
+     * (agent_edited_fields), admin edits during audit (audit_edited_fields),
+     * or a completed audit decision (audited_at). Sorted by the most recent
+     * of those timestamps so the top of the list is "what just happened".
+     *
+     * Visibility:
+     *   - Admin: every listing's activity.
+     *   - Team leader (agent role + is_leader=true): only their team's
+     *     activity (own listings + every team member's listings).
+     *   - Anyone else: 403.
+     */
+    public function auditFeed(Request $request)
+    {
+        $user = $request->user();
+
+        $isAdmin = $user->role->name === 'admin';
+        $ledAgentIds = [];
+        if (!$isAdmin) {
+            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+            if (empty($ledAgentIds)) abort(403);
+        }
+
+        $perPage = (int) $request->input('per_page', 20);
+        $perPage = max(1, min(100, $perPage));
+
+        $query = Listing::query()
+            ->where(function ($q) {
+                $q->whereNotNull('agent_edited_fields')
+                  ->orWhereNotNull('audit_edited_fields')
+                  ->orWhereNotNull('audited_at');
+            })
+            // Most-recent activity first. Either field can be null so we
+            // coalesce to an ancient date before taking the greatest.
+            ->orderByRaw("GREATEST(COALESCE(re_submitted_at, '1970-01-01'), COALESCE(audited_at, '1970-01-01')) DESC")
+            ->with([
+                'agent.user',
+                'property.propertyAttribute.subtype.type',
+                'category',
+                'auditedBy',
+            ]);
+
+        if (!$isAdmin) {
+            $query->whereIn('agent_id', $ledAgentIds);
+        }
+
+        return new ListingResourceCollection($query->paginate($perPage));
     }
 
     public function show(string $slug)
