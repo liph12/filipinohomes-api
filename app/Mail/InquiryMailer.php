@@ -25,7 +25,6 @@ class InquiryMailer extends Mailable
         public string $clientName,
         public string $clientEmail,
         public string $clientMessage,
-        public array $ccRecipients = [],
         public ?string $source = null,
     ) {
         // Best-effort avatar lookup so repeat clients show up with a face
@@ -46,15 +45,14 @@ class InquiryMailer extends Mailable
             default             => 'Get In Touch: ' . $this->clientName,
         };
 
+        // No CC by design: admin fan-out happens via BCC at the call-site
+        // (UserController::sendInquiry) so admins never see each other's
+        // addresses in the header. Don't add `cc:` here.
         return new Envelope(
             subject: $subject,
             replyTo: [
                 new Address($this->clientEmail, $this->clientName),
             ],
-            cc: array_map(
-                fn($cc) => new Address($cc['email'], $cc['name'] ?? ''),
-                $this->ccRecipients,
-            ),
         );
     }
 
