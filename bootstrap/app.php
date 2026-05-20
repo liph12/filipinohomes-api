@@ -1,9 +1,11 @@
 <?php
 
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -18,7 +20,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-    $exceptions->shouldRenderJsonWhen(
-        fn(Request $request) => $request->is('api/*') || $request->wantsJson()
-    );
+        $exceptions->shouldRenderJsonWhen(
+            fn(Request $request) => $request->is('api/*') || $request->wantsJson()
+        );
+
+        $exceptions->render(function (AuthenticationException $e, Request $request) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        });
     })->create();
