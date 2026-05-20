@@ -107,9 +107,15 @@ class MessageNotificationMailer extends Mailable
         // Email 2: to admins + team leader, with the listing-owner card
         // visible so they always know who's responsible. Skipped when the
         // audience is empty (no admins configured).
+        //
+        // TO header is the shared info@ inbox so admins don't see each
+        // other's emails exposed in the recipient header — mirrors the
+        // BCC pattern UserController::sendInquiry already uses for the
+        // Get-In-Touch / Contact-Us fan-out.
         $audience = self::resolveAdminAudience($agentUserId, $receiver->email);
         if (!empty($audience)) {
-            Mail::to($audience)->send(new self(
+            $sharedInbox = env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com');
+            Mail::to($sharedInbox)->bcc($audience)->send(new self(
                 $sender,
                 $receiver,
                 $message,
