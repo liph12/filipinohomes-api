@@ -64,8 +64,13 @@ class MessageNotificationMailer extends Mailable
 
     public function build()
     {
-        return $this->to($this->receiverEmail)
-            ->from(env('MAIL_FROM'), 'FH Support Team')
+        // Do NOT call $this->to(...) here. The TO address is set by the
+        // caller's Mail::to(...) chain (see dispatchForInquiry). If we
+        // also call ->to() here, Laravel adds it on top of whatever the
+        // caller set — which previously leaked the agent's email into
+        // the TO header of the admin fan-out send (it only meant to
+        // show info@filipinohomes.com).
+        return $this->from(env('MAIL_FROM'), 'FH Support Team')
             ->subject('Filipino Homes - New message received')
             ->markdown('emails.message-notification');
     }
