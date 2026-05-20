@@ -41,6 +41,7 @@ use App\Http\Controllers\{
     TeamAgentController,
     FeatureTokenController,
     GuestTokenController,
+    InquiryController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -219,6 +220,16 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
 
     
+            // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.
+            // GET /admin/inquiries          → paginated list with replies
+            // GET /admin/inquiries/{id}     → single inquiry with thread
+            // POST /admin/inquiries/{id}/reply → send a reply from info@
+            Route::middleware(RoleMiddleware::class . ':admin')->group(function () {
+                Route::get('/admin/inquiries', [InquiryController::class, 'index']);
+                Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
+                Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
+            });
+
             // Magazine, Office & Ad management (admin + editor only)
             Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
                 Route::apiResource('magazines', MagazineController::class)->except(['index', 'show']);

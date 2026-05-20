@@ -7,6 +7,7 @@ use App\Services\TeamLeadershipService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Mail;
 
 class MessageNotificationMailer extends Mailable
 {
@@ -18,30 +19,21 @@ class MessageNotificationMailer extends Mailable
     public $senderName;
     public $senderMobile;
     public $senderWhatsapp;
+    public $senderAvatar;
     public $message;
     public $slug;
     public $roleName;
-    /**
-     * Optional listing payload shown as a property card in the email so the
-     * recipient knows which listing the inquiry/message refers to.
-     * Shape: ['name', 'price', 'image', 'location', 'category', 'subtype',
-     * 'public_url'] — all strings, all optional.
-     */
     public $listing;
-    /**
-     * Frontend base URL (e.g. https://filipinohomes.com or a staging host).
-     * Driven by FRONTEND_URL env so emails don't hardcode prod — same value
-     * is used to compose role-aware deep links in the blade.
-     */
     public $frontendUrl;
-    /**
-     * Display name for the greeting line. When a listing is attached we use
-     * the listing's owning agent's full name (so admins BCC'd on inquiries
-     * see "Hello Agent X" — the person responsible). Falls back to the
-     * recipient's name for non-listing direct messages.
-     */
     public $greetingName;
     public $agentUserId;
+    /**
+     * Whether the "Listing Owner" contact block should render in the email.
+     * Hidden when the TO recipient IS the listing owner (the agent) — the
+     * block would just echo their own contact info. Always shown for the
+     * admin/team-leader copy (see dispatchForInquiry below).
+     */
+    public $showListingOwner;
 
     public function __construct(
         $sender,
@@ -50,57 +42,111 @@ class MessageNotificationMailer extends Mailable
         $slug,
         $roleName = 'agent',
         ?array $listing = null,
-        ?int $agentUserId = null
+        ?int $agentUserId = null,
+        bool $showListingOwner = true
     ) {
         $this->receiverEmail = $receiver->email;
         $this->receiverName = $receiver->name;
         $this->senderEmail = $sender->email;
         $this->senderName = $sender->name;
-        // Mobile sits on the User row; WhatsApp lives on the related Agent
-        // profile (only present for users with role=agent). Both optional so
-        // direct-client senders just show what they have.
         $this->senderMobile   = $sender->mobile_no ?? null;
         $this->senderWhatsapp = $sender->agent?->whats_app_no ?? null;
+        $this->senderAvatar   = $sender->avatar ?? null;
         $this->message = $message;
         $this->slug = $slug;
         $this->roleName = $roleName;
         $this->listing = $listing;
-        // Resolve once so the blade can compose deep links for any role:
-        //   {$frontendUrl}/{role}/listing-inquiries/{$slug}
-        // Falls back to prod when FRONTEND_URL isn't set in .env.
         $this->frontendUrl = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
         $this->agentUserId = $agentUserId;
-        // Foreground the listing's owning agent in the greeting line — that's
-        // the person responsible for the inquiry, which matters when admins
-        // and team-leaders are BCC'd. Falls back to the recipient's name when
-        // the chat isn't tied to a listing (direct messages).
         $this->greetingName = $listing['owner_name'] ?? $this->receiverName;
+        $this->showListingOwner = $showListingOwner;
     }
 
     public function build()
     {
-        $bccEmails = User::where('role_id', 1)->pluck('email')->all();
+        return $this->to($this->receiverEmail)
+            ->from(env('MAIL_FROM'), 'FH Support Team')
+            ->subject('Filipino Homes - New message received')
+            ->markdown('emails.message-notification');
+    }
 
-        if ($this->agentUserId) {
-            $leaderUserId = app(TeamLeadershipService::class)->findTeamLeaderUserIdFor($this->agentUserId);
+    /**
+     * Send the inquiry notification to the right audience(s). When the TO
+     * recipient is the listing owner themselves, their copy hides the
+     * "Listing Owner" block (redundant — it'd echo their own info), and a
+     * separate copy goes to admins + team leader WITH the block so they can
+     * see who's responsible.
+     *
+     * Replaces the previous Mail::to(...)->send(new self(...)) pattern at the
+     * callsites — they only need to know about this method now.
+     */
+    public static function dispatchForInquiry(
+        $sender,
+        $receiver,
+        $message,
+        $slug,
+        string $roleName,
+        ?array $listing,
+        ?int $agentUserId
+    ): void {
+        $receiverIsOwner = !empty($listing['owner_email'])
+            && strcasecmp((string) $listing['owner_email'], (string) $receiver->email) === 0;
+
+        // Email 1: to the primary recipient (agent or client).
+        Mail::to($receiver->email)->send(new self(
+            $sender,
+            $receiver,
+            $message,
+            $slug,
+            $roleName,
+            $listing,
+            $agentUserId,
+            !$receiverIsOwner,
+        ));
+
+        // Email 2: to admins + team leader, with the listing-owner card
+        // visible so they always know who's responsible. Skipped when the
+        // audience is empty (no admins configured).
+        $audience = self::resolveAdminAudience($agentUserId, $receiver->email);
+        if (!empty($audience)) {
+            Mail::to($audience)->send(new self(
+                $sender,
+                $receiver,
+                $message,
+                $slug,
+                $roleName,
+                $listing,
+                $agentUserId,
+                true,
+            ));
+        }
+    }
+
+    /**
+     * Resolve the admin audience for an inquiry: all role_id=1 users plus
+     * the team leader of the listing's owning agent (if known). Excludes
+     * the TO recipient so they don't get a second duplicate copy.
+     *
+     * @return array<int, string>
+     */
+    private static function resolveAdminAudience(?int $agentUserId, string $excludeEmail): array
+    {
+        $emails = User::where('role_id', 1)->pluck('email')->all();
+
+        if ($agentUserId) {
+            $leaderUserId = app(TeamLeadershipService::class)->findTeamLeaderUserIdFor($agentUserId);
             if ($leaderUserId) {
                 $leaderEmail = User::where('id', $leaderUserId)->value('email');
                 if ($leaderEmail) {
-                    $bccEmails[] = $leaderEmail;
+                    $emails[] = $leaderEmail;
                 }
             }
         }
 
-        $bccEmails = array_values(array_unique(array_filter(
-            $bccEmails,
-            fn ($email) => $email && strcasecmp($email, $this->receiverEmail) !== 0
+        return array_values(array_unique(array_filter(
+            $emails,
+            fn ($email) => $email && strcasecmp($email, $excludeEmail) !== 0,
         )));
-
-        return $this->to($this->receiverEmail)
-            ->from(env('MAIL_FROM'), 'FH Support Team')
-            ->subject('Filipino Homes - New message received')
-            ->bcc($bccEmails)
-            ->markdown('emails.message-notification');
     }
 
     /**
@@ -117,8 +163,6 @@ class MessageNotificationMailer extends Mailable
             return null;
         }
 
-        // featured_photo is JSON-cast to array on the Listing model; take the
-        // first URL. Falls back to first property photo when missing.
         $photo = null;
         $raw = $listing->featured_photo ?? null;
         if (is_array($raw) && !empty($raw[0])) {
@@ -134,8 +178,6 @@ class MessageNotificationMailer extends Mailable
             }
         }
 
-        // Compose location from the deepest available level — barangay > city
-        // > province > raw address.
         $barangay = $listing->property?->barangay;
         $city     = $barangay?->city;
         $province = $city?->province;
@@ -148,7 +190,6 @@ class MessageNotificationMailer extends Mailable
             ? implode(', ', $locParts)
             : ($listing->property?->address ?? null);
 
-        // Format price as "PHP 12,345,678" when numeric, otherwise pass through.
         $price = $listing->price ?? null;
         if ($price !== null && is_numeric($price)) {
             $price = 'PHP ' . number_format((float) $price);
@@ -158,23 +199,21 @@ class MessageNotificationMailer extends Mailable
         $typeName = $subtype?->type?->name;
         $subtypeName = $subtype?->name;
 
-        // Owning agent of THIS listing (Listing belongsTo Agent). Used as the
-        // greeting name AND in the dedicated "Listing Owner" contact block in
-        // the email so recipients (especially BCC'd admins/team-leaders) know
-        // who's responsible and how to reach them directly.
         $agent = $listing->agent ?? null;
         $ownerName = null;
         $ownerMobile = null;
         $ownerWhatsapp = null;
         $ownerEmail = null;
+        $ownerAvatar = null;
         if ($agent) {
             $ownerName     = trim(($agent->first_name ?? '') . ' ' . ($agent->last_name ?? '')) ?: null;
             $ownerMobile   = $agent->mobile_no    ?? null;
             $ownerWhatsapp = $agent->whats_app_no ?? null;
-            // Email lives on the related User row (Agent belongsTo User). Eager-
-            // load `agent.user` on the caller for free; falls back to lazy fetch
-            // here without crashing if the relation isn't preloaded.
             $ownerEmail    = $agent->user?->email ?? null;
+            // Use the related User's avatar (a plain URL string). Agent's
+            // own `avatar` column is JSON-cast and its structure isn't
+            // guaranteed to be a single URL, so we skip it here.
+            $ownerAvatar   = $agent->user?->avatar ?? null;
         }
 
         $frontend = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
@@ -192,6 +231,7 @@ class MessageNotificationMailer extends Mailable
             'owner_mobile'   => $ownerMobile,
             'owner_whatsapp' => $ownerWhatsapp,
             'owner_email'    => $ownerEmail,
+            'owner_avatar'   => $ownerAvatar,
         ];
     }
 }

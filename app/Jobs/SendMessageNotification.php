@@ -11,7 +11,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 class SendMessageNotification implements ShouldQueue
@@ -112,17 +111,17 @@ class SendMessageNotification implements ShouldQueue
 
         $recipientRole = $recipient->role?->name ?? 'client';
 
-        // Send email notification
-        Mail::to($recipient->email)->send(
-            new MessageNotificationMailer(
-                $sender,
-                $recipient,
-                $message->body,
-                $slug,
-                $recipientRole,
-                MessageNotificationMailer::buildListingPayload($listing),
-                $conversation->agent_user_id,
-            )
+        // Send email notification — dispatchForInquiry handles the
+        // TO-vs-admin-BCC split so the listing owner doesn't see a redundant
+        // copy of their own contact info.
+        MessageNotificationMailer::dispatchForInquiry(
+            $sender,
+            $recipient,
+            $message->body,
+            $slug,
+            $recipientRole,
+            MessageNotificationMailer::buildListingPayload($listing),
+            $conversation->agent_user_id,
         );
 
         // Update last_notified_at for the recipient

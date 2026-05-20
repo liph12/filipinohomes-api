@@ -9,7 +9,6 @@ use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Mail\MessageNotificationMailer;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 class ConversationController extends Controller
@@ -112,7 +111,7 @@ class ConversationController extends Controller
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
-        Mail::to($agent->email)->send(new MessageNotificationMailer(
+        MessageNotificationMailer::dispatchForInquiry(
             $sender,
             $agent,
             $message,
@@ -120,7 +119,7 @@ class ConversationController extends Controller
             'agent',
             MessageNotificationMailer::buildListingPayload($type),
             $conversation->agent_user_id,
-        ));
+        );
 
         return new ConversationResource($conversation);
     }

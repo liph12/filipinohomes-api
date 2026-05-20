@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
@@ -18,6 +19,8 @@ class ContactUsMailer extends Mailable
 {
     use Queueable, SerializesModels;
 
+    public ?string $clientAvatar = null;
+
     public function __construct(
         public string  $clientName,
         public string  $clientEmail,
@@ -25,7 +28,9 @@ class ContactUsMailer extends Mailable
         public ?string $clientPhone   = null,
         public ?string $inquiryType   = null,
         public ?string $clientSubject = null,
-    ) {}
+    ) {
+        $this->clientAvatar = User::where('email', $clientEmail)->value('avatar') ?: null;
+    }
 
     public function envelope(): Envelope
     {

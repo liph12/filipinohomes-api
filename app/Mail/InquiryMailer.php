@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
@@ -13,17 +14,25 @@ class InquiryMailer extends Mailable
 {
     use Queueable, SerializesModels;
 
+    /**
+     * Avatar URL for the submitter, if they're a registered Filipino Homes
+     * user (lookup by email at construction time). Null for first-time
+     * leads — the blade falls back to a ui-avatars.com initials thumbnail.
+     */
+    public ?string $clientAvatar = null;
+
     public function __construct(
         public string $clientName,
         public string $clientEmail,
         public string $clientMessage,
         public array $ccRecipients = [],
-        // Source key submitted from the frontend ('home_get_in_touch',
-        // 'contact_page'). Rendered as a "Submitted from:" indicator in the
-        // blade so admins can tell which page the message came from. Optional
-        // for backwards compatibility with older code paths.
         public ?string $source = null,
-    ) {}
+    ) {
+        // Best-effort avatar lookup so repeat clients show up with a face
+        // instead of just initials. One indexed query on a unique-ish column;
+        // safe to skip silently when no row exists.
+        $this->clientAvatar = User::where('email', $clientEmail)->value('avatar') ?: null;
+    }
 
     public function envelope(): Envelope
     {
