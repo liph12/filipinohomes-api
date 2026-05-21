@@ -4,6 +4,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* Mobile fit (viewports <=600px). Attribute selectors target the
+           inline-styled cells so no markup tagging is needed:
+           - Pull every 40px section padding in to 20px so text isn't
+             cramped on phone screens.
+           - Stack the property card so the listing details aren't
+             squeezed into a ~5-character column next to a fixed 160px
+             image. Image goes full-width on top; details follow below.
+           - Scale the H1 title down to fit narrow viewports.
+           Logo (32px padding) and ribbon (24px padding) are untouched. */
+        @media only screen and (max-width: 600px) {
+            td[style*="40px"] {
+                padding-left: 20px !important;
+                padding-right: 20px !important;
+            }
+            td[style*="width:160px;height:160px"] {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                padding: 0 !important;
+            }
+            img[width="160"][height="160"] {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                max-height: 240px !important;
+            }
+            td[style*="border-top-right-radius:14px"][style*="border-bottom-right-radius:14px"] {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                padding: 18px 20px !important;
+                border-top: none !important;
+                border-top-right-radius: 0 !important;
+                border-bottom-left-radius: 14px !important;
+            }
+            span[style*="font-size:28px"] {
+                font-size: 22px !important;
+                line-height: 30px !important;
+            }
+        }
+    </style>
 </head>
 
 @php
