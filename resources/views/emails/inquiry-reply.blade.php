@@ -65,10 +65,14 @@
                                     </td>
                                 </tr>
 
+                                {{-- Intentionally anonymous: the recipient sees "our team",
+                                     not the individual admin's name. The real responder is
+                                     still recorded against the InquiryReply row and shown
+                                     to admins on /admin/inquiries/{id} for internal audit. --}}
                                 <tr>
                                     <td align="left" valign="top" style="background-color:#ffffff;padding:8px 40px 20px;">
                                         <span style="font-size:15px;line-height:24px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
-                                            Thank you for reaching out to Filipino Homes. {{ ucwords(strtolower($adminName)) }} from our team has responded to your inquiry below.
+                                            Thank you for reaching out to Filipino Homes. Our team has responded to your inquiry below.
                                         </span>
                                     </td>
                                 </tr>
@@ -82,21 +86,24 @@
                                     </td>
                                 </tr>
 
-                                {{-- REPLIER (admin) with avatar --}}
+                                {{-- REPLIER signature — generic "FH Staff" label, never the
+                                     individual admin's name. Avatar uses a static "FH" seed
+                                     so initials always render "FH", regardless of whether
+                                     the responding admin has an avatar uploaded. --}}
                                 <tr>
                                     <td align="left" valign="top" style="background-color:#ffffff;padding:0 40px 20px;">
                                         <table border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
                                             <tbody>
                                                 <tr>
                                                     <td valign="top" width="64" style="width:64px;padding-right:14px;">
-                                                        <img src="{{ $avatarUrl($adminAvatar, $adminName, '245ee0') }}"
-                                                            alt="{{ $adminName }}"
+                                                        <img src="{{ $avatarUrl(null, 'FH', '245ee0') }}"
+                                                            alt="FH Staff"
                                                             width="56" height="56"
                                                             style="display:block;width:56px;height:56px;border-radius:50%;border:0;outline:none;text-decoration:none;background:#e5e7eb;" />
                                                     </td>
                                                     <td valign="top">
                                                         <div style="font-size:15px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#162033;font-weight:700;margin-bottom:4px;">
-                                                            {{ ucwords(strtolower($adminName)) }}
+                                                            FH Staff
                                                         </div>
                                                         <div style="font-size:12px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:#667085;">
                                                             Filipino Homes Support Team
