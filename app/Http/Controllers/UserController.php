@@ -69,10 +69,10 @@ class UserController extends Controller
             'name'    => 'required|string|max:255',
             // Strict email validation: rfc syntax + dns lookup (rejects
             // addresses like asd@d.c whose domain has no MX/A records) +
-            // strict RFC 5321 mode + spoof check for homoglyph attacks.
-            // The dns rule does a network call, but it's the only reliable
-            // way to keep junk leads out of the admin inbox.
-            'email'   => ['required', 'email:rfc,dns,strict,spoof', 'max:255'],
+            // strict RFC 5321 mode. The `spoof` homoglyph check is
+            // intentionally omitted — it requires PHP's Intl extension,
+            // which isn't installed on the production server.
+            'email'   => ['required', 'email:rfc,dns,strict', 'max:255'],
             'message' => 'required|string|max:5000',
             // Identifies which page submitted the form ('home_get_in_touch',
             // 'contact_page'). Optional — older clients still post without it,
@@ -173,8 +173,9 @@ class UserController extends Controller
 
         $validated = $request->validate([
             'name'        => 'required|string|max:255',
-            // See sendInquiry: rfc+dns+strict+spoof rejects junk like asd@d.c.
-            'email'       => ['required', 'email:rfc,dns,strict,spoof', 'max:255'],
+            // See sendInquiry: rfc+dns+strict rejects junk like asd@d.c.
+            // `spoof` is omitted because it needs the Intl extension.
+            'email'       => ['required', 'email:rfc,dns,strict', 'max:255'],
             'message'     => 'required|string|max:5000',
             'phone'       => 'nullable|string|max:64',
             'inquiryType' => 'nullable|string|max:128',
