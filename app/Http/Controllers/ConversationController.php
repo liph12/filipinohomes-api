@@ -111,14 +111,17 @@ class ConversationController extends Controller
 
         $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
 
-        MessageNotificationMailer::dispatchForInquiry(
-            $sender,
-            $agent,
-            $message,
-            $slug,
-            'agent',
-            MessageNotificationMailer::buildListingPayload($type),
-            $conversation->agent_user_id,
+        // Strictly notify the agent. Admins + team leader already saw the
+        // submission email when the client first filed the inquiry (see
+        // ChatController@store → dispatchForSubmission), so a second copy
+        // here would just be inbox noise.
+        MessageNotificationMailer::dispatchForAcceptance(
+            sender:      $sender,
+            agent:       $agent,
+            message:     $message,
+            slug:        $slug,
+            listing:     MessageNotificationMailer::buildListingPayload($type),
+            agentUserId: $conversation->agent_user_id,
         );
 
         return new ConversationResource($conversation);

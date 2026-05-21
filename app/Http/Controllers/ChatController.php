@@ -3,14 +3,17 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\ChatResource;
+use App\Mail\MessageNotificationMailer;
 use App\Models\Chat;
 use App\Models\Conversation;
+use App\Models\Listing;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ChatController extends Controller
 {
@@ -185,6 +188,20 @@ class ChatController extends Controller
 
                 $existing->touch();
                 $existing->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
+
+                // After a rejected → re-inquiry transition the new conversation
+                // is functionally a fresh submission. Notify admins + team
+                // leader so they can review it — same as the fresh-chat path
+                // below.
+                if ($isListing) {
+                    $this->dispatchSubmissionEmail(
+                        chatId:       $existing->id,
+                        listingId:    (int) $validated['type_id'],
+                        agentUserId:  (int) $validated['target_user_id'],
+                        message:      $validated['message'] ?? '',
+                        sender:       $user,
+                    );
+                }
             }
 
             return new ChatResource($existing);
@@ -245,7 +262,66 @@ class ChatController extends Controller
 
         $chat->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
 
+        // Notify admins + the agent's team leader on listing inquiries.
+        // Fires AFTER the DB transaction commits — the queued mailable
+        // serializes the listing payload, so we don't want a rollback to
+        // strand a job pointing at a non-existent conversation.
+        if ($validated['type'] === 'listing') {
+            $this->dispatchSubmissionEmail(
+                chatId:       $chat->id,
+                listingId:    (int) $validated['type_id'],
+                agentUserId:  (int) $validated['target_user_id'],
+                message:      $validated['message'] ?? '',
+                sender:       $user,
+            );
+        }
+
         return new ChatResource($chat);
+    }
+
+    /**
+     * Fan-out for the listing-inquiry submission email. Shared between
+     * the fresh-chat path and the rejected → re-inquiry path so the
+     * BCC pattern and relation-loading logic live in exactly one place.
+     */
+    private function dispatchSubmissionEmail(
+        int $chatId,
+        int $listingId,
+        int $agentUserId,
+        string $message,
+        User $sender,
+    ): void {
+        $listing = Listing::with([
+            'agent',
+            'category',
+            'property.barangay.city.province',
+            'property.propertyAttribute.subtype.type',
+        ])->find($listingId);
+
+        if (!$listing) {
+            // Listing was deleted between validation and dispatch (race).
+            // The conversation row still exists for moderation; just skip
+            // the email rather than crashing the queue worker.
+            return;
+        }
+
+        // Load the sender's agent profile so the email can surface their
+        // WhatsApp number when they're an agent. Skipped silently for
+        // regular clients (the relation just returns null).
+        $sender->loadMissing('agent');
+
+        // Slug shape matches ConversationController@accept so the frontend's
+        // ListingInquiries component (which matches `{slug}-{chat.id}`) can
+        // route from the email CTA back to the right inquiry.
+        $slug = Str::slug($listing->name) . '-' . $chatId;
+
+        MessageNotificationMailer::dispatchForSubmission(
+            sender:      $sender,
+            message:     $message,
+            slug:        $slug,
+            listing:     MessageNotificationMailer::buildListingPayload($listing),
+            agentUserId: $agentUserId,
+        );
     }
 
     public function show(Chat $chat)

@@ -22,7 +22,11 @@
         <li><a href="/preview/email/verified">✓ Listing Verified</a> &nbsp; <code>ListingVerifiedMailer</code></li>
         <li><a href="/preview/email/inquiry">✉ New Inquiry</a> &nbsp; <code>InquiryMailer</code> &nbsp; <small>(home / maintenance)</small></li>
         <li><a href="/preview/email/contact-us">📨 Contact Us Submission</a> &nbsp; <code>ContactUsMailer</code> &nbsp; <small>(contact page — rich form)</small></li>
-        <li><a href="/preview/email/notification">💬 Message Notification</a> &nbsp; <code>MessageNotificationMailer</code></li>
+        <li><a href="/preview/email/notification">💬 Message Notification</a> &nbsp; <code>MessageNotificationMailer</code> &nbsp; <small>(legacy / reply-path)</small></li>
+        <li><a href="/preview/email/inquiry-admin">🏠 Listing Inquiry — Admin View</a> &nbsp; <code>perspective=admin</code></li>
+        <li><a href="/preview/email/inquiry-admin-unassigned">🚨 Listing Inquiry — Admin View (Agent Unassigned)</a> &nbsp; <code>perspective=admin, teamName=null</code></li>
+        <li><a href="/preview/email/inquiry-team-leader">👥 Listing Inquiry — Team Leader View</a> &nbsp; <code>perspective=team_leader</code></li>
+        <li><a href="/preview/email/inquiry-agent">✅ Listing Inquiry — Agent (Assigned)</a> &nbsp; <code>perspective=agent</code></li>
         <li><a href="/preview/email/otp">🔐 Login OTP</a> &nbsp; <code>LoginOtpMailer</code></li>
     </ul>
 </body>

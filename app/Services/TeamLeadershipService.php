@@ -3,11 +3,18 @@
 namespace App\Services;
 
 use App\Models\Agent;
+use App\Models\Team;
 use App\Models\TeamAgent;
 
 class TeamLeadershipService
 {
-    private array $leaderForAgentCache = [];
+    // Memoizes the full team context (team_id + team_name + leader_user_id)
+    // per agent user_id. Both findTeamLeaderUserIdFor() and
+    // findTeamInfoForAgent() delegate here so the team_agents pivot is hit
+    // exactly once per request even when multiple callers ask about the
+    // same agent (e.g. ChatController + MessageNotificationMailer in a
+    // single submission).
+    private array $teamContextCache = [];
     private array $ledMembersCache = [];
     private array $isLeaderCache = [];
     private array $ledAgentIdsCache = [];
@@ -15,31 +22,77 @@ class TeamLeadershipService
 
     public function findTeamLeaderUserIdFor(int $agentUserId): ?int
     {
-        if (array_key_exists($agentUserId, $this->leaderForAgentCache)) {
-            return $this->leaderForAgentCache[$agentUserId];
+        return $this->resolveAgentTeamContext($agentUserId)['leader_user_id'] ?? null;
+    }
+
+    /**
+     * Full team context for an agent: team id + name, plus the team leader's
+     * user_id (null when the team has no separate leader OR the agent IS the
+     * leader — same semantics as findTeamLeaderUserIdFor). Returns null when
+     * the user isn't an agent or isn't on any active team.
+     *
+     * Used by the listing-inquiry email fan-out so admins/team-leaders can
+     * see which team is involved, even when no leader exists.
+     *
+     * @return array{team_id:int, team_name:string, leader_user_id:int|null}|null
+     */
+    public function findTeamInfoForAgent(int $agentUserId): ?array
+    {
+        return $this->resolveAgentTeamContext($agentUserId);
+    }
+
+    /**
+     * Single source of truth for "which team is this agent on, and who
+     * leads it". Cached per-request so repeated lookups for the same agent
+     * don't re-hit the database.
+     *
+     * @return array{team_id:int, team_name:string, leader_user_id:int|null}|null
+     */
+    private function resolveAgentTeamContext(int $agentUserId): ?array
+    {
+        if (array_key_exists($agentUserId, $this->teamContextCache)) {
+            return $this->teamContextCache[$agentUserId];
         }
 
         $agentId = Agent::where('user_id', $agentUserId)->value('id');
         if (!$agentId) {
-            return $this->leaderForAgentCache[$agentUserId] = null;
+            return $this->teamContextCache[$agentUserId] = null;
         }
 
         $teamId = TeamAgent::where('agent_id', $agentId)
             ->where('status', 'active')
             ->value('team_id');
         if (!$teamId) {
-            return $this->leaderForAgentCache[$agentUserId] = null;
+            return $this->teamContextCache[$agentUserId] = null;
+        }
+
+        $teamName = Team::where('id', $teamId)->value('name');
+        if ($teamName === null) {
+            return $this->teamContextCache[$agentUserId] = null;
         }
 
         $leaderAgentId = TeamAgent::where('team_id', $teamId)
             ->where('is_leader', true)
             ->where('status', 'active')
             ->value('agent_id');
-        if (!$leaderAgentId || $leaderAgentId === $agentId) {
-            return $this->leaderForAgentCache[$agentUserId] = null;
+
+        // Same semantics as the legacy method: a team without a separate
+        // leader, OR a team where the agent themselves IS the leader,
+        // resolves to leader_user_id=null so callers can decide what to do
+        // (the inquiry-email fan-out skips the team-leader send in both
+        // cases — the agent doesn't need to BCC themselves about their
+        // own listing).
+        $leaderUserId = null;
+        if ($leaderAgentId && (int) $leaderAgentId !== (int) $agentId) {
+            $resolved = Agent::where('id', $leaderAgentId)->value('user_id');
+            $leaderUserId = $resolved !== null ? (int) $resolved : null;
         }
 
-        return $this->leaderForAgentCache[$agentUserId] = Agent::where('id', $leaderAgentId)->value('user_id');
+        return $this->teamContextCache[$agentUserId] = [
+            'team_id'        => (int) $teamId,
+            'team_name'      => (string) $teamName,
+            'leader_user_id' => $leaderUserId,
+        ];
     }
 
     public function getLedTeamMemberUserIds(int $leaderUserId): array

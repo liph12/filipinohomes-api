@@ -113,12 +113,68 @@ if (config('app.debug')) {
                 $listing,
                 null,
             ),
+            // Three per-role previews for the redesigned listing-inquiry
+            // flow. Each instantiates the same Mailable with a different
+            // perspective so QA can compare the ribbons / greetings /
+            // footers side-by-side without sending real mail.
+            'inquiry-admin' => new MessageNotificationMailer(
+                sender:           $sender,
+                receiver:         $makeUser(['email' => 'info@filipinohomes.com', 'name' => 'Admin']),
+                message:          "Hi! I'm interested in this listing. Could we schedule a viewing this weekend?",
+                slug:             'demo-listing-123',
+                roleName:         'admin',
+                listing:          $listing,
+                agentUserId:      null,
+                showListingOwner: true,
+                perspective:      'admin',
+                teamName:         'Cebu IT Park Specialists',
+                teamId:           7,
+            ),
+            // Same admin blade but with no team — exercises the loud red
+            // "Action Needed" callout for the unassigned-agent case.
+            'inquiry-admin-unassigned' => new MessageNotificationMailer(
+                sender:           $sender,
+                receiver:         $makeUser(['email' => 'info@filipinohomes.com', 'name' => 'Admin']),
+                message:          "Hi! I'm interested in this listing. Could we schedule a viewing this weekend?",
+                slug:             'demo-listing-123',
+                roleName:         'admin',
+                listing:          $listing,
+                agentUserId:      null,
+                showListingOwner: true,
+                perspective:      'admin',
+                teamName:         null,
+                teamId:           null,
+            ),
+            'inquiry-team-leader' => new MessageNotificationMailer(
+                sender:           $sender,
+                receiver:         $makeUser(['email' => 'leader@example.com', 'name' => 'Ana Reyes']),
+                message:          "Hi! I'm interested in this listing. Could we schedule a viewing this weekend?",
+                slug:             'demo-listing-123',
+                roleName:         'team_leader',
+                listing:          $listing,
+                agentUserId:      null,
+                showListingOwner: true,
+                perspective:      'team_leader',
+                teamName:         'Cebu IT Park Specialists',
+                teamId:           7,
+            ),
+            'inquiry-agent' => new MessageNotificationMailer(
+                sender:           $sender,
+                receiver:         $receiver,
+                message:          "Hi! I'm interested in this listing. Could we schedule a viewing this weekend?",
+                slug:             'demo-listing-123',
+                roleName:         'agent',
+                listing:          $listing,
+                agentUserId:      null,
+                showListingOwner: false,
+                perspective:      'agent',
+            ),
             'otp'      => new LoginOtpMailer(
                 'juan.cruz@example.com',
                 '482913',
                 'Juan Dela Cruz',
             ),
-            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, inquiry, contact-us, notification, otp'),
+            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp'),
         };
     });
 }
