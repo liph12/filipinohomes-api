@@ -4,11 +4,26 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
-class Property extends Model
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
+class Property extends Model implements Auditable
 {
     use HasFactory;
     use SoftDeletes;
-    
+    use LogsActivity;
+
+    protected string $auditCategory = 'listings';
+    protected array $auditLabelAttributes = ['name', 'address'];
+
+    /**
+     * Property rows are only created via ListingService::createListing, in
+     * the same transaction as the parent Listing — the Listing's own
+     * `created` audit captures that flow. Skip `created` here to avoid
+     * duplicate "created" rows for a single listing creation. Updates and
+     * deletes (status changes, cascade soft-deletes) are still audited.
+     */
+    protected $auditEvents = ['updated', 'deleted', 'restored'];
+
     protected $fillable = [
         'name',
         'project_id',

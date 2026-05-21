@@ -3,9 +3,16 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class BlockedUser extends Model
+class BlockedUser extends Model implements Auditable
 {
+    use LogsActivity;
+
+    protected string $auditCategory = 'users';
+    protected array $auditLabelAttributes = ['reason'];
+
     protected $fillable = ['agent_user_id', 'blocked_user_id', 'blocked_by', 'reason'];
 
     public function agent()

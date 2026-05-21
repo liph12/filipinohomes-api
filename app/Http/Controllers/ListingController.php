@@ -18,6 +18,8 @@ use App\Mail\ListingFlaggedMailer;
 use App\Mail\ListingVerifiedMailer;
 use App\Services\Listing\ListingInsightsService;
 use App\Services\TeamLeadershipService;
+use Illuminate\Support\Facades\Event;
+use OwenIt\Auditing\Events\AuditCustom;
 
 class ListingController extends Controller
 {
@@ -801,6 +803,7 @@ class ListingController extends Controller
             'visibility' => 'required|in:public,private',
         ]);
 
+        $listing->auditSource = 'visibility_toggle';
         $listing->update(['visibility' => $request->visibility]);
 
         return response()->json(['visibility' => $listing->visibility]);
@@ -815,6 +818,7 @@ class ListingController extends Controller
             'status_remark'       => 'nullable|string',
         ]);
 
+        $listing->property->auditSource = 'status_change';
         $listing->property->update($data);
 
         return response()->json([
@@ -832,6 +836,7 @@ class ListingController extends Controller
             'is_featured' => 'required|boolean',
         ]);
 
+        $listing->auditSource = 'featured_toggle';
         $listing->update(['is_featured' => $data['is_featured']]);
 
         $listing = $listing->fresh();
@@ -862,7 +867,12 @@ class ListingController extends Controller
             'edited_fields'       => 'nullable|array',
         ]);
 
-        $listing->update([
+        $previousVerification = $listing->verification_status;
+
+        // Skip the default 'updated' audit — we'll fire a custom 'audited' one
+        // below so audit decisions surface as their own event under
+        // category=listings_audit instead of just another listing update.
+        $listing->updateQuietly([
             'verification_status' => $validated['verification_status'] ?? null,
             'audit_notes'         => $validated['audit_notes'] ?? null,
             'audit_checklist'     => $validated['audit_checklist'] ?? null,
@@ -870,6 +880,24 @@ class ListingController extends Controller
             'audited_by'          => $request->user()->id,
             'audited_at'          => now(),
         ]);
+
+        $listing->auditEvent             = 'audited';
+        $listing->isCustomEvent          = true;
+        $listing->auditCategoryOverride  = 'listings_audit';
+        $listing->auditSource            = 'audit_modal';
+        $listing->auditDescription       = "Audit: {$previousVerification} → "
+            . ($validated['verification_status'] ?? 'cleared');
+        $listing->auditCustomOld         = ['verification_status' => $previousVerification];
+        $listing->auditCustomNew         = [
+            'verification_status' => $validated['verification_status'] ?? null,
+            'audit_notes'         => $validated['audit_notes'] ?? null,
+            'audit_checklist'     => $validated['audit_checklist'] ?? null,
+            'edited_fields'       => $validated['edited_fields'] ?? null,
+        ];
+        // owen-it v14's AuditCustom takes the Auditable in its constructor —
+        // it must be dispatched as an instance, not via the (class, payload)
+        // form, otherwise the listener gets the model instead of the event.
+        Event::dispatch(new AuditCustom($listing));
 
         // Notify agent by email for flagged (action required) or verified
         // (congrats + list what's still needed for Fully Verified). Fully-
@@ -1055,14 +1083,18 @@ class ListingController extends Controller
             'category_id'    => 'sometimes|integer|exists:categories,id',
         ]);
 
+        $listing->auditSource = 'quick_edit';
         $listing->update($validated);
 
         return new ListingResource($listing);
     }
 
-    public function destroy(Listing $listing)
+    public function destroy(Request $request, Listing $listing)
     {
         $this->authorize('delete', $listing);
+
+        $listing->auditSource = 'listings_table';
+
         DB::transaction(function () use ($listing) {
             // Delete listing first (soft-delete if model uses SoftDeletes)
             if ($listing->exists) {

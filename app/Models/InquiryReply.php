@@ -3,9 +3,16 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class InquiryReply extends Model
+class InquiryReply extends Model implements Auditable
 {
+    use LogsActivity;
+
+    protected string $auditCategory = 'inquiries';
+    protected array $auditLabelAttributes = ['subject'];
+
     protected $fillable = [
         'inquiry_id',
         'admin_user_id',

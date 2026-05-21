@@ -3,9 +3,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-class Agent extends Model
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
+class Agent extends Model implements Auditable
 {
     use HasFactory, SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'agents';
+    protected array $auditLabelAttributes = ['first_name', 'last_name'];
+
     protected $fillable = [
         'first_name',
         'middle_name',

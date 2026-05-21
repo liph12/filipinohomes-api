@@ -7,6 +7,8 @@ use App\Http\Requests\UpdateListingRequest;
 use App\Models\Listing;
 use App\Services\Listing\ListingService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Event;
+use OwenIt\Auditing\Events\AuditCustom;
 use App\Http\Middleware\RoleMiddleware;
 class FullListingController extends Controller
 {
@@ -147,6 +149,14 @@ class FullListingController extends Controller
                 $snapPhotosCount   = count((array) ($listing->property->photos ?? []));
             }
 
+            // Tag the source so the audit row written by the service-layer
+            // save is attributed to the full edit form rather than the
+            // default route-name fallback.
+            $listing->auditSource = 'edit_listing_form';
+            if ($listing->property) {
+                $listing->property->auditSource = 'edit_listing_form';
+            }
+
             $updated = $this->listingService->updateListing(
                 $payload,
                 $listing,
@@ -218,6 +228,21 @@ class FullListingController extends Controller
                     're_submitted_at'     => now(),
                 ]);
                 $updated->refresh();
+
+                // Custom audit event for the resubmission so it surfaces
+                // under category=listings_audit, separate from the regular
+                // 'updated' audit that fired for the service-layer save.
+                $updated->auditEvent             = 'resubmitted';
+                $updated->isCustomEvent          = true;
+                $updated->auditCategoryOverride  = 'listings_audit';
+                $updated->auditSource            = 'edit_listing_form';
+                $updated->auditDescription       = 'Owner edited flagged listing → pending_review';
+                $updated->auditCustomOld         = ['verification_status' => 'flagged'];
+                $updated->auditCustomNew         = [
+                    'verification_status' => 'pending_review',
+                    'edited_fields'       => $agentEdited,
+                ];
+                Event::dispatch(new AuditCustom($updated));
             }
 
             return response()->json([

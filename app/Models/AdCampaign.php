@@ -5,11 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class AdCampaign extends Model
+class AdCampaign extends Model implements Auditable
 {
     use HasFactory;
     use SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'ads';
 
     protected $fillable = [
         'name',

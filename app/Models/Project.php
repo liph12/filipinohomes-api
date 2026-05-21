@@ -8,10 +8,15 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Jobs\PingIndexNow;
 use App\Services\IndexNowService;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Project extends Model
+class Project extends Model implements Auditable
 {
     use SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'projects';
 
     protected $table = 'projects';
     /**

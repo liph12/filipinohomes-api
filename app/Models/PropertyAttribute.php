@@ -4,10 +4,18 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
-class PropertyAttribute extends Model
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
+class PropertyAttribute extends Model implements Auditable
 {
     use HasFactory;
     use SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'listings';
+
+    /** See note on Property::$auditEvents — same reasoning. */
+    protected $auditEvents = ['updated', 'deleted', 'restored'];
 
     protected $fillable = [
         'bedroom_count',

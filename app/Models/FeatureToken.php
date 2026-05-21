@@ -4,9 +4,16 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class FeatureToken extends Model
+class FeatureToken extends Model implements Auditable
 {
+    use LogsActivity;
+
+    protected string $auditCategory = 'system';
+    protected array $auditLabelAttributes = ['token'];
+
     protected $fillable = [
         'agent_id',
         'created_by',

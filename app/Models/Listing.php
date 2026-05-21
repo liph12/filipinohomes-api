@@ -12,10 +12,29 @@ use Illuminate\Support\Facades\Auth;
 use App\Jobs\PingIndexNow;
 use App\Models\Province;
 use App\Services\IndexNowService;
-class Listing extends Model
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
+class Listing extends Model implements Auditable
 {
     use HasFactory;
     use SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'listings';
+    protected array $auditLabelAttributes = ['name', 'code'];
+
+    /**
+     * Auto-generated / counter-style fields that shouldn't write audit rows
+     * every time they tick. `seo_tags` is filled in by ListingService's
+     * AI sync right after create; `clicks` / `impressions` are bumped from
+     * tracking endpoints; `updated_at` is automatic.
+     */
+    protected $auditExclude = [
+        'seo_tags',
+        'clicks',
+        'impressions',
+        'updated_at',
+    ];
 
     /**
      * Service-layer flag set by ListingService::updateListing so the

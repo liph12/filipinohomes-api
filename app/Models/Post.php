@@ -4,10 +4,16 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Post extends Model
+class Post extends Model implements Auditable
 {
     use HasFactory;
+    use LogsActivity;
+
+    protected string $auditCategory = 'content';
+    protected array $auditLabelAttributes = ['title', 'slug'];
 
     protected $fillable = [
         'title',

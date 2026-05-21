@@ -6,10 +6,15 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class PageBuilder extends Model
+class PageBuilder extends Model implements Auditable
 {
     use HasFactory, SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'content';
 
     protected $table = 'page_builder';
 

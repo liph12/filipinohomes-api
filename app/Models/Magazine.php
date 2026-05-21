@@ -4,9 +4,16 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Magazine extends Model
+class Magazine extends Model implements Auditable
 {
+    use LogsActivity;
+
+    protected string $auditCategory = 'content';
+    protected array $auditLabelAttributes = ['title', 'slug'];
+
     protected $table = 'magazines';
 
     protected $fillable = [

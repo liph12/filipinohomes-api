@@ -4,10 +4,15 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class AdPlacement extends Model
+class AdPlacement extends Model implements Auditable
 {
     use HasFactory;
+    use LogsActivity;
+
+    protected string $auditCategory = 'ads';
 
     protected $fillable = [
         'ad_id',

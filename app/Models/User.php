@@ -5,10 +5,27 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-class User extends Authenticatable
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
+class User extends Authenticatable implements Auditable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
+    use LogsActivity;
+
+    protected string $auditCategory = 'users';
+    protected array $auditLabelAttributes = ['name', 'email'];
+
+    /**
+     * Don't audit fields that are noise / sensitive
+     */
+    protected $auditExclude = [
+        'password',
+        'remember_token',
+        'last_online_at',
+        'updated_at',
+        'active_at',
+    ];
 
     /**
      * The attributes that are mass assignable.

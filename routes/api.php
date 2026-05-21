@@ -42,6 +42,7 @@ use App\Http\Controllers\{
     FeatureTokenController,
     GuestTokenController,
     InquiryController,
+    ActivityLogController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -169,6 +170,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
             Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);
+
+            // Activity logs (admin-only — enforced in controller)
+            Route::get('/activity-logs', [ActivityLogController::class, 'index']);
+            Route::get('/activity-logs/categories', [ActivityLogController::class, 'categories']);
 
             // Feature tokens
             Route::post('/feature-tokens/issue', [FeatureTokenController::class, 'issue']);

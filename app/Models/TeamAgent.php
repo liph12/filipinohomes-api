@@ -4,10 +4,15 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class TeamAgent extends Model
+class TeamAgent extends Model implements Auditable
 {
     use HasFactory;
+    use LogsActivity;
+
+    protected string $auditCategory = 'agents';
 
     protected $table = 'team_agents';
 
