@@ -1165,4 +1165,37 @@ class ListingController extends Controller
                 : null,
         ]));
     }
+
+    /**
+     * Per-listing audit history feed. Returns every audit row written
+     * against this listing (created/updated/audited/resubmitted/deleted),
+     * newest first, so the audit modal can render a scrollable timeline
+     * of remarks, checklist changes, verification flips, and edited fields.
+     *
+     * Visibility rules mirror updateVerification():
+     *   - Admin → anything.
+     *   - Team leader → only listings owned by anyone on their team.
+     *   - Everyone else → 403.
+     */
+    public function activity(Request $request, Listing $listing)
+    {
+        $user = $request->user();
+        $isAdmin = $user->role->name === 'admin';
+        if (!$isAdmin) {
+            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+            if (empty($ledAgentIds) || !in_array((int) $listing->agent_id, $ledAgentIds, true)) {
+                abort(403);
+            }
+        }
+
+        $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
+
+        return response()->json(
+            \App\Models\Audit::query()
+                ->where('auditable_type', \App\Models\Listing::class)
+                ->where('auditable_id', $listing->id)
+                ->latest('id')
+                ->paginate($perPage)
+        );
+    }
 }

@@ -170,6 +170,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
             Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);
+            // Per-listing audit history (admin + team leader of that listing).
+            Route::get('/listings/{listing}/activity', [ListingController::class, 'activity']);
 
             // Activity logs (admin-only — enforced in controller)
             Route::get('/activity-logs', [ActivityLogController::class, 'index']);
