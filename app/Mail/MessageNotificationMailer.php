@@ -4,21 +4,27 @@ namespace App\Mail;
 
 use App\Models\User;
 use App\Services\TeamLeadershipService;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
-// Implements ShouldQueue so listing-inquiry sends (which now fan out to
-// admins + team leader on submission and to the agent on acceptance) run
-// off the HTTP request via the `database` queue driver. Without this,
-// POST /api/chats and POST /conversations/{id}/accept would block on
-// SMTP for every dispatch.
-class MessageNotificationMailer extends Mailable implements ShouldQueue
+// Sends synchronously. Production has no `php artisan queue:work` worker
+// wired up (no supervisor / systemd / cron config in this repo), so when
+// this class previously declared `implements ShouldQueue` with the default
+// QUEUE_CONNECTION=database driver, every Mail::send(new self(...)) call
+// just inserted a row into the `jobs` table and silently sat there — no
+// admin / team-leader / agent inquiry email actually went out.
+//
+// The two endpoints that dispatch this mailable — POST /api/chats
+// (submission fan-out to admins + team leader) and POST
+// /conversations/{id}/accept (single send to the agent) — are low-frequency
+// moderation paths where the ~1–3s SMTP round-trip is acceptable. If a
+// queue worker is wired up later, re-add `implements ShouldQueue` plus the
+// Queueable trait and no dispatch site needs to change.
+class MessageNotificationMailer extends Mailable
 {
-    use Queueable, SerializesModels;
+    use SerializesModels;
 
     public $receiverEmail;
     public $receiverName;
@@ -100,7 +106,15 @@ class MessageNotificationMailer extends Mailable implements ShouldQueue
         // ->to() here, Laravel adds it on top of whatever the caller set
         // — which previously leaked the agent's email into the TO header
         // of the admin fan-out send (commit 6a65b06).
-        return $this->from(env('MAIL_FROM'), 'FH Support Team')
+        // MAIL_FROM_ADDRESS is the canonical env name documented in
+        // .env.example; env('MAIL_FROM') is undocumented and resolves to
+        // null in prod, which made SMTP reject these sends silently once
+        // the queue actually started running them. Falls back to the
+        // shared inbox so a missing env doesn't break dispatch.
+        return $this->from(
+            env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'),
+            'FH Support Team',
+        )
             ->subject($this->resolveSubject())
             ->markdown($this->resolveView());
     }
