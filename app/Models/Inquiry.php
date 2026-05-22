@@ -17,6 +17,7 @@ class Inquiry extends Model implements Auditable
         'name',
         'email',
         'message',
+        'source',
         'device',
         'country',
         'state',

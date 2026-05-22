@@ -25,6 +25,14 @@ class InquiryController extends Controller
         $validated = $request->validate([
             'per_page' => 'nullable|integer|min:1|max:100',
             'search'   => 'nullable|string|max:255',
+            // Filter by form source. Known values posted by the public
+            // forms are `home_get_in_touch`, `maintenance_page`, and
+            // `contact_page` (see UserController::sendInquiry +
+            // sendContactUs). Older rows persisted before the
+            // add_source_to_inquiries_table migration may have a null
+            // source — they're matched by the All filter (no `source`
+            // param) only.
+            'source'   => 'nullable|string|max:64',
         ]);
 
         $query = Inquiry::with(['replies.admin:id,name,email,avatar'])
@@ -37,6 +45,10 @@ class InquiryController extends Controller
                     ->orWhere('email', 'like', $term)
                     ->orWhere('message', 'like', $term);
             });
+        }
+
+        if (!empty($validated['source'])) {
+            $query->where('source', $validated['source']);
         }
 
         return $query->paginate($validated['per_page'] ?? 20);

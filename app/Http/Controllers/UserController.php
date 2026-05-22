@@ -114,6 +114,11 @@ class UserController extends Controller
             'name' => $validated['name'],
             'email' => $validated['email'],
             'message' => $validated['message'],
+            // Persist the source label so /admin/inquiries can filter by
+            // which public form the submission came from
+            // (home_get_in_touch / maintenance_page). Null for older
+            // clients that don't post a source.
+            'source' => $validated['source'] ?? null,
             'device' => $userInfo['device'],
             'country' => $userInfo['country'],
             'state' => $userInfo['state'],
@@ -226,6 +231,10 @@ class UserController extends Controller
             'name'    => $validated['name'],
             'email'   => $validated['email'],
             'message' => $composedMessage,
+            // Hardcoded — this endpoint is exclusively the Contact Us
+            // page; sendInquiry handles the home Get-In-Touch and
+            // maintenance forms via their own `source` values.
+            'source'  => 'contact_page',
             'device'  => $userInfo['device']  ?? null,
             'country' => $userInfo['country'] ?? null,
             'state'   => $userInfo['state']   ?? null,
