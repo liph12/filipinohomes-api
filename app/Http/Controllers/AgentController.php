@@ -59,11 +59,11 @@ class AgentController extends Controller
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
                 DB::raw($rangeSql),
-                'agents.median_first_response_seconds',
-                'agents.within_1h_response_pct',
-                'agents.unanswered_response_pct',
-                'agents.response_sample_size',
-                'agents.response_metrics_window_days',
+                // response_* columns are already included by `agents.*` above;
+                // listing them explicitly here duplicates them, which surfaces
+                // as a "Duplicate column" SQL error when paginate() wraps the
+                // query for its COUNT subquery (the wrap happens whenever a
+                // HAVING clause is added — e.g. ?min_listings=1).
             ])
             ->addBinding($rangeBindings, 'select')
             ->with([
@@ -79,6 +79,12 @@ class AgentController extends Controller
             $query->whereHas('teamMembers', function ($q) use ($teamId) {
                 $q->where('team_id', $teamId);
             });
+        }
+
+        // Public directory hides agents with no listings — opt-in so admin
+        // tables (Top Agents, Agents Management) still see everyone.
+        if (($min = (int) $request->query('min_listings', 0)) > 0) {
+            $query->having('listings_count', '>=', $min);
         }
 
         if ($search = $request->query('search')) {
