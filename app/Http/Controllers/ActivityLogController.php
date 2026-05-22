@@ -24,6 +24,51 @@ class ActivityLogController extends Controller
         'system',
     ];
 
+    /**
+     * Keys we never want surfaced in the activity feed even if old rows
+     * captured them. Mirrors Listing::$auditExclude — kept in sync so the
+     * write-side exclude and the read-side scrub stay aligned.
+     */
+    public const SCRUB_KEYS = [
+        'clicks',
+        'impressions',
+        'updated_at',
+        'seo_tags',
+    ];
+
+    /**
+     * Strip SCRUB_KEYS from old_values / new_values on each row. If both
+     * diff sides become empty after stripping, the row carried no real
+     * change and is dropped from the feed entirely.
+     */
+    public static function scrubRows(array $rows): array
+    {
+        $out = [];
+        foreach ($rows as $row) {
+            $old = is_array($row['old_values'] ?? null) ? $row['old_values'] : [];
+            $new = is_array($row['new_values'] ?? null) ? $row['new_values'] : [];
+            foreach (self::SCRUB_KEYS as $k) {
+                unset($old[$k], $new[$k]);
+            }
+            $row['old_values'] = $old;
+            $row['new_values'] = $new;
+
+            // Keep custom events (audited, resubmitted, deleted, etc.) even
+            // if their diff is empty — the event itself is meaningful.
+            $event = $row['event'] ?? '';
+            $isMeaningfulEvent = in_array(
+                $event,
+                ['created', 'deleted', 'audited', 'resubmitted', 'restored'],
+                true
+            );
+            if (!$isMeaningfulEvent && empty($old) && empty($new)) {
+                continue;
+            }
+            $out[] = $row;
+        }
+        return $out;
+    }
+
     public function __construct()
     {
         $this->middleware('auth:sanctum');
@@ -100,7 +145,21 @@ class ActivityLogController extends Controller
             });
         }
 
-        return response()->json($query->paginate($perPage));
+        $paginated = $query->paginate($perPage);
+        $rows = self::scrubRows($paginated->items() ? array_map(
+            fn($m) => $m->toArray(),
+            $paginated->items()
+        ) : []);
+
+        return response()->json([
+            'data'         => $rows,
+            'current_page' => $paginated->currentPage(),
+            'last_page'    => $paginated->lastPage(),
+            'per_page'     => $paginated->perPage(),
+            'total'        => $paginated->total(),
+            'from'         => $paginated->firstItem(),
+            'to'           => $paginated->lastItem(),
+        ]);
     }
 
     /**

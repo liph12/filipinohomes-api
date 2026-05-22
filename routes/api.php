@@ -212,6 +212,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);
+            // ATS-specific upload: preserves originals ≤5MB, compresses
+            // larger files to JPEG ≤5MB without downscaling.
+            Route::post('/upload-ats', [ImageUploadController::class, 'uploadAts']);
             Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
             Route::post('/logout', [UserController::class, 'logout']);
             Route::post('/generate-description', [GenerateDescriptionController::class, 'generate']);

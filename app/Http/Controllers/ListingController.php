@@ -1190,12 +1190,28 @@ class ListingController extends Controller
 
         $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
 
-        return response()->json(
-            \App\Models\Audit::query()
-                ->where('auditable_type', \App\Models\Listing::class)
-                ->where('auditable_id', $listing->id)
-                ->latest('id')
-                ->paginate($perPage)
-        );
+        $paginated = \App\Models\Audit::query()
+            ->where('auditable_type', \App\Models\Listing::class)
+            ->where('auditable_id', $listing->id)
+            ->latest('id')
+            ->paginate($perPage);
+
+        // Strip noise (clicks/impressions/updated_at/seo_tags) and drop rows
+        // whose only changes were those noise fields. Keeps the audit-modal
+        // history focused on meaningful events.
+        $rows = ActivityLogController::scrubRows(array_map(
+            fn($m) => $m->toArray(),
+            $paginated->items()
+        ));
+
+        return response()->json([
+            'data'         => $rows,
+            'current_page' => $paginated->currentPage(),
+            'last_page'    => $paginated->lastPage(),
+            'per_page'     => $paginated->perPage(),
+            'total'        => $paginated->total(),
+            'from'         => $paginated->firstItem(),
+            'to'           => $paginated->lastItem(),
+        ]);
     }
 }

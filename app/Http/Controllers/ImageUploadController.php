@@ -66,4 +66,36 @@ class ImageUploadController extends Controller
 
         return config('filesystems.disks.s3.url') . $fileName;
     }
+
+    // ATS upload: keep originals ≤ 5 MB, compress larger files to JPEG ≤ 5 MB
+    // at full resolution. Documents need legible detail, so we never downscale.
+    public function uploadAts(Request $request)
+    {
+        $request->validate(['file' => 'required|image|max:51200']);
+
+        $file = $request->file('file');
+        $dir = "/filipinohomes-new/" . trim($request->input('folder', 'ats'), '/');
+        $threshold = 5 * 1024 * 1024;
+
+        if ($file->getSize() <= $threshold) {
+            $ext = strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            $fileName = $dir . "/" . Str::uuid() . "." . $ext;
+            Storage::disk('s3')->put($fileName, file_get_contents($file->getRealPath()), 'public');
+        } else {
+            $image = (new ImageManager(new Driver()))->read($file->getRealPath());
+            $q = 92;
+            do {
+                $encoded = (string) $image->toJpeg($q);
+                if (strlen($encoded) <= $threshold || $q <= 30) break;
+                $q -= 4;
+            } while (true);
+            $fileName = $dir . "/" . Str::uuid() . ".jpg";
+            Storage::disk('s3')->put($fileName, $encoded, 'public');
+        }
+
+        return response()->json([
+            'success' => true,
+            'filePath' => config('filesystems.disks.s3.url') . $fileName,
+        ]);
+    }
 }
