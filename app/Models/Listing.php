@@ -24,6 +24,22 @@ class Listing extends Model implements Auditable
     protected array $auditLabelAttributes = ['name', 'code'];
 
     /**
+     * Audit-feed label shows the listing CODE before the name so the
+     * activity-logs UI doesn't fall back to a meaningless "#id".
+     * Format: "FH-1234 — Listing title here".
+     */
+    protected function resolveAuditLabel(): ?string
+    {
+        $code = trim((string) ($this->code ?? ''));
+        $name = trim((string) ($this->name ?? ''));
+
+        if ($code && $name) return "{$code} — {$name}";
+        if ($code) return $code;
+        if ($name) return $name;
+        return 'Listing #' . $this->getKey();
+    }
+
+    /**
      * Auto-generated / counter-style fields that shouldn't write audit rows
      * every time they tick. `seo_tags` is filled in by ListingService's
      * AI sync right after create; `clicks` / `impressions` are bumped from
