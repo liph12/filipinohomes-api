@@ -19,7 +19,7 @@ class SitemapController extends Controller
         $perPage = min((int) $request->input('per_page', 500), 1000);
 
         $paginator = Listing::query()
-            ->where('visibility', 'public')
+            ->publiclyListed()
             ->select('id', 'slug', 'created_at', 'updated_at')
             ->orderBy('id')
             ->paginate($perPage);
@@ -88,7 +88,7 @@ class SitemapController extends Controller
         $perPage = min((int) $request->input('per_page', 200), 500);
 
         $paginator = Listing::query()
-            ->where('visibility', 'public')
+            ->publiclyListed()
             ->select('id', 'slug', 'name', 'featured_photo', 'property_id', 'updated_at')
             ->with('property:id,photos')
             ->orderBy('id')
@@ -143,6 +143,10 @@ class SitemapController extends Controller
             ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
             ->where('listings.visibility', 'public')
+            ->where(function ($q) {
+                $q->whereNull('listings.verification_status')
+                  ->orWhere('listings.verification_status', '!=', 'flagged');
+            })
             ->where('properties.status', 'active')
             ->select(
                 'cities.name as city',

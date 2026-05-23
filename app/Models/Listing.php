@@ -386,6 +386,22 @@ class Listing extends Model implements Auditable
         return $q->where('visibility', 'public');
     }
 
+    /**
+     * Listings safe to surface on any public, search-engine-visible
+     * channel: sitemap, browse grids, "featured" rail, location pages,
+     * etc. Excludes flagged (admin moderation) but keeps every other
+     * verification_status (null/verified/fully_verified/pending_review).
+     * Owner/admin dashboard queries deliberately do NOT use this scope.
+     */
+    public function scopePubliclyListed($q)
+    {
+        return $q->where('visibility', 'public')
+            ->where(function ($q) {
+                $q->whereNull('verification_status')
+                  ->orWhere('verification_status', '!=', 'flagged');
+            });
+    }
+
     public function scopeActive($q)
     {
         return $q->whereHas('property', function($q) {

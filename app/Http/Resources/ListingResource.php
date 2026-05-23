@@ -14,6 +14,11 @@ class ListingResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $user = auth('sanctum')->user();
+        $isAdmin = $user && optional($user->role)->name === 'admin';
+        $isOwner = $user && $this->agent_id === optional($user->agent)->id;
+        $canSeeAudit = $isAdmin || $isOwner;
+
         return [
             'id'             => $this->id,
             'code'           => $this->code,
@@ -28,12 +33,12 @@ class ListingResource extends JsonResource
             'created_at'          => $this->updated_at->diffForHumans(),
             'date_added'          => $this->created_at->toDateString(),
             'verification_status'  => $this->verification_status,
-            'audit_notes'          => $this->audit_notes,
-            'audit_checklist'      => $this->audit_checklist,
-            'audited_at'           => $this->audited_at?->toDateTimeString(),
-            'agent_edited_fields'  => $this->agent_edited_fields,
-            'audit_edited_fields'  => $this->audit_edited_fields,
-            're_submitted_at'      => $this->re_submitted_at?->toDateTimeString(),
+            'audit_notes'          => $this->when($canSeeAudit, $this->audit_notes),
+            'audit_checklist'      => $this->when($canSeeAudit, $this->audit_checklist),
+            'audited_at'           => $this->when($canSeeAudit, $this->audited_at?->toDateTimeString()),
+            'agent_edited_fields'  => $this->when($canSeeAudit, $this->agent_edited_fields),
+            'audit_edited_fields'  => $this->when($canSeeAudit, $this->audit_edited_fields),
+            're_submitted_at'      => $this->when($canSeeAudit, $this->re_submitted_at?->toDateTimeString()),
             'property'            => new PropertyResource($this->property),
             'category'            => new CategoryResource($this->category),
             'agent'               => new AgentResource($this->agent)

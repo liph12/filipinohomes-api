@@ -409,7 +409,7 @@ class ProjectController extends Controller
         };
 
         $baseListingsQuery = Listing::query()
-            ->where('visibility', 'public')
+            ->publiclyListed()
             ->whereHas('property', fn ($q) =>
                 $q->where('is_project', true)
                   ->where('project_id', $project->id)
@@ -426,7 +426,7 @@ class ProjectController extends Controller
 
         // Single aggregation query instead of 4 separate COUNTs
         $breakdown = Listing::query()
-            ->where('visibility', 'public')
+            ->publiclyListed()
             ->whereHas('property', fn ($q) =>
                 $q->where('is_project', true)
                   ->where('project_id', $project->id)

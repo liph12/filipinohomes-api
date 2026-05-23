@@ -164,7 +164,7 @@ class ListingController extends Controller
 
     public function index(Request $request): ListingResourceCollection
     {
-        $listings = Listing::where('visibility', 'public')
+        $listings = Listing::publiclyListed()
             ->with([
                 'property.propertyAttribute.subtype',
                 'property.nearbyFacility',
@@ -241,7 +241,7 @@ class ListingController extends Controller
 
     public function subtypeCounts(Request $request): JsonResponse
     {
-        $counts = Listing::where('visibility', 'public')
+        $counts = Listing::publiclyListed()
             ->filter($request)
             ->join('properties', 'listings.property_id', '=', 'properties.id')
             ->join('property_attributes', 'properties.property_attribute_id', '=', 'property_attributes.id')
@@ -1048,11 +1048,11 @@ class ListingController extends Controller
 
     public function featured(Request $request): ListingResourceCollection
     {
-        $listings = Listing::where('is_featured', true)
+        $listings = Listing::publiclyListed()
+            ->where('is_featured', true)
             ->where(function ($q) {
                 $q->whereNull('featured_until')->orWhere('featured_until', '>=', now());
             })
-            ->where('visibility', 'public')
             ->with([
                 'property.propertyAttribute.subtype',
                 'property.nearbyFacility',

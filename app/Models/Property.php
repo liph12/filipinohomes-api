@@ -155,7 +155,7 @@ class Property extends Model implements Auditable
 
     public function publicListing()
     {
-        return $this->hasOne(Listing::class, 'property_id')->public();
+        return $this->hasOne(Listing::class, 'property_id')->publiclyListed();
     }
 
     public function listings()
