@@ -147,12 +147,25 @@ class ChatController extends Controller
             // If the active conversation was rejected, allow re-inquiry by creating a new conversation
             if ($existing->activeConversation && $existing->activeConversation->status === 'rejected') {
                 $isListing = $validated['type'] === 'listing';
+                // Trusted senders skip Pending Review (see fresh-chat path
+                // below for the same predicate + rationale).
+                $autoAccept = $isListing
+                    && $this->shouldAutoAcceptListingInquiry($user, (int) $validated['target_user_id']);
 
-                DB::transaction(function () use ($existing, $validated, $user, $isListing) {
+                DB::transaction(function () use ($existing, $validated, $user, $isListing, $autoAccept) {
                     $conversation = Conversation::create([
                         'chat_id' => $existing->id,
-                        'status' => $isListing ? 'pending' : 'accepted',
+                        // Inquiries from trusted senders (admin, or a team
+                        // leader inquiring on a listing owned by an agent
+                        // in their team) skip Pending Review entirely —
+                        // they already have moderation rights, so a self-
+                        // submitted inquiry going through moderation is
+                        // pointless and would block the agent from seeing
+                        // the message until someone accepts.
+                        'status' => !$isListing || $autoAccept ? 'accepted' : 'pending',
                         'agent_user_id' => $isListing ? $validated['target_user_id'] : null,
+                        'reviewed_by' => $autoAccept ? $user->id : null,
+                        'reviewed_at' => $autoAccept ? now() : null,
                     ]);
 
                     if ($isListing) {
@@ -166,6 +179,20 @@ class ChatController extends Controller
                             ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
                         if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
                             $attachments[$leaderUserId] = ['last_read_at' => null];
+                        }
+
+                        // For auto-accepted inquiries (admin or team-leader
+                        // sender), attach the listing agent now so they can
+                        // read the history immediately (normally added on
+                        // accept by ConversationController::accept).
+                        if ($autoAccept) {
+                            $agentUserId = (int) $validated['target_user_id'];
+                            if ($agentUserId !== $user->id) {
+                                $attachments[$agentUserId] = [
+                                    'last_read_at' => null,
+                                    'last_notified_at' => now(),
+                                ];
+                            }
                         }
 
                         $conversation->users()->attach($attachments);
@@ -192,22 +219,43 @@ class ChatController extends Controller
                 // After a rejected → re-inquiry transition the new conversation
                 // is functionally a fresh submission. Notify admins + team
                 // leader so they can review it — same as the fresh-chat path
-                // below.
+                // below. For admin-initiated re-inquiries (auto-accepted),
+                // skip the submission fan-out and send the acceptance email
+                // straight to the agent instead.
                 if ($isListing) {
-                    $this->dispatchSubmissionEmail(
-                        chatId:       $existing->id,
-                        listingId:    (int) $validated['type_id'],
-                        agentUserId:  (int) $validated['target_user_id'],
-                        message:      $validated['message'] ?? '',
-                        sender:       $user,
-                    );
+                    if ($autoAccept) {
+                        $this->dispatchAcceptanceEmail(
+                            chatId:       $existing->id,
+                            listingId:    (int) $validated['type_id'],
+                            agentUserId:  (int) $validated['target_user_id'],
+                            message:      $validated['message'] ?? '',
+                            sender:       $user,
+                        );
+                    } else {
+                        $this->dispatchSubmissionEmail(
+                            chatId:       $existing->id,
+                            listingId:    (int) $validated['type_id'],
+                            agentUserId:  (int) $validated['target_user_id'],
+                            message:      $validated['message'] ?? '',
+                            sender:       $user,
+                        );
+                    }
                 }
             }
 
             return new ChatResource($existing);
         }
 
-        $chat = DB::transaction(function () use ($validated, $user) {
+        // Trusted senders skip the Pending Review step entirely. Two senders
+        // qualify (see shouldAutoAcceptListingInquiry below):
+        //   - admins (full moderation rights)
+        //   - team leaders inquiring on a listing owned by an agent in their
+        //     team (they're the natural moderator for that team's inquiries,
+        //     so requiring themselves to also click Accept is busy-work)
+        $autoAccept = $validated['type'] === 'listing'
+            && $this->shouldAutoAcceptListingInquiry($user, (int) $validated['target_user_id']);
+
+        $chat = DB::transaction(function () use ($validated, $user, $autoAccept) {
             $chat = Chat::create([
                 'type' => $validated['type'],
                 'type_id' => $validated['type_id'],
@@ -218,8 +266,14 @@ class ChatController extends Controller
 
             $conversation = Conversation::create([
                 'chat_id' => $chat->id,
-                'status' => $isListing ? 'pending' : 'accepted',
+                // Trusted senders (admins + team leaders inquiring within
+                // their own team) skip Pending Review — they already have
+                // moderation rights, so blocking the agent from seeing the
+                // message until someone clicks Accept is pointless.
+                'status' => !$isListing || $autoAccept ? 'accepted' : 'pending',
                 'agent_user_id' => $isListing ? $validated['target_user_id'] : null,
+                'reviewed_by' => $autoAccept ? $user->id : null,
+                'reviewed_at' => $autoAccept ? now() : null,
             ]);
 
             if ($isListing) {
@@ -237,6 +291,24 @@ class ChatController extends Controller
                     ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
                 if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
                     $attachments[$leaderUserId] = ['last_read_at' => null];
+                }
+
+                // For auto-accepted inquiries (admin or team-leader sender)
+                // attach the listing agent now so they can read the history
+                // immediately. Without this they'd see the chat row in their
+                // inquiries inbox (the agent-side ChatController::index
+                // surfaces it via agent_user_id-in-ledIds) but
+                // MessageController::index would 403 because they aren't in
+                // conversation_users — that's exactly the empty-messages
+                // symptom reported on the team leader's side.
+                if ($autoAccept) {
+                    $agentUserId = (int) $validated['target_user_id'];
+                    if ($agentUserId !== $user->id) {
+                        $attachments[$agentUserId] = [
+                            'last_read_at' => null,
+                            'last_notified_at' => now(),
+                        ];
+                    }
                 }
 
                 $conversation->users()->attach($attachments);
@@ -262,21 +334,73 @@ class ChatController extends Controller
 
         $chat->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
 
-        // Notify admins + the agent's team leader on listing inquiries.
-        // Fires AFTER the DB transaction commits — the queued mailable
-        // serializes the listing payload, so we don't want a rollback to
-        // strand a job pointing at a non-existent conversation.
+        // Email fan-out fires AFTER the DB transaction commits.
+        //   - Trusted sender (admin or team leader in scope) → acceptance
+        //     email straight to the agent; the inquiry is already auto-
+        //     accepted, and emailing the moderators their own submission
+        //     would be noise.
+        //   - Anyone else → submission email to admins + team leader for
+        //     moderation (same as before).
+        //
+        // BCC pattern is preserved by MessageNotificationMailer (admin /
+        // leader / agent addresses always live in BCC; TO header stays
+        // info@filipinohomes.com). See MessageNotificationMailer.php:
+        // dispatchForSubmission + dispatchForAcceptance.
         if ($validated['type'] === 'listing') {
-            $this->dispatchSubmissionEmail(
-                chatId:       $chat->id,
-                listingId:    (int) $validated['type_id'],
-                agentUserId:  (int) $validated['target_user_id'],
-                message:      $validated['message'] ?? '',
-                sender:       $user,
-            );
+            if ($autoAccept) {
+                $this->dispatchAcceptanceEmail(
+                    chatId:       $chat->id,
+                    listingId:    (int) $validated['type_id'],
+                    agentUserId:  (int) $validated['target_user_id'],
+                    message:      $validated['message'] ?? '',
+                    sender:       $user,
+                );
+            } else {
+                $this->dispatchSubmissionEmail(
+                    chatId:       $chat->id,
+                    listingId:    (int) $validated['type_id'],
+                    agentUserId:  (int) $validated['target_user_id'],
+                    message:      $validated['message'] ?? '',
+                    sender:       $user,
+                );
+            }
         }
 
         return new ChatResource($chat);
+    }
+
+    /**
+     * Trusted-sender predicate for listing inquiries. Returns true when
+     * the sender's own submission should bypass Pending Review:
+     *
+     *   - Admin (role.name = 'admin') — full moderation rights.
+     *   - Team leader inquiring on a listing whose agent is in their own
+     *     team. The leader is the natural moderator for that team's
+     *     inquiries, so requiring them to also click Accept on their own
+     *     submission is busy-work and would block the agent from reading
+     *     the message until acceptance.
+     *
+     * Returns false for everyone else (regular clients, regular agents
+     * inquiring outside their team, etc.) so the existing moderation
+     * flow stays intact for normal traffic.
+     */
+    private function shouldAutoAcceptListingInquiry(
+        User $sender,
+        int $targetAgentUserId,
+    ): bool {
+        $roleName = $sender->role?->name;
+
+        if ($roleName === 'admin') {
+            return true;
+        }
+
+        if ($roleName === 'agent') {
+            $ledMemberUserIds = app(TeamLeadershipService::class)
+                ->getLedTeamMemberUserIds($sender->id);
+            return in_array($targetAgentUserId, $ledMemberUserIds, true);
+        }
+
+        return false;
     }
 
     /**
@@ -317,6 +441,51 @@ class ChatController extends Controller
 
         MessageNotificationMailer::dispatchForSubmission(
             sender:      $sender,
+            message:     $message,
+            slug:        $slug,
+            listing:     MessageNotificationMailer::buildListingPayload($listing),
+            agentUserId: $agentUserId,
+        );
+    }
+
+    /**
+     * Acceptance-email fan-out used by admin-initiated listing inquiries
+     * (which auto-accept on submit — see store() above). Mirrors
+     * dispatchSubmissionEmail's relation-loading + slug shape but routes
+     * to dispatchForAcceptance so the agent (not admins/leader) gets the
+     * "you've been assigned" email — matching what the moderation accept
+     * path in ConversationController::accept produces.
+     */
+    private function dispatchAcceptanceEmail(
+        int $chatId,
+        int $listingId,
+        int $agentUserId,
+        string $message,
+        User $sender,
+    ): void {
+        $listing = Listing::with([
+            'agent',
+            'category',
+            'property.barangay.city.province',
+            'property.propertyAttribute.subtype.type',
+        ])->find($listingId);
+
+        if (!$listing) {
+            return;
+        }
+
+        $agent = User::find($agentUserId);
+        if (!$agent) {
+            return;
+        }
+
+        $sender->loadMissing('agent');
+
+        $slug = Str::slug($listing->name) . '-' . $chatId;
+
+        MessageNotificationMailer::dispatchForAcceptance(
+            sender:      $sender,
+            agent:       $agent,
             message:     $message,
             slug:        $slug,
             listing:     MessageNotificationMailer::buildListingPayload($listing),
