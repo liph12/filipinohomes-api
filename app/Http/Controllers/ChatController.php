@@ -87,8 +87,20 @@ class ChatController extends Controller
         //   archived_at NULL + removed_at NULL  → inbox  (default)
         //   archived_at NOT NULL + removed_at NULL → archived
         //   removed_at NOT NULL → trash
-        // Always scoped to Auth::id() so archiving on one side never hides
-        // the chat from the other participant.
+        //
+        // Archived and Trash require an explicit pivot row with the matching
+        // flag set, so a `whereHas` makes sense.
+        //
+        // Inbox uses `whereDoesntHave` so we EXCLUDE chats the viewer has
+        // personally archived or trashed — not so we REQUIRE the viewer to
+        // be in the pivot. That distinction matters for admins: the
+        // role-scoped branch above lets admins see every chat, but some
+        // legacy chats may not have an admin pivot row at all (created
+        // before that admin was promoted, before the admin-attach logic
+        // in store() existed, etc.). Using whereHas would silently
+        // wipe those rows for the admin viewer. With whereDoesntHave,
+        // "no pivot row at all" means "viewer hasn't archived/trashed
+        // this chat", and it stays visible.
         $view = $request->query('view', 'inbox');
         if ($view === 'archived') {
             $query->whereHas('activeConversation.users', function ($q) use ($user) {
@@ -102,13 +114,13 @@ class ChatController extends Controller
                     ->whereNotNull('conversation_users.removed_at');
             });
         } else {
-            // Inbox (default): hide chats this viewer has personally
-            // archived OR trashed. Other participants still see the chat
-            // in their inbox if they haven't acted on it themselves.
-            $query->whereHas('activeConversation.users', function ($q) use ($user) {
+            // Inbox (default).
+            $query->whereDoesntHave('activeConversation.users', function ($q) use ($user) {
                 $q->where('users.id', $user->id)
-                    ->whereNull('conversation_users.archived_at')
-                    ->whereNull('conversation_users.removed_at');
+                    ->where(function ($w) {
+                        $w->whereNotNull('conversation_users.archived_at')
+                          ->orWhereNotNull('conversation_users.removed_at');
+                    });
             });
         }
 
