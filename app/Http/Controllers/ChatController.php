@@ -81,6 +81,37 @@ class ChatController extends Controller
             });
         }
 
+        // Per-participant archive / trash view. The pivot lives on
+        // conversation_users; the state machine is documented at the
+        // 2026_05_23 migration:
+        //   archived_at NULL + removed_at NULL  → inbox  (default)
+        //   archived_at NOT NULL + removed_at NULL → archived
+        //   removed_at NOT NULL → trash
+        // Always scoped to Auth::id() so archiving on one side never hides
+        // the chat from the other participant.
+        $view = $request->query('view', 'inbox');
+        if ($view === 'archived') {
+            $query->whereHas('activeConversation.users', function ($q) use ($user) {
+                $q->where('users.id', $user->id)
+                    ->whereNotNull('conversation_users.archived_at')
+                    ->whereNull('conversation_users.removed_at');
+            });
+        } elseif ($view === 'trash') {
+            $query->whereHas('activeConversation.users', function ($q) use ($user) {
+                $q->where('users.id', $user->id)
+                    ->whereNotNull('conversation_users.removed_at');
+            });
+        } else {
+            // Inbox (default): hide chats this viewer has personally
+            // archived OR trashed. Other participants still see the chat
+            // in their inbox if they haven't acted on it themselves.
+            $query->whereHas('activeConversation.users', function ($q) use ($user) {
+                $q->where('users.id', $user->id)
+                    ->whereNull('conversation_users.archived_at')
+                    ->whereNull('conversation_users.removed_at');
+            });
+        }
+
         $perPage = (int) $request->query('per_page', 10);
         $chats = $query->latest()->paginate(min(max($perPage, 1), 50));
 
@@ -533,6 +564,97 @@ class ChatController extends Controller
         $chat->delete();
 
         return response()->json(['message' => 'Chat deleted.']);
+    }
+
+    /**
+     * Per-participant archive / trash actions.
+     *
+     * All four methods mutate the conversation_users pivot row for the
+     * authenticated viewer × the chat's active_conversation. The
+     * conversation's own status (pending / accepted / closed / rejected)
+     * is untouched — this is a personal inbox shelf, not a state change.
+     *
+     * State machine (see the 2026_05_23 migration):
+     *   archived_at NULL + removed_at NULL → Inbox      (default)
+     *   archived_at NOT NULL + removed_at NULL → Archived
+     *   removed_at NOT NULL → Trash
+     *
+     * Restore from Trash clears both columns so the row returns straight
+     * to the inbox (mirrors Gmail's "Move to Inbox" from Trash).
+     */
+    public function archive(Chat $chat)
+    {
+        return $this->mutateViewerPivot($chat, [
+            'archived_at' => now(),
+        ]);
+    }
+
+    public function unarchive(Chat $chat)
+    {
+        return $this->mutateViewerPivot($chat, [
+            'archived_at' => null,
+        ]);
+    }
+
+    public function trash(Chat $chat)
+    {
+        return $this->mutateViewerPivot($chat, [
+            'removed_at' => now(),
+        ]);
+    }
+
+    public function restore(Chat $chat)
+    {
+        return $this->mutateViewerPivot($chat, [
+            'archived_at' => null,
+            'removed_at'  => null,
+        ]);
+    }
+
+    /**
+     * Shared pivot mutation for archive / unarchive / trash / restore.
+     * Authorizes via the existing `view` ability so admins (who bypass
+     * the participant check via ChatPolicy) can still act on chats they
+     * don't appear in the pivot for — but only after we attach them, so
+     * the row exists to update. For non-admins the pivot row is
+     * guaranteed to exist already (ChatController::store attaches the
+     * client + admins + leader at submission time).
+     */
+    private function mutateViewerPivot(Chat $chat, array $columns)
+    {
+        $this->authorize('view', $chat);
+
+        $activeConv = $chat->activeConversation;
+        if (!$activeConv) {
+            return response()->json(
+                ['message' => 'This chat has no active conversation.'],
+                404,
+            );
+        }
+
+        $userId = Auth::id();
+
+        // Admins may not have a pivot row if they were promoted after the
+        // conversation was created. Attach them lazily so the update has
+        // something to act on; matches the existing "admins see all"
+        // semantic in index().
+        if (!$activeConv->users()->where('users.id', $userId)->exists()) {
+            $activeConv->users()->attach($userId, [
+                'last_read_at' => null,
+            ]);
+        }
+
+        $activeConv->users()->updateExistingPivot($userId, $columns);
+
+        $chat->load([
+            'user',
+            'listing',
+            'activeConversation.latestMessage.user',
+            'activeConversation.users',
+            'activeConversation.agentUser',
+        ]);
+
+        return new ChatResource($chat);
     }
 
     /**

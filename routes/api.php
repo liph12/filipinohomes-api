@@ -271,6 +271,12 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('conversations/{conversation}/reject', [ConversationController::class, 'reject']);
             Route::post('conversations/{conversation}/close', [ConversationController::class, 'close']);
             Route::post('conversations/{conversation}/reopen', [ConversationController::class, 'reopen']);
+            // Per-participant archive + trash. State machine lives on the
+            // conversation_users pivot; see ChatController::mutateViewerPivot.
+            Route::post('chats/{chat}/archive',   [ChatController::class, 'archive']);
+            Route::post('chats/{chat}/unarchive', [ChatController::class, 'unarchive']);
+            Route::post('chats/{chat}/trash',     [ChatController::class, 'trash']);
+            Route::post('chats/{chat}/restore',   [ChatController::class, 'restore']);
             Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
             Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
             Route::get('blocked-users', [BlockedUserController::class, 'index']);
