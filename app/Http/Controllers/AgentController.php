@@ -462,10 +462,11 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function show(Request $request, $id)
     {
         $agent = Agent::with('user')
-            ->withCount('listings')
+            ->withCount(['listings' => fn ($q) => $q->where('visibility', 'public')])
             ->findOrFail($id);
 
         $listingsQuery = $agent->listings()
+            ->where('visibility', 'public')
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
