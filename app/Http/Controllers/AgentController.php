@@ -106,7 +106,7 @@ class AgentController extends Controller
         $sortDir = strtolower($request->query('sort_dir', 'desc'));
         if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
 
-        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'listings_in_range', 'transactions_count', 'inquiries_count', 'response_speed', 'last_online', 'status', 'login_count'];
+        $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'listings_in_range', 'transactions_count', 'inquiries_count', 'response_speed', 'highest_rated', 'last_online', 'status', 'login_count'];
 
         if (in_array($sortBy, $allowed)) {
             match ($sortBy) {
@@ -123,6 +123,15 @@ class AgentController extends Controller
                 'response_speed'     => $query
                     ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN 0 ELSE 1 END ASC")
                     ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN median_first_response_seconds ELSE NULL END ASC")
+                    ->orderByDesc('listings_count'),
+                // Highest rated: agents with <3 reviews or no rating sink to
+                // the bottom so a freshly-rated 5.0 doesn't outrank a
+                // battle-tested 4.6. Within the rated tier, sort by
+                // avg_rating desc then total_reviews desc as tiebreaker.
+                'highest_rated'      => $query
+                    ->orderByRaw("CASE WHEN total_reviews >= 3 AND avg_rating IS NOT NULL THEN 0 ELSE 1 END ASC")
+                    ->orderByDesc('avg_rating')
+                    ->orderByDesc('total_reviews')
                     ->orderByDesc('listings_count'),
             };
         } else {

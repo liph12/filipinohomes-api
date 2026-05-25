@@ -119,6 +119,21 @@ class User extends Authenticatable implements Auditable
         return $this->hasMany(BlockedUser::class, 'blocked_user_id');
     }
 
+    public function reviewsAsAgent()
+    {
+        return $this->hasMany(AgentReview::class, 'agent_user_id');
+    }
+
+    public function reviewsAsClient()
+    {
+        return $this->hasMany(AgentReview::class, 'client_user_id');
+    }
+
+    public function reviewResponses()
+    {
+        return $this->hasMany(AgentReviewResponse::class, 'agent_user_id');
+    }
+
     public function conversations()
     {
         return $this->belongsToMany(Conversation::class, 'conversation_users')

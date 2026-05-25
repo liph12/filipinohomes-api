@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Resources\ConversationResource;
 use App\Models\Chat;
 use App\Models\Conversation;
+use App\Services\ReviewEligibilityService;
 use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -184,6 +185,21 @@ class ConversationController extends Controller
         $conversation->load(['latestMessage.user', 'users']);
 
         return new ConversationResource($conversation);
+    }
+
+    /**
+     * Rate-prompt eligibility probe. The frontend hits this whenever
+     * the client opens a conversation; the response decides whether
+     * the inline RateAgentInlineCard renders (and in Add vs. Edit
+     * mode). Server-side enforcement also runs in
+     * AgentReviewController::store so the answer here is advisory.
+     */
+    public function ratePromptEligibility(Conversation $conversation)
+    {
+        $this->authorize('view', $conversation);
+        $eligibility = app(ReviewEligibilityService::class)
+            ->check((int) Auth::id(), $conversation);
+        return response()->json($eligibility);
     }
 
     public function markRead(Conversation $conversation)

@@ -37,6 +37,7 @@ use App\Http\Controllers\{
     AdPlacementController,
     PublicAdController,
     BlockedUserController,
+    AgentReviewController,
     TeamController,
     TeamAgentController,
     FeatureTokenController,
@@ -287,8 +288,38 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('blocked-users/check', [BlockedUserController::class, 'check']);
             Route::post('blocked-users', [BlockedUserController::class, 'store']);
             Route::delete('blocked-users/{blockedUser}', [BlockedUserController::class, 'destroy']);
+
+            // Agent reviews — client → agent star ratings + agent right-of-reply.
+            // Rate-prompt eligibility probe (used by the chat UI to decide when
+            // to surface the inline RateAgentInlineCard).
+            Route::get('conversations/{conversation}/rate-prompt-eligibility',
+                [ConversationController::class, 'ratePromptEligibility']);
+            Route::post('conversations/{conversation}/rate-prompt-dismiss',
+                [AgentReviewController::class, 'dismissPrompt']);
+
+            // Client-side CRUD. Upserts via unique (client_user_id, agent_user_id).
+            Route::post('agent-reviews', [AgentReviewController::class, 'store']);
+            Route::put('agent-reviews/{review}', [AgentReviewController::class, 'update']);
+            Route::delete('agent-reviews/{review}', [AgentReviewController::class, 'destroy']);
+            Route::post('agent-reviews/{review}/response',
+                [AgentReviewController::class, 'storeResponse']);
+
+            // Admin moderation surface — /admin/agent-feedback consumes these.
+            Route::get('admin/agent-reviews', [AgentReviewController::class, 'adminIndex']);
+            Route::get('admin/agent-reviews/summary', [AgentReviewController::class, 'adminSummary']);
+            Route::patch('agent-reviews/{review}/visibility',
+                [AgentReviewController::class, 'setVisibility']);
         });
-    }); 
+    });
+});
+
+// Public agent-review reads (no auth required). Live OUTSIDE the chat
+// throttle group so they're cacheable and not rate-shaped to chat
+// traffic. {agent} here is the user_id of the agent (matches the
+// existing /agents/{id} routes' resolution shape).
+Route::middleware('strip.tags')->group(function () {
+    Route::get('/agents/{agent}/reviews', [AgentReviewController::class, 'index']);
+    Route::get('/agents/{agent}/reviews/summary', [AgentReviewController::class, 'summary']);
 });
 // Background Jobs
 Route::post('/listings/update-batch', [BackgroundJobController::class, 'execute']);

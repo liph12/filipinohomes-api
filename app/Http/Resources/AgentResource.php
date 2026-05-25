@@ -57,6 +57,12 @@ class AgentResource extends JsonResource
                 : null,
             'response_sample_size'          => $this->response_sample_size,
             'response_metrics_window_days'  => $this->response_metrics_window_days,
+            // Rolled up by AgentRatingRollupService whenever an
+            // agent_reviews row changes. avg_rating is null when the
+            // agent has no visible reviews; total_reviews is always an
+            // int (0 when none).
+            'avg_rating'    => $this->avg_rating !== null ? (float) $this->avg_rating : null,
+            'total_reviews' => (int) ($this->total_reviews ?? 0),
             'page_slug'    => $this->pageBuilder?->slug,
             'last_login_at'  => optional($user?->loginLogs()->latest('logged_in_at')->first())->logged_in_at?->toISOString(),
             'login_count'    => $user?->loginLogs()->count() ?? 0,
