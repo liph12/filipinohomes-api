@@ -4,10 +4,15 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Auditing\LogsActivity;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Conversation extends Model
+class Conversation extends Model implements Auditable
 {
     use SoftDeletes;
+    use LogsActivity;
+
+    protected string $auditCategory = 'inquiries';
 
     protected $fillable = ['chat_id', 'status', 'agent_user_id', 'reviewed_by', 'reviewed_at', 'closed_at', 'closed_by'];
 

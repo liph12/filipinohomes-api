@@ -32,6 +32,7 @@ class ActivityLogController extends Controller
     public const SCRUB_KEYS = [
         'clicks',
         'impressions',
+        'views',
         'updated_at',
         'seo_tags',
     ];

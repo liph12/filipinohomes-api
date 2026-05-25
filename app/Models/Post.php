@@ -13,6 +13,10 @@ class Post extends Model implements Auditable
     use LogsActivity;
 
     protected string $auditCategory = 'content';
+
+    // View-tracking counter — bumped on every blog read. Excluded so the
+    // activity feed doesn't get spammed with view updates.
+    protected $auditExclude = ['views', 'impressions', 'updated_at'];
     protected array $auditLabelAttributes = ['title', 'slug'];
 
     protected $fillable = [

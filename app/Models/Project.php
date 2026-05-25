@@ -18,6 +18,10 @@ class Project extends Model implements Auditable
 
     protected string $auditCategory = 'projects';
 
+    // View-tracking counter — bumped on every project page hit. Excluded so
+    // the activity feed doesn't get spammed with view updates.
+    protected $auditExclude = ['views', 'updated_at'];
+
     protected $table = 'projects';
     /**
      * Allow mass-assignment for the expected project columns

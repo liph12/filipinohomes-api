@@ -16,6 +16,10 @@ class PageBuilder extends Model implements Auditable
 
     protected string $auditCategory = 'content';
 
+    // View-tracking counters — bumped on every page hit. Excluded so the
+    // activity feed doesn't get spammed with click/impression updates.
+    protected $auditExclude = ['clicks', 'impressions', 'updated_at'];
+
     protected $table = 'page_builder';
 
     protected $fillable = [
