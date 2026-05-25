@@ -25,12 +25,21 @@ class ListingInsightsService
     private const TRANSACTION_STATUSES = ['sold', 'rented', 'leased'];
 
     /**
+     * Per-request scoping for team-leader callers. When non-null, every
+     * aggregation only counts listings whose `agent_id` is in this list —
+     * the leader sees their team's footprint, not the whole platform.
+     * Admins pass null (no scoping). An empty array means "no agents" and
+     * intentionally yields zeroes.
+     */
+    private ?array $agentIds = null;
+
+    /**
      * Base join chain — listings → properties → location resolution.
      * Every aggregation query layers on top of this closure.
      */
     private function baseListingQuery()
     {
-        return DB::table('listings')
+        $query = DB::table('listings')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
             ->leftJoin('projects', function ($join) {
@@ -45,6 +54,12 @@ class ListingInsightsService
             ->whereNull('listings.deleted_at')
             ->whereNull('properties.deleted_at')
             ->whereIn('categories.name', self::STANDARD_CATEGORIES);
+
+        if ($this->agentIds !== null) {
+            $query->whereIn('listings.agent_id', $this->agentIds);
+        }
+
+        return $query;
     }
 
     private function categoryKey(string $name): ?string
@@ -61,8 +76,10 @@ class ListingInsightsService
      * Province-level breakdown. Returns one row per (province, city) with
      * listing-count metrics, then groups into provinces with cities[].
      */
-    public function provinceBreakdown(string $sortBy = 'listing_count'): array
+    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null): array
     {
+        $this->agentIds = $agentIds;
+
         // Cities — count listings per (province, city).
         $cityRows = $this->baseListingQuery()
             ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
@@ -282,8 +299,10 @@ class ListingInsightsService
      * Status-level breakdown. Returns one row per properties.status, with the
      * listing count, category breakdown, and the top provinces for that status.
      */
-    public function statusBreakdown(string $sortBy = 'listing_count'): array
+    public function statusBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null): array
     {
+        $this->agentIds = $agentIds;
+
         // This breakdown only covers transaction statuses (Sold / Rented /
         // Leased). Active listings live elsewhere (province + category cards)
         // and aren't shown here so the section stays focused on outcomes.
@@ -415,8 +434,9 @@ class ListingInsightsService
      *     visibility?:string, province_id?:int|null
      * } $params
      */
-    public function listingsForStatus(string $status, array $params): array
+    public function listingsForStatus(string $status, array $params, ?array $agentIds = null): array
     {
+        $this->agentIds = $agentIds;
         $page     = max(1, (int) ($params['page'] ?? 1));
         $perPage  = max(1, min(100, (int) ($params['per_page'] ?? 20)));
         $category = (string) ($params['category'] ?? '');

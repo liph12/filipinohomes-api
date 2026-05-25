@@ -1123,12 +1123,10 @@ class ListingController extends Controller
      */
     public function insightsByProvince(Request $request, ListingInsightsService $insights): JsonResponse
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            abort(403);
-        }
+        $agentIds = $this->resolveInsightsAgentScope($request);
 
         $sortBy = (string) $request->query('sort_by', 'city_count');
-        return response()->json($insights->provinceBreakdown($sortBy));
+        return response()->json($insights->provinceBreakdown($sortBy, $agentIds));
     }
 
     /**
@@ -1137,12 +1135,10 @@ class ListingController extends Controller
      */
     public function insightsByStatus(Request $request, ListingInsightsService $insights): JsonResponse
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            abort(403);
-        }
+        $agentIds = $this->resolveInsightsAgentScope($request);
 
         $sortBy = (string) $request->query('sort_by', 'priority');
-        return response()->json($insights->statusBreakdown($sortBy));
+        return response()->json($insights->statusBreakdown($sortBy, $agentIds));
     }
 
     /**
@@ -1151,9 +1147,7 @@ class ListingController extends Controller
      */
     public function insightsListingsForStatus(Request $request, ListingInsightsService $insights, string $status): JsonResponse
     {
-        if (($request->user()->role->name ?? null) !== 'admin') {
-            abort(403);
-        }
+        $agentIds = $this->resolveInsightsAgentScope($request);
 
         return response()->json($insights->listingsForStatus($status, [
             'page'        => (int) $request->query('page', 1),
@@ -1163,7 +1157,28 @@ class ListingController extends Controller
             'province_id' => $request->query('province_id') !== null
                 ? (int) $request->query('province_id')
                 : null,
-        ]));
+        ], $agentIds));
+    }
+
+    /**
+     * Resolve who's allowed to call the insights endpoints + what agent scope
+     * the service should apply. Admins → null (unscoped, see everything).
+     * Team leaders → their led agent IDs (their team's footprint). Everyone
+     * else → 403.
+     */
+    private function resolveInsightsAgentScope(Request $request): ?array
+    {
+        $user = $request->user();
+        if (($user->role->name ?? null) === 'admin') {
+            return null;
+        }
+
+        $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+        if (empty($ledAgentIds)) {
+            abort(403);
+        }
+
+        return $ledAgentIds;
     }
 
     /**
