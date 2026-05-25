@@ -81,48 +81,55 @@ class ChatController extends Controller
             });
         }
 
-        // Per-participant archive / trash view. The pivot lives on
-        // conversation_users; the state machine is documented at the
-        // 2026_05_23 migration:
-        //   archived_at NULL + removed_at NULL  → inbox  (default)
-        //   archived_at NOT NULL + removed_at NULL → archived
-        //   removed_at NOT NULL → trash
+        // Per-participant archive / trash / permanent-delete view. The
+        // pivot lives on conversation_users; the full state machine is
+        // documented at the 2026_05_23 + 2026_05_24 migrations:
+        //   archived_at NULL + removed_at NULL + purged_at NULL → Inbox  (default)
+        //   archived_at NOT NULL + removed_at NULL + purged_at NULL → Archived
+        //   removed_at NOT NULL + purged_at NULL → Trash
+        //   purged_at NOT NULL → hidden from every view for this viewer
         //
-        // Archived and Trash require an explicit pivot row with the matching
-        // flag set, so a `whereHas` makes sense.
-        //
-        // Inbox uses `whereDoesntHave` so we EXCLUDE chats the viewer has
-        // personally archived or trashed — not so we REQUIRE the viewer to
-        // be in the pivot. That distinction matters for admins: the
-        // role-scoped branch above lets admins see every chat, but some
-        // legacy chats may not have an admin pivot row at all (created
-        // before that admin was promoted, before the admin-attach logic
-        // in store() existed, etc.). Using whereHas would silently
-        // wipe those rows for the admin viewer. With whereDoesntHave,
-        // "no pivot row at all" means "viewer hasn't archived/trashed
-        // this chat", and it stays visible.
+        // Purged rows are excluded from ALL three views unconditionally.
+        // The row stays in the DB so an admin tool can recover it later.
+        $purgedExclusion = function ($q) use ($user) {
+            $q->where('users.id', $user->id)
+              ->whereNotNull('conversation_users.purged_at');
+        };
+
         $view = $request->query('view', 'inbox');
         if ($view === 'archived') {
+            // Archived and Trash REQUIRE an explicit pivot row with the
+            // matching flag — whereHas is correct here.
             $query->whereHas('activeConversation.users', function ($q) use ($user) {
                 $q->where('users.id', $user->id)
                     ->whereNotNull('conversation_users.archived_at')
-                    ->whereNull('conversation_users.removed_at');
+                    ->whereNull('conversation_users.removed_at')
+                    ->whereNull('conversation_users.purged_at');
             });
         } elseif ($view === 'trash') {
             $query->whereHas('activeConversation.users', function ($q) use ($user) {
                 $q->where('users.id', $user->id)
-                    ->whereNotNull('conversation_users.removed_at');
+                    ->whereNotNull('conversation_users.removed_at')
+                    ->whereNull('conversation_users.purged_at');
             });
         } else {
-            // Inbox (default).
+            // Inbox (default). EXCLUDE chats this viewer has archived /
+            // trashed / purged — but don't require them to be in the
+            // pivot at all (admins promoted after a chat was created
+            // have no pivot row in that chat, and they should still see
+            // it via the "admin sees all" role branch above).
             $query->whereDoesntHave('activeConversation.users', function ($q) use ($user) {
                 $q->where('users.id', $user->id)
                     ->where(function ($w) {
                         $w->whereNotNull('conversation_users.archived_at')
-                          ->orWhereNotNull('conversation_users.removed_at');
+                          ->orWhereNotNull('conversation_users.removed_at')
+                          ->orWhereNotNull('conversation_users.purged_at');
                     });
             });
         }
+        // Belt-and-suspenders: purged rows are never visible regardless
+        // of view, even if a future view branch forgets the exclusion.
+        $query->whereDoesntHave('activeConversation.users', $purgedExclusion);
 
         $perPage = (int) $request->query('per_page', 10);
         $chats = $query->latest()->paginate(min(max($perPage, 1), 50));
@@ -620,6 +627,25 @@ class ChatController extends Controller
         return $this->mutateViewerPivot($chat, [
             'archived_at' => null,
             'removed_at'  => null,
+        ]);
+    }
+
+    /**
+     * Per-participant "Delete Permanently". Final state — once purged
+     * the chat is hidden from every view (inbox / archived / trash) for
+     * this viewer. The row stays in the database so an admin tool can
+     * recover it later if needed (e.g. compliance request). Other
+     * participants' pivot rows are untouched; the chat stays in their
+     * inboxes / archive / trash as before.
+     *
+     * Only exposed from the Trash view in the UI, behind a confirmation
+     * dialog. archived_at + removed_at are left as-is so the audit
+     * trail of how the chat got purged is preserved on the row.
+     */
+    public function purge(Chat $chat)
+    {
+        return $this->mutateViewerPivot($chat, [
+            'purged_at' => now(),
         ]);
     }
 

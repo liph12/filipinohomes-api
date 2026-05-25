@@ -49,6 +49,7 @@ class Conversation extends Model
                 'last_notified_at',
                 'archived_at',
                 'removed_at',
+                'purged_at',
             )
             ->withTimestamps();
     }
