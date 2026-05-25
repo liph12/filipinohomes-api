@@ -290,6 +290,13 @@ class ChatController extends Controller
                             sender:       $user,
                         );
                     }
+                } elseif ($validated['type'] === 'agent') {
+                    $this->dispatchAgentProfileEmail(
+                        chatId:      $existing->id,
+                        agentUserId: (int) $validated['target_user_id'],
+                        message:     $validated['message'] ?? '',
+                        sender:      $user,
+                    );
                 }
             }
 
@@ -414,6 +421,16 @@ class ChatController extends Controller
                     sender:       $user,
                 );
             }
+        } elseif ($validated['type'] === 'agent') {
+            // Agent-profile "Message Me" inquiry — no moderation step (the
+            // conversation is auto-accepted on create), so the agent gets
+            // exactly one email straight to their inbox.
+            $this->dispatchAgentProfileEmail(
+                chatId:      $chat->id,
+                agentUserId: (int) $validated['target_user_id'],
+                message:     $validated['message'] ?? '',
+                sender:      $user,
+            );
         }
 
         return new ChatResource($chat);
@@ -539,6 +556,41 @@ class ChatController extends Controller
             message:     $message,
             slug:        $slug,
             listing:     MessageNotificationMailer::buildListingPayload($listing),
+            agentUserId: $agentUserId,
+        );
+    }
+
+    /**
+     * Email the agent when a visitor sends them an inquiry through the
+     * "Message Me" form on their public profile (POST /chats with
+     * type=agent). No listing context, no moderation fan-out — the
+     * conversation is auto-accepted, so the agent is the only recipient.
+     *
+     * Slug shape mirrors the listing-inquiry helpers so the "Reply To
+     * Inquiry" CTA in the email lands on the same /inbox/{slug-id}
+     * route the frontend's ListingInquiries component understands.
+     */
+    private function dispatchAgentProfileEmail(
+        int $chatId,
+        int $agentUserId,
+        string $message,
+        User $sender,
+    ): void {
+        $agent = User::find($agentUserId);
+        if (!$agent) {
+            return;
+        }
+
+        $sender->loadMissing('agent');
+
+        $agentName = trim((string) ($agent->name ?? '')) ?: 'agent';
+        $slug = Str::slug($agentName) . '-' . $chatId;
+
+        MessageNotificationMailer::dispatchForAgentProfile(
+            sender:      $sender,
+            agent:       $agent,
+            message:     $message,
+            slug:        $slug,
             agentUserId: $agentUserId,
         );
     }

@@ -128,10 +128,11 @@ class MessageNotificationMailer extends Mailable
     private function resolveView(): string
     {
         return match ($this->perspective) {
-            'admin'       => 'emails.listing-inquiry-admin',
-            'team_leader' => 'emails.listing-inquiry-team-leader',
-            'agent'       => 'emails.listing-inquiry-agent',
-            default       => 'emails.message-notification',
+            'admin'         => 'emails.listing-inquiry-admin',
+            'team_leader'   => 'emails.listing-inquiry-team-leader',
+            'agent'         => 'emails.listing-inquiry-agent',
+            'agent_profile' => 'emails.agent-profile-inquiry',
+            default         => 'emails.message-notification',
         };
     }
 
@@ -144,9 +145,12 @@ class MessageNotificationMailer extends Mailable
     {
         $listingName = !empty($this->listing['name']) ? (string) $this->listing['name'] : null;
         $suffix = $listingName ? " — {$listingName}" : '';
+        $senderName = trim((string) ($this->senderName ?? ''));
+        $senderSuffix = $senderName !== '' ? " — {$senderName}" : '';
         return match ($this->perspective) {
             'admin', 'team_leader' => "[Filipino Homes] New inquiry pending review{$suffix}",
             'agent'                => "[Filipino Homes] Inquiry assigned to you{$suffix}",
+            'agent_profile'        => "[Filipino Homes] New inquiry from your agent profile{$senderSuffix}",
             default                => 'Filipino Homes - New message received',
         };
     }
@@ -340,6 +344,55 @@ class MessageNotificationMailer extends Mailable
             agentUserId:      $agentUserId,
             showListingOwner: false,
             perspective:      'agent',
+        ));
+    }
+
+    /**
+     * Sent when a visitor submits the "Message Me" form on a public agent
+     * profile (POST /chats with type=agent). Unlike listing inquiries this
+     * skips moderation entirely — the conversation is auto-accepted on
+     * create — so the agent is the only recipient. No admin/team-leader
+     * fan-out: profile inquiries are a direct visitor-to-agent channel and
+     * the admins don't moderate them, so a BCC copy would just be noise.
+     *
+     * Same BCC pattern as the other dispatchers: TO is the shared inbox,
+     * the agent's address lives in BCC only so reply-all doesn't leak it.
+     * No listing context — agent-profile inquiries aren't tied to a unit.
+     */
+    public static function dispatchForAgentProfile(
+        $sender,
+        $agent,
+        $message,
+        $slug,
+        ?int $agentUserId
+    ): void {
+        $sharedInbox = 'info@filipinohomes.com';
+        $agentEmail  = (string) ($agent->email ?? '');
+        if ($agentEmail === '') {
+            Log::warning('dispatchForAgentProfile: agent has no email — skipping send', [
+                'agent_user_id' => $agentUserId,
+            ]);
+            return;
+        }
+
+        // Don't email when the sender IS the agent (self-conversation isn't
+        // valid through the form, but the validation lives elsewhere — be
+        // defensive here so a missed validation can't produce a noise email).
+        $senderEmail = (string) ($sender->email ?? '');
+        if ($senderEmail !== '' && strcasecmp($senderEmail, $agentEmail) === 0) {
+            return;
+        }
+
+        Mail::to($sharedInbox)->bcc([$agentEmail])->send(new self(
+            sender:           $sender,
+            receiver:         $agent,
+            message:          $message,
+            slug:             $slug,
+            roleName:         'agent',
+            listing:          null,
+            agentUserId:      $agentUserId,
+            showListingOwner: false,
+            perspective:      'agent_profile',
         ));
     }
 
