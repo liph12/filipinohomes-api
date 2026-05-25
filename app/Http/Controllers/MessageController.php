@@ -72,14 +72,12 @@ class MessageController extends Controller
             abort(403, 'Cannot send messages to a ' . $conversation->status . ' conversation.');
         }
 
-        // Check if sender is blocked by the conversation's agent
-        if ($conversation->agent_user_id) {
-            $isBlocked = BlockedUser::where('agent_user_id', $conversation->agent_user_id)
-                ->where('blocked_user_id', Auth::id())
-                ->exists();
-            if ($isBlocked) {
-                abort(403, 'You have been blocked from this conversation.');
-            }
+        // Sender blocked from messaging this agent? Scope-aware via the
+        // helper: catches both per-agent rows (this specific agent) and
+        // any global admin-issued ban regardless of agent.
+        if ($conversation->agent_user_id
+            && BlockedUser::isBlocking((int) Auth::id(), (int) $conversation->agent_user_id)) {
+            abort(403, 'You have been blocked from this conversation.');
         }
 
         if (!empty($validated['reply_to_id'])) {

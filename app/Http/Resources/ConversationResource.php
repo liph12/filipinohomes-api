@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\BlockedUser;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Auth;
@@ -28,6 +29,18 @@ class ConversationResource extends JsonResource
             }
         }
 
+        // Per-viewer "am I blocked from messaging in this conversation?"
+        // signal. Drives the frontend's composer-to-blocked-panel swap so
+        // the client sees a clear notice instead of a still-typeable input.
+        // Only the participant client can be blocked here — agents,
+        // moderators, and admins always see false even if a per-agent row
+        // happens to exist with their user_id (they're the blocker, not
+        // the blockee). The check is scope-aware via BlockedUser::isBlocking.
+        $isBlockedForMe = false;
+        if ($authUserId && $this->agent_user_id && $authUserId !== (int) $this->agent_user_id) {
+            $isBlockedForMe = BlockedUser::isBlocking((int) $authUserId, (int) $this->agent_user_id);
+        }
+
         return [
             'id' => $this->id,
             'chat_id' => $this->chat_id,
@@ -43,6 +56,7 @@ class ConversationResource extends JsonResource
             'latest_message' => new MessageResource($this->whenLoaded('latestMessage')),
             'users' => UserResource::collection($this->whenLoaded('users')),
             'unread_count' => $unreadCount,
+            'is_blocked_for_me' => $isBlockedForMe,
             'created_at' => $this->created_at,
         ];
     }

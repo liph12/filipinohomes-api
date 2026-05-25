@@ -3,25 +3,35 @@
 namespace App\Http\Controllers;
 
 use App\Models\BlockedUser;
+use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class BlockedUserController extends Controller
 {
     public function index(Request $request)
     {
         $user = Auth::user();
+        $roleName = $user->role?->name;
 
-        $query = BlockedUser::with(['blockedUser', 'blockedByUser']);
+        $query = BlockedUser::with(['blockedUser', 'blockedByUser', 'agent']);
 
-        if ($user->role?->name === 'admin') {
-            // Admins can filter by agent_user_id or see all
+        if ($roleName === 'admin') {
+            // Admins see every row — global + per-agent for all agents.
             if ($request->has('agent_user_id')) {
                 $query->where('agent_user_id', $request->input('agent_user_id'));
             }
         } else {
-            // Agents can only see their own blocked list
-            $query->where('agent_user_id', $user->id);
+            // Agent: own per-agent rows.
+            // Team leader: own per-agent rows + per-agent rows for any agent
+            // in a team they lead. Both fall through the same OR.
+            $ledIds = app(TeamLeadershipService::class)->getLedTeamMemberUserIds($user->id);
+            $visibleAgentIds = array_values(array_unique(array_merge([$user->id], $ledIds)));
+
+            $query->where(function ($q) use ($visibleAgentIds) {
+                $q->whereIn('agent_user_id', $visibleAgentIds);
+            });
         }
 
         return response()->json($query->latest()->get());
@@ -34,8 +44,19 @@ class BlockedUserController extends Controller
             'blocked_user_id' => 'required|exists:users,id',
         ]);
 
-        $blocked = BlockedUser::where('agent_user_id', $validated['agent_user_id'])
+        // Scope-aware: a global row for blocked_user_id counts as blocking
+        // regardless of agent. The blocked_user payload is the most relevant
+        // row (global preferred so the UI surfaces "site-wide" when present).
+        $blocked = BlockedUser::with(['blockedUser', 'blockedByUser', 'agent'])
             ->where('blocked_user_id', $validated['blocked_user_id'])
+            ->where(function ($q) use ($validated) {
+                $q->where('scope', 'global')
+                  ->orWhere(function ($qq) use ($validated) {
+                      $qq->where('scope', 'per_agent')
+                         ->where('agent_user_id', $validated['agent_user_id']);
+                  });
+            })
+            ->orderByRaw("FIELD(scope, 'global', 'per_agent')")
             ->first();
 
         return response()->json([
@@ -54,21 +75,104 @@ class BlockedUserController extends Controller
 
         $user = Auth::user();
         $isAdmin = $user->role?->name === 'admin';
+        $targetAgentId = (int) $validated['agent_user_id'];
+        $blockedUserId = (int) $validated['blocked_user_id'];
 
-        // Only the agent themselves or an admin can block
-        if (!$isAdmin && (int) $validated['agent_user_id'] !== $user->id) {
-            abort(403, 'You can only block users for your own account.');
+        // Prevent blocking yourself (only meaningful for the per-agent path —
+        // admins never target their own user_id as the agent anyway since
+        // they'll be writing scope='global').
+        if (!$isAdmin && $targetAgentId === $blockedUserId) {
+            abort(422, 'You cannot block yourself.');
         }
 
-        // Prevent blocking yourself
-        if ((int) $validated['agent_user_id'] === (int) $validated['blocked_user_id']) {
-            abort(422, 'You cannot block yourself.');
+        if ($isAdmin) {
+            // Site-wide ban — one row, applies to every agent.
+            $blocked = BlockedUser::firstOrCreate(
+                [
+                    'blocked_user_id' => $blockedUserId,
+                    'scope' => 'global',
+                ],
+                [
+                    'agent_user_id' => null,
+                    'blocked_by' => $user->id,
+                    'reason' => $validated['reason'] ?? null,
+                ]
+            );
+
+            $blocked->load(['blockedUser', 'blockedByUser', 'agent']);
+
+            return response()->json($blocked, 201);
+        }
+
+        // Team leaders block across their entire team — one click fans out
+        // to a per-agent row for every active member of the team(s) they
+        // lead, so the client is blocked from messaging any of them. This
+        // matches the operator mental model: "a TL block is a team ban,
+        // not a personal ban". Regular agents (no led members) just write
+        // a single per-agent row for themselves.
+        $tls = app(TeamLeadershipService::class);
+        $ledIds = $tls->getLedTeamMemberUserIds($user->id);
+        $isTeamLeader = !empty($ledIds);
+
+        if ($isTeamLeader) {
+            // Roster always includes the TL themselves so a self-issued block
+            // from their own chat also fans out, and so a leader who happens
+            // not to appear in their own team's roster still gets blocked.
+            $teamAgentIds = array_values(array_unique(array_merge([$user->id], $ledIds)));
+
+            // Target agent must be in their team's scope (or the TL themselves).
+            // A TL can't write a per-agent row for an agent outside their team.
+            if (!in_array($targetAgentId, $teamAgentIds, true)) {
+                abort(403, 'You can only block users for your own account or your team\'s agents.');
+            }
+
+            $rows = [];
+            DB::transaction(function () use ($teamAgentIds, $blockedUserId, $user, $validated, &$rows) {
+                foreach ($teamAgentIds as $agentId) {
+                    if ($agentId === $blockedUserId) {
+                        // Skip the self-block edge case — e.g. a TL whose
+                        // team member happens to share the client's id (won't
+                        // happen in practice but cheap to guard).
+                        continue;
+                    }
+                    $rows[$agentId] = BlockedUser::firstOrCreate(
+                        [
+                            'agent_user_id' => $agentId,
+                            'blocked_user_id' => $blockedUserId,
+                            'scope' => 'per_agent',
+                        ],
+                        [
+                            'blocked_by' => $user->id,
+                            'reason' => $validated['reason'] ?? null,
+                        ]
+                    );
+                }
+            });
+
+            // Return the row whose agent matches the conversation the caller
+            // is on — the frontend uses its `id` to drive unblock on the same
+            // visible "Unblock User" button. Falls back to any row if the
+            // target somehow isn't in the fan-out (shouldn't happen).
+            $primary = $rows[$targetAgentId] ?? reset($rows);
+            if (!$primary) {
+                // No rows were written — degenerate case (e.g. blocking self).
+                abort(422, 'Nothing to block.');
+            }
+            $primary->load(['blockedUser', 'blockedByUser', 'agent']);
+
+            return response()->json($primary, 201);
+        }
+
+        // Regular agent — can only write a per-agent row for themselves.
+        if ($targetAgentId !== $user->id) {
+            abort(403, 'You can only block users for your own account.');
         }
 
         $blocked = BlockedUser::firstOrCreate(
             [
-                'agent_user_id' => $validated['agent_user_id'],
-                'blocked_user_id' => $validated['blocked_user_id'],
+                'agent_user_id' => $targetAgentId,
+                'blocked_user_id' => $blockedUserId,
+                'scope' => 'per_agent',
             ],
             [
                 'blocked_by' => $user->id,
@@ -76,7 +180,7 @@ class BlockedUserController extends Controller
             ]
         );
 
-        $blocked->load(['blockedUser', 'blockedByUser']);
+        $blocked->load(['blockedUser', 'blockedByUser', 'agent']);
 
         return response()->json($blocked, 201);
     }
@@ -86,8 +190,48 @@ class BlockedUserController extends Controller
         $user = Auth::user();
         $isAdmin = $user->role?->name === 'admin';
 
-        if (!$isAdmin && $blockedUser->agent_user_id !== $user->id) {
-            abort(403, 'You can only unblock users from your own block list.');
+        if ($isAdmin) {
+            // Admins can unblock any row (global or per-agent).
+            $blockedUser->delete();
+            return response()->json(['message' => 'User unblocked.']);
+        }
+
+        // Non-admins can only touch per-agent rows.
+        if ($blockedUser->scope === 'global') {
+            abort(403, 'Site-wide blocks can only be removed by an administrator.');
+        }
+
+        $tls = app(TeamLeadershipService::class);
+        $ledIds = $tls->getLedTeamMemberUserIds($user->id);
+        $isTeamLeader = !empty($ledIds);
+
+        if ($isTeamLeader) {
+            // Team leader: unblock fans out across the team — remove every
+            // per-agent row sharing the blocked_user_id whose agent is in
+            // this leader's team (or is the leader themselves). Matches the
+            // fan-out shape applied in store() so block + unblock are
+            // symmetric. Rows authored by another moderator (a different TL
+            // or the agent themselves) are preserved — TLs only undo their
+            // own team's coverage, not somebody else's separately issued
+            // per-agent block.
+            $teamAgentIds = array_values(array_unique(array_merge([$user->id], $ledIds)));
+            if (!in_array($blockedUser->agent_user_id, $teamAgentIds, true)) {
+                abort(403, 'You can only unblock users from your own list or your team\'s agents.');
+            }
+
+            DB::table('blocked_users')
+                ->where('blocked_user_id', $blockedUser->blocked_user_id)
+                ->where('scope', 'per_agent')
+                ->whereIn('agent_user_id', $teamAgentIds)
+                ->where('blocked_by', $user->id)
+                ->delete();
+
+            return response()->json(['message' => 'User unblocked.']);
+        }
+
+        // Regular agent — can only touch their own per-agent row.
+        if ($blockedUser->agent_user_id !== $user->id) {
+            abort(403, 'You can only unblock users from your own list.');
         }
 
         $blockedUser->delete();

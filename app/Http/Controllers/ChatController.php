@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\ChatResource;
 use App\Mail\MessageNotificationMailer;
+use App\Models\BlockedUser;
 use App\Models\Chat;
 use App\Models\Conversation;
 use App\Models\Listing;
@@ -185,6 +186,17 @@ class ChatController extends Controller
             }],
             'message' => 'sometimes|string|max:5000',
         ]);
+
+        // Block-check the sender BEFORE we touch chats/conversations. This
+        // closes the loophole where a blocked client could open a brand-new
+        // inquiry on a different listing owned by the same agent (or any
+        // listing if an admin issued a site-wide ban). Limited to listing
+        // chats since agent/blog/reel chats don't have a specific "target
+        // agent" to block against.
+        if ($validated['type'] === 'listing'
+            && BlockedUser::isBlocking($user->id, (int) $validated['target_user_id'])) {
+            abort(403, 'You can no longer contact this agent.');
+        }
 
         $existing = Chat::where('type', $validated['type'])
             ->where('type_id', $validated['type_id'])
