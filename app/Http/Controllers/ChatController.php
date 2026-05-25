@@ -68,6 +68,13 @@ class ChatController extends Controller
         if ($typeId = $request->query('type_id')) {
             $query->where('type_id', (int) $typeId);
         }
+        // "Have I already messaged X?" lookups must always be scoped to the
+        // viewer's own chats. Without this, admins (who see all chats by
+        // default in the role branch above) get any user's chat with the
+        // target agent and the UI falsely shows "Message Already Sent."
+        if ($request->boolean('mine')) {
+            $query->where('user_id', $user->id);
+        }
         if ($status = $request->query('status')) {
             if ($status !== 'all') {
                 $query->whereHas('activeConversation', fn ($c) => $c->where('status', $status));
