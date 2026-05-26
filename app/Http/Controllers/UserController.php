@@ -317,6 +317,67 @@ class UserController extends Controller
         ]);
     }
 
+    public function dashboardUsersByDate(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $validated = $request->validate([
+            'date_start'  => 'nullable|date',
+            'date_end'    => 'nullable|date|after_or_equal:date_start',
+            'granularity' => 'nullable|in:day,month,year',
+            'role'        => 'nullable|in:all,agent,client',
+        ]);
+
+        // role_id per RoleSeeder: admin=1, agent=2, client=3, editor=4.
+        if ($request->user()->role_id !== 1) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $start = $validated['date_start'] ?? now()->startOfYear()->toDateString();
+        $end   = $validated['date_end']   ?? now()->toDateString();
+        $gran  = $validated['granularity'] ?? 'day';
+        $role  = $validated['role'] ?? 'all';
+
+        $roleIds = $role === 'agent' ? [2] : ($role === 'client' ? [3] : [2, 3]);
+
+        $bucketExpr = match ($gran) {
+            'year'  => "DATE_FORMAT(created_at, '%Y-01-01')",
+            'month' => "DATE_FORMAT(created_at, '%Y-%m-01')",
+            default => "DATE(created_at)",
+        };
+
+        $rows = User::query()
+            ->selectRaw("$bucketExpr as bucket_start, SUM(role_id = 2) as agents, SUM(role_id = 3) as clients")
+            ->whereIn('role_id', $roleIds)
+            ->whereBetween('created_at', [$start . ' 00:00:00', $end . ' 23:59:59'])
+            ->groupBy('bucket_start')
+            ->orderBy('bucket_start')
+            ->get();
+
+        $totals = ['agent' => 0, 'client' => 0, 'total' => 0];
+        $data = $rows->map(function ($row) use ($gran, &$totals) {
+            $agent  = (int) $row->agents;
+            $client = (int) $row->clients;
+            $totals['agent']  += $agent;
+            $totals['client'] += $client;
+            $totals['total']  += $agent + $client;
+
+            return [
+                'bucket_start' => $row->bucket_start,
+                'bucket_label' => match ($gran) {
+                    'year'  => substr($row->bucket_start, 0, 4),
+                    'month' => date('M Y', strtotime($row->bucket_start)),
+                    default => date('M j, Y', strtotime($row->bucket_start)),
+                },
+                'counts' => ['agent' => $agent, 'client' => $client, 'total' => $agent + $client],
+            ];
+        });
+
+        return response()->json([
+            'data'   => $data,
+            'totals' => $totals,
+            'meta'   => ['granularity' => $gran, 'from' => $start, 'to' => $end, 'role' => $role],
+        ]);
+    }
+
     public function index(Request $request)
     {
         $query = User::query()
