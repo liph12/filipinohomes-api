@@ -312,6 +312,15 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('agent-reviews/my-eligible-inquiries',
                 [AgentReviewController::class, 'myEligibleInquiries']);
 
+            // Authored-review history for /client/my-reviews. Returns
+            // every status (visible / hidden / flagged) so the author
+            // can see admin moderation transparently. mineSummary
+            // powers the header stat strip.
+            Route::get('agent-reviews/mine',
+                [AgentReviewController::class, 'mine']);
+            Route::get('agent-reviews/mine/summary',
+                [AgentReviewController::class, 'mineSummary']);
+
             // Admin moderation surface — /admin/agent-feedback consumes these.
             Route::get('admin/agent-reviews', [AgentReviewController::class, 'adminIndex']);
             Route::get('admin/agent-reviews/summary', [AgentReviewController::class, 'adminSummary']);

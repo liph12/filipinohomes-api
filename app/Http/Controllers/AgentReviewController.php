@@ -433,6 +433,88 @@ class AgentReviewController extends Controller
     }
 
     /**
+     * Paginated history of reviews authored by the caller. Powers the
+     * /client/my-reviews page. Returns rows of EVERY status (visible /
+     * hidden / flagged) — the author is always allowed to see what
+     * they themselves wrote, including admin-suppressed content, so
+     * moderation never silently erases their voice. Public profile
+     * reads still respect the visible-only filter via index().
+     */
+    public function mine(Request $request)
+    {
+        $user = Auth::user();
+        $userId = (int) $user->id;
+
+        $validated = $request->validate([
+            'per_page' => 'sometimes|integer|min:1|max:30',
+            'status' => 'sometimes|in:visible,hidden,flagged',
+        ]);
+
+        $q = AgentReview::query()
+            ->where('client_user_id', $userId)
+            ->latest()
+            ->with([
+                'agent:id,name,avatar',
+                // teamMembers (active only) → team for the row's team chip.
+                // Same eager-load pattern adminIndex uses so the resource's
+                // agent.team_name projection populates.
+                'agent.agent:id,user_id',
+                'agent.agent.teamMembers' => fn ($qq) => $qq->where('status', 'active'),
+                'agent.agent.teamMembers.team:id,name',
+                'response',
+                'hiddenByUser:id,name',
+            ]);
+
+        if (!empty($validated['status'])) {
+            $q->where('status', $validated['status']);
+        }
+
+        return AgentReviewResource::collection(
+            $q->paginate($validated['per_page'] ?? 10)
+        );
+    }
+
+    /**
+     * Summary stats for the /client/my-reviews header strip. Returns
+     * total / avg rating given / last review timestamp / top three
+     * tags the caller picks most often. All scoped to the caller's
+     * authored reviews regardless of status (so a client who's been
+     * heavily moderated still sees the truth about their own history).
+     */
+    public function mineSummary(Request $request)
+    {
+        $user = Auth::user();
+        $userId = (int) $user->id;
+
+        $base = AgentReview::where('client_user_id', $userId);
+
+        $total = (clone $base)->count();
+        $avg = (clone $base)->avg('overall_rating');
+        $latest = (clone $base)->max('created_at');
+
+        // Tag frequency — pull the JSON arrays in one query, count in PHP.
+        // The result set is bounded by the caller's own review count
+        // (typically under a few dozen rows), so unpacking client-side
+        // is cheaper than JSON_TABLE / generator-table acrobatics.
+        $allTags = (clone $base)
+            ->whereNotNull('tags')
+            ->pluck('tags')
+            ->flatten(1)
+            ->filter()
+            ->all();
+        $counts = array_count_values(array_map('strval', $allTags));
+        arsort($counts);
+        $topTags = array_slice($counts, 0, 3, preserve_keys: true);
+
+        return response()->json([
+            'total' => $total,
+            'avg_rating_given' => $avg !== null ? round((float) $avg, 2) : null,
+            'last_reviewed_at' => $latest,
+            'top_tags' => (object) $topTags,
+        ]);
+    }
+
+    /**
      * Leaderboards for /admin/agent-feedback. Returns:
      *   per_tag — top 5 agents per tag (responsiveness / knowledge /
      *             professionalism / helpfulness) ordered by avg rating.
