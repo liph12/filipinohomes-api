@@ -321,6 +321,14 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('agent-reviews/mine/summary',
                 [AgentReviewController::class, 'mineSummary']);
 
+            // Manual-entry probe used by the agent profile "Rate this
+            // Agent" button. Returns can_submit + conversation_id +
+            // existing_review_id so the frontend can render the right
+            // affordance + open the dialog with the right context.
+            Route::get('agent-reviews/can-submit-for-agent/{agentUserId}',
+                [AgentReviewController::class, 'canSubmitForAgent'])
+                ->whereNumber('agentUserId');
+
             // Admin moderation surface — /admin/agent-feedback consumes these.
             Route::get('admin/agent-reviews', [AgentReviewController::class, 'adminIndex']);
             Route::get('admin/agent-reviews/summary', [AgentReviewController::class, 'adminSummary']);

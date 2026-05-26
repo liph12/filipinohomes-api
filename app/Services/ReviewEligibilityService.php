@@ -44,6 +44,17 @@ class ReviewEligibilityService
     private const ENGAGEMENT_AGENT_MIN = 1;
     private const ENGAGEMENT_QUIET_MINUTES = 48 * 60;
     private const CLIENT_QUIET_DAYS = 7;
+    // open_relationship — fires for active, established conversations
+    // that the existing quiet-period gates miss. Caught the "we've been
+    // chatting daily for a week, let me rate now" pattern.
+    private const OPEN_RELATIONSHIP_DAYS = 5;
+    private const OPEN_RELATIONSHIP_CLIENT_MIN = 5;
+    private const OPEN_RELATIONSHIP_AGENT_MIN = 3;
+    // canSubmit() — looser gate used by the manual rate entries
+    // (chat-header kebab, agent profile button). The auto-prompt gates
+    // above stay strict so we don't spam clients with surfaces.
+    private const SUBMIT_CLIENT_MIN = 1;
+    private const SUBMIT_AGENT_MIN = 1;
 
     /**
      * @return array{eligible:bool, reason:?string, reason_code:?string, existing_review_id:?int, already_shown:bool}
@@ -117,7 +128,20 @@ class ReviewEligibilityService
             return $this->eligible('client_quiet', $existingReviewId, $alreadyShown);
         }
 
-        // (D) Original engagement gate. Keep all three sub-conditions
+        // (E) open_relationship — established back-and-forth that the
+        // quiet-period gates can't catch. Accepted conversation that's
+        // been alive for several days with substantial messaging from
+        // both sides means the client clearly knows what they think of
+        // the agent; we don't need to wait for silence to ask.
+        if ($conv->status === 'accepted'
+            && $conv->created_at
+            && $conv->created_at->diffInDays(now()) >= self::OPEN_RELATIONSHIP_DAYS
+            && $clientMsgs >= self::OPEN_RELATIONSHIP_CLIENT_MIN
+            && $agentMsgs >= self::OPEN_RELATIONSHIP_AGENT_MIN) {
+            return $this->eligible('open_relationship', $existingReviewId, $alreadyShown);
+        }
+
+        // (F) Original engagement gate. Keep all three sub-conditions
         // intact so we don't regress the existing behavior.
         if ($clientMsgs < self::ENGAGEMENT_CLIENT_MIN) {
             return $this->fail('Send a few more messages before rating.', $existingReviewId, $alreadyShown);
@@ -169,6 +193,77 @@ class ReviewEligibilityService
             'reason_code' => null,
             'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
             'already_shown' => $alreadyShown,
+        ];
+    }
+
+    /**
+     * Looser submission gate used by the manual rate entries — chat
+     * header kebab, agent profile button, etc. The auto-prompt gates
+     * in check() decide whether to SURFACE a prompt to the client; this
+     * decides whether to ACCEPT a submission once they've clicked. A
+     * client who explicitly wants to rate shouldn't have to wait for
+     * the conversation to go quiet — but we still require a real
+     * relationship (one message each way) so we never accept drive-by
+     * ratings from a chat the agent never replied to.
+     *
+     * Returns the same array shape as check() so AgentReviewController
+     * can swap one for the other without touching its callers.
+     *
+     * @return array{can_submit:bool, reason:?string, existing_review_id:?int}
+     */
+    public function canSubmit(int $clientUserId, Conversation $conv): array
+    {
+        $conv->loadMissing('chat');
+
+        if (!$conv->agent_user_id) {
+            return $this->submitFail('Conversation has no assigned agent.', null);
+        }
+        if ((int) $conv->chat?->user_id !== $clientUserId) {
+            return $this->submitFail('Only the inquiring client can rate this agent.', null);
+        }
+        if ($clientUserId === (int) $conv->agent_user_id) {
+            return $this->submitFail('You cannot rate yourself.', null);
+        }
+
+        $existingReviewId = AgentReview::where('client_user_id', $clientUserId)
+            ->where('agent_user_id', $conv->agent_user_id)
+            ->value('id');
+
+        $counts = Message::query()
+            ->where('conversation_id', $conv->id)
+            ->whereNotIn('status', ['deleted', 'unsent'])
+            ->selectRaw('
+                SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as client_msgs,
+                SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as agent_msgs
+            ', [$clientUserId, $conv->agent_user_id])
+            ->first();
+
+        $clientMsgs = (int) ($counts->client_msgs ?? 0);
+        $agentMsgs = (int) ($counts->agent_msgs ?? 0);
+
+        if ($clientMsgs < self::SUBMIT_CLIENT_MIN) {
+            return $this->submitFail('Send a message first before rating.', $existingReviewId);
+        }
+        if ($agentMsgs < self::SUBMIT_AGENT_MIN) {
+            return $this->submitFail('Wait for the agent to reply at least once.', $existingReviewId);
+        }
+
+        return [
+            'can_submit' => true,
+            'reason' => null,
+            'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
+        ];
+    }
+
+    /**
+     * @return array{can_submit:bool, reason:string, existing_review_id:?int}
+     */
+    private function submitFail(string $reason, ?int $existingReviewId): array
+    {
+        return [
+            'can_submit' => false,
+            'reason' => $reason,
+            'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
         ];
     }
 }

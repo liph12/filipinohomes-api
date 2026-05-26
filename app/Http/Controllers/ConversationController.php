@@ -197,9 +197,19 @@ class ConversationController extends Controller
     public function ratePromptEligibility(Conversation $conversation)
     {
         $this->authorize('view', $conversation);
-        $eligibility = app(ReviewEligibilityService::class)
-            ->check((int) Auth::id(), $conversation);
-        return response()->json($eligibility);
+        $service = app(ReviewEligibilityService::class);
+        $clientId = (int) Auth::id();
+        $eligibility = $service->check($clientId, $conversation);
+        $submission = $service->canSubmit($clientId, $conversation);
+
+        // Additive — keeps every existing field intact so older
+        // frontend callers keep working unchanged. New can_submit /
+        // submit_reason power the manual rate entries (chat-header
+        // kebab, agent profile hero button).
+        return response()->json(array_merge($eligibility, [
+            'can_submit' => $submission['can_submit'],
+            'submit_reason' => $submission['reason'],
+        ]));
     }
 
     public function markRead(Conversation $conversation)

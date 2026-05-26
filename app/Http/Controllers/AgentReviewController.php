@@ -106,9 +106,14 @@ class AgentReviewController extends Controller
         }
 
         $conv = Conversation::with('chat')->findOrFail($validated['conversation_id']);
-        $eligibility = app(ReviewEligibilityService::class)->check($clientId, $conv);
-        if (!$eligibility['eligible']) {
-            abort(422, $eligibility['reason'] ?? 'You are not eligible to rate this agent yet.');
+        // Submission uses the looser canSubmit() gate — manual entries
+        // (chat-header kebab, agent profile button) intentionally bypass
+        // the strict auto-prompt gates so a client who knows they want
+        // to rate doesn't have to wait for the conversation to go quiet.
+        // The strict check() still drives WHERE we surface the prompt.
+        $submission = app(ReviewEligibilityService::class)->canSubmit($clientId, $conv);
+        if (!$submission['can_submit']) {
+            abort(422, $submission['reason'] ?? 'You are not eligible to rate this agent yet.');
         }
 
         $status = app(ReviewAntiAbuseService::class)->initialStatus($clientId, $agentId);
@@ -430,6 +435,71 @@ class AgentReviewController extends Controller
         }
 
         return response()->json(['data' => $out]);
+    }
+
+    /**
+     * Manual-entry probe for the agent profile "Rate this Agent"
+     * button. Locates the caller's most recent listing-chat
+     * conversation with this agent and asks canSubmit() whether it
+     * passes the relaxed manual gate. Used by AgentDetailPage to
+     * decide whether to render the hero Rate button + which
+     * conversation to attach the review to.
+     */
+    public function canSubmitForAgent(Request $request, int $agentUserId)
+    {
+        $user = Auth::user();
+        $clientId = (int) $user->id;
+
+        if ($clientId === $agentUserId) {
+            return response()->json([
+                'can_submit' => false,
+                'reason' => 'You cannot rate yourself.',
+                'conversation_id' => null,
+                'existing_review_id' => null,
+                'agent_user_id' => $agentUserId,
+                'agent_name' => null,
+                'agent_avatar' => null,
+            ]);
+        }
+
+        // Pick the latest listing-chat where the caller owns the chat
+        // and the active conversation is assigned to this agent. The
+        // chat-owner constraint mirrors what canSubmit() enforces, so
+        // we won't surprise the client with a 422 on submit.
+        $conv = Conversation::query()
+            ->whereHas('chat', function ($q) use ($clientId) {
+                $q->where('user_id', $clientId);
+            })
+            ->where('agent_user_id', $agentUserId)
+            ->whereIn('status', ['accepted', 'closed'])
+            ->with(['chat', 'agentUser:id,name,avatar'])
+            ->latest()
+            ->first();
+
+        if (!$conv) {
+            return response()->json([
+                'can_submit' => false,
+                'reason' => 'No inquiry with this agent yet.',
+                'conversation_id' => null,
+                'existing_review_id' => null,
+                'agent_user_id' => $agentUserId,
+                'agent_name' => null,
+                'agent_avatar' => null,
+            ]);
+        }
+
+        $service = app(ReviewEligibilityService::class);
+        $submission = $service->canSubmit($clientId, $conv);
+
+        return response()->json([
+            'can_submit' => $submission['can_submit'],
+            'reason' => $submission['reason'],
+            'conversation_id' => (int) $conv->id,
+            'existing_review_id' => $submission['existing_review_id'],
+            'agent_user_id' => $agentUserId,
+            'agent_name' => $conv->agentUser?->name,
+            'agent_avatar' => $conv->agentUser?->avatar,
+        ]);
     }
 
     /**
