@@ -204,6 +204,7 @@ Route::middleware('strip.tags')->group(function(){
                 ->where('projectKey', '(project|property):\d+');
             Route::get('/listings/insights/by-province', [ListingController::class, 'insightsByProvince']);
             Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
+            Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
                 ->where('status', '[a-z_-]+');
             Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);

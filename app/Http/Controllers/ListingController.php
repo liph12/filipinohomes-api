@@ -1142,6 +1142,23 @@ class ListingController extends Controller
     }
 
     /**
+     * Listing Insights — property-type breakdown. One row per property type
+     * with subtype children and per-category + per-transaction-status counts.
+     */
+    public function insightsByType(Request $request, ListingInsightsService $insights): JsonResponse
+    {
+        $agentIds  = $this->resolveInsightsAgentScope($request);
+        $dateStart = $request->query('date_start');
+        $dateEnd   = $request->query('date_end');
+
+        return response()->json($insights->typeBreakdown(
+            is_string($dateStart) ? $dateStart : null,
+            is_string($dateEnd) ? $dateEnd : null,
+            $agentIds
+        ));
+    }
+
+    /**
      * Listing Insights — paginated listings for a single status. Used by the
      * "Listings by Status" drawer drill-down.
      */
