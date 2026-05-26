@@ -27,6 +27,22 @@ class AgentReviewResource extends JsonResource
                     'avatar' => $this->client->avatar,
                 ];
             }),
+            // Agent name + active team — populated by admin endpoints
+            // that eager-load 'agent' and 'agent.agent.teamMembers.team'.
+            // Falls through to null/undefined when those relations
+            // aren't loaded so public profile responses stay slim.
+            'agent' => $this->whenLoaded('agent', function () {
+                $teamMember = $this->agent->relationLoaded('agent')
+                    ? $this->agent->agent?->teamMembers?->firstWhere('status', 'active')
+                    : null;
+                return [
+                    'id' => $this->agent->id,
+                    'name' => $this->agent->name,
+                    'avatar' => $this->agent->avatar,
+                    'team_id' => $teamMember?->team_id ?? null,
+                    'team_name' => $teamMember?->team?->name ?? null,
+                ];
+            }),
             'conversation_id' => $this->conversation_id ? (int) $this->conversation_id : null,
             'overall_rating' => (int) $this->overall_rating,
             'tags' => $this->tags ?? [],

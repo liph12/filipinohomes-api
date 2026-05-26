@@ -283,7 +283,18 @@ class AgentReviewController extends Controller
         ]);
 
         $q = AgentReview::query()
-            ->with(['client:id,name,avatar', 'agent:id,name,avatar', 'response', 'hiddenByUser:id,name'])
+            ->with([
+                'client:id,name,avatar',
+                'agent:id,name,avatar',
+                // Pull the agent's active team_members + their team so the
+                // resource can project agent.team_name. team_agents.status
+                // is filtered by AgentReviewResource via firstWhere.
+                'agent.agent:id,user_id',
+                'agent.agent.teamMembers' => fn ($q) => $q->where('status', 'active'),
+                'agent.agent.teamMembers.team:id,name',
+                'response',
+                'hiddenByUser:id,name',
+            ])
             ->latest();
 
         if (!empty($validated['agent_user_id'])) {
@@ -357,5 +368,333 @@ class AgentReviewController extends Controller
             ->update(['rate_prompt_shown_at' => now()]);
 
         return response()->json(['message' => 'Rate prompt dismissed.']);
+    }
+
+    /**
+     * Batched eligibility lookup for the inquiry list. Returns every
+     * chat owned by the caller whose active conversation is currently
+     * rating-eligible AND hasn't been dismissed. Frontend uses this to
+     * paint per-row "Rate" chips + the top-of-list banner count without
+     * running N eligibility probes (one per row).
+     */
+    public function myEligibleInquiries(Request $request)
+    {
+        $user = Auth::user();
+        $userId = (int) $user->id;
+        $service = app(ReviewEligibilityService::class);
+
+        // Only the chat owner can rate the agent on that chat. Limit
+        // the scan to their own chats with an active conversation that
+        // has an assigned agent. listing.property is needed for the
+        // listing-status trigger so we eager-load it here too.
+        $chats = \App\Models\Chat::query()
+            ->where('user_id', $userId)
+            ->whereHas('activeConversation', function ($q) {
+                $q->whereNotNull('agent_user_id');
+            })
+            ->with([
+                'activeConversation:id,chat_id,status,agent_user_id',
+                'activeConversation.agentUser:id,name,avatar',
+                'listing:id,property_id',
+                'listing.property:id,status',
+            ])
+            ->get();
+
+        $out = [];
+        foreach ($chats as $chat) {
+            $conv = $chat->activeConversation;
+            if (!$conv) {
+                continue;
+            }
+            // The service expects chat.listing.property reachable from
+            // $conv. The relations above feed chat → listing → property,
+            // but the service looks at $conv->chat → listing → property,
+            // so wire conv.chat to the already-loaded $chat to avoid a
+            // duplicate query.
+            $conv->setRelation('chat', $chat);
+
+            $elig = $service->check($userId, $conv);
+            if (!$elig['eligible'] || $elig['already_shown']) {
+                continue;
+            }
+
+            $out[] = [
+                'chat_id' => (int) $chat->id,
+                'conversation_id' => (int) $conv->id,
+                'agent_user_id' => (int) $conv->agent_user_id,
+                'agent_name' => $conv->agentUser?->name,
+                'agent_avatar' => $conv->agentUser?->avatar,
+                'existing_review_id' => $elig['existing_review_id'],
+                'reason_code' => $elig['reason_code'],
+            ];
+        }
+
+        return response()->json(['data' => $out]);
+    }
+
+    /**
+     * Leaderboards for /admin/agent-feedback. Returns:
+     *   per_tag — top 5 agents per tag (responsiveness / knowledge /
+     *             professionalism / helpfulness) ordered by avg rating.
+     *   top_by_total — top 5 agents by total visible reviews.
+     *   top_by_rating — top 5 agents by avg rating, gated at >=3 reviews
+     *                   so a single 5.0 doesn't outrank battle-tested 4.6.
+     *
+     * Each row includes the agent's display name + active team so the
+     * admin UI never has to surface "Agent #6".
+     */
+    public function leaderboards(Request $request)
+    {
+        $user = Auth::user();
+        if ($user->role?->name !== 'admin') {
+            abort(403, 'Admin only.');
+        }
+
+        $tags = ['responsiveness', 'knowledge', 'professionalism', 'helpfulness'];
+        $perTag = [];
+        foreach ($tags as $tag) {
+            $perTag[$tag] = $this->aggregateAgents(function ($q) use ($tag) {
+                // `r` is the agent_reviews alias inside aggregateAgents;
+                // whereJsonContains doesn't honor the alias so use
+                // whereRaw + JSON_CONTAINS directly. Bound value must
+                // be JSON-encoded so MySQL matches the array element.
+                $q->whereRaw('JSON_CONTAINS(r.tags, ?)', [json_encode($tag)]);
+            }, orderBy: 'avg_rating_desc', limit: 5, minReviews: 1);
+        }
+
+        $topByTotal = $this->aggregateAgents(
+            fn ($q) => $q,
+            orderBy: 'total_desc',
+            limit: 5,
+            minReviews: 1,
+        );
+
+        $topByRating = $this->aggregateAgents(
+            fn ($q) => $q,
+            orderBy: 'avg_rating_desc',
+            limit: 5,
+            minReviews: 3,
+        );
+
+        return response()->json([
+            'per_tag' => $perTag,
+            'top_by_total' => $topByTotal,
+            'top_by_rating' => $topByRating,
+        ]);
+    }
+
+    /**
+     * Per-team rollup. Group visible reviews by the agent's active team
+     * (via agents.user_id → team_agents.agent_id → teams) and return
+     * total_reviews + avg_rating + agent_count + leader_name. Mirrors
+     * ChatController::stats' per_team shape so the admin UI is
+     * visually consistent.
+     */
+    public function teamsRollup(Request $request)
+    {
+        $user = Auth::user();
+        if ($user->role?->name !== 'admin') {
+            abort(403, 'Admin only.');
+        }
+
+        $rows = DB::table('agent_reviews as r')
+            ->join('agents as a', 'a.user_id', '=', 'r.agent_user_id')
+            ->join('team_agents as ta', function ($j) {
+                $j->on('ta.agent_id', '=', 'a.id')
+                  ->where('ta.status', '=', 'active');
+            })
+            ->join('teams as t', 't.id', '=', 'ta.team_id')
+            ->where('r.status', 'visible')
+            ->groupBy('t.id', 't.name')
+            ->orderByRaw('AVG(r.overall_rating) DESC')
+            ->select(
+                't.id as team_id',
+                't.name as team_name',
+                DB::raw('COUNT(*) as total_reviews'),
+                DB::raw('ROUND(AVG(r.overall_rating), 2) as avg_rating'),
+                DB::raw('COUNT(DISTINCT r.agent_user_id) as rated_agent_count'),
+            )
+            ->get();
+
+        // Enrich with leader name + total agent count using the same
+        // join chain ChatController::stats uses for the per_team meta.
+        $teamMeta = DB::table('teams as t')
+            ->leftJoin('team_agents as la', function ($j) {
+                $j->on('la.team_id', '=', 't.id')
+                  ->where('la.status', '=', 'active')
+                  ->where('la.is_leader', '=', true);
+            })
+            ->leftJoin('agents as la_a', 'la_a.id', '=', 'la.agent_id')
+            ->leftJoin('users as la_u', 'la_u.id', '=', 'la_a.user_id')
+            ->leftJoin('team_agents as ag', function ($j) {
+                $j->on('ag.team_id', '=', 't.id')
+                  ->where('ag.status', '=', 'active');
+            })
+            ->whereIn('t.id', $rows->pluck('team_id'))
+            ->groupBy('t.id', 'la_u.name')
+            ->select(
+                't.id as team_id',
+                'la_u.name as leader_name',
+                DB::raw('COUNT(DISTINCT ag.agent_id) as agent_count'),
+            )
+            ->get()
+            ->keyBy('team_id');
+
+        $data = $rows->map(function ($r) use ($teamMeta) {
+            $meta = $teamMeta[$r->team_id] ?? null;
+            return [
+                'team_id' => (int) $r->team_id,
+                'team_name' => (string) $r->team_name,
+                'leader_name' => $meta?->leader_name,
+                'agent_count' => (int) ($meta?->agent_count ?? 0),
+                'rated_agent_count' => (int) $r->rated_agent_count,
+                'total_reviews' => (int) $r->total_reviews,
+                'avg_rating' => (float) $r->avg_rating,
+            ];
+        })->values()->all();
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Top reviewers (clients) ranked by visible review count. The avg
+     * rating they GIVE is included so admins can spot retaliatory
+     * patterns (one client with many low ratings is a flag).
+     */
+    public function topReviewers(Request $request)
+    {
+        $user = Auth::user();
+        if ($user->role?->name !== 'admin') {
+            abort(403, 'Admin only.');
+        }
+
+        $rows = DB::table('agent_reviews as r')
+            ->join('users as u', 'u.id', '=', 'r.client_user_id')
+            ->where('r.status', 'visible')
+            ->groupBy('r.client_user_id', 'u.name', 'u.avatar')
+            ->orderByRaw('COUNT(*) DESC, AVG(r.overall_rating) ASC')
+            ->limit(20)
+            ->select(
+                'r.client_user_id',
+                'u.name',
+                'u.avatar',
+                DB::raw('COUNT(*) as reviews_count'),
+                DB::raw('ROUND(AVG(r.overall_rating), 2) as avg_rating_given'),
+            )
+            ->get()
+            ->map(fn ($r) => [
+                'client_user_id' => (int) $r->client_user_id,
+                'name' => $r->name,
+                'avatar' => $r->avatar,
+                'reviews_count' => (int) $r->reviews_count,
+                'avg_rating_given' => (float) $r->avg_rating_given,
+            ])
+            ->all();
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * 30-day trend for the Overview tab sparkline. Returns one bucket
+     * per calendar day (count + avg) plus headline numbers. Days with
+     * no reviews appear with count=0, avg=null so the sparkline draws
+     * a continuous line.
+     */
+    public function trends(Request $request)
+    {
+        $user = Auth::user();
+        if ($user->role?->name !== 'admin') {
+            abort(403, 'Admin only.');
+        }
+
+        $start = now()->subDays(29)->startOfDay();
+
+        $rows = DB::table('agent_reviews')
+            ->where('status', 'visible')
+            ->where('created_at', '>=', $start)
+            ->selectRaw("DATE(created_at) as d, COUNT(*) as n, ROUND(AVG(overall_rating), 2) as avg_r")
+            ->groupBy('d')
+            ->get()
+            ->keyBy('d');
+
+        $daily = [];
+        $totalCount = 0;
+        $weightedSum = 0.0;
+        for ($i = 0; $i < 30; $i++) {
+            $date = now()->subDays(29 - $i)->toDateString();
+            $row = $rows[$date] ?? null;
+            $count = $row ? (int) $row->n : 0;
+            $avg = $row ? (float) $row->avg_r : null;
+            $daily[] = ['date' => $date, 'count' => $count, 'avg' => $avg];
+            $totalCount += $count;
+            if ($avg !== null) {
+                $weightedSum += $avg * $count;
+            }
+        }
+
+        return response()->json([
+            'daily' => $daily,
+            'total_30d' => $totalCount,
+            'avg_30d' => $totalCount > 0
+                ? round($weightedSum / $totalCount, 2)
+                : null,
+        ]);
+    }
+
+    /**
+     * Shared agent-rollup query for the leaderboard endpoints. Returns
+     * one row per agent matching the predicate, ordered by either avg
+     * rating or total count. Joins users + agents + team_agents so the
+     * frontend has display name + team without a second roundtrip.
+     *
+     * @param  \Closure  $applyFilter  receives the base query (agent_reviews
+     *                                  as `r`) so callers can scope by tag, etc.
+     * @param  string  $orderBy        'avg_rating_desc' | 'total_desc'
+     * @param  int  $limit
+     * @param  int  $minReviews        gates the result set
+     */
+    private function aggregateAgents(
+        \Closure $applyFilter,
+        string $orderBy,
+        int $limit,
+        int $minReviews,
+    ): array {
+        $q = DB::table('agent_reviews as r')
+            ->join('users as u', 'u.id', '=', 'r.agent_user_id')
+            ->leftJoin('agents as a', 'a.user_id', '=', 'r.agent_user_id')
+            ->leftJoin('team_agents as ta', function ($j) {
+                $j->on('ta.agent_id', '=', 'a.id')
+                  ->where('ta.status', '=', 'active');
+            })
+            ->leftJoin('teams as t', 't.id', '=', 'ta.team_id')
+            ->where('r.status', 'visible');
+
+        $applyFilter($q);
+
+        $q->groupBy('r.agent_user_id', 'u.name', 'u.avatar', 't.name')
+          ->havingRaw('COUNT(*) >= ?', [$minReviews])
+          ->limit($limit)
+          ->select(
+              'r.agent_user_id',
+              'u.name',
+              'u.avatar',
+              't.name as team_name',
+              DB::raw('COUNT(*) as total_reviews'),
+              DB::raw('ROUND(AVG(r.overall_rating), 2) as avg_rating'),
+          );
+
+        match ($orderBy) {
+            'avg_rating_desc' => $q->orderByRaw('AVG(r.overall_rating) DESC, COUNT(*) DESC'),
+            'total_desc'      => $q->orderByRaw('COUNT(*) DESC, AVG(r.overall_rating) DESC'),
+        };
+
+        return $q->get()->map(fn ($r) => [
+            'agent_user_id' => (int) $r->agent_user_id,
+            'name' => $r->name,
+            'avatar' => $r->avatar,
+            'team_name' => $r->team_name,
+            'total_reviews' => (int) $r->total_reviews,
+            'avg_rating' => (float) $r->avg_rating,
+        ])->all();
     }
 }

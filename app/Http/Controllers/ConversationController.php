@@ -209,13 +209,25 @@ class ConversationController extends Controller
         $user = Auth::user();
         $now = now();
 
-        // Ensure the user is a participant (admins may not be in agent-type chats)
+        // Pivot last_read_at is always stamped — moderators (admin / TL)
+        // still need accurate unread counts in their own inbox. The
+        // pivot is private per participant; it never leaks across users.
         $conversation->users()->syncWithoutDetaching([
             $user->id => ['last_read_at' => $now],
         ]);
 
-        // Admins should not trigger "seen" — only update pivot for unread tracking
-        if ($user->role?->name !== 'admin') {
+        // messages.read_at is the public "seen" signal — visible to the
+        // other party as the seen-receipt + avatar at the bottom of the
+        // bubble. Only the two first-class participants (the chat-owning
+        // client and the conversation's assigned agent) can flip it.
+        // Admins, team leaders, and anyone else who happens to be in the
+        // pivot stay invisible in the seen system so a client never
+        // learns from the UI that a moderator is reading along.
+        $conversation->loadMissing('chat');
+        $isChatOwner = (int) $conversation->chat?->user_id === (int) $user->id;
+        $isAssignedAgent = (int) $conversation->agent_user_id === (int) $user->id;
+
+        if ($isChatOwner || $isAssignedAgent) {
             $conversation->messages()
                 ->where('user_id', '!=', $user->id)
                 ->whereNull('read_at')

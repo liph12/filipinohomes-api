@@ -305,9 +305,23 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('agent-reviews/{review}/response',
                 [AgentReviewController::class, 'storeResponse']);
 
+            // Batched eligibility lookup used by /client/listing-inquiries
+            // to paint per-row "Rate" chips + the top banner without
+            // running N probes (one per row).
+            Route::get('agent-reviews/my-eligible-inquiries',
+                [AgentReviewController::class, 'myEligibleInquiries']);
+
             // Admin moderation surface — /admin/agent-feedback consumes these.
             Route::get('admin/agent-reviews', [AgentReviewController::class, 'adminIndex']);
             Route::get('admin/agent-reviews/summary', [AgentReviewController::class, 'adminSummary']);
+            Route::get('admin/agent-reviews/leaderboards',
+                [AgentReviewController::class, 'leaderboards']);
+            Route::get('admin/agent-reviews/teams',
+                [AgentReviewController::class, 'teamsRollup']);
+            Route::get('admin/agent-reviews/reviewers',
+                [AgentReviewController::class, 'topReviewers']);
+            Route::get('admin/agent-reviews/trends',
+                [AgentReviewController::class, 'trends']);
             Route::patch('agent-reviews/{review}/visibility',
                 [AgentReviewController::class, 'setVisibility']);
         });

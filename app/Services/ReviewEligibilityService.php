@@ -13,14 +13,22 @@ use Illuminate\Support\Facades\DB;
  * the AgentReviewController::store guard call this so the answer is
  * always consistent.
  *
- * Rules (return ['eligible' => false, 'reason' => ...] on first miss):
+ * Common rules (failure paths short-circuit before any trigger fires):
  *   - Conversation must have an assigned agent.
  *   - Caller must own the chat row that wraps the conversation (the
  *     reviewer is always the inquiring client, never the agent).
  *   - Self-review is rejected (client_user_id !== agent_user_id).
- *   - Engagement gate satisfied: status === 'closed' OR
- *     (client_messages >= 3 AND agent_messages >= 1 AND last_message
- *      is >= 48 hours old).
+ *
+ * Trigger gates (any one fires eligibility, recorded via reason_code):
+ *   A) closed       — conversation.status === 'closed'.
+ *   B) listing_sold — listing's property in a terminal state
+ *                     (sold / rented / leased). Highest-signal moment.
+ *   C) client_quiet — accepted + >= 1 client message + >= 7 days since
+ *                     the client's most recent message. Catches the
+ *                     "visited and went silent" pattern that the 48h
+ *                     all-sides gate misses.
+ *   D) engagement   — client_messages >= 3 AND agent_messages >= 1 AND
+ *                     >= 48h since the last message from any side.
  *
  * Returns existing_review_id (if any) so the frontend can switch the
  * inline card between Add-mode and Edit-mode without a second roundtrip.
@@ -35,13 +43,17 @@ class ReviewEligibilityService
     private const ENGAGEMENT_CLIENT_MIN = 3;
     private const ENGAGEMENT_AGENT_MIN = 1;
     private const ENGAGEMENT_QUIET_MINUTES = 48 * 60;
+    private const CLIENT_QUIET_DAYS = 7;
 
     /**
-     * @return array{eligible:bool, reason:?string, existing_review_id:?int, already_shown:bool}
+     * @return array{eligible:bool, reason:?string, reason_code:?string, existing_review_id:?int, already_shown:bool}
      */
     public function check(int $clientUserId, Conversation $conv): array
     {
-        $conv->loadMissing('chat');
+        // Ensure we have enough relations to evaluate every trigger. The
+        // listing-status trigger needs chat → listing → property; missing
+        // relations are quietly skipped so the trigger just won't fire.
+        $conv->loadMissing(['chat', 'chat.listing.property:id,status']);
 
         if (!$conv->agent_user_id) {
             return $this->fail('Conversation has no assigned agent.', null, false);
@@ -60,32 +72,53 @@ class ReviewEligibilityService
             ->where('agent_user_id', $conv->agent_user_id)
             ->value('id');
 
+        // (A) Closed conversation — moderation-driven hard end.
         if ($conv->status === 'closed') {
-            return [
-                'eligible' => true,
-                'reason' => null,
-                'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
-                'already_shown' => $alreadyShown,
-            ];
+            return $this->eligible('closed', $existingReviewId, $alreadyShown);
         }
 
-        // Count messages by author + locate the most recent timestamp.
-        // One grouped query keeps this cheap; the conversation_id index
-        // backs the lookup.
+        // (B) Listing transactional state — the deal closed off-platform.
+        // Strongest real-world signal available since most PH inquiries
+        // never close via the chat's Close button.
+        $listingStatus = $conv->chat?->listing?->property?->status ?? null;
+        if (in_array($listingStatus, ['sold', 'rented', 'leased'], true)) {
+            return $this->eligible('listing_sold', $existingReviewId, $alreadyShown);
+        }
+
+        // For (C) and (D) we need message activity. One grouped query.
         $counts = Message::query()
             ->where('conversation_id', $conv->id)
             ->whereNotIn('status', ['deleted', 'unsent'])
             ->selectRaw('
                 SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as client_msgs,
                 SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as agent_msgs,
-                MAX(created_at) as last_at
-            ', [$clientUserId, $conv->agent_user_id])
+                MAX(created_at) as last_at,
+                MAX(CASE WHEN user_id = ? THEN created_at END) as last_client_at
+            ', [$clientUserId, $conv->agent_user_id, $clientUserId])
             ->first();
 
         $clientMsgs = (int) ($counts->client_msgs ?? 0);
         $agentMsgs = (int) ($counts->agent_msgs ?? 0);
         $lastAt = $counts->last_at ? \Carbon\Carbon::parse($counts->last_at) : null;
+        $lastClientAt = $counts->last_client_at
+            ? \Carbon\Carbon::parse($counts->last_client_at)
+            : null;
 
+        // (C) Accepted + client has been silent for >= 7 days. Don't
+        // require the AGENT to also be silent — the agent might've
+        // followed up multiple times since; what we care about is that
+        // the client has stopped engaging, which usually means the
+        // experience already concluded (toured / declined / found
+        // elsewhere).
+        if ($conv->status === 'accepted'
+            && $clientMsgs >= 1
+            && $lastClientAt
+            && $lastClientAt->diffInDays(now()) >= self::CLIENT_QUIET_DAYS) {
+            return $this->eligible('client_quiet', $existingReviewId, $alreadyShown);
+        }
+
+        // (D) Original engagement gate. Keep all three sub-conditions
+        // intact so we don't regress the existing behavior.
         if ($clientMsgs < self::ENGAGEMENT_CLIENT_MIN) {
             return $this->fail('Send a few more messages before rating.', $existingReviewId, $alreadyShown);
         }
@@ -96,12 +129,7 @@ class ReviewEligibilityService
             return $this->fail('Conversation is still active — rate after 48 hours of quiet.', $existingReviewId, $alreadyShown);
         }
 
-        return [
-            'eligible' => true,
-            'reason' => null,
-            'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
-            'already_shown' => $alreadyShown,
-        ];
+        return $this->eligible('engagement', $existingReviewId, $alreadyShown);
     }
 
     private function alreadyShown(int $userId, int $conversationId): bool
@@ -114,13 +142,31 @@ class ReviewEligibilityService
     }
 
     /**
-     * @return array{eligible:bool, reason:string, existing_review_id:?int, already_shown:bool}
+     * @return array{eligible:bool, reason:null, reason_code:string, existing_review_id:?int, already_shown:bool}
+     */
+    private function eligible(
+        string $reasonCode,
+        ?int $existingReviewId,
+        bool $alreadyShown,
+    ): array {
+        return [
+            'eligible' => true,
+            'reason' => null,
+            'reason_code' => $reasonCode,
+            'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
+            'already_shown' => $alreadyShown,
+        ];
+    }
+
+    /**
+     * @return array{eligible:bool, reason:string, reason_code:null, existing_review_id:?int, already_shown:bool}
      */
     private function fail(string $reason, ?int $existingReviewId, bool $alreadyShown): array
     {
         return [
             'eligible' => false,
             'reason' => $reason,
+            'reason_code' => null,
             'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
             'already_shown' => $alreadyShown,
         ];
