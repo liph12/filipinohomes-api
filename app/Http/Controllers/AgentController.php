@@ -87,6 +87,19 @@ class AgentController extends Controller
             $query->having('listings_count', '>=', $min);
         }
 
+        // Online-only filter — driven by the public /agents directory's
+        // "● N agents online now" pill becoming a toggleable chip.
+        // 5-minute freshness window mirrors the threshold used across
+        // the frontend (utils/presence.ts) and the rest of this
+        // controller. Accepts "1", "true", and "yes" so the param is
+        // friendly to query strings hand-typed into a URL.
+        if (in_array(strtolower((string) $request->query('online', '')), ['1', 'true', 'yes'], true)) {
+            $threshold = now()->subMinutes(5);
+            $query->whereHas('user', function ($uq) use ($threshold) {
+                $uq->where('last_online_at', '>=', $threshold);
+            });
+        }
+
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
 
