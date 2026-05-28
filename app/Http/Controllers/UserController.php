@@ -409,6 +409,10 @@ class UserController extends Controller
             });
         }
 
+        if ($role = $request->query('role')) {
+            $query->whereHas('role', fn ($q) => $q->where('name', $role));
+        }
+
         $perPage = (int) $request->query('per_page', 10);
 
         return new UserResourceCollection(
