@@ -673,15 +673,13 @@ class UserController extends Controller
 
     public function sessionPing(Request $request)
     {
-        $user = $request->user();
-        User::where('id', $user->id)->update(['last_online_at' => now()]);
+        // Bump `last_online_at` only. The frontend calls this every
+        // 60s while the tab is visible, so any side effect here
+        // multiplies by every logged-in user. LoginLog rows belong
+        // to actual `authenticate()` calls — not heartbeats.
+        User::where('id', $request->user()->id)
+            ->update(['last_online_at' => now()]);
 
-        LoginLog::create([
-            'user_id'      => $user->id,
-            'ip_address'   => $request->ip(),
-            'user_agent'   => $request->userAgent(),
-            'logged_in_at' => now(),
-        ]);
         return response()->json(['ok' => true]);
     }
     

@@ -92,6 +92,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/furnishings', [FurnishingController::class, 'index']);
             Route::get('/amenities', [AmenityController::class, 'index']);
             Route::get('agents', [AgentController::class, 'index']);
+            // Must come BEFORE `agents/{id}` so it doesn't bind
+            // "online-ids" as the {id} param.
+            Route::get('agents/online-ids', [AgentController::class, 'onlineAgentIds']);
             Route::get('agents/deleted', [AgentController::class, 'deletedAgents'])->middleware('auth:sanctum');
             Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
             Route::get('agents/{id}/activity', [AgentController::class, 'activity']);

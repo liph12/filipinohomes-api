@@ -65,6 +65,10 @@ class AgentResource extends JsonResource
             'total_reviews' => (int) ($this->total_reviews ?? 0),
             'page_slug'    => $this->pageBuilder?->slug,
             'last_login_at'  => optional($user?->loginLogs()->latest('logged_in_at')->first())->logged_in_at?->toISOString(),
+            // Public presence signal. Bumped every 60s by the
+            // frontend session-ping heartbeat; surfaces decide
+            // "online" by comparing against a 5-minute threshold.
+            'last_online_at' => $user?->last_online_at?->toISOString(),
             'login_count'    => $user?->loginLogs()->count() ?? 0,
             'user'         => new UserResource($user),
             'listings' => AgentListingResource::collection($this->whenLoaded('listings')),

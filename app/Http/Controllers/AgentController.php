@@ -135,7 +135,18 @@ class AgentController extends Controller
                     ->orderByDesc('listings_count'),
             };
         } else {
-            $query->orderByDesc('listings_count');
+            // Default browse: online agents bubble to the top so
+            // visitors can preferentially reach someone responsive.
+            // Bucket 0 = currently online (last_online_at within 5
+            // min), bucket 1 = everyone else. Within each bucket we
+            // keep the existing listings_count desc tiebreaker so
+            // top producers stay surfaced first.
+            $query
+                ->orderByRaw(
+                    '(CASE WHEN (SELECT last_online_at FROM users WHERE users.id = agents.user_id) >= ? THEN 0 ELSE 1 END) ASC',
+                    [now()->subMinutes(5)]
+                )
+                ->orderByDesc('listings_count');
         }
 
         return new AgentResourceCollection(
@@ -148,6 +159,25 @@ class AgentController extends Controller
         $adminIds = User::query()->admin()->pluck('id');
 
         return response()->json($adminIds);
+    }
+
+    // Lightweight presence endpoint used by the public /agents
+    // directory header ("● N agents online now") and any surface
+    // that wants to hydrate online state for many agents in a
+    // single call instead of reading per-row last_online_at.
+    //
+    // Returns the user_ids (not agent ids) of agents whose
+    // last_online_at is within the 5-minute online threshold.
+    public function onlineAgentIds()
+    {
+        $threshold = now()->subMinutes(5);
+
+        $ids = User::query()
+            ->whereHas('role', fn ($q) => $q->where('name', 'agent'))
+            ->where('last_online_at', '>=', $threshold)
+            ->pluck('id');
+
+        return response()->json(['ids' => $ids]);
     }
 
     public function statistics(Request $request, $id)
