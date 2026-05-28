@@ -180,7 +180,12 @@ class AgentController extends Controller
     // single call instead of reading per-row last_online_at.
     //
     // Returns the user_ids (not agent ids) of agents whose
-    // last_online_at is within the 5-minute online threshold.
+    // last_online_at is within the 5-minute online threshold AND
+    // who would actually appear in the public /agents directory
+    // (i.e. have at least one non-deleted listing). Without the
+    // listings filter the pill could advertise more agents than
+    // `?online=1` can surface, leaving visitors staring at an
+    // empty grid when they click the pill to filter.
     public function onlineAgentIds()
     {
         $threshold = now()->subMinutes(5);
@@ -188,6 +193,9 @@ class AgentController extends Controller
         $ids = User::query()
             ->whereHas('role', fn ($q) => $q->where('name', 'agent'))
             ->where('last_online_at', '>=', $threshold)
+            ->whereHas('agent.listings', function ($lq) {
+                $lq->whereNull('listings.deleted_at');
+            })
             ->pluck('id');
 
         return response()->json(['ids' => $ids]);
