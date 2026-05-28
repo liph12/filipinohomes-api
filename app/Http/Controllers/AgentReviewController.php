@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\AgentReviewResource;
 use App\Models\AgentReview;
+use App\Models\AgentReviewHelpfulVote;
 use App\Models\AgentReviewResponse;
 use App\Models\Conversation;
 use App\Services\ReviewAntiAbuseService;
@@ -24,23 +25,60 @@ class AgentReviewController extends Controller
         $validated = $request->validate([
             'rating' => 'sometimes|integer|min:1|max:5',
             'tag' => 'sometimes|string|max:32',
+            'sort' => 'sometimes|in:recent,highest,lowest,with_comment,with_response',
             'per_page' => 'sometimes|integer|min:1|max:50',
         ]);
 
         $query = AgentReview::query()
             ->where('agent_user_id', $agentUserId)
             ->where('status', 'visible')
-            ->with(['client:id,name,avatar', 'response'])
-            ->latest();
+            ->with([
+                // Display name + avatar for the row header.
+                'client:id,name,avatar',
+                // role drives the "Inquired as agent" badge — eager-load
+                // it via the client relation so the resource projection
+                // can read $this->client->role.
+                'client.role:id,name',
+                // conversation → chat → listing powers the "Re: {listing}"
+                // chip per row. Chats reference listings via the
+                // polymorphic-ish (type, type_id) pair — listing() uses
+                // type_id as the FK so we need to select that column.
+                'conversation:id,chat_id',
+                'conversation.chat:id,type,type_id',
+                'conversation.chat.listing:id,name,slug,featured_photo',
+                'response',
+                // helpfulVotes minimal selects — only need user_id so the
+                // resource can compute is_helpful_for_me without N+1.
+                'helpfulVotes:id,agent_review_id,user_id',
+            ]);
 
         if (!empty($validated['rating'])) {
             $query->where('overall_rating', (int) $validated['rating']);
         }
         if (!empty($validated['tag'])) {
-            $tag = $validated['tag'];
             // JSON_CONTAINS for MySQL; the column stores a JSON array.
-            $query->whereJsonContains('tags', $tag);
+            $query->whereJsonContains('tags', $validated['tag']);
         }
+
+        // Sort dispatch — default 'recent'. with_comment / with_response
+        // double as filters because the surfaces they target are
+        // implicit ("show me reviews with comments / replies").
+        match ($validated['sort'] ?? 'recent') {
+            'highest' => $query
+                ->orderByDesc('overall_rating')
+                ->orderByDesc('created_at'),
+            'lowest' => $query
+                ->orderBy('overall_rating')
+                ->orderByDesc('created_at'),
+            'with_comment' => $query
+                ->whereNotNull('comment')
+                ->where('comment', '!=', '')
+                ->latest(),
+            'with_response' => $query
+                ->whereHas('response')
+                ->latest(),
+            default => $query->latest(),
+        };
 
         return AgentReviewResource::collection(
             $query->paginate($validated['per_page'] ?? 10)
@@ -50,17 +88,37 @@ class AgentReviewController extends Controller
     /**
      * Aggregate stats for an agent's review section — used by the
      * frontend AgentReviewsSection header. Counts grouped by star.
+     *
+     * Aggregates count only client-authored reviews. Agent-to-agent
+     * and admin-authored reviews still surface in the list (with the
+     * "Inquired as agent" badge) but never affect the headline avg /
+     * total / breakdown / tag frequency. AgentReviewsSection renders
+     * a tooltip next to the totals explaining the policy.
      */
     public function summary(int $agentUserId)
     {
-        $rows = AgentReview::query()
-            ->selectRaw('overall_rating, COUNT(*) as n')
-            ->where('agent_user_id', $agentUserId)
-            ->where('status', 'visible')
-            ->groupBy('overall_rating')
-            ->pluck('n', 'overall_rating');
+        // Shared scope helper — applied to both the breakdown query and
+        // the tag-frequency pull so the two never drift apart.
+        $clientOnly = function ($query) use ($agentUserId) {
+            $query
+                ->from('agent_reviews as r')
+                ->join('users as u', 'u.id', '=', 'r.client_user_id')
+                ->leftJoin('roles as ro', 'ro.id', '=', 'u.role_id')
+                ->where('r.agent_user_id', $agentUserId)
+                ->where('r.status', 'visible')
+                ->where('ro.name', 'client');
+        };
 
         $breakdown = [5 => 0, 4 => 0, 3 => 0, 2 => 0, 1 => 0];
+        $rows = DB::table('agent_reviews as r')
+            ->join('users as u', 'u.id', '=', 'r.client_user_id')
+            ->leftJoin('roles as ro', 'ro.id', '=', 'u.role_id')
+            ->where('r.agent_user_id', $agentUserId)
+            ->where('r.status', 'visible')
+            ->where('ro.name', 'client')
+            ->selectRaw('r.overall_rating, COUNT(*) as n')
+            ->groupBy('r.overall_rating')
+            ->pluck('n', 'overall_rating');
         foreach ($rows as $star => $count) {
             $breakdown[(int) $star] = (int) $count;
         }
@@ -73,10 +131,35 @@ class AgentReviewController extends Controller
             )
             : null;
 
+        // Tag frequency over CLIENT reviews only (matches the breakdown
+        // above). Bounded by the agent's visible-client-review count so
+        // unpacking in PHP stays cheap.
+        $allTagsRaw = DB::table('agent_reviews as r')
+            ->join('users as u', 'u.id', '=', 'r.client_user_id')
+            ->leftJoin('roles as ro', 'ro.id', '=', 'u.role_id')
+            ->where('r.agent_user_id', $agentUserId)
+            ->where('r.status', 'visible')
+            ->where('ro.name', 'client')
+            ->whereNotNull('r.tags')
+            ->pluck('r.tags')
+            ->toArray();
+        $allTags = [];
+        foreach ($allTagsRaw as $tagJson) {
+            $decoded = json_decode((string) $tagJson, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $tag) {
+                    if (is_string($tag) && $tag !== '') $allTags[] = $tag;
+                }
+            }
+        }
+        $tagCounts = array_count_values($allTags);
+        arsort($tagCounts);
+
         return response()->json([
             'avg_rating' => $avg,
             'total_reviews' => $total,
             'breakdown' => $breakdown,
+            'top_tags' => (object) $tagCounts,
         ]);
     }
 
@@ -228,6 +311,26 @@ class AgentReviewController extends Controller
                 'body' => trim($validated['body']),
             ]
         );
+
+        $review->load(['client:id,name,avatar', 'response']);
+
+        return new AgentReviewResource($review);
+    }
+
+    /**
+     * Remove the agent's public response from a review. Same auth gate
+     * as storeResponse — only the rated agent themselves can clear
+     * their reply. The review row stays; only the linked response
+     * record is dropped.
+     */
+    public function destroyResponse(AgentReview $review)
+    {
+        $user = Auth::user();
+        if ((int) $review->agent_user_id !== (int) $user->id) {
+            abort(403, 'Only the rated agent can remove this response.');
+        }
+
+        AgentReviewResponse::where('agent_review_id', $review->id)->delete();
 
         $review->load(['client:id,name,avatar', 'response']);
 
@@ -398,7 +501,17 @@ class AgentReviewController extends Controller
                 $q->whereNotNull('agent_user_id');
             })
             ->with([
-                'activeConversation:id,chat_id,status,agent_user_id',
+                // activeConversation uses Eloquent's latestOfMany scope,
+                // which joins conversations against itself. A slim
+                // select with bare column names hits "ambiguous chat_id"
+                // because both sides of the join expose it — use a
+                // closure to qualify the columns to the base table.
+                'activeConversation' => fn ($q) => $q->select([
+                    'conversations.id',
+                    'conversations.chat_id',
+                    'conversations.status',
+                    'conversations.agent_user_id',
+                ]),
                 'activeConversation.agentUser:id,name,avatar',
                 'listing:id,property_id',
                 'listing.property:id,status',
@@ -435,6 +548,60 @@ class AgentReviewController extends Controller
         }
 
         return response()->json(['data' => $out]);
+    }
+
+    /**
+     * Toggle the caller's "helpful" vote on a review. One vote per
+     * (review, user) — submitting twice removes the vote. The
+     * agent_reviews.helpful_count counter is kept in sync so public
+     * list reads don't aggregate the votes table.
+     *
+     * Gating:
+     *   - Auth required (sanctum).
+     *   - The review must be visible (hidden / flagged rows aren't
+     *     publicly displayed, so accepting votes on them would create
+     *     stale counts when the review re-surfaces).
+     *   - The reviewer can't mark their own review helpful.
+     */
+    public function toggleHelpful(AgentReview $review)
+    {
+        $user = Auth::user();
+        $userId = (int) $user->id;
+
+        if ($review->status !== 'visible') {
+            abort(403, 'This review is not currently public.');
+        }
+        if ((int) $review->client_user_id === $userId) {
+            abort(422, 'You cannot mark your own review as helpful.');
+        }
+
+        $existing = AgentReviewHelpfulVote::where('agent_review_id', $review->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        DB::transaction(function () use ($existing, $review, $userId, &$isHelpful) {
+            if ($existing) {
+                $existing->delete();
+                // decrement, never go negative
+                $review->decrement('helpful_count');
+                if ($review->helpful_count < 0) {
+                    $review->update(['helpful_count' => 0]);
+                }
+                $isHelpful = false;
+            } else {
+                AgentReviewHelpfulVote::create([
+                    'agent_review_id' => $review->id,
+                    'user_id' => $userId,
+                ]);
+                $review->increment('helpful_count');
+                $isHelpful = true;
+            }
+        });
+
+        return response()->json([
+            'helpful_count' => (int) $review->fresh()->helpful_count,
+            'is_helpful_for_me' => $isHelpful ?? false,
+        ]);
     }
 
     /**
@@ -649,7 +816,13 @@ class AgentReviewController extends Controller
             abort(403, 'Admin only.');
         }
 
+        // Team rollup matches the public-aggregate policy: only count
+        // reviews authored by users with role.name='client'. Agent-to-
+        // agent reviews appear in the per-agent list with the
+        // "Inquired as agent" badge but never affect team rankings.
         $rows = DB::table('agent_reviews as r')
+            ->join('users as cu', 'cu.id', '=', 'r.client_user_id')
+            ->leftJoin('roles as cro', 'cro.id', '=', 'cu.role_id')
             ->join('agents as a', 'a.user_id', '=', 'r.agent_user_id')
             ->join('team_agents as ta', function ($j) {
                 $j->on('ta.agent_id', '=', 'a.id')
@@ -657,6 +830,7 @@ class AgentReviewController extends Controller
             })
             ->join('teams as t', 't.id', '=', 'ta.team_id')
             ->where('r.status', 'visible')
+            ->where('cro.name', 'client')
             ->groupBy('t.id', 't.name')
             ->orderByRaw('AVG(r.overall_rating) DESC')
             ->select(
@@ -813,13 +987,21 @@ class AgentReviewController extends Controller
     ): array {
         $q = DB::table('agent_reviews as r')
             ->join('users as u', 'u.id', '=', 'r.agent_user_id')
+            // Client side — needed so we can filter on role.name='client'.
+            // Agent-to-agent reviews still appear in the agent profile
+            // list with the "Inquired as agent" badge but never count
+            // toward the leaderboards (matches the public-aggregate
+            // policy in AgentRatingRollupService + summary()).
+            ->join('users as cu', 'cu.id', '=', 'r.client_user_id')
+            ->leftJoin('roles as cro', 'cro.id', '=', 'cu.role_id')
             ->leftJoin('agents as a', 'a.user_id', '=', 'r.agent_user_id')
             ->leftJoin('team_agents as ta', function ($j) {
                 $j->on('ta.agent_id', '=', 'a.id')
                   ->where('ta.status', '=', 'active');
             })
             ->leftJoin('teams as t', 't.id', '=', 'ta.team_id')
-            ->where('r.status', 'visible');
+            ->where('r.status', 'visible')
+            ->where('cro.name', 'client');
 
         $applyFilter($q);
 

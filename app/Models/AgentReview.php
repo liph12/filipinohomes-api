@@ -26,6 +26,7 @@ class AgentReview extends Model implements Auditable
         'hidden_at',
         'hidden_reason',
         'edit_window_ends_at',
+        'helpful_count',
     ];
 
     protected $casts = [
@@ -58,6 +59,11 @@ class AgentReview extends Model implements Auditable
     public function response()
     {
         return $this->hasOne(AgentReviewResponse::class);
+    }
+
+    public function helpfulVotes()
+    {
+        return $this->hasMany(AgentReviewHelpfulVote::class);
     }
 
     /**

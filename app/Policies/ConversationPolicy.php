@@ -22,7 +22,20 @@ class ConversationPolicy
 
     public function view(User $user, Conversation $conversation): bool
     {
-        return $conversation->users()->where('users.id', $user->id)->exists();
+        // Standard path — anyone already in the conversation pivot can
+        // view it. Covers clients (always attached on store), admins
+        // (always attached), and the assigned agent / team leader once
+        // an inquiry is accepted (attached by ConversationController::accept).
+        if ($conversation->users()->where('users.id', $user->id)->exists()) {
+            return true;
+        }
+
+        // Pending-inquiry escape hatch — the assigned agent and any
+        // team leader of that agent need to view the thread BEFORE
+        // they accept, otherwise the message list won't render and
+        // they can't read the inquiry to decide. Mirrors the
+        // moderate() permission so view ⊇ moderate.
+        return $this->canModerateForAgent($user, $conversation);
     }
 
     public function moderate(User $user, Conversation $conversation): bool

@@ -21,10 +21,17 @@ class MessageController extends Controller
 
         $conversation = Conversation::findOrFail($validated['conversation_id']);
 
-        if (!$conversation->users()->where('users.id', Auth::id())->exists()
-            && Auth::user()->role?->name !== 'admin') {
-            abort(403, 'You are not a participant in this conversation.');
-        }
+        // Use ConversationPolicy::view which already covers:
+        //   - admin bypass (via the policy's before())
+        //   - anyone in the conversation_users pivot
+        //   - the assigned agent + any team leader of that agent, even
+        //     before they're attached (lets a TL read a Pending Review
+        //     inquiry so they can decide whether to accept it)
+        // The previous inline check only honored admin + pivot
+        // membership, which 403'd team-leader moderators on pending
+        // inquiries since the assigned agent / TL isn't attached until
+        // the inquiry is accepted.
+        $this->authorize('view', $conversation);
 
         $messages = Message::where('conversation_id', $validated['conversation_id'])
             ->with(['user', 'replyTo.user', 'reactions.user'])

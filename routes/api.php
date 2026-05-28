@@ -305,6 +305,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::delete('agent-reviews/{review}', [AgentReviewController::class, 'destroy']);
             Route::post('agent-reviews/{review}/response',
                 [AgentReviewController::class, 'storeResponse']);
+            Route::delete('agent-reviews/{review}/response',
+                [AgentReviewController::class, 'destroyResponse']);
+            Route::post('agent-reviews/{review}/helpful',
+                [AgentReviewController::class, 'toggleHelpful']);
 
             // Batched eligibility lookup used by /client/listing-inquiries
             // to paint per-row "Rate" chips + the top banner without

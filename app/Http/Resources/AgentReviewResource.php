@@ -10,7 +10,12 @@ class AgentReviewResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $authId = Auth::id();
+        // The public /agents/{id}/reviews route doesn't run auth:sanctum
+        // middleware (it's cacheable + reachable to visitors), so a
+        // bare Auth::id() returns null even for logged-in clients
+        // looking at their own review. Fall back to the Sanctum guard
+        // directly so the bearer token still resolves the viewer.
+        $authId = Auth::id() ?: auth('sanctum')->id();
         $isOwn = $authId && (int) $authId === (int) $this->client_user_id;
         $editWindowOpen = $this->edit_window_ends_at
             ? now()->lessThanOrEqualTo($this->edit_window_ends_at)
@@ -27,6 +32,42 @@ class AgentReviewResource extends JsonResource
                     'avatar' => $this->client->avatar,
                 ];
             }),
+            // Reviewer's account role. Lets the frontend render an
+            // "Inquired as agent" badge on the public profile so
+            // visitors can read agent-to-agent reviews in context.
+            // Falls through to null when 'client.role' isn't loaded.
+            'inquirer_role' => $this->whenLoaded('client', function () {
+                return $this->client->relationLoaded('role')
+                    ? $this->client->role?->name
+                    : null;
+            }),
+            // Listing context for the row chip ("Re: {listing.name}").
+            // Reached via conversation → chat → listing; null when the
+            // relation chain isn't loaded, the listing was hard-deleted,
+            // or the chat isn't a listing-type inquiry (chat.type='agent'
+            // DMs reuse type_id for the messaged user, so Eloquent could
+            // otherwise resolve a spurious Listing whose id happens to
+            // match that user id).
+            'listing' => $this->whenLoaded('conversation', function () {
+                $chat = $this->conversation?->chat ?? null;
+                if (!$chat || $chat->type !== 'listing') return null;
+                $listing = $chat->listing ?? null;
+                if (!$listing) return null;
+                return [
+                    'id' => $listing->id,
+                    'name' => $listing->name,
+                    'slug' => $listing->slug,
+                    'featured_photo' => $listing->featured_photo,
+                ];
+            }),
+            // Denormalized helpful counter + per-viewer state. Counter
+            // is always present (column has default 0). is_helpful_for_me
+            // relies on the controller eager-loading 'helpfulVotes' so
+            // the public list endpoint doesn't N+1.
+            'helpful_count' => (int) ($this->helpful_count ?? 0),
+            'is_helpful_for_me' => $authId && $this->relationLoaded('helpfulVotes')
+                ? $this->helpfulVotes->contains('user_id', (int) $authId)
+                : false,
             // Agent name + active team — populated by admin endpoints
             // that eager-load 'agent' and 'agent.agent.teamMembers.team'.
             // Falls through to null/undefined when those relations
