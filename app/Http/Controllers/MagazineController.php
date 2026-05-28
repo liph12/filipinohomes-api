@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Magazine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use App\Http\Resources\MagazineResourceCollection;
 use App\Http\Resources\MagazineResource;
 use Illuminate\Support\Str;
@@ -124,22 +125,52 @@ class MagazineController extends Controller
             abort(404, 'No PDF available for this magazine.');
         }
 
-        // Stream the upstream PDF chunk-by-chunk straight to the
-        // client instead of buffering it in memory. The previous
-        // implementation called $response->body(), which read the
-        // entire PDF into a PHP string before returning the
-        // Symfony Response — fine for ~30MB issues but fatal for the
-        // company-profile PDF that pushed past PHP's 128MB
-        // memory_limit (incident 2026-05-28,
-        // "Allowed memory size of 134217728 bytes exhausted").
-        // Streaming keeps peak memory in the kB range regardless of
-        // issue size.
+        $disk = Storage::disk('local');
+        $cachePath = "magazine-pdfs/{$magazine->id}.pdf";
+
+        $headers = [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline',
+            'Access-Control-Allow-Origin' => '*',
+            // Browser + intermediary CDN cache for a day. Subsequent
+            // visits to the same magazine never re-enter PHP at all
+            // once the CDN warms (configure a Cloudflare cache rule
+            // for /api/magazines/*/pdf to actually realise this — the
+            // header alone isn't enough, CF treats unknown
+            // content-types as DYNAMIC by default).
+            'Cache-Control' => 'public, max-age=86400',
+        ];
+
+        // ───────────────── Cache hit ─────────────────
+        // Local disk cache is fresh when its mtime is >= the
+        // magazine's updated_at. Any admin edit (new pdf_file URL,
+        // title rename, etc.) bumps updated_at, automatically
+        // invalidating the cached binary on the next request. Served
+        // via Storage::response() which uses Symfony
+        // BinaryFileResponse + sendfile when the SAPI supports it —
+        // PHP never touches the file body.
+        if ($disk->exists($cachePath)
+            && $disk->lastModified($cachePath) >= $magazine->updated_at->timestamp
+        ) {
+            return $disk->response($cachePath, "{$magazine->slug}.pdf", $headers);
+        }
+
+        // ──────────────── Cache miss ────────────────
+        // Fetch from the upstream URL once and persist to local disk
+        // before serving. Streamed in 8KB chunks so peak memory
+        // stays in the kB range (see incident 2026-05-28,
+        // "Allowed memory size of 134217728 bytes exhausted" — the
+        // pre-stream implementation buffered the whole PDF body in
+        // memory). Written to a temp path first and atomically
+        // renamed into place so a failed mid-download never leaves a
+        // truncated cache file behind.
         try {
             $upstream = Http::withOptions([
                 'stream' => true,
                 'connect_timeout' => 10,
                 // No total-request cap — large PDFs take time to
-                // transit and we don't want to artificially abort.
+                // transit from S3 and we don't want to artificially
+                // abort partway through.
                 'timeout' => 0,
             ])->get($pdfUrl);
         } catch (\Throwable $e) {
@@ -151,33 +182,39 @@ class MagazineController extends Controller
             abort(502, 'Failed to fetch PDF from storage.');
         }
 
-        $psr7 = $upstream->toPsrResponse();
-        $body = $psr7->getBody();
+        $body = $upstream->toPsrResponse()->getBody();
 
-        $headers = [
-            'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline',
-            'Access-Control-Allow-Origin' => '*',
-            'Cache-Control' => 'public, max-age=86400',
-        ];
+        $tempPath = $cachePath . '.tmp.' . bin2hex(random_bytes(4));
+        $tempFullPath = $disk->path($tempPath);
 
-        // Pass through Content-Length when upstream provides it so
-        // the browser can show real download progress instead of an
-        // indeterminate spinner.
-        if ($psr7->hasHeader('Content-Length')) {
-            $headers['Content-Length'] = $psr7->getHeaderLine('Content-Length');
+        $tempDir = dirname($tempFullPath);
+        if (!is_dir($tempDir) && !mkdir($tempDir, 0775, true) && !is_dir($tempDir)) {
+            report(new \RuntimeException("Cannot create cache dir: {$tempDir}"));
+            abort(500, 'Failed to cache PDF.');
         }
 
-        return response()->stream(function () use ($body) {
+        $out = fopen($tempFullPath, 'wb');
+        if ($out === false) {
+            report(new \RuntimeException("Cannot open cache temp file: {$tempFullPath}"));
+            abort(500, 'Failed to cache PDF.');
+        }
+
+        try {
             while (!$body->eof()) {
-                echo $body->read(8192);
-                if (ob_get_level() > 0) {
-                    @ob_flush();
+                $chunk = $body->read(8192);
+                if ($chunk === '') {
+                    break;
                 }
-                flush();
+                fwrite($out, $chunk);
             }
+        } finally {
+            fclose($out);
             $body->close();
-        }, 200, $headers);
+        }
+
+        $disk->move($tempPath, $cachePath);
+
+        return $disk->response($cachePath, "{$magazine->slug}.pdf", $headers);
     }
 
     public function destroy($id)
