@@ -178,14 +178,27 @@ class PublicAdController extends Controller
     private function getGeoData(Request $request): array
     {
         $userInfo = $request->input("user_info");
+
+        // The frontend doesn't always send user_info (server-side
+        // renders, guest tokens, OG-image bots, ad-blockers that
+        // strip the payload). Bail with nulls instead of indexing
+        // into null — these endpoints are fire-and-forget trackers
+        // and shouldn't 500 just because we can't geo-tag the row.
+        if (!is_array($userInfo) || empty($userInfo['ip'])) {
+            return [
+                'country' => null,
+                'state'   => null,
+                'city'    => null,
+            ];
+        }
+
         $cacheKey = "geo_ip_{$userInfo['ip']}";
 
         return Cache::remember($cacheKey, now()->addHours(24), function () use ($userInfo) {
-
             return [
-                'country' => $userInfo['country'],
-                'state' => $userInfo['region'],
-                'city' => $userInfo['city'],
+                'country' => $userInfo['country'] ?? null,
+                'state'   => $userInfo['region']  ?? null,
+                'city'    => $userInfo['city']    ?? null,
             ];
         });
     }
