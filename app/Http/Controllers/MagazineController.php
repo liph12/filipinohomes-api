@@ -124,18 +124,60 @@ class MagazineController extends Controller
             abort(404, 'No PDF available for this magazine.');
         }
 
-        $response = Http::withOptions(['stream' => true])->get($pdfUrl);
-
-        if (!$response->successful()) {
+        // Stream the upstream PDF chunk-by-chunk straight to the
+        // client instead of buffering it in memory. The previous
+        // implementation called $response->body(), which read the
+        // entire PDF into a PHP string before returning the
+        // Symfony Response — fine for ~30MB issues but fatal for the
+        // company-profile PDF that pushed past PHP's 128MB
+        // memory_limit (incident 2026-05-28,
+        // "Allowed memory size of 134217728 bytes exhausted").
+        // Streaming keeps peak memory in the kB range regardless of
+        // issue size.
+        try {
+            $upstream = Http::withOptions([
+                'stream' => true,
+                'connect_timeout' => 10,
+                // No total-request cap — large PDFs take time to
+                // transit and we don't want to artificially abort.
+                'timeout' => 0,
+            ])->get($pdfUrl);
+        } catch (\Throwable $e) {
+            report($e);
             abort(502, 'Failed to fetch PDF from storage.');
         }
 
-        return response($response->body(), 200, [
+        if (!$upstream->successful()) {
+            abort(502, 'Failed to fetch PDF from storage.');
+        }
+
+        $psr7 = $upstream->toPsrResponse();
+        $body = $psr7->getBody();
+
+        $headers = [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline',
             'Access-Control-Allow-Origin' => '*',
             'Cache-Control' => 'public, max-age=86400',
-        ]);
+        ];
+
+        // Pass through Content-Length when upstream provides it so
+        // the browser can show real download progress instead of an
+        // indeterminate spinner.
+        if ($psr7->hasHeader('Content-Length')) {
+            $headers['Content-Length'] = $psr7->getHeaderLine('Content-Length');
+        }
+
+        return response()->stream(function () use ($body) {
+            while (!$body->eof()) {
+                echo $body->read(8192);
+                if (ob_get_level() > 0) {
+                    @ob_flush();
+                }
+                flush();
+            }
+            $body->close();
+        }, 200, $headers);
     }
 
     public function destroy($id)
