@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Magazine;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use App\Http\Resources\MagazineResourceCollection;
@@ -58,11 +59,28 @@ class MagazineController extends Controller
 
     public function show($id)
     {
-        $magazine = is_numeric($id)
-            ? Magazine::findOrFail($id)
-            : Magazine::where('slug', $id)->firstOrFail();
+        return new MagazineResource($this->resolveMagazine($id));
+    }
 
-        return new MagazineResource($magazine);
+    /**
+     * Look up a Magazine by numeric ID or by slug, memoized in the
+     * Cache store for an hour. Invalidated automatically on save /
+     * delete via Magazine model events (see Magazine::boot). Used by
+     * both show() and streamPdf() so the DB roundtrip happens at
+     * most once per magazine per hour regardless of which endpoint
+     * is hit.
+     */
+    private function resolveMagazine($id): Magazine
+    {
+        $cacheKey = is_numeric($id)
+            ? "magazine:by-id:{$id}"
+            : "magazine:by-slug:{$id}";
+
+        return Cache::remember($cacheKey, 3600, function () use ($id) {
+            return is_numeric($id)
+                ? Magazine::findOrFail($id)
+                : Magazine::where('slug', $id)->firstOrFail();
+        });
     }
 
     public function store(Request $request)
@@ -115,9 +133,7 @@ class MagazineController extends Controller
 
     public function streamPdf($id)
     {
-        $magazine = is_numeric($id)
-            ? Magazine::findOrFail($id)
-            : Magazine::where('slug', $id)->firstOrFail();
+        $magazine = $this->resolveMagazine($id);
 
         $pdfUrl = $magazine->pdf_file[0] ?? null;
 

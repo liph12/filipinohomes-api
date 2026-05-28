@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use App\Auditing\LogsActivity;
 use OwenIt\Auditing\Contracts\Auditable;
@@ -60,7 +61,7 @@ class Magazine extends Model implements Auditable
         static::updating(function ($page) {
             $baseSlug = $page->isDirty('slug') && $page->slug
                 ? Str::slug($page->slug)
-                : Str::slug($page->title); 
+                : Str::slug($page->title);
 
             $finalSlug = $baseSlug;
             $counter = 1;
@@ -70,6 +71,29 @@ class Magazine extends Model implements Auditable
             }
 
             $page->slug = $finalSlug;
+        });
+
+        // Invalidate the per-id and per-slug lookup caches used by
+        // MagazineController so admin edits and deletes show up
+        // immediately on the public site without waiting for the
+        // 1-hour TTL.
+        static::saved(function (self $magazine) {
+            Cache::forget("magazine:by-id:{$magazine->id}");
+            Cache::forget("magazine:by-slug:{$magazine->slug}");
+
+            // If the slug changed during this save, also drop the
+            // entry under the previous slug — otherwise the old
+            // /magazine/{old-slug} URL would keep returning a stale
+            // model until TTL.
+            $originalSlug = $magazine->getOriginal('slug');
+            if ($originalSlug && $originalSlug !== $magazine->slug) {
+                Cache::forget("magazine:by-slug:{$originalSlug}");
+            }
+        });
+
+        static::deleted(function (self $magazine) {
+            Cache::forget("magazine:by-id:{$magazine->id}");
+            Cache::forget("magazine:by-slug:{$magazine->slug}");
         });
     }
 }
