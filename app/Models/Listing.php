@@ -257,13 +257,19 @@ class Listing extends Model implements Auditable
             }else{
                 if (!empty($search)) {
                     $terms = array_filter(explode(' ', $search));
-            
-                    $query->whereHas('property', function($q) use($terms){
-                        $q->where(function ($q) use ($terms) {
-                            foreach ($terms as $w) {
-                                $q->where('address', 'LIKE', "%{$w}%");
-                            }
-                        });
+
+                    // Match either listings.code (raw search string,
+                    // so codes like "ABC-1234" stay intact) OR the
+                    // property address (tokenized AND-match).
+                    $query->where(function ($outer) use ($terms, $search) {
+                        $outer->where('listings.code', 'LIKE', "%{$search}%")
+                            ->orWhereHas('property', function ($q) use ($terms) {
+                                $q->where(function ($q) use ($terms) {
+                                    foreach ($terms as $w) {
+                                        $q->where('address', 'LIKE', "%{$w}%");
+                                    }
+                                });
+                            });
                     });
                 }
             }
