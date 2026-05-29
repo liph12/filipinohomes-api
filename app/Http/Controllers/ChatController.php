@@ -75,6 +75,41 @@ class ChatController extends Controller
         if ($request->boolean('mine')) {
             $query->where('user_id', $user->id);
         }
+
+        // Mine vs Moderating filter for admin/TL inboxes.
+        //   scope=mine       — chats the viewer is PERSONALLY driving:
+        //                      they're either the chat owner OR the
+        //                      assigned agent. Team-member chats do
+        //                      NOT count here (a TL doesn't "own" a
+        //                      conversation assigned to one of their
+        //                      agents — that's their team member's
+        //                      job to drive). Team-member chats fall
+        //                      under Moderating.
+        //   scope=moderating — everything else they can see. For a
+        //                      TL: chats assigned to their team's
+        //                      agents that they oversee but aren't
+        //                      personally driving. For an admin: every
+        //                      other chat in the system.
+        //   scope=all (or absent) — no scope filter (back-compat).
+        // Independent of the `mine` boolean above, which exists for
+        // duplicate-detection in MessageMeCard and stays untouched.
+        $scope = $request->query('scope');
+        if ($scope === 'mine' || $scope === 'moderating') {
+            if ($scope === 'mine') {
+                $query->where(function ($q) use ($user) {
+                    $q->where('user_id', $user->id)
+                      ->orWhereHas('activeConversation', function ($c) use ($user) {
+                          $c->where('agent_user_id', $user->id);
+                      });
+                });
+            } else {
+                $query->where('user_id', '!=', $user->id)
+                      ->whereDoesntHave('activeConversation', function ($c) use ($user) {
+                          $c->where('agent_user_id', $user->id);
+                      });
+            }
+        }
+
         if ($status = $request->query('status')) {
             if ($status !== 'all') {
                 $query->whereHas('activeConversation', fn ($c) => $c->where('status', $status));
@@ -476,6 +511,11 @@ class ChatController extends Controller
     ): bool {
         $roleName = $sender->role?->name;
 
+        // Sender-side: admins skip Pending Review (full moderation
+        // rights). Team leaders inquiring inside their own team
+        // skip too — they're the natural moderator for that team's
+        // queue, so requiring themselves to also click Accept is
+        // busy-work.
         if ($roleName === 'admin') {
             return true;
         }
@@ -483,7 +523,25 @@ class ChatController extends Controller
         if ($roleName === 'agent') {
             $ledMemberUserIds = app(TeamLeadershipService::class)
                 ->getLedTeamMemberUserIds($sender->id);
-            return in_array($targetAgentUserId, $ledMemberUserIds, true);
+            if (in_array($targetAgentUserId, $ledMemberUserIds, true)) {
+                return true;
+            }
+        }
+
+        // Recipient-side: when the listing's assigned agent IS an
+        // admin or team leader, skip Pending Review too. They're
+        // trusted moderators and ceremonially clicking Accept on
+        // their own listings' inquiries is confusing (the TL would
+        // be "accepting their own pending inquiry from a client").
+        $target = User::with('role')->find($targetAgentUserId);
+        if (!$target) {
+            return false;
+        }
+        if ($target->role?->name === 'admin') {
+            return true;
+        }
+        if (app(TeamLeadershipService::class)->isTeamLeader($targetAgentUserId)) {
+            return true;
         }
 
         return false;
@@ -864,11 +922,18 @@ class ChatController extends Controller
         )";
 
         // 2) Listing-inquiry rollup (single grouped query)
+        // Only accepted conversations count toward chat-stats KPIs.
+        // Pending = admin still has to moderate the inbound side, so
+        // it's not yet "agent workload". Rejected never made it
+        // past the gate. Closed are excluded too — the user wants
+        // the page to reflect "real, currently-actionable" accepted
+        // conversations only.
         $listingAgg = DB::table('conversations as c')
             ->joinSub($latestConvSub, 'lc', 'lc.id', '=', 'c.id')
             ->join('chats', 'chats.id', '=', 'c.chat_id')
             ->whereNull('chats.deleted_at')
             ->where('chats.type', 'listing')
+            ->where('c.status', 'accepted')
             ->tap($applyDateFilter)
             ->select(
                 DB::raw('COUNT(*) as total'),
@@ -900,11 +965,15 @@ class ChatController extends Controller
         ];
 
         // 3) Per-agent rollup (listing chats, latest conversation, agent assigned)
+        // Same accepted-only filter as the listing aggregate above
+        // so the per-agent table on /admin/chat-statistics matches
+        // the headline KPI cards.
         $perAgentRows = DB::table('conversations as c')
             ->joinSub($latestConvSub, 'lc', 'lc.id', '=', 'c.id')
             ->join('chats', 'chats.id', '=', 'c.chat_id')
             ->whereNull('chats.deleted_at')
             ->where('chats.type', 'listing')
+            ->where('c.status', 'accepted')
             ->whereNotNull('c.agent_user_id')
             ->tap($applyDateFilter)
             ->groupBy('c.agent_user_id')
