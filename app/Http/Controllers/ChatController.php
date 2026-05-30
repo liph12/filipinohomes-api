@@ -15,6 +15,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ChatController extends Controller
 {
@@ -583,13 +585,27 @@ class ChatController extends Controller
         // route from the email CTA back to the right inquiry.
         $slug = Str::slug($listing->name) . '-' . $chatId;
 
-        MessageNotificationMailer::dispatchForSubmission(
-            sender:      $sender,
-            message:     $message,
-            slug:        $slug,
-            listing:     MessageNotificationMailer::buildListingPayload($listing),
-            agentUserId: $agentUserId,
-        );
+        // SMTP failures (disabled mailbox, rate limits, transient
+        // network) must NEVER 500 the inquiry-submission flow — the
+        // chat row is already committed in the caller's transaction
+        // by the time we get here. Email is a side-effect; log and
+        // move on rather than throwing past the controller.
+        try {
+            MessageNotificationMailer::dispatchForSubmission(
+                sender:      $sender,
+                message:     $message,
+                slug:        $slug,
+                listing:     MessageNotificationMailer::buildListingPayload($listing),
+                agentUserId: $agentUserId,
+            );
+        } catch (Throwable $e) {
+            Log::warning('Submission email failed to dispatch', [
+                'chat_id'       => $chatId,
+                'listing_id'    => $listingId,
+                'agent_user_id' => $agentUserId,
+                'error'         => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -627,14 +643,27 @@ class ChatController extends Controller
 
         $slug = Str::slug($listing->name) . '-' . $chatId;
 
-        MessageNotificationMailer::dispatchForAcceptance(
-            sender:      $sender,
-            agent:       $agent,
-            message:     $message,
-            slug:        $slug,
-            listing:     MessageNotificationMailer::buildListingPayload($listing),
-            agentUserId: $agentUserId,
-        );
+        // Same protection as dispatchSubmissionEmail above — SMTP
+        // failures can't be allowed to 500 the inquiry-creation
+        // path. The auto-accept already happened in store(); a
+        // failing notification email is not worth losing the chat.
+        try {
+            MessageNotificationMailer::dispatchForAcceptance(
+                sender:      $sender,
+                agent:       $agent,
+                message:     $message,
+                slug:        $slug,
+                listing:     MessageNotificationMailer::buildListingPayload($listing),
+                agentUserId: $agentUserId,
+            );
+        } catch (Throwable $e) {
+            Log::warning('Auto-acceptance email failed to dispatch', [
+                'chat_id'       => $chatId,
+                'listing_id'    => $listingId,
+                'agent_user_id' => $agentUserId,
+                'error'         => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -663,13 +692,26 @@ class ChatController extends Controller
         $agentName = trim((string) ($agent->name ?? '')) ?: 'agent';
         $slug = Str::slug($agentName) . '-' . $chatId;
 
-        MessageNotificationMailer::dispatchForAgentProfile(
-            sender:      $sender,
-            agent:       $agent,
-            message:     $message,
-            slug:        $slug,
-            agentUserId: $agentUserId,
-        );
+        // Same protection as the listing-inquiry mailers above —
+        // a failing SMTP transport can't be allowed to block a
+        // visitor sending the very first message through "Message
+        // Me" on an agent profile. The chat row exists already;
+        // the email is a fan-out, not the operation.
+        try {
+            MessageNotificationMailer::dispatchForAgentProfile(
+                sender:      $sender,
+                agent:       $agent,
+                message:     $message,
+                slug:        $slug,
+                agentUserId: $agentUserId,
+            );
+        } catch (Throwable $e) {
+            Log::warning('Agent-profile inquiry email failed to dispatch', [
+                'chat_id'       => $chatId,
+                'agent_user_id' => $agentUserId,
+                'error'         => $e->getMessage(),
+            ]);
+        }
     }
 
     public function show(Chat $chat)

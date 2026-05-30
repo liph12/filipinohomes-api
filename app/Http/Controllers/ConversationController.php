@@ -11,6 +11,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Mail\MessageNotificationMailer;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ConversationController extends Controller
 {
@@ -116,14 +118,29 @@ class ConversationController extends Controller
         // submission email when the client first filed the inquiry (see
         // ChatController@store → dispatchForSubmission), so a second copy
         // here would just be inbox noise.
-        MessageNotificationMailer::dispatchForAcceptance(
-            sender:      $sender,
-            agent:       $agent,
-            message:     $message,
-            slug:        $slug,
-            listing:     MessageNotificationMailer::buildListingPayload($type),
-            agentUserId: $conversation->agent_user_id,
-        );
+        //
+        // The acceptance itself is already committed to the DB above —
+        // a failing email transport (SMTP down, disabled mailbox at the
+        // provider, network blip) MUST NOT 500 the controller and make
+        // the moderator think their click didn't work. Log the failure
+        // and return success; the email is a side-effect notification,
+        // not a critical path.
+        try {
+            MessageNotificationMailer::dispatchForAcceptance(
+                sender:      $sender,
+                agent:       $agent,
+                message:     $message,
+                slug:        $slug,
+                listing:     MessageNotificationMailer::buildListingPayload($type),
+                agentUserId: $conversation->agent_user_id,
+            );
+        } catch (Throwable $e) {
+            Log::warning('Acceptance email failed to dispatch', [
+                'conversation_id' => $conversation->id,
+                'agent_user_id'   => $conversation->agent_user_id,
+                'error'           => $e->getMessage(),
+            ]);
+        }
 
         return new ConversationResource($conversation);
     }
