@@ -91,7 +91,16 @@ class MessageNotificationMailer extends Mailable
         $this->listing = $listing;
         $this->frontendUrl = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
         $this->agentUserId = $agentUserId;
-        $this->greetingName = $listing['owner_name'] ?? $this->receiverName;
+        // Greeting prefers the actual receiver's name so admins receiving
+        // a fan-out copy aren't greeted by the listing-owner's name (the
+        // legacy behavior — "Hello {owner}" — addressed every recipient
+        // as if they were the listing's agent, which read as "I'm sending
+        // you an email about yourself" to anyone who wasn't actually the
+        // owner). Listing owner name is now only the last-resort fallback
+        // when receiverName is empty (e.g. mailable was built with the
+        // generic admin persona that has name='Admin' — in that case
+        // 'Admin' wins over the listing owner's name).
+        $this->greetingName = $this->receiverName ?? ($listing['owner_name'] ?? null);
         $this->showListingOwner = $showListingOwner;
         $this->perspective = $perspective;
         $this->teamName = $teamName;
@@ -156,14 +165,19 @@ class MessageNotificationMailer extends Mailable
     }
 
     /**
-     * Send the inquiry notification to the right audience(s). When the TO
-     * recipient is the listing owner themselves, their copy hides the
-     * "Listing Owner" block (redundant — it'd echo their own info), and a
-     * separate copy goes to admins + team leader WITH the block so they can
-     * see who's responsible.
+     * Send a follow-up chat-message notification strictly to the
+     * conversation's other party. No admin/team-leader fan-out — admins
+     * and TLs already saw the moderation moment at submission time (see
+     * dispatchForSubmission), and ongoing back-and-forth ("ok thanks",
+     * "viewing at 3pm", "is parking included?") doesn't carry moderation
+     * value worth flooding their inbox over. Admins retain visibility
+     * via /admin/listing-inquiries and /admin/activity-logs without
+     * being pushed every chat reply.
      *
-     * Replaces the previous Mail::to(...)->send(new self(...)) pattern at the
-     * callsites — they only need to know about this method now.
+     * Earlier this method fanned out a second BCC copy to admins + TLs
+     * on every dispatch. That produced noise admins complained about
+     * (and, before the sender-exclusion fix, occasionally bounced an
+     * admin's own reply back to them). The fan-out is gone.
      */
     public static function dispatchForInquiry(
         $sender,
@@ -177,7 +191,6 @@ class MessageNotificationMailer extends Mailable
         $receiverIsOwner = !empty($listing['owner_email'])
             && strcasecmp((string) $listing['owner_email'], (string) $receiver->email) === 0;
 
-        // Email 1: to the primary recipient (agent or client).
         Mail::to($receiver->email)->send(new self(
             $sender,
             $receiver,
@@ -186,31 +199,12 @@ class MessageNotificationMailer extends Mailable
             $roleName,
             $listing,
             $agentUserId,
+            // Hide the "Listing Owner" card when the receiver IS the
+            // owner — they don't need their own info echoed back to
+            // them. When receiver is a client, show the card so the
+            // client has the agent's contact details handy.
             !$receiverIsOwner,
         ));
-
-        // Email 2: to admins + team leader, with the listing-owner card
-        // visible so they always know who's responsible. Skipped when the
-        // audience is empty (no admins configured).
-        //
-        // TO header is the shared info@ inbox so admins don't see each
-        // other's emails exposed in the recipient header — mirrors the
-        // BCC pattern UserController::sendInquiry already uses for the
-        // Get-In-Touch / Contact-Us fan-out.
-        $audience = self::resolveAdminAudience($agentUserId, $receiver->email);
-        if (!empty($audience)) {
-            $sharedInbox = env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com');
-            Mail::to($sharedInbox)->bcc($audience)->send(new self(
-                $sender,
-                $receiver,
-                $message,
-                $slug,
-                $roleName,
-                $listing,
-                $agentUserId,
-                true,
-            ));
-        }
     }
 
     /**
@@ -253,7 +247,7 @@ class MessageNotificationMailer extends Mailable
         $teamName = $teamContext['team_name'] ?? null;
 
         // --- Email 1: admin BCC fan-out -------------------------------------
-        $adminEmails = self::resolveAdminEmails($senderEmail);
+        $adminEmails = self::resolveAdminEmails([$senderEmail]);
         if (!empty($adminEmails)) {
             // Receiver is a generic admin persona. The admin blade greets
             // "Hello Admin," and doesn't display the receiver name, so this
@@ -397,44 +391,42 @@ class MessageNotificationMailer extends Mailable
     }
 
     /**
-     * Resolve the admin audience for an inquiry: all role_id=1 users plus
-     * the team leader of the listing's owning agent (if known). Excludes
-     * the TO recipient so they don't get a second duplicate copy.
+     * Just the admin (role_id=1) audience, deduplicated, with every email
+     * in $excludeEmails stripped out. Used by dispatchForSubmission to
+     * exclude the sender (an admin testing the form should not BCC
+     * themselves).
      *
+     * @param array<int, string> $excludeEmails
      * @return array<int, string>
      */
-    private static function resolveAdminAudience(?int $agentUserId, string $excludeEmail): array
-    {
-        $emails = self::resolveAdminEmails($excludeEmail);
-
-        if ($agentUserId) {
-            $leaderUserId = app(TeamLeadershipService::class)->findTeamLeaderUserIdFor($agentUserId);
-            if ($leaderUserId) {
-                $leaderEmail = User::where('id', $leaderUserId)->value('email');
-                if ($leaderEmail && strcasecmp((string) $leaderEmail, $excludeEmail) !== 0) {
-                    $emails[] = $leaderEmail;
-                }
-            }
-        }
-
-        return array_values(array_unique($emails));
-    }
-
-    /**
-     * Just the admin (role_id=1) audience, deduplicated, with the sender's
-     * own email stripped out (an admin testing the form in prod should not
-     * BCC themselves). Used by dispatchForSubmission for the admin send;
-     * dispatchForInquiry's resolveAdminAudience delegates here for the
-     * admin portion of its combined admin+leader list.
-     *
-     * @return array<int, string>
-     */
-    private static function resolveAdminEmails(string $excludeEmail): array
+    private static function resolveAdminEmails(array $excludeEmails): array
     {
         return array_values(array_unique(array_filter(
             User::where('role_id', 1)->pluck('email')->all(),
-            fn ($email) => $email && strcasecmp((string) $email, $excludeEmail) !== 0,
+            fn ($email) => $email && !self::emailMatchesAny((string) $email, $excludeEmails),
         )));
+    }
+
+    /**
+     * Case-insensitive "is this email in the exclusion list" check.
+     * Empty strings in $excludeEmails are ignored (a caller passing
+     * a missing sender->email shouldn't accidentally strip every
+     * empty-string email from the admin list — there are none, but
+     * being defensive keeps the helper safe to call from any caller).
+     */
+    private static function emailMatchesAny(string $email, array $excludeEmails): bool
+    {
+        $emailLower = strtolower(trim($email));
+        if ($emailLower === '') {
+            return false;
+        }
+        foreach ($excludeEmails as $exclude) {
+            $excludeLower = strtolower(trim((string) $exclude));
+            if ($excludeLower !== '' && $excludeLower === $emailLower) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
