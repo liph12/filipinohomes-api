@@ -211,4 +211,63 @@ class TeamLeadershipService
             ->where('status', 'active')
             ->exists();
     }
+
+    /**
+     * Bulk variant of isTeamLeader. Resolves team-leader status for
+     * many users in two queries instead of 2N (one to map user_id →
+     * agent_id, one to find which agents lead an active team). Used
+     * by ActivityLogController::index to enrich a paginated batch of
+     * audit rows without N+1 lookups.
+     *
+     * @param int[] $userIds
+     * @return array<int,bool> user_id => is_team_leader
+     */
+    public function isTeamLeaderBulk(array $userIds): array
+    {
+        $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
+        $out = [];
+        foreach ($userIds as $id) {
+            // Seed every requested id so callers can do a plain
+            // `$out[$userId] ?? false` lookup without a missing-key fallback.
+            $out[$id] = false;
+        }
+        if (empty($userIds)) {
+            return $out;
+        }
+
+        $agentRows = Agent::whereIn('user_id', $userIds)
+            ->select('id', 'user_id')
+            ->get();
+        if ($agentRows->isEmpty()) {
+            return $out;
+        }
+
+        $agentIdToUserId = $agentRows->pluck('user_id', 'id'); // agent_id => user_id
+
+        $leaderAgentIds = TeamAgent::whereIn('agent_id', $agentIdToUserId->keys()->all())
+            ->where('is_leader', true)
+            ->where('status', 'active')
+            ->pluck('agent_id')
+            ->all();
+
+        foreach ($leaderAgentIds as $agentId) {
+            $uid = $agentIdToUserId[$agentId] ?? null;
+            if ($uid !== null) {
+                $out[(int) $uid] = true;
+                // Warm the per-instance cache so a subsequent
+                // isTeamLeader($uid) doesn't re-hit the DB.
+                $this->isLeaderCache[(int) $uid] = true;
+            }
+        }
+
+        // Seed `false` results into the single-id cache too so the
+        // same request can flip back to scalar lookups for free.
+        foreach ($out as $uid => $isLeader) {
+            if (!$isLeader) {
+                $this->isLeaderCache[(int) $uid] = false;
+            }
+        }
+
+        return $out;
+    }
 }

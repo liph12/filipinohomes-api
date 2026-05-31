@@ -153,5 +153,9 @@ class GoogleAuthController extends Controller
             'user_agent'   => $request->userAgent(),
             'logged_in_at' => now(),
         ]);
+
+        // Surface in /admin/activity-logs alongside the LoginLog row.
+        app(\App\Services\AuditAuthService::class)
+            ->recordLogin($user, 'google', $request);
     }
 }

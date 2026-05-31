@@ -2,17 +2,21 @@
 
 namespace App\Providers;
 
+use App\Services\AuditMailService;
 use App\Services\TeamLeadershipService;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Mail\Events\MessageSent;
 
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
         $this->app->singleton(TeamLeadershipService::class);
+        $this->app->singleton(AuditMailService::class);
     }
 
     public function boot(): void
@@ -45,6 +49,18 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(300)->by(
                 $request->user()?->id ?: $request->ip()
             );
+        });
+
+        // Global outbound-mail audit. Every successful Mail::send
+        // in the app fires Illuminate\Mail\Events\MessageSent, so
+        // this listener captures all of them — Get In Touch,
+        // Contact Us, OTP login, inquiry mailers, notifications,
+        // anything that ships an email. Failure-side writes are
+        // handled at each Mail::send call site via try/catch +
+        // AuditMailService::recordFailure (Laravel doesn't expose
+        // a MessageFailed event).
+        Event::listen(MessageSent::class, function (MessageSent $event) {
+            app(AuditMailService::class)->recordSent($event);
         });
     }
 }

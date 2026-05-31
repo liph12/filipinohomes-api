@@ -99,6 +99,13 @@ class InquiryController extends Controller
                 'reply_id'   => $reply->id,
                 'error'      => $e->getMessage(),
             ]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                \App\Mail\InquiryReplyMailer::class,
+                [$inquiry->email],
+                $validated['subject'] ?? 'Re: Filipino Homes — your message',
+                ['auditable_type' => \App\Models\Inquiry::class, 'auditable_id' => $inquiry->id],
+            );
             return response()->json([
                 'message' => 'Reply saved but email delivery failed. Please retry.',
                 'data'    => $reply->fresh(),

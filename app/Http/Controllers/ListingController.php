@@ -803,7 +803,14 @@ class ListingController extends Controller
             'visibility' => 'required|in:public,private',
         ]);
 
+        $actor = $request->user()?->name ?? 'Someone';
         $listing->auditSource = 'visibility_toggle';
+        $listing->auditDescription = sprintf(
+            '%s changed %s visibility to %s',
+            $actor,
+            $listing->name,
+            $request->visibility,
+        );
         $listing->update(['visibility' => $request->visibility]);
 
         return response()->json(['visibility' => $listing->visibility]);
@@ -818,7 +825,14 @@ class ListingController extends Controller
             'status_remark'       => 'nullable|string',
         ]);
 
+        $actor = $request->user()?->name ?? 'Someone';
         $listing->property->auditSource = 'status_change';
+        $listing->property->auditDescription = sprintf(
+            '%s changed %s status to %s',
+            $actor,
+            $listing->name,
+            $data['status'],
+        );
         $listing->property->update($data);
 
         return response()->json([
@@ -836,7 +850,14 @@ class ListingController extends Controller
             'is_featured' => 'required|boolean',
         ]);
 
+        $actor = $request->user()?->name ?? 'Someone';
         $listing->auditSource = 'featured_toggle';
+        $listing->auditDescription = sprintf(
+            '%s marked %s as %s',
+            $actor,
+            $listing->name,
+            $data['is_featured'] ? 'featured' : 'unfeatured',
+        );
         $listing->update(['is_featured' => $data['is_featured']]);
 
         $listing = $listing->fresh();
@@ -967,6 +988,16 @@ class ListingController extends Controller
                     'status'     => $status,
                     'error'      => $e->getMessage(),
                 ]);
+                app(\App\Services\AuditMailService::class)->recordFailure(
+                    $e,
+                    'ListingVerificationMailer',
+                    $agentUser?->email ? [$agentUser->email] : [],
+                    "Listing verification — {$status}",
+                    [
+                        'auditable_type' => \App\Models\Listing::class,
+                        'auditable_id'   => $listing->id,
+                    ],
+                );
             }
         }
 
@@ -1083,7 +1114,9 @@ class ListingController extends Controller
             'category_id'    => 'sometimes|integer|exists:categories,id',
         ]);
 
+        $actor = $request->user()?->name ?? 'Someone';
         $listing->auditSource = 'quick_edit';
+        $listing->auditDescription = sprintf('%s edited %s', $actor, $listing->name);
         $listing->update($validated);
 
         return new ListingResource($listing);
@@ -1093,7 +1126,9 @@ class ListingController extends Controller
     {
         $this->authorize('delete', $listing);
 
+        $actor = $request->user()?->name ?? 'Someone';
         $listing->auditSource = 'listings_table';
+        $listing->auditDescription = sprintf('%s deleted listing %s', $actor, $listing->name);
 
         DB::transaction(function () use ($listing) {
             // Delete listing first (soft-delete if model uses SoftDeletes)

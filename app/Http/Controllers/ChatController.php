@@ -259,7 +259,7 @@ class ChatController extends Controller
                     && $this->shouldAutoAcceptListingInquiry($user, (int) $validated['target_user_id']);
 
                 DB::transaction(function () use ($existing, $validated, $user, $isListing, $autoAccept) {
-                    $conversation = Conversation::create([
+                    $conversation = new Conversation([
                         'chat_id' => $existing->id,
                         // Inquiries from trusted senders (admin, or a team
                         // leader inquiring on a listing owned by an agent
@@ -273,6 +273,20 @@ class ChatController extends Controller
                         'reviewed_by' => $autoAccept ? $user->id : null,
                         'reviewed_at' => $autoAccept ? now() : null,
                     ]);
+
+                    // Human-readable audit description for /admin/activity-logs.
+                    // Set on the model instance BEFORE save so the
+                    // LogsActivity trait picks it up at audit-write time.
+                    $listingName = $existing->listing?->name;
+                    $conversation->auditSource = $autoAccept ? 'inquiry_auto_accept' : 'inquiry_submit';
+                    $conversation->auditDescription = sprintf(
+                        '%s re-submitted an inquiry%s%s',
+                        $user->name,
+                        $listingName ? " on {$listingName}" : '',
+                        $autoAccept ? ' — auto-accepted' : '',
+                    );
+
+                    $conversation->save();
 
                     if ($isListing) {
                         $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
@@ -377,7 +391,7 @@ class ChatController extends Controller
 
             $isListing = $validated['type'] === 'listing';
 
-            $conversation = Conversation::create([
+            $conversation = new Conversation([
                 'chat_id' => $chat->id,
                 // Trusted senders (admins + team leaders inquiring within
                 // their own team) skip Pending Review — they already have
@@ -388,6 +402,26 @@ class ChatController extends Controller
                 'reviewed_by' => $autoAccept ? $user->id : null,
                 'reviewed_at' => $autoAccept ? now() : null,
             ]);
+
+            // Human-readable audit description for /admin/activity-logs.
+            // Set on the model instance BEFORE save so the
+            // LogsActivity trait picks it up at audit-write time.
+            $listingName = $isListing
+                ? \App\Models\Listing::where('id', $validated['type_id'])->value('name')
+                : null;
+            $conversation->auditSource = $autoAccept
+                ? 'inquiry_auto_accept'
+                : ($isListing ? 'inquiry_submit' : 'agent_dm_open');
+            $conversation->auditDescription = $isListing
+                ? sprintf(
+                    '%s submitted an inquiry%s%s',
+                    $user->name,
+                    $listingName ? " on {$listingName}" : '',
+                    $autoAccept ? ' — auto-accepted' : '',
+                )
+                : sprintf('%s opened a direct message', $user->name);
+
+            $conversation->save();
 
             if ($isListing) {
                 // Attach client + all admin users + team leader (not the agent yet)
@@ -605,6 +639,16 @@ class ChatController extends Controller
                 'agent_user_id' => $agentUserId,
                 'error'         => $e->getMessage(),
             ]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                MessageNotificationMailer::class,
+                [],
+                'New listing inquiry — admin fan-out',
+                [
+                    'auditable_type' => Chat::class,
+                    'auditable_id'   => $chatId,
+                ],
+            );
         }
     }
 
@@ -663,6 +707,16 @@ class ChatController extends Controller
                 'agent_user_id' => $agentUserId,
                 'error'         => $e->getMessage(),
             ]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                MessageNotificationMailer::class,
+                $agent->email ? [$agent->email] : [],
+                'Auto-accepted inquiry — agent notification',
+                [
+                    'auditable_type' => Chat::class,
+                    'auditable_id'   => $chatId,
+                ],
+            );
         }
     }
 
@@ -711,6 +765,16 @@ class ChatController extends Controller
                 'agent_user_id' => $agentUserId,
                 'error'         => $e->getMessage(),
             ]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                MessageNotificationMailer::class,
+                $agent->email ? [$agent->email] : [],
+                'Agent profile DM — first message notification',
+                [
+                    'auditable_type' => Chat::class,
+                    'auditable_id'   => $chatId,
+                ],
+            );
         }
     }
 

@@ -96,6 +96,14 @@ class ConversationController extends Controller
 
         $user = Auth::user();
 
+        $listingName = $conversation->chat?->listing?->name;
+        $conversation->auditSource = 'inquiry_accept';
+        $conversation->auditDescription = sprintf(
+            '%s accepted the inquiry%s',
+            $user->name,
+            $listingName ? " on {$listingName}" : '',
+        );
+
         $conversation->update([
             'status' => 'accepted',
             'reviewed_by' => $user->id,
@@ -140,6 +148,16 @@ class ConversationController extends Controller
                 'agent_user_id'   => $conversation->agent_user_id,
                 'error'           => $e->getMessage(),
             ]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                MessageNotificationMailer::class,
+                $agent?->email ? [$agent->email] : [],
+                'Inquiry accepted — agent notification',
+                [
+                    'auditable_type' => Conversation::class,
+                    'auditable_id'   => $conversation->id,
+                ],
+            );
         }
 
         return new ConversationResource($conversation);
@@ -154,6 +172,14 @@ class ConversationController extends Controller
         }
 
         $user = Auth::user();
+
+        $listingName = $conversation->chat?->listing?->name;
+        $conversation->auditSource = 'inquiry_reject';
+        $conversation->auditDescription = sprintf(
+            '%s rejected the inquiry%s',
+            $user->name,
+            $listingName ? " on {$listingName}" : '',
+        );
 
         $conversation->update([
             'status' => 'rejected',
@@ -174,6 +200,15 @@ class ConversationController extends Controller
             return response()->json(['message' => 'Only accepted conversations can be closed.'], 422);
         }
 
+        $user = Auth::user();
+        $listingName = $conversation->chat?->listing?->name;
+        $conversation->auditSource = 'inquiry_close';
+        $conversation->auditDescription = sprintf(
+            '%s closed the inquiry%s',
+            $user?->name ?? 'Someone',
+            $listingName ? " on {$listingName}" : '',
+        );
+
         $conversation->update([
             'status' => 'closed',
             'closed_at' => now(),
@@ -192,6 +227,15 @@ class ConversationController extends Controller
         if ($conversation->status !== 'closed') {
             return response()->json(['message' => 'Only closed conversations can be reopened.'], 422);
         }
+
+        $user = Auth::user();
+        $listingName = $conversation->chat?->listing?->name;
+        $conversation->auditSource = 'inquiry_reopen';
+        $conversation->auditDescription = sprintf(
+            '%s reopened the inquiry%s',
+            $user?->name ?? 'Someone',
+            $listingName ? " on {$listingName}" : '',
+        );
 
         $conversation->update([
             'status' => 'accepted',

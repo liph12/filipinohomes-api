@@ -180,6 +180,10 @@ Route::middleware('strip.tags')->group(function(){
             // Activity logs (admin-only — enforced in controller)
             Route::get('/activity-logs', [ActivityLogController::class, 'index']);
             Route::get('/activity-logs/categories', [ActivityLogController::class, 'categories']);
+            Route::get('/activity-logs/overview-stats', [ActivityLogController::class, 'overviewStats']);
+            Route::get('/activity-logs/storage', [ActivityLogController::class, 'storageOverview']);
+            Route::get('/activity-logs/export', [ActivityLogController::class, 'exportLogs']);
+            Route::post('/activity-logs/clear', [ActivityLogController::class, 'clearOldLogs']);
 
             // Feature tokens
             Route::post('/feature-tokens/issue', [FeatureTokenController::class, 'issue']);

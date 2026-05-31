@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
+use App\Services\AuditAuthService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
@@ -100,14 +101,28 @@ class UserController extends Controller
             // To: the shared public inbox (info@filipinohomes.com) so admins
             // don't see each other's emails exposed in the recipient header.
             // Actual delivery to every admin happens via BCC.
-            Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
-                ->bcc($adminEmails)
-                ->send(new InquiryMailer(
-                    clientName:    $validated['name'],
-                    clientEmail:   $validated['email'],
-                    clientMessage: $validated['message'],
-                    source:        $validated['source'] ?? null,
-                ));
+            // SMTP failures must not 500 the inquiry — Inquiry row below
+            // is the real persistence; email is a notification.
+            try {
+                Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
+                    ->bcc($adminEmails)
+                    ->send(new InquiryMailer(
+                        clientName:    $validated['name'],
+                        clientEmail:   $validated['email'],
+                        clientMessage: $validated['message'],
+                        source:        $validated['source'] ?? null,
+                    ));
+            } catch (\Throwable $e) {
+                Log::warning('Get In Touch inquiry email failed', [
+                    'error' => $e->getMessage(),
+                ]);
+                app(\App\Services\AuditMailService::class)->recordFailure(
+                    $e,
+                    InquiryMailer::class,
+                    $adminEmails,
+                    'New inquiry from ' . ($validated['name'] ?? 'visitor'),
+                );
+            }
         }
 
         Inquiry::create([
@@ -202,17 +217,31 @@ class UserController extends Controller
             Log::warning('sendContactUs: no admin recipients found (role_id=1)');
         } else {
             // BCC pattern (mirrors sendInquiry above) — admin emails stay
-            // hidden behind info@filipinohomes.com.
-            Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
-                ->bcc($adminEmails)
-                ->send(new ContactUsMailer(
-                    clientName:    $validated['name'],
-                    clientEmail:   $validated['email'],
-                    clientMessage: $validated['message'],
-                    clientPhone:   $validated['phone']       ?? null,
-                    inquiryType:   $validated['inquiryType'] ?? null,
-                    clientSubject: $validated['subject']     ?? null,
-                ));
+            // hidden behind info@filipinohomes.com. Same SMTP-resilience
+            // wrap so the persistence call below still runs even if the
+            // mail send fails.
+            try {
+                Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
+                    ->bcc($adminEmails)
+                    ->send(new ContactUsMailer(
+                        clientName:    $validated['name'],
+                        clientEmail:   $validated['email'],
+                        clientMessage: $validated['message'],
+                        clientPhone:   $validated['phone']       ?? null,
+                        inquiryType:   $validated['inquiryType'] ?? null,
+                        clientSubject: $validated['subject']     ?? null,
+                    ));
+            } catch (\Throwable $e) {
+                Log::warning('Contact Us email failed', [
+                    'error' => $e->getMessage(),
+                ]);
+                app(\App\Services\AuditMailService::class)->recordFailure(
+                    $e,
+                    ContactUsMailer::class,
+                    $adminEmails,
+                    'Contact Us submission from ' . ($validated['name'] ?? 'visitor'),
+                );
+            }
         }
 
         // Persist via the same Inquiry table so submissions stay in one place.
@@ -275,7 +304,17 @@ class UserController extends Controller
         $user->verification = $otp;
         $user->save();
 
-        Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
+        try {
+            Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
+        } catch (\Throwable $e) {
+            Log::warning('OTP email failed', ['email' => $email, 'error' => $e->getMessage()]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                LoginOtpMailer::class,
+                [$email],
+                'OTP login code',
+            );
+        }
 
         return response()->json([
             'message' => 'Register OTP successfully sent!'
@@ -467,6 +506,15 @@ class UserController extends Controller
                 $request->ip(),
                 $request->userAgent()
             );
+            // Surface in /admin/activity-logs alongside the
+            // existing LoginLog write. New 'auth' category.
+            if (isset($result['user']) && $result['user'] instanceof User) {
+                app(AuditAuthService::class)->recordLogin(
+                    $result['user'],
+                    'password',
+                    $request,
+                );
+            }
             return response()->json($result, 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -538,7 +586,17 @@ class UserController extends Controller
         $user->verification = $otp;
         $user->save();
 
-        Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
+        try {
+            Mail::to($email)->send(new LoginOtpMailer($email, $otp, $user->name));
+        } catch (\Throwable $e) {
+            Log::warning('OTP email failed', ['email' => $email, 'error' => $e->getMessage()]);
+            app(\App\Services\AuditMailService::class)->recordFailure(
+                $e,
+                LoginOtpMailer::class,
+                [$email],
+                'OTP login code',
+            );
+        }
 
         return response()->json([
             'message' => 'Login OTP successfully sent!',
@@ -582,6 +640,8 @@ class UserController extends Controller
             'user_agent'   => $request->userAgent(),
             'logged_in_at' => now(),
         ]);
+
+        app(AuditAuthService::class)->recordLogin($verified, 'otp', $request);
 
         return response()->json([
             'user' => $verified,
@@ -637,6 +697,8 @@ class UserController extends Controller
             'user_agent'   => $request->userAgent(),
             'logged_in_at' => now(),
         ]);
+
+        app(AuditAuthService::class)->recordLogin($user, 'dev', $request);
 
         return response()->json([
             'message' => 'Dev login successful.',
