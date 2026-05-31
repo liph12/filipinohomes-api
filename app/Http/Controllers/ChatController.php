@@ -290,15 +290,24 @@ class ChatController extends Controller
 
                     if ($isListing) {
                         $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
-                        $attachments = [$user->id => ['last_read_at' => now()]];
+                        // Every pivot row must declare the SAME set of pivot
+                        // columns — otherwise Laravel's batch attach() picks
+                        // the column list from the first row and binds extra
+                        // values for rows with extra keys → "column count
+                        // doesn't match value count". Default `last_notified_at`
+                        // to null on every row so the auto-accept branch below
+                        // (which sets it for the agent only) stays consistent.
+                        $attachments = [
+                            $user->id => ['last_read_at' => now(), 'last_notified_at' => null],
+                        ];
                         foreach ($adminUserIds as $adminId) {
-                            $attachments[$adminId] = ['last_read_at' => null];
+                            $attachments[$adminId] = ['last_read_at' => null, 'last_notified_at' => null];
                         }
 
                         $leaderUserId = app(TeamLeadershipService::class)
                             ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
                         if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
-                            $attachments[$leaderUserId] = ['last_read_at' => null];
+                            $attachments[$leaderUserId] = ['last_read_at' => null, 'last_notified_at' => null];
                         }
 
                         // For auto-accepted inquiries (admin or team-leader
@@ -424,20 +433,23 @@ class ChatController extends Controller
             $conversation->save();
 
             if ($isListing) {
-                // Attach client + all admin users + team leader (not the agent yet)
+                // Attach client + all admin users + team leader (not the agent yet).
+                // Every pivot row must declare the same set of pivot columns —
+                // see the comment in the parallel block above (~line 291) for
+                // why `last_notified_at` is defaulted to null on every row.
                 $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
 
                 $attachments = [
-                    $user->id => ['last_read_at' => now()],
+                    $user->id => ['last_read_at' => now(), 'last_notified_at' => null],
                 ];
                 foreach ($adminUserIds as $adminId) {
-                    $attachments[$adminId] = ['last_read_at' => null];
+                    $attachments[$adminId] = ['last_read_at' => null, 'last_notified_at' => null];
                 }
 
                 $leaderUserId = app(TeamLeadershipService::class)
                     ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
                 if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
-                    $attachments[$leaderUserId] = ['last_read_at' => null];
+                    $attachments[$leaderUserId] = ['last_read_at' => null, 'last_notified_at' => null];
                 }
 
                 // For auto-accepted inquiries (admin or team-leader sender)
