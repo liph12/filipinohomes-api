@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\TagsFhMailerHeader;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -12,7 +13,7 @@ use Illuminate\Queue\SerializesModels;
 
 class InquiryMailer extends Mailable
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesModels, TagsFhMailerHeader;
 
     /**
      * Avatar URL for the submitter, if they're a registered Filipino Homes
@@ -31,6 +32,7 @@ class InquiryMailer extends Mailable
         // instead of just initials. One indexed query on a unique-ish column;
         // safe to skip silently when no row exists.
         $this->clientAvatar = User::where('email', $clientEmail)->value('avatar') ?: null;
+        $this->tagFhMailerHeader();
     }
 
     public function envelope(): Envelope

@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\TagsFhMailerHeader;
 use App\Models\Inquiry;
 use App\Models\InquiryReply;
 use Illuminate\Bus\Queueable;
@@ -19,14 +20,16 @@ use Illuminate\Queue\SerializesModels;
  */
 class InquiryReplyMailer extends Mailable
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesModels, TagsFhMailerHeader;
 
     public function __construct(
         public Inquiry      $inquiry,
         public InquiryReply $reply,
         public string       $adminName,
         public ?string      $adminAvatar = null,
-    ) {}
+    ) {
+        $this->tagFhMailerHeader();
+    }
 
     public function envelope(): Envelope
     {

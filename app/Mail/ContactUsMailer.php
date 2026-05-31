@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\TagsFhMailerHeader;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -17,7 +18,7 @@ use Illuminate\Queue\SerializesModels;
  */
 class ContactUsMailer extends Mailable
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesModels, TagsFhMailerHeader;
 
     public ?string $clientAvatar = null;
 
@@ -30,6 +31,7 @@ class ContactUsMailer extends Mailable
         public ?string $clientSubject = null,
     ) {
         $this->clientAvatar = User::where('email', $clientEmail)->value('avatar') ?: null;
+        $this->tagFhMailerHeader();
     }
 
     public function envelope(): Envelope

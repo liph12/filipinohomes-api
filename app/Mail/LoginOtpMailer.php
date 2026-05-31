@@ -2,13 +2,14 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\TagsFhMailerHeader;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 
 class LoginOtpMailer extends Mailable
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesModels, TagsFhMailerHeader;
     public $email;
     public $verification;
     public $name;
@@ -23,6 +24,7 @@ class LoginOtpMailer extends Mailable
         $this->email = $email;
         $this->verification = $verification;
         $this->name = $name;
+        $this->tagFhMailerHeader();
     }
 
     /**

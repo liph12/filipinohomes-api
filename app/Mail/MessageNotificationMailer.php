@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\TagsFhMailerHeader;
 use App\Models\User;
 use App\Services\TeamLeadershipService;
 use Illuminate\Mail\Mailable;
@@ -24,7 +25,7 @@ use Illuminate\Support\Facades\Mail;
 // Queueable trait and no dispatch site needs to change.
 class MessageNotificationMailer extends Mailable
 {
-    use SerializesModels;
+    use SerializesModels, TagsFhMailerHeader;
 
     public $receiverEmail;
     public $receiverName;
@@ -105,6 +106,7 @@ class MessageNotificationMailer extends Mailable
         $this->perspective = $perspective;
         $this->teamName = $teamName;
         $this->teamId = $teamId;
+        $this->tagFhMailerHeader();
     }
 
     public function build()
