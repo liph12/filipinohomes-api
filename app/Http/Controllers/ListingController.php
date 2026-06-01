@@ -262,12 +262,33 @@ class ListingController extends Controller
 
         $query = Listing::where('agent_id', $user->agent->id);
 
+        // Soft-deleted view: when `trashed=1`, return ONLY soft-deleted
+        // listings. A soft-deleted listing's property/attribute are trashed
+        // too (see destroy()), so the property `whereHas` clauses below must
+        // opt those rows back in.
+        $trashed = filter_var($request->input('trashed'), FILTER_VALIDATE_BOOLEAN);
+        if ($trashed) {
+            $query->onlyTrashed();
+        }
+
+        // whereHas('property', ...) helper that opts trashed rows back in
+        // when viewing the deleted set.
+        $propHas = function ($q, callable $cb) use ($trashed) {
+            return $q->whereHas('property', function ($sub) use ($cb, $trashed) {
+                if ($trashed) $sub->withTrashed();
+                $cb($sub);
+            });
+        };
+
         // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
-            $query->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search, $trashed) {
                 $q->where('listings.name', 'like', "%{$search}%")  // ← prefix with table
                     ->orWhere('listings.code', 'like', "%{$search}%")  // ← prefix with table
-                    ->orWhereHas('property', fn($sub) => $sub->where('address', 'like', "%{$search}%"));
+                    ->orWhereHas('property', function ($sub) use ($search, $trashed) {
+                        if ($trashed) $sub->withTrashed();
+                        $sub->where('address', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -278,10 +299,9 @@ class ListingController extends Controller
         $atsStatus  = $request->input('ats_status'); // 'pending' | 'approved' | 'expired'
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
-        $applyStatus = function ($q) use ($status) {
+        $applyStatus = function ($q) use ($status, $propHas) {
             if (!$status) return $q;
-            if ($status === 'active') return $q->active();
-            return $q->whereHas('property', fn($sub) => $sub->where('status', $status));
+            return $propHas($q, fn($sub) => $sub->where('status', $status));
         };
 
         $applyVisibility = function ($q) use ($visibility) {
@@ -314,19 +334,19 @@ class ListingController extends Controller
         };
 
         // ATS status filter maps 'approved' -> 'approve' in DB
-        $applyAtsStatus = function ($q) use ($atsStatus) {
+        $applyAtsStatus = function ($q) use ($atsStatus, $propHas) {
             if (!$atsStatus || strtolower((string)$atsStatus) === 'all') return $q;
             $dbVal = strtolower((string)$atsStatus) === 'approved' ? 'approve' : strtolower((string)$atsStatus);
-            return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $dbVal));
+            return $propHas($q, fn($sub) => $sub->where('ats_status', $dbVal));
         };
 
         // ── Status counts: respect visibility + category filters, NOT status ──
         $statusBase = $applyAtsStatus($applyFeatured($applyCategory($applyVisibility(clone $query))));
         $statusCounts = [
-            'active' => (clone $statusBase)->active()->count(),
-            'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
-            'sold'   => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'sold'))->count(),
-            'leased' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'leased'))->count(),
+            'active' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'active'))->count(),
+            'rented' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'rented'))->count(),
+            'sold'   => $propHas(clone $statusBase, fn($q) => $q->where('status', 'sold'))->count(),
+            'leased' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'leased'))->count(),
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
@@ -358,10 +378,10 @@ class ListingController extends Controller
         // ── ATS counts: respect status + visibility + category filters, NOT ats_status ──
         $atsBase   = $applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query))));
         $atsCounts = [
-            'pending'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'pending'))->count(),
-            'approved' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'approve'))->count(),
-            'expired'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'expired'))->count(),
-            'rejected' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'rejected'))->count(),
+            'pending'  => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'pending'))->count(),
+            'approved' => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'approve'))->count(),
+            'expired'  => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'expired'))->count(),
+            'rejected' => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'rejected'))->count(),
         ];
 
         // ── Apply ALL filters for pagination ─────────────────────────────────
@@ -370,19 +390,21 @@ class ListingController extends Controller
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
         $query = $applyAtsStatus($query);
-        $atsStatus = $request->input('ats_status');
-        $applyAtsStatus = function ($q) use ($atsStatus) {
-            if (!$atsStatus) return $q;
-            return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
-        };
-        $query = $applyAtsStatus($query);
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
         $listings = $query
             ->with([
-                'property.propertyAttribute.subtype',
-                'property.nearbyFacility',
+                'property' => function ($q) use ($trashed) {
+                    if ($trashed) $q->withTrashed();
+                    $q->with([
+                        'propertyAttribute' => function ($qa) use ($trashed) {
+                            if ($trashed) $qa->withTrashed();
+                            $qa->with('subtype');
+                        },
+                        'nearbyFacility',
+                    ]);
+                },
                 'category',
                 'agent' => function ($q) {
                     $q->withCount('listings');
@@ -432,12 +454,35 @@ class ListingController extends Controller
             $query->where('agent_id', $aid);
         }
 
+        // Soft-deleted view: when `trashed=1`, return ONLY soft-deleted
+        // listings. Applied to the base query so every count clone and the
+        // paginated result share the same scope. A soft-deleted listing's
+        // property/attribute are trashed too (see destroy()), so all the
+        // property `whereHas` clauses below must opt those rows back in.
+        $trashed = filter_var($request->input('trashed'), FILTER_VALIDATE_BOOLEAN);
+        if ($trashed) {
+            $query->onlyTrashed();
+        }
+
+        // whereHas('property', ...) helper that opts trashed rows back in
+        // when viewing the deleted set — otherwise every property filter and
+        // count silently returns 0 against soft-deleted listings.
+        $propHas = function ($q, callable $cb) use ($trashed) {
+            return $q->whereHas('property', function ($sub) use ($cb, $trashed) {
+                if ($trashed) $sub->withTrashed();
+                $cb($sub);
+            });
+        };
+
         // ── Search (applied to everything) ───────────────────────────────────
         if ($search = $request->input('search')) {
-            $query->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search, $trashed) {
                 $q->where('listings.name', 'like', "%{$search}%")  // ← prefix with table
                     ->orWhere('listings.code', 'like', "%{$search}%")  // ← prefix with table
-                    ->orWhereHas('property', fn($sub) => $sub->where('address', 'like', "%{$search}%"));
+                    ->orWhereHas('property', function ($sub) use ($search, $trashed) {
+                        if ($trashed) $sub->withTrashed();
+                        $sub->where('address', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -448,10 +493,9 @@ class ListingController extends Controller
         $subtypes   = $request->input('subtypes'); // array or comma-separated ids
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
-        $applyStatus = function ($q) use ($status) {
+        $applyStatus = function ($q) use ($status, $propHas) {
             if (!$status) return $q;
-            if ($status === 'active') return $q->active();
-            return $q->whereHas('property', fn($sub) => $sub->where('status', $status));
+            return $propHas($q, fn($sub) => $sub->where('status', $status));
         };
 
         $applyVisibility = function ($q) use ($visibility) {
@@ -495,10 +539,10 @@ class ListingController extends Controller
         // ── Status counts: respect visibility + category filters, NOT status ──
         $statusBase = $applySubtypes($applyFeatured($applyCategory($applyVisibility(clone $query))));
         $statusCounts = [
-            'active' => (clone $statusBase)->active()->count(),
-            'rented' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'rented'))->count(),
-            'sold'   => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'sold'))->count(),
-            'leased' => (clone $statusBase)->whereHas('property', fn($q) => $q->where('status', 'leased'))->count(),
+            'active' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'active'))->count(),
+            'rented' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'rented'))->count(),
+            'sold'   => $propHas(clone $statusBase, fn($q) => $q->where('status', 'sold'))->count(),
+            'leased' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'leased'))->count(),
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
@@ -524,10 +568,10 @@ class ListingController extends Controller
         // ── ATS counts: respect status + visibility + category filters, NOT ats_status ──
         $atsBase   = $applySubtypes($applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query)))));
         $atsCounts = [
-            'pending'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'pending'))->count(),
-            'approved' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'approve'))->count(),
-            'expired'  => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'expired'))->count(),
-            'rejected' => (clone $atsBase)->whereHas('property', fn($q) => $q->where('ats_status', 'rejected'))->count(),
+            'pending'  => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'pending'))->count(),
+            'approved' => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'approve'))->count(),
+            'expired'  => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'expired'))->count(),
+            'rejected' => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'rejected'))->count(),
         ];
 
         // ── Verification status filter ────────────────────────────────────────
@@ -562,9 +606,9 @@ class ListingController extends Controller
             $query->where('listings.created_at', '>=', $dateFrom . ' 00:00:00');
         }
         $atsStatus = $request->input('ats_status');
-        $applyAtsStatus = function ($q) use ($atsStatus) {
+        $applyAtsStatus = function ($q) use ($atsStatus, $propHas) {
             if (!$atsStatus) return $q;
-            return $q->whereHas('property', fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
+            return $propHas($q, fn($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
         };
         $query = $applyAtsStatus($query);
 
@@ -572,8 +616,16 @@ class ListingController extends Controller
 
         $listings = $query
             ->with([
-                'property.propertyAttribute.subtype',
-                'property.nearbyFacility',
+                'property' => function ($q) use ($trashed) {
+                    if ($trashed) $q->withTrashed();
+                    $q->with([
+                        'propertyAttribute' => function ($qa) use ($trashed) {
+                            if ($trashed) $qa->withTrashed();
+                            $qa->with('subtype');
+                        },
+                        'nearbyFacility',
+                    ]);
+                },
                 'category',
                 'agent' => function ($q) {
                     $q->withCount('listings');
@@ -1150,6 +1202,35 @@ class ListingController extends Controller
         });
 
         return response()->json(['message' => 'Listing and related rows soft-deleted: listings, properties, property_attributes']);
+    }
+
+    public function restore(Request $request, $id)
+    {
+        $listing = Listing::withTrashed()->findOrFail($id);
+        $this->authorize('delete', $listing);
+
+        $actor = $request->user()?->name ?? 'Someone';
+        $listing->auditSource = 'listings_table';
+        $listing->auditDescription = sprintf('%s restored listing %s', $actor, $listing->name);
+
+        DB::transaction(function () use ($listing) {
+            // Restore in the inverse order of destroy(): attribute → property → listing
+            $property = $listing->property()->withTrashed()->first();
+            if ($property) {
+                $propertyAttribute = $property->propertyAttribute()->withTrashed()->first();
+                if ($propertyAttribute && $propertyAttribute->trashed()) {
+                    $propertyAttribute->restore();
+                }
+                if ($property->trashed()) {
+                    $property->restore();
+                }
+            }
+            if ($listing->trashed()) {
+                $listing->restore();
+            }
+        });
+
+        return response()->json(['message' => 'Listing and related rows restored: listings, properties, property_attributes']);
     }
 
     /**

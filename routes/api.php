@@ -169,6 +169,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::apiResource('property_attributes', PropertyAttributesController::class);
             Route::apiResource('properties', PropertyController::class);
             Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
+            Route::post('/listings/{id}/restore', [ListingController::class, 'restore']);
             Route::apiResource('full-listing', FullListingController::class)->only(['store', 'show', 'update', 'destroy'])->parameters(['full-listing' => 'listing']);
             Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
