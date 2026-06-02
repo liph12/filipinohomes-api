@@ -58,11 +58,11 @@
                                     <td align="center" valign="middle"
                                         style="background:#0f766e;padding:14px 24px;">
                                         <span style="font-size:13px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">
-                                            💬 New Inquiry From Your Profile
+                                            💬 New Inquiry From Your {{ ucwords($channelLabel ?? 'agent profile') }}
                                         </span>
                                         <br />
                                         <span style="font-size:12px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:#d1fae5;">
-                                            A visitor reached out through your public agent profile
+                                            A visitor reached out through your {{ $channelLabel ?? 'agent profile' }}
                                         </span>
                                     </td>
                                 </tr>
@@ -86,7 +86,7 @@
                                             style="font-size:16px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
                                             Hello {{ ucwords(strtolower($greetingName)) }},
                                             <br /><br />
-                                            A visitor sent you a message from your Filipino Homes agent profile. Reply at your earliest convenience to keep the conversation moving.
+                                            A visitor sent you a message from your Filipino Homes {{ $channelLabel ?? 'agent profile' }}. Reply at your earliest convenience to keep the conversation moving.
                                         </span>
                                     </td>
                                 </tr>
@@ -155,7 +155,7 @@
                                 <tr>
                                     <td align="center" style="padding:18px 40px 28px;background:#f8fafc;">
                                         <span style="font-size:11px;line-height:16px;font-family:Helvetica,Arial,sans-serif;color:#94a3b8;">
-                                            You're receiving this because a visitor messaged you through your Filipino Homes agent profile.
+                                            You're receiving this because a visitor messaged you through your Filipino Homes {{ $channelLabel ?? 'agent profile' }}.
                                         </span>
                                     </td>
                                 </tr>

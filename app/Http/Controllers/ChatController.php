@@ -229,6 +229,10 @@ class ChatController extends Controller
                 }
             }],
             'message' => 'sometimes|string|max:5000',
+            // Origin of an agent inquiry — drives the "from your agent
+            // profile" vs "from your agent page" wording in the notification
+            // email. Only meaningful for type=agent; ignored otherwise.
+            'source' => 'nullable|in:agent_profile,agent_page',
         ]);
 
         // Block-check the sender BEFORE we touch chats/conversations. This
@@ -375,6 +379,7 @@ class ChatController extends Controller
                         agentUserId: (int) $validated['target_user_id'],
                         message:     $validated['message'] ?? '',
                         sender:      $user,
+                        source:      $validated['source'] ?? null,
                     );
                 }
             }
@@ -532,6 +537,7 @@ class ChatController extends Controller
                 agentUserId: (int) $validated['target_user_id'],
                 message:     $validated['message'] ?? '',
                 sender:      $user,
+                source:      $validated['source'] ?? null,
             );
         }
 
@@ -747,6 +753,7 @@ class ChatController extends Controller
         int $agentUserId,
         string $message,
         User $sender,
+        ?string $source = null,
     ): void {
         $agent = User::find($agentUserId);
         if (!$agent) {
@@ -770,6 +777,7 @@ class ChatController extends Controller
                 message:     $message,
                 slug:        $slug,
                 agentUserId: $agentUserId,
+                source:      $source,
             );
         } catch (Throwable $e) {
             Log::warning('Agent-profile inquiry email failed to dispatch', [

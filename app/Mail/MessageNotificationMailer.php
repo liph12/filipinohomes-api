@@ -55,6 +55,12 @@ class MessageNotificationMailer extends Mailable
      */
     public $perspective;
     /**
+     * Human-readable origin label for the agent-direct blade ("agent profile"
+     * or "agent page"). Lets the single agent-profile-inquiry template render
+     * the correct surface name without a per-source duplicate.
+     */
+    public $channelLabel;
+    /**
      * Team name to render in the admin/team-leader callout block. Falls
      * back to a "(unassigned)" / "your team" label in the blade when
      * null (agent has no team).
@@ -104,6 +110,7 @@ class MessageNotificationMailer extends Mailable
         $this->greetingName = $this->receiverName ?? ($listing['owner_name'] ?? null);
         $this->showListingOwner = $showListingOwner;
         $this->perspective = $perspective;
+        $this->channelLabel = $perspective === 'agent_page' ? 'agent page' : 'agent profile';
         $this->teamName = $teamName;
         $this->teamId = $teamId;
         $this->tagFhMailerHeader();
@@ -142,7 +149,9 @@ class MessageNotificationMailer extends Mailable
             'admin'         => 'emails.listing-inquiry-admin',
             'team_leader'   => 'emails.listing-inquiry-team-leader',
             'agent'         => 'emails.listing-inquiry-agent',
-            'agent_profile' => 'emails.agent-profile-inquiry',
+            // Both agent-direct perspectives share one blade; the wording is
+            // driven by $channelLabel rather than a duplicate template.
+            'agent_profile', 'agent_page' => 'emails.agent-profile-inquiry',
             default         => 'emails.message-notification',
         };
     }
@@ -162,6 +171,7 @@ class MessageNotificationMailer extends Mailable
             'admin', 'team_leader' => "[Filipino Homes] New inquiry pending review{$suffix}",
             'agent'                => "[Filipino Homes] Inquiry assigned to you{$suffix}",
             'agent_profile'        => "[Filipino Homes] New inquiry from your agent profile{$senderSuffix}",
+            'agent_page'           => "[Filipino Homes] New inquiry from your agent page{$senderSuffix}",
             default                => 'Filipino Homes - New message received',
         };
     }
@@ -360,7 +370,8 @@ class MessageNotificationMailer extends Mailable
         $agent,
         $message,
         $slug,
-        ?int $agentUserId
+        ?int $agentUserId,
+        ?string $source = null
     ): void {
         $sharedInbox = 'info@filipinohomes.com';
         $agentEmail  = (string) ($agent->email ?? '');
@@ -379,6 +390,11 @@ class MessageNotificationMailer extends Mailable
             return;
         }
 
+        // Page-builder agent pages reuse the same form/endpoint as the public
+        // profile; the only difference visitors see is which surface they were
+        // on. Reflect that in the email so the agent knows the lead's origin.
+        $perspective = $source === 'agent_page' ? 'agent_page' : 'agent_profile';
+
         Mail::to($sharedInbox)->bcc([$agentEmail])->send(new self(
             sender:           $sender,
             receiver:         $agent,
@@ -388,7 +404,7 @@ class MessageNotificationMailer extends Mailable
             listing:          null,
             agentUserId:      $agentUserId,
             showListingOwner: false,
-            perspective:      'agent_profile',
+            perspective:      $perspective,
         ));
     }
 
