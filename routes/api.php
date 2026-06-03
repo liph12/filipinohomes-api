@@ -46,6 +46,7 @@ use App\Http\Controllers\{
     ActivityLogController,
     DeviceTokenController,
     NotificationController,
+    EmailChangeController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -211,6 +212,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/user/settings', [UserController::class, 'userSettings']);
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
+            Route::post('/user/email-change/initiate', [EmailChangeController::class, 'initiateUserEmail']);
+            Route::post('/user/email-change/confirm', [EmailChangeController::class, 'confirmUserEmail']);
+            Route::post('/agent/lr-email-change/initiate', [EmailChangeController::class, 'initiateLrEmail']);
+            Route::post('/agent/lr-email-change/confirm', [EmailChangeController::class, 'confirmLrEmail']);
             Route::patch('agents/{id}/status', [AgentController::class, 'updateStatus']);
             Route::delete('agents/{id}', [AgentController::class, 'destroy']);
             Route::post('agents/{id}/restore', [AgentController::class, 'restore']);
