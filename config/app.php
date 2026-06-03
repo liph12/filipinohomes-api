@@ -15,6 +15,10 @@ return [
 
     'name' => env('APP_NAME', 'Laravel'),
 
+    // Public web page listing mobile app download links; the mobile app's
+    // "Download latest version" / maintenance CTA opens this URL.
+    'downloads_url' => env('APP_DOWNLOADS_URL', 'https://www.filipinohomes.com/app/downloads'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Environment

@@ -1,5 +1,7 @@
 <?php
 use App\Http\Controllers\{
+    AppConfigController,
+    AppVersionController,
     UserController,
     AgentController,
     CategoryController,
@@ -120,6 +122,10 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/provinces/{province}/cities', [ProvinceController::class, 'cities']);
         Route::get('/cities/{city}/barangays', [CityController::class, 'barangays']);
         Route::get('/maintenance-status', [MaintenanceController::class, 'status']);
+        // Mobile bootstrap config (maintenance + forced-update) and the public
+        // app-downloads listing. Both must be reachable pre-login.
+        Route::get('/app-config', [AppConfigController::class, 'show']);
+        Route::get('/app-versions', [AppVersionController::class, 'index']);
         Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
         Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
         Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted'])
@@ -278,6 +284,11 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
+
+                // App version download links (CRUD for the web downloads page).
+                Route::post('/admin/app-versions', [AppVersionController::class, 'store']);
+                Route::patch('/admin/app-versions/{id}', [AppVersionController::class, 'update']);
+                Route::delete('/admin/app-versions/{id}', [AppVersionController::class, 'destroy']);
             });
 
             // Magazine, Office & Ad management (admin + editor only)
