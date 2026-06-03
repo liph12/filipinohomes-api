@@ -240,10 +240,15 @@ class ChatController extends Controller
         // Block-check the sender BEFORE we touch chats/conversations. This
         // closes the loophole where a blocked client could open a brand-new
         // inquiry on a different listing owned by the same agent (or any
-        // listing if an admin issued a site-wide ban). Limited to listing
-        // chats since agent/blog/reel chats don't have a specific "target
-        // agent" to block against.
-        if ($validated['type'] === 'listing'
+        // listing if an admin issued a site-wide ban).
+        //
+        // Both listing AND agent-direct ("Message Me") chats target a
+        // specific user (`target_user_id` = the agent). blog / reel chats
+        // don't have an agent target so they're not gated here. Surfaced
+        // on prod 2026-06-03 — a globally-blocked scammer could still send
+        // agent-direct messages because the original gate only fired for
+        // `type=listing`.
+        if (in_array($validated['type'], ['listing', 'agent'], true)
             && BlockedUser::isBlocking($user->id, (int) $validated['target_user_id'])) {
             abort(403, 'You can no longer contact this agent.');
         }

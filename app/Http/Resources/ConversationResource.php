@@ -29,6 +29,24 @@ class ConversationResource extends JsonResource
             }
         }
 
+        // Resolve which user serves as "the agent" for this
+        // conversation's block-check purposes. Listing chats record
+        // it as conversation.agent_user_id directly; agent-direct
+        // ("Message Me") chats leave that column null and the agent
+        // is the chat's target user (chat.type_id). Without this
+        // fallback, agent-direct conversations never set
+        // is_blocked_for_me=true even when the client is banned —
+        // surfaced on prod 2026-06-03 when a globally-blocked client
+        // could keep messaging through an existing agent-direct
+        // thread.
+        $resolvedAgentId = (int) ($this->agent_user_id ?? 0);
+        if (!$resolvedAgentId) {
+            $this->loadMissing('chat');
+            if ($this->chat?->type === 'agent') {
+                $resolvedAgentId = (int) $this->chat->type_id;
+            }
+        }
+
         // Per-viewer "am I blocked from messaging in this conversation?"
         // signal. Drives the frontend's composer-to-blocked-panel swap so
         // the client sees a clear notice instead of a still-typeable input.
@@ -37,8 +55,24 @@ class ConversationResource extends JsonResource
         // happens to exist with their user_id (they're the blocker, not
         // the blockee). The check is scope-aware via BlockedUser::isBlocking.
         $isBlockedForMe = false;
-        if ($authUserId && $this->agent_user_id && $authUserId !== (int) $this->agent_user_id) {
-            $isBlockedForMe = BlockedUser::isBlocking((int) $authUserId, (int) $this->agent_user_id);
+        if ($authUserId && $resolvedAgentId && $authUserId !== $resolvedAgentId) {
+            $isBlockedForMe = BlockedUser::isBlocking((int) $authUserId, $resolvedAgentId);
+        }
+
+        // Global-ban awareness banner for everyone EXCEPT the blocked
+        // client themselves. Lets agents and team leaders see at a
+        // glance that the chat owner is on the platform-wide blocklist
+        // (i.e., an admin has banned them site-wide), not just blocked
+        // from this specific agent. The client already gets
+        // is_blocked_for_me=true above, so they don't need the duplicate
+        // signal.
+        $isClientGloballyBlocked = false;
+        $this->loadMissing('chat');
+        $clientUserId = (int) ($this->chat?->user_id ?? 0);
+        if ($clientUserId && $authUserId && $authUserId !== $clientUserId) {
+            $isClientGloballyBlocked = BlockedUser::where('blocked_user_id', $clientUserId)
+                ->where('scope', 'global')
+                ->exists();
         }
 
         return [
@@ -57,6 +91,7 @@ class ConversationResource extends JsonResource
             'users' => UserResource::collection($this->whenLoaded('users')),
             'unread_count' => $unreadCount,
             'is_blocked_for_me' => $isBlockedForMe,
+            'is_client_globally_blocked' => $isClientGloballyBlocked,
             'created_at' => $this->created_at,
         ];
     }

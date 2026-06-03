@@ -70,7 +70,14 @@ class BlockedUserController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'agent_user_id' => 'required|exists:users,id',
+            // Required for per-agent blocks; optional for global blocks
+            // since the controller writes agent_user_id=null on the
+            // global row anyway. Some legacy listing chats also have
+            // conversation.agent_user_id=null even though the listing
+            // itself has an owner — relaxing this lets admins ship a
+            // global ban without needing the frontend to fall back to
+            // a placeholder agent.
+            'agent_user_id' => 'required_unless:scope,global|nullable|exists:users,id',
             'blocked_user_id' => 'required|exists:users,id',
             'reason' => 'nullable|string|max:1000',
             // Admin-only knob: 'global' writes a site-wide ban,
@@ -83,7 +90,11 @@ class BlockedUserController extends Controller
 
         $user = Auth::user();
         $isAdmin = $user->role?->name === 'admin';
-        $targetAgentId = (int) $validated['agent_user_id'];
+        // agent_user_id is optional for global blocks; coerce to 0
+        // when missing so downstream code that compares it as int
+        // doesn't blow up. The per-agent branches below explicitly
+        // require a non-zero value and abort otherwise.
+        $targetAgentId = (int) ($validated['agent_user_id'] ?? 0);
         $blockedUserId = (int) $validated['blocked_user_id'];
 
         // Prevent blocking yourself.
@@ -101,6 +112,9 @@ class BlockedUserController extends Controller
             $requestedScope = $validated['scope'] ?? 'global';
 
             if ($requestedScope === 'per_agent') {
+                if ($targetAgentId <= 0) {
+                    abort(422, 'agent_user_id is required for a per-agent block.');
+                }
                 $blocked = BlockedUser::firstOrCreate(
                     [
                         'agent_user_id'   => $targetAgentId,

@@ -82,8 +82,22 @@ class MessageController extends Controller
         // Sender blocked from messaging this agent? Scope-aware via the
         // helper: catches both per-agent rows (this specific agent) and
         // any global admin-issued ban regardless of agent.
-        if ($conversation->agent_user_id
-            && BlockedUser::isBlocking((int) Auth::id(), (int) $conversation->agent_user_id)) {
+        //
+        // For listing chats `conversation.agent_user_id` is the agent.
+        // For agent-direct ("Message Me") chats that column is null
+        // because there's no separate "assigned agent" — the agent is
+        // the chat's target user (`chat.type_id`). Fall through to that
+        // when the conversation column is empty so a globally-banned
+        // user can't keep messaging in an existing agent-direct thread.
+        $blockTargetAgentId = (int) ($conversation->agent_user_id ?? 0);
+        if (!$blockTargetAgentId) {
+            $conversation->loadMissing('chat');
+            if ($conversation->chat?->type === 'agent') {
+                $blockTargetAgentId = (int) $conversation->chat->type_id;
+            }
+        }
+        if ($blockTargetAgentId
+            && BlockedUser::isBlocking((int) Auth::id(), $blockTargetAgentId)) {
             abort(403, 'You have been blocked from this conversation.');
         }
 
