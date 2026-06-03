@@ -23,9 +23,12 @@ class DeviceTokenController extends Controller
         $token = DeviceToken::updateOrCreate(
             ['expo_token' => $validated['expo_token']],
             [
-                'user_id'      => $request->user()->id,
-                'platform'     => $validated['platform'] ?? null,
-                'last_used_at' => now(),
+                'user_id'                   => $request->user()->id,
+                // Tie this push registration to the calling session so
+                // revoking that session also silences this device.
+                'personal_access_token_id'  => $request->user()->currentAccessToken()->id,
+                'platform'                  => $validated['platform'] ?? null,
+                'last_used_at'              => now(),
             ],
         );
 

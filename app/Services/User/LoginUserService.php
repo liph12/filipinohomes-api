@@ -4,6 +4,7 @@ namespace App\Services\User;
 
 use App\Models\User;
 use App\Models\LoginLog;
+use App\Support\DeviceLabel;
 use Illuminate\Support\Facades\Hash;
 
 class LoginUserService
@@ -11,7 +12,7 @@ class LoginUserService
     /**
      * @throws \Exception
      */
-    public function execute(array $credentials, ?string $ipAddress = null, ?string $userAgent = null): array
+    public function execute(array $credentials, ?string $ipAddress = null, ?string $userAgent = null, ?string $deviceName = null): array
     {
         $user = User::where('email', $credentials['email'])->first();
 
@@ -23,13 +24,11 @@ class LoginUserService
             throw new \Exception('Incorrect password', 401);
         }
 
-        if (!$user->remember_token) {
-            $token = $user->createToken('API Token')->plainTextToken;
-            $user->remember_token = $token;
-            $user->save();
-        } else {
-            $token = $user->remember_token;
-        }
+        // One token per login so each device/session can be revoked
+        // independently (per-device logout). Do NOT reuse a cached token.
+        // The token name labels the session in the user's "active devices" list.
+        $label = $deviceName ?: DeviceLabel::fromUserAgent($userAgent);
+        $token = $user->createToken($label)->plainTextToken;
 
         LoginLog::create([
             'user_id'     => $user->id,

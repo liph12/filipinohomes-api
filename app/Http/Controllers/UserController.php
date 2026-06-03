@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\LoginLog;
 use App\Models\User;
+use App\Models\DeviceToken;
+use App\Support\DeviceLabel;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
@@ -339,12 +341,9 @@ class UserController extends Controller
             ], 403);
         }
 
-        if (!$verified->remember_token) {
-            $token = $verified->createToken('API Token')->plainTextToken;
-            $verified->remember_token = $token;
-        } else {
-            $token = $verified->remember_token;
-        }
+        // One token per login → each device can be logged out independently.
+        // The token name labels the session in the user's "active devices" list.
+        $token = $verified->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
 
         $verified->verification = 'verified';
         $verified->email_verified_at = now();
@@ -504,7 +503,8 @@ class UserController extends Controller
             $result = $loginUserService->execute(
                 $credentials,
                 $request->ip(),
-                $request->userAgent()
+                $request->userAgent(),
+                $request->input('device_name'),
             );
             // Surface in /admin/activity-logs alongside the
             // existing LoginLog write. New 'auth' category.
@@ -621,12 +621,9 @@ class UserController extends Controller
             $userInfo
         );
 
-        if (!$verified->remember_token) {
-            $token = $verified->createToken('API Token')->plainTextToken;
-            $verified->remember_token = $token;
-        } else {
-            $token = $verified->remember_token;
-        }
+        // One token per login → each device can be logged out independently.
+        // The token name labels the session in the user's "active devices" list.
+        $token = $verified->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
 
         $verified->verification = "verified";
         $verified->save();
@@ -680,13 +677,8 @@ class UserController extends Controller
             $userInfo
         );
 
-        if (!$user->remember_token) {
-            $token = $user->createToken('API Token')->plainTextToken;
-            $user->remember_token = $token;
-            $user->save();
-        } else {
-            $token = $user->remember_token;
-        }
+        // One token per login → each device can be logged out independently.
+        $token = $user->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
 
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($user);
@@ -711,14 +703,33 @@ class UserController extends Controller
     {
         $user = $request->user();
 
-        $user->currentAccessToken()->delete();
+        // Stop pushing to this device once it signs out. The client sends the
+        // Expo token it registered; remove only that row so the user's other
+        // devices keep receiving notifications.
+        if ($expoToken = $request->input('expo_token')) {
+            DeviceToken::where('user_id', $user->id)
+                ->where('expo_token', $expoToken)
+                ->delete();
+        }
 
-        $user->forceFill([
-            'remember_token' => null,
-        ])->save();
+        // Revoke only this device's token (per-device logout).
+        $user->currentAccessToken()->delete();
 
         return response()->json([
             'message' => 'Logged out successfully',
+        ], 200);
+    }
+
+    public function logoutAll(Request $request)
+    {
+        $user = $request->user();
+
+        // Revoke every session and stop pushing to every device.
+        $user->deviceTokens()->delete();
+        $user->tokens()->delete();
+
+        return response()->json([
+            'message' => 'Logged out of all devices',
         ], 200);
     }
 

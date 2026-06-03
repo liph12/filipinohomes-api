@@ -46,6 +46,7 @@ use App\Http\Controllers\{
     ActivityLogController,
     DeviceTokenController,
     NotificationController,
+    SessionController,
     EmailChangeController,
 };
 use App\Http\Controllers\AdPreviewController;
@@ -243,6 +244,11 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/upload-ats', [ImageUploadController::class, 'uploadAts']);
             Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
             Route::post('/logout', [UserController::class, 'logout']);
+            Route::post('/logout-all', [UserController::class, 'logoutAll']);
+
+            // Active login sessions ("Manage devices")
+            Route::get('/sessions', [SessionController::class, 'index']);
+            Route::delete('/sessions/{id}', [SessionController::class, 'destroy']);
             Route::post('/generate-description', [GenerateDescriptionController::class, 'generate']);
             Route::post('/agent/profile', [AgentController::class, 'store']);
             Route::post('/favorites/sync', [FavoriteController::class, 'sync']);

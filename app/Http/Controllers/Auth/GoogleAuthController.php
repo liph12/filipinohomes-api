@@ -8,6 +8,7 @@ use App\Models\LoginLog;
 use App\Models\User;
 use App\Services\Auth\GoogleTokenService;
 use App\Services\LeuterioreRealty\LrApiService;
+use App\Support\DeviceLabel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -45,7 +46,7 @@ class GoogleAuthController extends Controller
             }
             $user->save();
 
-            $token = $this->getOrCreateToken($user);
+            $token = $this->issueToken($user, $request);
 
             // Sync team assignment from LR API if not yet in team_agents
             (new TeamSyncService())->syncForUser($user);
@@ -118,7 +119,7 @@ class GoogleAuthController extends Controller
             $userInfo
         );
 
-        $token = $this->getOrCreateToken($user);
+        $token = $this->issueToken($user, $request);
 
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($user);
@@ -132,17 +133,11 @@ class GoogleAuthController extends Controller
         ]);
     }
 
-    private function getOrCreateToken(User $user): string
+    private function issueToken(User $user, Request $request): string
     {
-        if ($user->remember_token) {
-            return $user->remember_token;
-        }
-
-        $token = $user->createToken('API Token')->plainTextToken;
-        $user->remember_token = $token;
-        $user->save();
-
-        return $token;
+        // One token per login → each device can be logged out independently.
+        // The token name labels the session in the user's "active devices" list.
+        return $user->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
     }
 
     private function recordLogin(User $user, Request $request): void
