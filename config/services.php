@@ -53,6 +53,15 @@ return [
     ],
 
     /*
+    | Expo Push Service. The access_token is optional — only required if the
+    | Expo project has "Enhanced Security for Push Notifications" enabled.
+    | Messages are sent to https://exp.host/--/api/v2/push/send.
+    */
+    'expo' => [
+        'access_token' => env('EXPO_ACCESS_TOKEN'),
+    ],
+
+    /*
     | IndexNow integration. The Next.js frontend hosts the IndexNow
     | key file and exposes a POST /api/indexnow/submit endpoint
     | guarded by INDEXNOW_SUBMIT_SECRET. This service config tells

@@ -72,6 +72,28 @@ class SendMessageNotification implements ShouldQueue
             return;
         }
 
+        // Push notification fires on EVERY new message (real-time), unlike the
+        // email below which is throttled to the first message / 24h re-notify.
+        // Only app users (agents/admins) have device tokens + an in-app feed;
+        // the mobile inquiry route is keyed on chat_id.
+        $recipientRoleName = $recipient->role?->name ?? 'client';
+        if (in_array($recipientRoleName, ['agent', 'admin'], true)) {
+            try {
+                app(\App\Services\ExpoPushService::class)->notify(
+                    $recipient,
+                    'inquiry',
+                    $sender->name ?? 'New message',
+                    $message->body ? Str::limit($message->body, 120) : 'Sent an attachment',
+                    ['type' => 'inquiry', 'id' => $conversation->chat_id],
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Push notify (message) failed', [
+                    'conversation_id' => $conversation->id,
+                    'error'           => $e->getMessage(),
+                ]);
+            }
+        }
+
         // Send email if:
         // 1. Sender's first message in this conversation, OR
         // 2. Last message in conversation was sent 24+ hours ago (re-notification)

@@ -44,6 +44,8 @@ use App\Http\Controllers\{
     GuestTokenController,
     InquiryController,
     ActivityLogController,
+    DeviceTokenController,
+    NotificationController,
 };
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -157,6 +159,14 @@ Route::middleware('strip.tags')->group(function(){
         Route::middleware('auth:sanctum')->group(function(){
             Route::get('/client-logins', [UserController::class, 'getClients']);
             Route::get('/authenticate', [UserController::class, 'authenticate']);
+
+            // Expo push tokens + in-app notification feed (mobile app)
+            Route::post('/device-tokens', [DeviceTokenController::class, 'store']);
+            Route::get('/notifications', [NotificationController::class, 'index']);
+            Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+            Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+            Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
+
             Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
             Route::get('/users/search', [UserController::class, 'searchUsers']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);

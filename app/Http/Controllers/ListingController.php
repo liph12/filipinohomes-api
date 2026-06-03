@@ -1053,6 +1053,30 @@ class ListingController extends Controller
             }
         }
 
+        // Push the agent when their listing is flagged (action required). The
+        // mobile listing route is keyed on the listing id. Non-fatal — a push
+        // failure must not roll back the saved audit status.
+        if ($status === 'flagged') {
+            try {
+                $agentUser = optional($listing->agent)->user
+                    ?? optional($listing->load('agent.user')->agent)->user;
+                if ($agentUser) {
+                    app(\App\Services\ExpoPushService::class)->notify(
+                        $agentUser,
+                        'listing_flagged',
+                        'Listing flagged',
+                        "“{$listing->name}” needs your attention.",
+                        ['type' => 'listing_flagged', 'id' => $listing->id],
+                    );
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Push notify (listing flagged) failed', [
+                    'listing_id' => $listing->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+        }
+
         return response()->json(['data' => $listing->fresh(), 'email_sent' => $emailSent]);
     }
 

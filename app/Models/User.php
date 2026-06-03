@@ -146,6 +146,16 @@ class User extends Authenticatable implements Auditable
         return $this->hasMany(Favorite::class);
     }
 
+    public function deviceTokens()
+    {
+        return $this->hasMany(DeviceToken::class);
+    }
+
+    public function appNotifications()
+    {
+        return $this->hasMany(AppNotification::class);
+    }
+
     public function userInfo()
     {
         return $this->hasOne(UserInfo::class);
