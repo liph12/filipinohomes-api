@@ -182,6 +182,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::apiResource('properties', PropertyController::class);
             Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
             Route::post('/listings/{id}/restore', [ListingController::class, 'restore']);
+            // Manually input photos for a removed (photo-migration soft-deleted)
+            // listing. Saves to listing.featured_photo + property.photos; the
+            // listing stays soft-deleted/removed.
+            Route::patch('/listings/{id}/removed-photos', [ListingController::class, 'updateRemovedPhotos']);
             Route::apiResource('full-listing', FullListingController::class)->only(['store', 'show', 'update', 'destroy'])->parameters(['full-listing' => 'listing']);
             Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);

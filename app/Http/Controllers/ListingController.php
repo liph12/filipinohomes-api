@@ -266,9 +266,20 @@ class ListingController extends Controller
         // listings. A soft-deleted listing's property/attribute are trashed
         // too (see destroy()), so the property `whereHas` clauses below must
         // opt those rows back in.
-        $trashed = filter_var($request->input('trashed'), FILTER_VALIDATE_BOOLEAN);
+        // `removed=1` is a subset of the soft-deleted set: only listings the
+        // photo-migration soft-deleted (photos_migrated_at + migration note
+        // both set). It implies the trashed view.
+        $removed = filter_var($request->input('removed'), FILTER_VALIDATE_BOOLEAN);
+        $trashed = filter_var($request->input('trashed'), FILTER_VALIDATE_BOOLEAN) || $removed;
         if ($trashed) {
             $query->onlyTrashed();
+        }
+        if ($removed) {
+            $query->whereNotNull('listings.photos_migration_note');
+        } elseif ($trashed) {
+            // Plain deleted view excludes the photo-migration "removed" subset
+            // (those carry a migration note) so the two views never overlap.
+            $query->whereNull('listings.photos_migration_note');
         }
 
         // whereHas('property', ...) helper that opts trashed rows back in
@@ -393,6 +404,15 @@ class ListingController extends Controller
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
+        // Removed view sorts by verification_status then audited_at; everything
+        // else by newest first.
+        if ($removed) {
+            $query->orderBy('listings.verification_status')
+                  ->orderBy('listings.audited_at');
+        } else {
+            $query->orderBy('created_at', 'desc');
+        }
+
         $listings = $query
             ->with([
                 'property' => function ($q) use ($trashed) {
@@ -410,7 +430,6 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
-            ->orderBy('created_at', 'desc')
             ->paginate($perPage);
 
         return (new ListingResourceCollection($listings))->additional([
@@ -459,9 +478,20 @@ class ListingController extends Controller
         // paginated result share the same scope. A soft-deleted listing's
         // property/attribute are trashed too (see destroy()), so all the
         // property `whereHas` clauses below must opt those rows back in.
-        $trashed = filter_var($request->input('trashed'), FILTER_VALIDATE_BOOLEAN);
+        // `removed=1` is a subset of the soft-deleted set: only listings the
+        // photo-migration soft-deleted (photos_migrated_at + migration note
+        // both set). It implies the trashed view.
+        $removed = filter_var($request->input('removed'), FILTER_VALIDATE_BOOLEAN);
+        $trashed = filter_var($request->input('trashed'), FILTER_VALIDATE_BOOLEAN) || $removed;
         if ($trashed) {
             $query->onlyTrashed();
+        }
+        if ($removed) {
+            $query->whereNotNull('listings.photos_migration_note');
+        } elseif ($trashed) {
+            // Plain deleted view excludes the photo-migration "removed" subset
+            // (those carry a migration note) so the two views never overlap.
+            $query->whereNull('listings.photos_migration_note');
         }
 
         // whereHas('property', ...) helper that opts trashed rows back in
@@ -614,6 +644,15 @@ class ListingController extends Controller
 
         $totalViews = (int) (clone $query)->sum('clicks');
 
+        // Removed view sorts by verification_status then audited_at; everything
+        // else by newest first.
+        if ($removed) {
+            $query->orderBy('listings.verification_status')
+                  ->orderBy('listings.audited_at');
+        } else {
+            $query->orderBy('created_at', 'desc');
+        }
+
         $listings = $query
             ->with([
                 'property' => function ($q) use ($trashed) {
@@ -631,7 +670,6 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
-            ->orderBy('created_at', 'desc')
             ->paginate($request->query('per_page', 12));
 
         return (new ListingResourceCollection($listings))->additional([
@@ -1255,6 +1293,51 @@ class ListingController extends Controller
         });
 
         return response()->json(['message' => 'Listing and related rows restored: listings, properties, property_attributes']);
+    }
+
+    /**
+     * Manually input the photo arrays for a removed (photo-migration
+     * soft-deleted) listing. The migration emptied these to [] and kept no
+     * copy, so the admin pastes the originals back in. The listing STAYS
+     * soft-deleted/removed — this only writes the arrays.
+     */
+    public function updateRemovedPhotos(Request $request, $id)
+    {
+        $listing = Listing::withTrashed()->findOrFail($id);
+        $this->authorize('update', $listing);
+
+        $data = $request->validate([
+            'featured_photo'   => 'present|array',
+            'featured_photo.*' => 'string',
+            'photos'           => 'nullable|array',
+            'photos.*'         => 'string',
+        ]);
+
+        $clean = fn (array $urls) => array_values(array_filter(
+            $urls,
+            fn ($u) => is_string($u) && trim($u) !== '',
+        ));
+
+        DB::transaction(function () use ($listing, $data, $clean) {
+            $listing->featured_photo = $clean($data['featured_photo'] ?? []);
+            $listing->saveQuietly();
+
+            if (array_key_exists('photos', $data)) {
+                $property = $listing->property()->withTrashed()->first();
+                if ($property) {
+                    $property->photos = $clean($data['photos'] ?? []);
+                    $property->saveQuietly();
+                }
+            }
+        });
+
+        $listing->load(['property' => fn ($q) => $q->withTrashed()]);
+
+        return response()->json([
+            'message'        => 'Photos saved.',
+            'featured_photo' => $listing->featured_photo,
+            'photos'         => optional($listing->property)->photos,
+        ]);
     }
 
     /**
