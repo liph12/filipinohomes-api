@@ -42,7 +42,13 @@ class BlockedUserController extends Controller
     public function check(Request $request)
     {
         $validated = $request->validate([
-            'agent_user_id' => 'required|exists:users,id',
+            // Optional: when omitted we only check for global blocks.
+            // Some legacy listing chats have conversation.agent_user_id=null
+            // (the moderation flow assigned an agent at create-time, but
+            // older rows missed the column). The frontend still needs to
+            // know "is this client banned?" in those cases — without the
+            // agent context the answer is "yes if a global row exists".
+            'agent_user_id' => 'nullable|exists:users,id',
             'blocked_user_id' => 'required|exists:users,id',
         ]);
 
@@ -52,11 +58,17 @@ class BlockedUserController extends Controller
         $blocked = BlockedUser::with(['blockedUser', 'blockedByUser', 'agent'])
             ->where('blocked_user_id', $validated['blocked_user_id'])
             ->where(function ($q) use ($validated) {
-                $q->where('scope', 'global')
-                  ->orWhere(function ($qq) use ($validated) {
-                      $qq->where('scope', 'per_agent')
-                         ->where('agent_user_id', $validated['agent_user_id']);
-                  });
+                $q->where('scope', 'global');
+                // Per-agent rows only enter the OR when the caller passed
+                // an agent context — otherwise this would match any
+                // per-agent row across the system, which isn't what we
+                // want for an unscoped "is this client banned?" query.
+                if (!empty($validated['agent_user_id'])) {
+                    $q->orWhere(function ($qq) use ($validated) {
+                        $qq->where('scope', 'per_agent')
+                           ->where('agent_user_id', $validated['agent_user_id']);
+                    });
+                }
             })
             ->orderByRaw("FIELD(scope, 'global', 'per_agent')")
             ->first();
