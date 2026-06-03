@@ -15,7 +15,12 @@ class LoginUserService
      */
     public function execute(array $credentials, ?string $ipAddress = null, ?string $userAgent = null, ?string $deviceName = null): array
     {
-        $user = User::where('email', $credentials['email'])->first();
+        // Accept either the user's own email or their agent's lr_email
+        // (Leuterio Realty email) as the login identifier. Both are unique.
+        $login = trim((string) ($credentials['email'] ?? ''));
+        $user = User::where('email', $login)
+            ->orWhereHas('agent', fn ($q) => $q->where('lr_email', $login))
+            ->first();
 
         if (!$user) {
             throw new \Exception('Email not found', 404);
