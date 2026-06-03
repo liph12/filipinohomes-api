@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\BlockedUser;
+use App\Models\User;
+use App\Services\AuditSecurityService;
 use App\Services\TeamLeadershipService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -71,6 +73,12 @@ class BlockedUserController extends Controller
             'agent_user_id' => 'required|exists:users,id',
             'blocked_user_id' => 'required|exists:users,id',
             'reason' => 'nullable|string|max:1000',
+            // Admin-only knob: 'global' writes a site-wide ban,
+            // 'per_agent' writes a single per-agent row. Defaults
+            // to 'global' (the legacy admin behavior). Agents and
+            // TLs always use per_agent regardless of what they
+            // send here — the branch below enforces it.
+            'scope' => 'nullable|in:per_agent,global',
         ]);
 
         $user = Auth::user();
@@ -78,26 +86,56 @@ class BlockedUserController extends Controller
         $targetAgentId = (int) $validated['agent_user_id'];
         $blockedUserId = (int) $validated['blocked_user_id'];
 
-        // Prevent blocking yourself (only meaningful for the per-agent path —
-        // admins never target their own user_id as the agent anyway since
-        // they'll be writing scope='global').
+        // Prevent blocking yourself.
         if (!$isAdmin && $targetAgentId === $blockedUserId) {
             abort(422, 'You cannot block yourself.');
         }
 
+        $auditService = app(AuditSecurityService::class);
+        $blockedUserModel = User::find($blockedUserId);
+
         if ($isAdmin) {
-            // Site-wide ban — one row, applies to every agent.
-            $blocked = BlockedUser::firstOrCreate(
-                [
-                    'blocked_user_id' => $blockedUserId,
-                    'scope' => 'global',
-                ],
-                [
-                    'agent_user_id' => null,
-                    'blocked_by' => $user->id,
-                    'reason' => $validated['reason'] ?? null,
-                ]
-            );
+            // Admins pick the scope at the call site (see the
+            // BlockScopeDialog on the frontend). Default = global to
+            // preserve legacy behavior when no scope is sent.
+            $requestedScope = $validated['scope'] ?? 'global';
+
+            if ($requestedScope === 'per_agent') {
+                $blocked = BlockedUser::firstOrCreate(
+                    [
+                        'agent_user_id'   => $targetAgentId,
+                        'blocked_user_id' => $blockedUserId,
+                        'scope'           => 'per_agent',
+                    ],
+                    [
+                        'blocked_by' => $user->id,
+                        'reason'     => $validated['reason'] ?? null,
+                    ]
+                );
+            } else {
+                // Site-wide ban — one row, applies to every agent.
+                $blocked = BlockedUser::firstOrCreate(
+                    [
+                        'blocked_user_id' => $blockedUserId,
+                        'scope'           => 'global',
+                    ],
+                    [
+                        'agent_user_id' => null,
+                        'blocked_by'    => $user->id,
+                        'reason'        => $validated['reason'] ?? null,
+                    ]
+                );
+            }
+
+            if ($blockedUserModel) {
+                $auditService->recordBlock(
+                    $user,
+                    $blockedUserModel,
+                    $blocked->scope,
+                    $blocked->agent_user_id,
+                    $validated['reason'] ?? null,
+                );
+            }
 
             $blocked->load(['blockedUser', 'blockedByUser', 'agent']);
 
@@ -160,6 +198,16 @@ class BlockedUserController extends Controller
             }
             $primary->load(['blockedUser', 'blockedByUser', 'agent']);
 
+            if ($blockedUserModel) {
+                $auditService->recordBlock(
+                    $user,
+                    $blockedUserModel,
+                    'per_agent',
+                    $primary->agent_user_id,
+                    $validated['reason'] ?? null,
+                );
+            }
+
             return response()->json($primary, 201);
         }
 
@@ -182,6 +230,16 @@ class BlockedUserController extends Controller
 
         $blocked->load(['blockedUser', 'blockedByUser', 'agent']);
 
+        if ($blockedUserModel) {
+            $auditService->recordBlock(
+                $user,
+                $blockedUserModel,
+                'per_agent',
+                $blocked->agent_user_id,
+                $validated['reason'] ?? null,
+            );
+        }
+
         return response()->json($blocked, 201);
     }
 
@@ -190,9 +248,25 @@ class BlockedUserController extends Controller
         $user = Auth::user();
         $isAdmin = $user->role?->name === 'admin';
 
+        // Snapshot fields BEFORE delete so the audit row can record
+        // the scope + agent_user_id we just removed (the model is
+        // gone by the time we call recordUnblock otherwise).
+        $auditService = app(AuditSecurityService::class);
+        $blockedUserModel = User::find($blockedUser->blocked_user_id);
+        $unblockScope = (string) $blockedUser->scope;
+        $unblockAgentId = $blockedUser->agent_user_id;
+
         if ($isAdmin) {
             // Admins can unblock any row (global or per-agent).
             $blockedUser->delete();
+            if ($blockedUserModel) {
+                $auditService->recordUnblock(
+                    $user,
+                    $blockedUserModel,
+                    $unblockScope,
+                    $unblockAgentId,
+                );
+            }
             return response()->json(['message' => 'User unblocked.']);
         }
 
@@ -226,6 +300,15 @@ class BlockedUserController extends Controller
                 ->where('blocked_by', $user->id)
                 ->delete();
 
+            if ($blockedUserModel) {
+                $auditService->recordUnblock(
+                    $user,
+                    $blockedUserModel,
+                    'per_agent',
+                    $unblockAgentId,
+                );
+            }
+
             return response()->json(['message' => 'User unblocked.']);
         }
 
@@ -235,6 +318,15 @@ class BlockedUserController extends Controller
         }
 
         $blockedUser->delete();
+
+        if ($blockedUserModel) {
+            $auditService->recordUnblock(
+                $user,
+                $blockedUserModel,
+                'per_agent',
+                $unblockAgentId,
+            );
+        }
 
         return response()->json(['message' => 'User unblocked.']);
     }

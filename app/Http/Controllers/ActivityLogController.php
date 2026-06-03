@@ -35,6 +35,11 @@ class ActivityLogController extends Controller
         // try/catch blocks around every Mail::send call site via
         // AuditMailService::recordFailure().
         'mailer',
+        // Security-relevant events that aren't model mutations:
+        // rate_limit_hit (daily cap exceeded), user_blocked /
+        // user_unblocked (block lifecycle). Written by
+        // AuditSecurityService.
+        'security',
     ];
 
     /**
