@@ -1300,6 +1300,12 @@ class ListingController extends Controller
      * soft-deleted) listing. The migration emptied these to [] and kept no
      * copy, so the admin pastes the originals back in. The listing STAYS
      * soft-deleted/removed — this only writes the arrays.
+     *
+     * With `redownload=1`, every pasted URL is fetched and re-hosted through
+     * the ImageUploadController pipeline (new bucket, WebP ≤ 50 KB). Each
+     * unique source is uploaded once and the same old→new mapping is applied
+     * to both featured_photo and property.photos, so shared images stay
+     * consistent. Dead/unreachable URLs are dropped.
      */
     public function updateRemovedPhotos(Request $request, $id)
     {
@@ -1311,21 +1317,52 @@ class ListingController extends Controller
             'featured_photo.*' => 'string',
             'photos'           => 'nullable|array',
             'photos.*'         => 'string',
+            'redownload'       => 'sometimes|boolean',
         ]);
 
         $clean = fn (array $urls) => array_values(array_filter(
-            $urls,
-            fn ($u) => is_string($u) && trim($u) !== '',
+            array_map(fn ($u) => is_string($u) ? trim($u) : $u, $urls),
+            fn ($u) => is_string($u) && $u !== '',
         ));
 
-        DB::transaction(function () use ($listing, $data, $clean) {
-            $listing->featured_photo = $clean($data['featured_photo'] ?? []);
+        $featuredIn = $clean($data['featured_photo'] ?? []);
+        $photosIn   = $clean($data['photos'] ?? []);
+        $redownload = filter_var($request->input('redownload'), FILTER_VALIDATE_BOOLEAN);
+
+        $failed = [];
+        if ($redownload) {
+            $uploader = app(RemovedPhotoUploadController::class);
+            $map = []; // sourceUrl => newUrl|null
+            foreach (array_values(array_unique(array_merge($featuredIn, $photosIn))) as $url) {
+                try {
+                    // Flat output: filipinohomes-new/{uuid}.webp
+                    $map[$url] = $uploader->uploadFromUrl($url, "/filipinohomes-new");
+                } catch (\Throwable $e) {
+                    $map[$url] = null;
+                    $failed[]  = $url;
+                    Log::warning('removed-photos redownload failed', [
+                        'listing_id' => $listing->id, 'url' => $url, 'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+            $applyMap = fn (array $urls) => array_values(array_filter(
+                array_map(fn ($u) => $map[$u] ?? null, $urls),
+            ));
+            $featuredOut = $applyMap($featuredIn);
+            $photosOut   = $applyMap($photosIn);
+        } else {
+            $featuredOut = $featuredIn;
+            $photosOut   = $photosIn;
+        }
+
+        DB::transaction(function () use ($listing, $data, $featuredOut, $photosOut) {
+            $listing->featured_photo = $featuredOut;
             $listing->saveQuietly();
 
             if (array_key_exists('photos', $data)) {
                 $property = $listing->property()->withTrashed()->first();
                 if ($property) {
-                    $property->photos = $clean($data['photos'] ?? []);
+                    $property->photos = $photosOut;
                     $property->saveQuietly();
                 }
             }
@@ -1334,9 +1371,12 @@ class ListingController extends Controller
         $listing->load(['property' => fn ($q) => $q->withTrashed()]);
 
         return response()->json([
-            'message'        => 'Photos saved.',
+            'message'        => $redownload
+                ? sprintf('Re-hosted %d photo(s)%s.', count($featuredOut) + count($photosOut), $failed ? ', ' . count($failed) . ' failed' : '')
+                : 'Photos saved.',
             'featured_photo' => $listing->featured_photo,
             'photos'         => optional($listing->property)->photos,
+            'failed'         => $failed,
         ]);
     }
 

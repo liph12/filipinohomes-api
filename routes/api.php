@@ -13,6 +13,7 @@ use App\Http\Controllers\{
     ProjectController,
     AmenityController,
     ImageUploadController,
+    RemovedPhotoUploadController,
     BlogCategoryController,
     PostController,
     GenerateDescriptionController,
@@ -243,6 +244,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);
+            // Re-host a recovered photo from a remote URL (or file). Separate
+            // from /upload so the public uploader stays untouched.
+            Route::post('/upload-from-url', [RemovedPhotoUploadController::class, 'upload']);
             // ATS-specific upload: preserves originals ≤5MB, compresses
             // larger files to JPEG ≤5MB without downscaling.
             Route::post('/upload-ats', [ImageUploadController::class, 'uploadAts']);
