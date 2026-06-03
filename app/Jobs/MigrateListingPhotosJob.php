@@ -387,6 +387,23 @@ class MigrateListingPhotosJob implements ShouldQueue
     {
         foreach (self::OLD_BUCKET_HOSTS as $marker) {
             if (str_contains($url, $marker)) {
+                // Plain HTTP GET of the full legacy URL FIRST. Legacy URLs often
+                // contain a double slash (members//listings) that Flysystem
+                // normalizes away, so the s3_new disk key no longer matches and
+                // size()/get() throw — which previously dropped the URL and
+                // mass-blanked listings. Public GET still works.
+                try {
+                    $resp = Http::timeout(30)->retry(2, 1000)->get($url);
+                    if ($resp->ok()) {
+                        $body = $resp->body();
+                        if (strlen($body) > 0) {
+                            return $body;
+                        }
+                    }
+                } catch (Throwable $e) {
+                    // fall through to the s3_new disk-by-key path
+                }
+
                 $key = $this->extractOldKey($url, $marker);
                 if ($key === null) {
                     $this->say($cmd, "  skip s3 url={$url} (could not derive key)");
