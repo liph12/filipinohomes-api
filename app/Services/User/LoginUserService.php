@@ -5,6 +5,7 @@ namespace App\Services\User;
 use App\Models\User;
 use App\Models\LoginLog;
 use App\Support\DeviceLabel;
+use App\Support\TokenIssuer;
 use Illuminate\Support\Facades\Hash;
 
 class LoginUserService
@@ -28,7 +29,7 @@ class LoginUserService
         // independently (per-device logout). Do NOT reuse a cached token.
         // The token name labels the session in the user's "active devices" list.
         $label = $deviceName ?: DeviceLabel::fromUserAgent($userAgent);
-        $token = $user->createToken($label)->plainTextToken;
+        $token = TokenIssuer::issue($user, $label, $ipAddress);
 
         LoginLog::create([
             'user_id'     => $user->id,

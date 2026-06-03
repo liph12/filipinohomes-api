@@ -8,7 +8,7 @@ use App\Models\LoginLog;
 use App\Models\User;
 use App\Services\Auth\GoogleTokenService;
 use App\Services\LeuterioreRealty\LrApiService;
-use App\Support\DeviceLabel;
+use App\Support\TokenIssuer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -137,7 +137,7 @@ class GoogleAuthController extends Controller
     {
         // One token per login → each device can be logged out independently.
         // The token name labels the session in the user's "active devices" list.
-        return $user->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
+        return TokenIssuer::fromRequest($user, $request);
     }
 
     private function recordLogin(User $user, Request $request): void

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\DeviceToken;
+use App\Support\GeoLocation;
 use Illuminate\Http\Request;
 
 class SessionController extends Controller
@@ -24,6 +25,8 @@ class SessionController extends Controller
             ->map(fn ($token) => [
                 'id'           => $token->id,
                 'name'         => $token->name,
+                'ip_address'   => $token->ip_address,
+                'location'     => GeoLocation::resolve($token->ip_address),
                 'last_used_at' => $token->last_used_at,
                 'created_at'   => $token->created_at,
                 'current'      => $token->id === $currentId,

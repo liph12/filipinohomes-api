@@ -7,6 +7,7 @@ use App\Models\LoginLog;
 use App\Models\User;
 use App\Models\DeviceToken;
 use App\Support\DeviceLabel;
+use App\Support\TokenIssuer;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
@@ -343,7 +344,7 @@ class UserController extends Controller
 
         // One token per login → each device can be logged out independently.
         // The token name labels the session in the user's "active devices" list.
-        $token = $verified->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
+        $token = TokenIssuer::fromRequest($verified, $request);
 
         $verified->verification = 'verified';
         $verified->email_verified_at = now();
@@ -623,7 +624,7 @@ class UserController extends Controller
 
         // One token per login → each device can be logged out independently.
         // The token name labels the session in the user's "active devices" list.
-        $token = $verified->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
+        $token = TokenIssuer::fromRequest($verified, $request);
 
         $verified->verification = "verified";
         $verified->save();
@@ -678,7 +679,7 @@ class UserController extends Controller
         );
 
         // One token per login → each device can be logged out independently.
-        $token = $user->createToken(DeviceLabel::fromRequest($request))->plainTextToken;
+        $token = TokenIssuer::fromRequest($user, $request);
 
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($user);
