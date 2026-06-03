@@ -24,6 +24,10 @@ class AgentResource extends JsonResource
                              ?: $user?->name
                              ?: 'Guest User',
             'avatar'       => $this->avatar ?? $user?->avatar,
+            'email'        => $user?->email,
+            'lr_email'     => $this->lr_email,
+            'birthdate'    => $this->birthdate,
+            'gender'       => $this->gender,
             'mobile_no'    => $this->mobile_no ?? $user?->mobile_no,
             'whats_app_no' => $this->whats_app_no,
             'address'      => $this->address,

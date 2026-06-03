@@ -27,12 +27,16 @@ class Agent extends Model implements Auditable
         'member_since',
         'user_id',
         'status',
+        'lr_email',
+        'birthdate',
+        'gender',
     ];
 
     protected $casts = [
         'socials' => 'array',
         'avatar' => 'array',
         'geo_location' => 'array',
+        'birthdate' => 'date',
         'response_metrics_updated_at' => 'datetime',
         'within_1h_response_pct' => 'float',
         'unanswered_response_pct' => 'float',
