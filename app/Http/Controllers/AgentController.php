@@ -592,6 +592,8 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             'bio'               => 'nullable|string',
             'avatar'            => 'nullable|string|url',
             'geo_location'      => 'nullable|array:lat,lng',
+            'birthdate'         => 'nullable|date',
+            'gender'            => 'nullable|string|in:male,female',
             'user_id'           => 'nullable|exists:users,id', // ← admin can pass a target user
         ]);
 
