@@ -322,6 +322,12 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('conversations/{conversation}/reject', [ConversationController::class, 'reject']);
             Route::post('conversations/{conversation}/close', [ConversationController::class, 'close']);
             Route::post('conversations/{conversation}/reopen', [ConversationController::class, 'reopen']);
+            // Bulk Accept / Reject for moderators. Per-conversation
+            // authorization happens inside the controller so a TL
+            // submitting a chat outside their team is reported in
+            // the response's `skipped` array, not blanket-403 for
+            // the whole batch.
+            Route::post('conversations/bulk-action', [ConversationController::class, 'bulkAction']);
             // Per-participant archive + trash + permanent delete. State
             // machine lives on the conversation_users pivot; see
             // ChatController::mutateViewerPivot. `purge` is the only

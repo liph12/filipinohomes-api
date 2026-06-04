@@ -66,16 +66,57 @@ class ConversationController extends Controller
     public function accept(Conversation $conversation)
     {
         $this->authorize('moderate', $conversation);
-        $message = $conversation->latestMessage->body;
+
+        if ($conversation->status !== 'pending') {
+            return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
+        }
+
+        $this->applyAccept($conversation, Auth::user());
+
+        return new ConversationResource($conversation->fresh([
+            'latestMessage.user', 'users', 'reviewedBy',
+        ]));
+    }
+
+    public function reject(Conversation $conversation)
+    {
+        $this->authorize('moderate', $conversation);
+
+        if ($conversation->status !== 'pending') {
+            return response()->json(['message' => 'Only pending conversations can be rejected.'], 422);
+        }
+
+        $this->applyReject($conversation, Auth::user());
+
+        return new ConversationResource($conversation->fresh([
+            'latestMessage.user', 'users', 'reviewedBy',
+        ]));
+    }
+
+    /**
+     * Per-conversation accept logic — shared between the single-row
+     * accept() endpoint and the bulkAction() endpoint. Caller is
+     * responsible for authorization + the status === 'pending' check;
+     * this helper assumes both have already passed.
+     *
+     * Side effects: updates conversation status, attaches the agent
+     * to conversation_users so they see the full message history,
+     * and dispatches the acceptance email (with try/catch so a
+     * failing transport never 500s the caller — the DB commit
+     * already succeeded by the time we attempt the send).
+     */
+    private function applyAccept(Conversation $conversation, $user): void
+    {
+        $message = $conversation->latestMessage?->body;
         $agent = $conversation->agentUser;
-        $sender = $conversation->chat->user;
-        // Load the sender's agent profile so the email can surface their
-        // WhatsApp number when they're an agent. Skipped silently for
-        // regular clients (the relation just returns null).
+        $sender = $conversation->chat?->user;
+        // Load the sender's agent profile so the email can surface
+        // their WhatsApp number when they're an agent. Skipped
+        // silently for regular clients (the relation returns null).
         $sender?->loadMissing('agent');
-        $type = $conversation->chat->listing;
-        // Load the relations the email's property card needs so we don't
-        // trigger N+1 queries inside the mailer payload builder.
+        $type = $conversation->chat?->listing;
+        // Load the relations the email's property card needs so we
+        // don't trigger N+1 queries inside the mailer payload builder.
         if ($type) {
             $type->load([
                 'agent',
@@ -84,19 +125,17 @@ class ConversationController extends Controller
                 'property.propertyAttribute.subtype.type',
             ]);
         }
-        // Slug trailer must be the chat_id — the frontend's ListingInquiries
-        // component matches `{slug}-{chat.id}` to find the right inquiry.
-        // Using conversation.id here would render the page with no inquiry
-        // selected (slugError = "invalid").
-        $slug = Str::slug($type->name)."-".$conversation->chat_id;
+        // Slug trailer must be the chat_id — the frontend's
+        // ListingInquiries component matches `{slug}-{chat.id}` to
+        // find the right inquiry. Using conversation.id here would
+        // render the page with no inquiry selected (slugError =
+        // "invalid"). Falls through gracefully when the chat has
+        // no listing (agent-direct chats don't carry a listing).
+        $slug = $type
+            ? Str::slug($type->name) . '-' . $conversation->chat_id
+            : 'chat-' . $conversation->chat_id;
 
-        if ($conversation->status !== 'pending') {
-            return response()->json(['message' => 'Only pending conversations can be accepted.'], 422);
-        }
-
-        $user = Auth::user();
-
-        $listingName = $conversation->chat?->listing?->name;
+        $listingName = $type?->name;
         $conversation->auditSource = 'inquiry_accept';
         $conversation->auditDescription = sprintf(
             '%s accepted the inquiry%s',
@@ -120,24 +159,25 @@ class ConversationController extends Controller
             ]);
         }
 
-        $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
-
-        // Strictly notify the agent. Admins + team leader already saw the
-        // submission email when the client first filed the inquiry (see
-        // ChatController@store → dispatchForSubmission), so a second copy
-        // here would just be inbox noise.
+        // Strictly notify the agent. Admins + team leader already
+        // saw the submission email when the client first filed the
+        // inquiry (see ChatController@store → dispatchForSubmission),
+        // so a second copy here would just be inbox noise.
         //
-        // The acceptance itself is already committed to the DB above —
-        // a failing email transport (SMTP down, disabled mailbox at the
-        // provider, network blip) MUST NOT 500 the controller and make
-        // the moderator think their click didn't work. Log the failure
-        // and return success; the email is a side-effect notification,
-        // not a critical path.
+        // The acceptance itself is already committed above — a
+        // failing email transport MUST NOT 500 the controller. Log
+        // the failure + write an audit row, then return success;
+        // the email is a side-effect notification, not a critical
+        // path. Particularly important for bulkAction() where one
+        // bad email shouldn't take down a batch of 50.
+        if (!$agent || !$sender) {
+            return; // nothing to notify (e.g. agent_user_id was null)
+        }
         try {
             MessageNotificationMailer::dispatchForAcceptance(
                 sender:      $sender,
                 agent:       $agent,
-                message:     $message,
+                message:     $message ?? '',
                 slug:        $slug,
                 listing:     MessageNotificationMailer::buildListingPayload($type),
                 agentUserId: $conversation->agent_user_id,
@@ -159,20 +199,16 @@ class ConversationController extends Controller
                 ],
             );
         }
-
-        return new ConversationResource($conversation);
     }
 
-    public function reject(Conversation $conversation)
+    /**
+     * Per-conversation reject logic — shared between the single-row
+     * reject() endpoint and the bulkAction() endpoint. No email
+     * dispatch on the reject side (clients aren't notified of
+     * rejection by design).
+     */
+    private function applyReject(Conversation $conversation, $user): void
     {
-        $this->authorize('moderate', $conversation);
-
-        if ($conversation->status !== 'pending') {
-            return response()->json(['message' => 'Only pending conversations can be rejected.'], 422);
-        }
-
-        $user = Auth::user();
-
         $listingName = $conversation->chat?->listing?->name;
         $conversation->auditSource = 'inquiry_reject';
         $conversation->auditDescription = sprintf(
@@ -186,10 +222,82 @@ class ConversationController extends Controller
             'reviewed_by' => $user->id,
             'reviewed_at' => now(),
         ]);
+    }
 
-        $conversation->load(['latestMessage.user', 'users', 'reviewedBy']);
+    /**
+     * Moderator-only bulk Accept / Reject endpoint. Validates the
+     * payload, then loops the conversation_ids array applying the
+     * same per-row authorization + status check that the single-row
+     * endpoints do. Each conversation gets its own audit row via
+     * the existing LogsActivity trait — no separate bulk-audit
+     * write needed.
+     *
+     * Returns a per-batch breakdown:
+     *   { accepted: int, rejected: int,
+     *     skipped: [{id, reason: 'not_pending'|'unauthorized'|'not_found'}, ...],
+     *     errors:  [{id, message}, ...] }
+     *
+     * The endpoint NEVER aborts the whole batch — if one item is
+     * unauthorized or non-pending, the others continue. The
+     * frontend surfaces the skipped/errors counts in its toast.
+     */
+    public function bulkAction(Request $request)
+    {
+        $validated = $request->validate([
+            'action' => 'required|in:accept,reject',
+            'conversation_ids' => 'required|array|min:1|max:100',
+            'conversation_ids.*' => 'integer|exists:conversations,id',
+        ]);
 
-        return new ConversationResource($conversation);
+        $action = $validated['action'];
+        $user = Auth::user();
+
+        $results = [
+            'accepted' => 0,
+            'rejected' => 0,
+            'skipped'  => [],
+            'errors'   => [],
+        ];
+
+        foreach ($validated['conversation_ids'] as $convId) {
+            try {
+                $conv = Conversation::find($convId);
+                if (!$conv) {
+                    $results['skipped'][] = ['id' => $convId, 'reason' => 'not_found'];
+                    continue;
+                }
+                // Per-conversation authorization — same Policy gate
+                // the single-row endpoints use. A TL trying to bulk
+                // moderate a chat outside their team lands here as
+                // 'unauthorized' instead of throwing 403.
+                try {
+                    $this->authorize('moderate', $conv);
+                } catch (Throwable $e) {
+                    $results['skipped'][] = ['id' => $convId, 'reason' => 'unauthorized'];
+                    continue;
+                }
+                if ($conv->status !== 'pending') {
+                    $results['skipped'][] = ['id' => $convId, 'reason' => 'not_pending'];
+                    continue;
+                }
+                if ($action === 'accept') {
+                    $this->applyAccept($conv, $user);
+                    $results['accepted']++;
+                } else {
+                    $this->applyReject($conv, $user);
+                    $results['rejected']++;
+                }
+            } catch (Throwable $e) {
+                Log::warning('bulkAction item failed', [
+                    'conversation_id' => $convId,
+                    'action' => $action,
+                    'error' => $e->getMessage(),
+                ]);
+                $results['errors'][] = ['id' => $convId, 'message' => $e->getMessage()];
+            }
+        }
+
+        return response()->json($results);
     }
 
     public function close(Conversation $conversation)
