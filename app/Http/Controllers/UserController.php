@@ -570,12 +570,18 @@ class UserController extends Controller
                         'verification' => 'pending',
                     ]);
 
+                    // They signed in with their LR email, so link it on the new
+                    // agent — unless it's already linked to another agent
+                    // (lr_email is unique), in which case leave it null.
+                    $lrEmailAvailable = !Agent::where('lr_email', $email)->exists();
+
                     Agent::create([
                         'user_id' => $user->id,
                         'first_name' => $nameParts['first_name'],
                         'middle_name' => $nameParts['middle_name'],
                         'last_name' => $nameParts['last_name'],
                         'mobile_no' => $lrData['mobile_no'] ?? null,
+                        'lr_email' => $lrEmailAvailable ? $email : null,
                     ]);
 
                     return $user;
@@ -632,6 +638,13 @@ class UserController extends Controller
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($verified);
 
+        // Backfill blank LR fields (lr_email, birthdate, gender) from LR.
+        // The v2 detail call is slow (~11s), so defer it to run AFTER the
+        // login response is sent — login stays instant; the fields fill a
+        // moment later. Only does anything when a field is still blank.
+        defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
+            ->backfill($verified->loadMissing('agent')));
+
         LoginLog::create([
             'user_id'      => $verified->id,
             'ip_address'   => $request->ip(),
@@ -683,6 +696,10 @@ class UserController extends Controller
 
         // Sync team assignment from LR API if not yet in team_agents
         (new TeamSyncService())->syncForUser($user);
+
+        // Backfill blank LR fields (lr_email, birthdate, gender) after response.
+        defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
+            ->backfill($user->loadMissing('agent')));
 
         LoginLog::create([
             'user_id'      => $user->id,

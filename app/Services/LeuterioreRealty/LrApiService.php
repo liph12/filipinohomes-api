@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Http;
 class LrApiService
 {
     private const BASE_URL = 'https://api.leuteriorealty.com/lr/v1/public/api/agent';
+    // v2 endpoint exposes richer agent detail (birthday, gender).
+    private const AGENT_DETAIL_URL = 'https://api.leuteriorealty.com/lr/v2/public/api/agents';
 
     // LR roleId → Filipino Homes role_id
     // LR 1 = admin → FH 1 (admin)
@@ -34,6 +36,23 @@ class LrApiService
 
             return null;
         } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Richer agent detail from the v2 endpoint — includes `birthday` and
+     * `gender` (0 = male, 1 = female). Returns the `data` payload or null.
+     */
+    public function agentDetail(string $email): ?array
+    {
+        try {
+            // The v2 detail payload is large and routinely takes ~11s, so the
+            // usual 10s timeout silently fails. Give it generous headroom.
+            $res = Http::timeout(30)->acceptJson()
+                ->get(self::AGENT_DETAIL_URL . '/' . urlencode(strtolower(trim($email))));
+            return $res->successful() ? $res->json('data') : null;
+        } catch (\Throwable $e) {
             return null;
         }
     }
