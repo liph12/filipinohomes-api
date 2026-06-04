@@ -404,11 +404,10 @@ class ListingController extends Controller
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
-        // Removed view sorts by verification_status then audited_at; everything
-        // else by newest first.
+        // Removed view sorts by audited_at newest→oldest; everything else by
+        // newest created first.
         if ($removed) {
-            $query->orderBy('listings.verification_status')
-                  ->orderBy('listings.audited_at');
+            $query->orderByDesc('listings.audited_at');
         } else {
             $query->orderBy('created_at', 'desc');
         }
@@ -644,11 +643,10 @@ class ListingController extends Controller
 
         $totalViews = (int) (clone $query)->sum('clicks');
 
-        // Removed view sorts by verification_status then audited_at; everything
-        // else by newest first.
+        // Removed view sorts by audited_at newest→oldest; everything else by
+        // newest created first.
         if ($removed) {
-            $query->orderBy('listings.verification_status')
-                  ->orderBy('listings.audited_at');
+            $query->orderByDesc('listings.audited_at');
         } else {
             $query->orderBy('created_at', 'desc');
         }
