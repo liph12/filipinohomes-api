@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Mail\EmailChangeOtpMailer;
+use App\Models\Agent;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -20,6 +22,36 @@ class EmailChangeController extends Controller
         $otp = Str::upper(Str::random(6));
         Mail::to($sendTo)->send(new EmailChangeOtpMailer($sendTo, $otp, $name));
         Cache::put($key, ['otp' => $otp] + $payload, now()->addMinutes(self::OTP_TTL));
+    }
+
+    /**
+     * Ensure an lr_email isn't already taken — by another agent's lr_email, or
+     * by any user's primary login email (login accepts both, so a collision
+     * would make the identifier ambiguous). If it already belongs to the
+     * current account, say so with a clearer message.
+     */
+    private function assertLrEmailAvailable(string $lrEmail, User $user): void
+    {
+        $agent = $user->agent;
+
+        // Already belongs to THIS account.
+        if ($agent && strtolower(trim((string) $agent->lr_email)) === $lrEmail) {
+            abort(422, 'This email is already linked to your account.');
+        }
+        if (strtolower(trim((string) $user->email)) === $lrEmail) {
+            abort(422, 'This email is already your account email.');
+        }
+
+        // Taken by someone else.
+        $takenByAgent = Agent::where('lr_email', $lrEmail)
+            ->when($agent, fn ($q) => $q->where('id', '!=', $agent->id))
+            ->exists();
+        abort_if($takenByAgent, 422, 'This Leuterio Realty email is already linked to another account.');
+
+        $takenByUser = User::where('email', $lrEmail)
+            ->where('id', '!=', $user->id)
+            ->exists();
+        abort_if($takenByUser, 422, 'This email is already used by another account.');
     }
 
     private function verifyOtp(string $key, string $otp): array
@@ -68,6 +100,7 @@ class EmailChangeController extends Controller
         $lr = $this->lrSignIn($data['lr_email'], $data['lr_password']);
         abort_if(!$lr, 422, 'Invalid Leuterio Realty credentials. Please check your email and password.');
         $lrEmail = strtolower(trim($lr['email'] ?? $data['lr_email']));
+        $this->assertLrEmailAvailable($lrEmail, $user);
         $detail = $this->lrAgentDetail($lrEmail) ?? [];
         $birthday = trim((string) ($detail['birthday'] ?? ''));
         $this->startChange("lr_email_change_{$user->id}", $lrEmail, $user->name, [
@@ -85,6 +118,9 @@ class EmailChangeController extends Controller
         $user = $request->user();
         abort_unless($user->agent, 403, 'Agent profile not found.');
         $pending = $this->verifyOtp("lr_email_change_{$user->id}", $otp);
+        // Re-check at confirm time — someone may have claimed it during the
+        // OTP window, and lr_email is now a unique login identifier.
+        $this->assertLrEmailAvailable($pending['lr_email'], $user);
         $user->agent->update([
             'lr_email'  => $pending['lr_email'],
             'birthdate' => $pending['birthdate'],
