@@ -27,7 +27,7 @@ class SendMessageNotification implements ShouldQueue
 
     public function handle(): void
     {
-        $conversation = Conversation::with(['chat.user', 'chat.listing', 'users'])->find($this->conversationId);
+        $conversation = Conversation::with(['chat.user', 'chat.listing', 'users.role'])->find($this->conversationId);
         $message = Message::find($this->messageId);
 
         if (! $conversation || ! $message) {
@@ -46,7 +46,95 @@ class SendMessageNotification implements ShouldQueue
         $clientUserId = $conversation->chat->user_id;
         $isClientSending = $this->senderId === $clientUserId;
 
-        // Determine the recipient
+        // ── PUSH recipients ──────────────────────────────────────────
+        // Push fires in real time on every message. We notify every app
+        // user (agent/admin) who is part of the thread except the sender,
+        // NOT just the listing's assigned agent. This is what lets an
+        // admin / team leader moderating a conversation receive a push when
+        // the client replies — they're attached as a participant the moment
+        // they send their first message (see MessageController::store), so
+        // they show up here on every subsequent client message.
+        $pushRecipients = collect();
+        if ($isClientSending) {
+            foreach ($conversation->users as $participant) {
+                if ($participant->id === $this->senderId || $participant->id === $clientUserId) {
+                    continue;
+                }
+                $pushRecipients->push($participant);
+            }
+            // The assigned agent is attached to the thread on accept, but
+            // include them defensively (accepted threads only — pending
+            // listing leads are still handled by the submission/accept
+            // emails, not a per-message push to an agent who hasn't joined).
+            if ($isListing
+                && $conversation->status === 'accepted'
+                && $conversation->agent_user_id
+                && ! $pushRecipients->contains('id', $conversation->agent_user_id)) {
+                if ($agentUser = User::with('role')->find($conversation->agent_user_id)) {
+                    $pushRecipients->push($agentUser);
+                }
+            }
+        } elseif ($conversation->chat->user) {
+            // Agent/admin replying → notify the client.
+            $pushRecipients->push($conversation->chat->user);
+        }
+
+        $pushRecipients = $pushRecipients
+            ->filter(fn ($u) => $u && $u->id !== $this->senderId)
+            ->unique('id')
+            ->values();
+
+        if ($pushRecipients->isNotEmpty()) {
+            $chat = $conversation->chat;
+            $isDirect = $chat->type !== 'listing';
+            $senderName = $sender->name ?? 'New message';
+            $preview = $message->body ? Str::limit($message->body, 120) : 'Sent an attachment';
+
+            // Rich, data-only payload the mobile app renders with Notifee
+            // (Messenger-style). 'type'/'id' stay for deep-link routing.
+            // Recipient-independent, so build once and reuse per device.
+            $payload = [
+                'type' => 'inquiry',
+                'id' => $conversation->chat_id,
+                'conversation_id' => $conversation->id,
+                'thread_key' => 'conv-'.$conversation->id,
+                'sender_name' => $senderName,
+                'sender_avatar' => $sender->avatar,
+                're_label' => $isDirect ? null : ($chat->listing->name ?? null),
+                'is_direct' => $isDirect,
+                'message_id' => $message->id,
+                'body' => $message->body,
+                'message_type' => $message->type,
+                'has_attachment' => ! empty($message->attachments),
+                'sent_at' => optional($message->created_at)->toIso8601String(),
+            ];
+
+            foreach ($pushRecipients as $pushRecipient) {
+                // Only app users (agents/admins) have device tokens + an
+                // in-app feed; the mobile inquiry route is keyed on chat_id.
+                $roleName = $pushRecipient->role?->name ?? 'client';
+                if (! in_array($roleName, ['agent', 'admin'], true)) {
+                    continue;
+                }
+                try {
+                    app(ExpoPushService::class)->notifyMessage(
+                        $pushRecipient,
+                        $senderName,
+                        $preview,
+                        $payload,
+                    );
+                } catch (\Throwable $e) {
+                    Log::warning('Push notify (message) failed', [
+                        'conversation_id' => $conversation->id,
+                        'recipient_id' => $pushRecipient->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        // ── EMAIL recipient (throttled channel — unchanged targeting) ──
+        // Determine the single primary recipient for the email path.
         if ($isClientSending) {
             // Client is sending → notify the other participant(s)
             if ($isListing) {
@@ -72,48 +160,6 @@ class SendMessageNotification implements ShouldQueue
         // Don't email yourself
         if ($recipient->id === $this->senderId) {
             return;
-        }
-
-        // Push notification fires on EVERY new message (real-time), unlike the
-        // email below which is throttled to the first message / 24h re-notify.
-        // Only app users (agents/admins) have device tokens + an in-app feed;
-        // the mobile inquiry route is keyed on chat_id.
-        $recipientRoleName = $recipient->role?->name ?? 'client';
-        if (in_array($recipientRoleName, ['agent', 'admin'], true)) {
-            try {
-                $chat = $conversation->chat;
-                $isDirect = $chat->type !== 'listing';
-                $senderName = $sender->name ?? 'New message';
-                $preview = $message->body ? Str::limit($message->body, 120) : 'Sent an attachment';
-
-                // Rich, data-only payload the mobile app renders with Notifee
-                // (Messenger-style). 'type'/'id' stay for deep-link routing.
-                app(ExpoPushService::class)->notifyMessage(
-                    $recipient,
-                    $senderName,
-                    $preview,
-                    [
-                        'type' => 'inquiry',
-                        'id' => $conversation->chat_id,
-                        'conversation_id' => $conversation->id,
-                        'thread_key' => 'conv-'.$conversation->id,
-                        'sender_name' => $senderName,
-                        'sender_avatar' => $sender->avatar,
-                        're_label' => $isDirect ? null : ($chat->listing->name ?? null),
-                        'is_direct' => $isDirect,
-                        'message_id' => $message->id,
-                        'body' => $message->body,
-                        'message_type' => $message->type,
-                        'has_attachment' => ! empty($message->attachments),
-                        'sent_at' => optional($message->created_at)->toIso8601String(),
-                    ],
-                );
-            } catch (\Throwable $e) {
-                Log::warning('Push notify (message) failed', [
-                    'conversation_id' => $conversation->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
         }
 
         // Send email if:

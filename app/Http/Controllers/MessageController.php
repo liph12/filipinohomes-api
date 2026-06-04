@@ -120,9 +120,13 @@ class MessageController extends Controller
         // Touch the parent chat so it sorts to the top of the list
         $conversation->chat->touch();
 
-        // Update sender's last_read_at so online presence reflects activity
-        $conversation->users()->updateExistingPivot(Auth::id(), [
-            'last_read_at' => Carbon::now(),
+        // Update sender's last_read_at so online presence reflects activity.
+        // syncWithoutDetaching (not updateExistingPivot) so a moderating
+        // admin/TL who sends into a thread they don't yet belong to gets
+        // attached as a participant — that's what lets them receive push
+        // notifications on the client's subsequent replies.
+        $conversation->users()->syncWithoutDetaching([
+            Auth::id() => ['last_read_at' => Carbon::now()],
         ]);
 
         // A new message resurfaces an archived thread: clear archived_at for
