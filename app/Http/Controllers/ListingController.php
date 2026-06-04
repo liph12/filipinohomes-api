@@ -631,6 +631,9 @@ class ListingController extends Controller
         $query = $applySubtypes($query);
         $query = $applyVerification($query);
         // Date-from filter (audit queue: April 2026+)
+        if ($dateTo = $request->input('date_to')) {
+            $query->where('listings.created_at', '<=', $dateTo . ' 23:59:59');
+        }
         if ($dateFrom = $request->input('date_from')) {
             $query->where('listings.created_at', '>=', $dateFrom . ' 00:00:00');
         }
