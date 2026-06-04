@@ -6,11 +6,13 @@ use App\Mail\MessageNotificationMailer;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\ExpoPushService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class SendMessageNotification implements ShouldQueue
@@ -28,14 +30,14 @@ class SendMessageNotification implements ShouldQueue
         $conversation = Conversation::with(['chat.user', 'chat.listing', 'users'])->find($this->conversationId);
         $message = Message::find($this->messageId);
 
-        if (!$conversation || !$message) {
+        if (! $conversation || ! $message) {
             return;
         }
 
         // Eager-load the agent profile so the mailer can read
         // $sender->agent?->whats_app_no when the sender is an agent.
         $sender = User::with('agent')->find($this->senderId);
-        if (!$sender) {
+        if (! $sender) {
             return;
         }
 
@@ -50,7 +52,7 @@ class SendMessageNotification implements ShouldQueue
             if ($isListing) {
                 // For listing inquiries, the agent gets notified via ConversationController::accept
                 // Only send here if the conversation is already accepted (agent already in conversation)
-                if ($conversation->status !== 'accepted' || !$conversation->agent_user_id) {
+                if ($conversation->status !== 'accepted' || ! $conversation->agent_user_id) {
                     return;
                 }
                 $recipient = User::find($conversation->agent_user_id);
@@ -63,7 +65,7 @@ class SendMessageNotification implements ShouldQueue
             $recipient = $conversation->chat->user;
         }
 
-        if (!$recipient) {
+        if (! $recipient) {
             return;
         }
 
@@ -79,17 +81,37 @@ class SendMessageNotification implements ShouldQueue
         $recipientRoleName = $recipient->role?->name ?? 'client';
         if (in_array($recipientRoleName, ['agent', 'admin'], true)) {
             try {
-                app(\App\Services\ExpoPushService::class)->notify(
+                $chat = $conversation->chat;
+                $isDirect = $chat->type !== 'listing';
+                $senderName = $sender->name ?? 'New message';
+                $preview = $message->body ? Str::limit($message->body, 120) : 'Sent an attachment';
+
+                // Rich, data-only payload the mobile app renders with Notifee
+                // (Messenger-style). 'type'/'id' stay for deep-link routing.
+                app(ExpoPushService::class)->notifyMessage(
                     $recipient,
-                    'inquiry',
-                    $sender->name ?? 'New message',
-                    $message->body ? Str::limit($message->body, 120) : 'Sent an attachment',
-                    ['type' => 'inquiry', 'id' => $conversation->chat_id],
+                    $senderName,
+                    $preview,
+                    [
+                        'type' => 'inquiry',
+                        'id' => $conversation->chat_id,
+                        'conversation_id' => $conversation->id,
+                        'thread_key' => 'conv-'.$conversation->id,
+                        'sender_name' => $senderName,
+                        'sender_avatar' => $sender->avatar,
+                        're_label' => $isDirect ? null : ($chat->listing->name ?? null),
+                        'is_direct' => $isDirect,
+                        'message_id' => $message->id,
+                        'body' => $message->body,
+                        'message_type' => $message->type,
+                        'has_attachment' => ! empty($message->attachments),
+                        'sent_at' => optional($message->created_at)->toIso8601String(),
+                    ],
                 );
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('Push notify (message) failed', [
+                Log::warning('Push notify (message) failed', [
                     'conversation_id' => $conversation->id,
-                    'error'           => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
@@ -108,7 +130,7 @@ class SendMessageNotification implements ShouldQueue
                 ->latest('created_at')
                 ->first();
 
-            if (!$lastMessage || $lastMessage->created_at->gt(now()->subHours(24))) {
+            if (! $lastMessage || $lastMessage->created_at->gt(now()->subHours(24))) {
                 return; // Last message within 24h — skip notification
             }
         }
@@ -116,8 +138,8 @@ class SendMessageNotification implements ShouldQueue
         // Build slug for the email link
         $listing = $conversation->chat->listing;
         $slug = $listing
-            ? Str::slug($listing->name) . '-' . $conversation->chat_id
-            : 'chat-' . $conversation->chat_id;
+            ? Str::slug($listing->name).'-'.$conversation->chat_id
+            : 'chat-'.$conversation->chat_id;
 
         // Load the relations the email's property card needs (category,
         // location chain, property type/subtype). Direct messages without a
