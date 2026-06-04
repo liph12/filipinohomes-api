@@ -792,6 +792,104 @@ class ListingController extends Controller
         return response()->json($statistics);
     }
 
+    /**
+     * Demographics (gender + age brackets) of agents who closed at least one
+     * transaction (property sold/rented/leased) within the selected period —
+     * keyed off properties.status_change_date. Admin sees all agents; an agent
+     * sees only themselves. Each agent is counted once (by their own gender /
+     * age), not per transaction.
+     */
+    public function dashboardAgentDemographics(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'date_start'  => 'nullable|date',
+            'date_end'    => 'nullable|date|after_or_equal:date_start',
+            'granularity' => 'nullable|in:day,month,year', // accepted for parity with other charts
+        ]);
+
+        $user    = $request->user();
+        $isAdmin = $user->role->name === 'admin';
+        $start   = $validated['date_start'] ?? now()->startOfYear()->toDateString();
+        $end     = $validated['date_end']   ?? now()->toDateString();
+
+        // Distinct agents with ≥1 transaction in the period.
+        $agentIds = Listing::query()
+            ->whereHas('property', function ($q) use ($start, $end) {
+                $q->whereIn('status', ['sold', 'rented', 'leased'])
+                  ->whereNotNull('status_change_date')
+                  ->whereBetween('status_change_date', [$start . ' 00:00:00', $end . ' 23:59:59']);
+            })
+            ->when(!$isAdmin, fn ($q) => $q->where('agent_id', optional($user->agent)->id))
+            ->distinct()
+            ->pluck('agent_id')
+            ->filter()
+            ->all();
+
+        $agents = \App\Models\Agent::whereIn('id', $agentIds)->get(['id', 'gender', 'birthdate']);
+
+        $gender = ['male' => 0, 'female' => 0, 'unknown' => 0];
+        $age    = ['18-24' => 0, '25-34' => 0, '35-44' => 0, '45-54' => 0, '55+' => 0, 'unknown' => 0];
+        $withGender  = 0;
+        $withAge     = 0;
+        $ageSum      = 0;
+        $ageByGender = []; // exactAge => ['male' => n, 'female' => n]
+
+        foreach ($agents as $a) {
+            $g = in_array($a->gender, ['male', 'female'], true) ? $a->gender : 'unknown';
+            $gender[$g]++;
+            if ($g !== 'unknown') $withGender++;
+
+            if ($a->birthdate) {
+                $yrs = $a->birthdate->age;
+                $bracket = $yrs < 25 ? '18-24'
+                    : ($yrs < 35 ? '25-34'
+                    : ($yrs < 45 ? '35-44'
+                    : ($yrs < 55 ? '45-54' : '55+')));
+                $age[$bracket]++;
+                $withAge++;
+                $ageSum += $yrs;
+
+                // Per-exact-age tally by gender. An agent with a birthdate
+                // always has a gender too (both fill together on login), so
+                // only male/female ever occur here.
+                if ($g !== 'unknown') {
+                    if (!isset($ageByGender[$yrs])) {
+                        $ageByGender[$yrs] = ['male' => 0, 'female' => 0];
+                    }
+                    $ageByGender[$yrs][$g]++;
+                }
+            } else {
+                $age['unknown']++;
+            }
+        }
+
+        $avgAge = $withAge > 0 ? (int) round($ageSum / $withAge) : null;
+
+        ksort($ageByGender);
+        $ageRows = [];
+        foreach ($ageByGender as $yrs => $c) {
+            $ageRows[] = ['age' => $yrs, 'male' => $c['male'], 'female' => $c['female']];
+        }
+
+        $toSeries = fn (array $map) => collect($map)
+            ->map(fn ($v, $k) => ['label' => $k, 'value' => $v])
+            ->values()
+            ->all();
+
+        return response()->json([
+            'gender'        => $toSeries($gender),
+            'age'           => $toSeries($age),
+            'age_by_gender' => $ageRows,
+            'totals' => [
+                'agents'      => count($agents),
+                'with_gender' => $withGender,
+                'with_age'    => $withAge,
+                'avg_age'     => $avgAge,
+            ],
+            'meta' => ['from' => $start, 'to' => $end],
+        ]);
+    }
+
     public function dashboardStatusByDate(Request $request): JsonResponse
     {
         $validated = $request->validate([
