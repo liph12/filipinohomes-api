@@ -125,6 +125,19 @@ class MessageController extends Controller
             'last_read_at' => Carbon::now(),
         ]);
 
+        // A new message resurfaces an archived thread: clear archived_at for
+        // every recipient (participants other than the sender) so the chat
+        // returns to their Inbox, matching Messenger. Trashed/purged rows are
+        // left untouched — those are deliberate states a message shouldn't undo.
+        $conversation->users()
+            ->newPivotStatement()
+            ->where('conversation_id', $conversation->id)
+            ->where('user_id', '!=', Auth::id())
+            ->whereNotNull('archived_at')
+            ->whereNull('removed_at')
+            ->whereNull('purged_at')
+            ->update(['archived_at' => null]);
+
         // Dispatch notification job (async, with 30-min cooldown per recipient)
         SendMessageNotification::dispatch(
             $conversation->id,
