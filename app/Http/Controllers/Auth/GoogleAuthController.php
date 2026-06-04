@@ -152,5 +152,9 @@ class GoogleAuthController extends Controller
         // Surface in /admin/activity-logs alongside the LoginLog row.
         app(\App\Services\AuditAuthService::class)
             ->recordLogin($user, 'google', $request);
+
+        // Backfill blank LR fields (lr_email, birthdate, gender) after response.
+        defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
+            ->backfill($user->loadMissing('agent')));
     }
 }
