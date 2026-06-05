@@ -17,6 +17,8 @@ class ExpoPushService
 {
     private const ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
+    private const MESSAGES_CHANNEL = 'messages';
+
     /**
      * Persist an in-app notification row and push to every device the user
      * owns. Non-fatal: a delivery failure logs a warning, it never throws into
@@ -48,10 +50,16 @@ class ExpoPushService
     }
 
     /**
-     * Like notify(), but for chat messages: Android devices receive a
-     * **data-only** push (no title/body) so the app can render a rich
-     * Messenger-style notification on-device with Notifee, while iOS (and any
-     * token with an unknown platform) keeps the standard title/body push.
+     * Like notify(), but for chat messages: sends a standard title/body push
+     * on the dedicated "messages" channel and still carries the rich data
+     * payload (thread_key, sender_avatar, re_label…) so the app can upgrade it
+     * to a Messenger-style notification in the foreground via Notifee.
+     *
+     * We deliberately do NOT send a data-only push to Android: that relies on
+     * the app waking in the background to render the notification itself, which
+     * Android (especially battery-restricted OEM ROMs) does unreliably — the
+     * result was no notification at all while backgrounded/locked. A normal
+     * title/body push is drawn by the OS, so it always arrives.
      * The in-app feed row is recorded once, exactly like notify().
      *
      * @param  array<string,mixed>  $data  Rich payload incl. thread_key, sender_name, sender_avatar, re_label, body…
@@ -66,21 +74,12 @@ class ExpoPushService
             'data' => $data,
         ]);
 
-        $tokens = DeviceToken::where('user_id', $user->id)->get(['expo_token', 'platform']);
-        if ($tokens->isEmpty()) {
+        $tokens = DeviceToken::where('user_id', $user->id)->pluck('expo_token')->all();
+        if (empty($tokens)) {
             return;
         }
 
-        $android = $tokens->filter(fn ($t) => $t->platform === 'android')->pluck('expo_token')->all();
-        // NULL/legacy platforms fall back to the plain push (works everywhere).
-        $plain = $tokens->reject(fn ($t) => $t->platform === 'android')->pluck('expo_token')->all();
-
-        if (! empty($android)) {
-            $this->sendDataOnly($android, $data);
-        }
-        if (! empty($plain)) {
-            $this->send($plain, $title, $body, $data);
-        }
+        $this->send($tokens, $title, $body, $data, self::MESSAGES_CHANNEL);
     }
 
     /**
@@ -90,7 +89,7 @@ class ExpoPushService
      * @param  list<string>  $tokens
      * @param  array<string,mixed>  $data
      */
-    private function send(array $tokens, string $title, string $body, array $data): void
+    private function send(array $tokens, string $title, string $body, array $data, string $channelId = 'default'): void
     {
         foreach (array_chunk($tokens, 100) as $chunk) {
             $messages = array_map(fn ($token) => [
@@ -103,30 +102,7 @@ class ExpoPushService
                 // immediately instead of deferring under Doze/battery saver
                 // until the app is next opened.
                 'priority' => 'high',
-                'channelId' => 'default',
-            ], $chunk);
-
-            $this->postMessages($messages, $chunk);
-        }
-    }
-
-    /**
-     * Data-only variant: omit title/body so FCM delivers a data message that
-     * wakes the app's background task; the app renders the notification itself.
-     * Uses the dedicated "messages" channel.
-     *
-     * @param  list<string>  $tokens
-     * @param  array<string,mixed>  $data
-     */
-    private function sendDataOnly(array $tokens, array $data): void
-    {
-        foreach (array_chunk($tokens, 100) as $chunk) {
-            $messages = array_map(fn ($token) => [
-                'to' => $token,
-                'data' => $data,
-                'priority' => 'high',
-                'channelId' => 'messages',
-                '_contentAvailable' => true,
+                'channelId' => $channelId,
             ], $chunk);
 
             $this->postMessages($messages, $chunk);
