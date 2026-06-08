@@ -12,6 +12,9 @@ class DeviceToken extends Model
         'personal_access_token_id',
         'expo_token',
         'platform',
+        'os_version',
+        'device_model',
+        'app_version',
         'last_used_at',
     ];
 

@@ -11,6 +11,7 @@ class AppNotification extends Model
 
     protected $fillable = [
         'user_id',
+        'announcement_id',
         'type',
         'title',
         'body',
@@ -26,5 +27,10 @@ class AppNotification extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function announcement(): BelongsTo
+    {
+        return $this->belongsTo(Announcement::class);
     }
 }

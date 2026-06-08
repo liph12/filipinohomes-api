@@ -16,8 +16,11 @@ class DeviceTokenController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'expo_token' => 'required|string|max:255',
-            'platform'   => 'nullable|string|max:16',
+            'expo_token'   => 'required|string|max:255',
+            'platform'     => 'nullable|string|max:16',
+            'os_version'   => 'nullable|string|max:32',
+            'device_model' => 'nullable|string|max:128',
+            'app_version'  => 'nullable|string|max:32',
         ]);
 
         $token = DeviceToken::updateOrCreate(
@@ -28,6 +31,10 @@ class DeviceTokenController extends Controller
                 // revoking that session also silences this device.
                 'personal_access_token_id'  => $request->user()->currentAccessToken()->id,
                 'platform'                  => $validated['platform'] ?? null,
+                // Device metadata for the broadcast analytics fleet breakdown.
+                'os_version'                => $validated['os_version'] ?? null,
+                'device_model'              => $validated['device_model'] ?? null,
+                'app_version'               => $validated['app_version'] ?? null,
                 'last_used_at'              => now(),
             ],
         );

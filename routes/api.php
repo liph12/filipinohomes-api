@@ -49,6 +49,7 @@ use App\Http\Controllers\{
     ActivityLogController,
     DeviceTokenController,
     NotificationController,
+    AnnouncementController,
     SessionController,
     EmailChangeController,
 };
@@ -290,6 +291,13 @@ Route::middleware('strip.tags')->group(function(){
                 Route::post('/admin/app-versions', [AppVersionController::class, 'store']);
                 Route::patch('/admin/app-versions/{id}', [AppVersionController::class, 'update']);
                 Route::delete('/admin/app-versions/{id}', [AppVersionController::class, 'destroy']);
+
+                // Broadcast push notifications (announcement / maintenance /
+                // custom) to a fleet segment, with per-announcement read +
+                // device analytics.
+                Route::get('/admin/announcements', [AnnouncementController::class, 'index']);
+                Route::post('/admin/announcements', [AnnouncementController::class, 'store']);
+                Route::get('/admin/announcements/{announcement}', [AnnouncementController::class, 'show']);
             });
 
             // Magazine, Office & Ad management (admin + editor only)

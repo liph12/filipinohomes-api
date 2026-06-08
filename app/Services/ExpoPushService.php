@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AppNotification;
 use App\Models\DeviceToken;
 use App\Models\User;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -80,6 +81,55 @@ class ExpoPushService
         }
 
         $this->send($tokens, $title, $body, $data, self::MESSAGES_CHANNEL);
+    }
+
+    /**
+     * Broadcast an admin announcement to many users at once. Fans out one
+     * app_notifications feed row per recipient (tagged with announcement_id so
+     * the analytics screen can count reads), then pushes to every matching
+     * device token. Rows are bulk-inserted, so the data payload is encoded
+     * here rather than going through the model's array cast.
+     *
+     * @param  Collection<int,User>  $users     Recipients (each needs an id).
+     * @param  array<string,mixed>   $data       Push payload (deep-link etc.).
+     * @param  string|null           $platform   Restrict pushes to this platform.
+     * @return int  Number of recipients notified.
+     */
+    public function broadcast(Collection $users, string $kind, string $title, string $body, array $data, int $announcementId, ?string $platform = null): int
+    {
+        if ($users->isEmpty()) {
+            return 0;
+        }
+
+        $now = now();
+        $encodedData = json_encode($data);
+
+        $rows = $users->map(fn ($user) => [
+            'user_id' => $user->id,
+            'announcement_id' => $announcementId,
+            'type' => $kind,
+            'title' => $title,
+            'body' => $body,
+            'data' => $encodedData,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ])->all();
+
+        foreach (array_chunk($rows, 500) as $chunk) {
+            AppNotification::insert($chunk);
+        }
+
+        $tokenQuery = DeviceToken::whereIn('user_id', $users->pluck('id'));
+        if ($platform) {
+            $tokenQuery->where('platform', $platform);
+        }
+        $tokens = $tokenQuery->pluck('expo_token')->all();
+
+        if (! empty($tokens)) {
+            $this->send($tokens, $title, $body, $data);
+        }
+
+        return $users->count();
     }
 
     /**
