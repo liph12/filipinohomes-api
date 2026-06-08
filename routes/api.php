@@ -177,6 +177,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
             Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
 
+            // Recipient-facing announcement detail (broadcast a user received).
+            Route::get('/announcements/{announcement}', [AnnouncementController::class, 'showForRecipient']);
+
             Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
             Route::get('/users/search', [UserController::class, 'searchUsers']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);

@@ -92,6 +92,33 @@ class AnnouncementController extends Controller
     }
 
     /**
+     * Recipient-facing detail for a broadcast the caller actually received.
+     * No analytics; the poster is exposed as `created_by` only so the client
+     * can render the masked "Staff-XXX" identity (admins are never named here).
+     */
+    public function showForRecipient(Request $request, Announcement $announcement)
+    {
+        $received = AppNotification::query()
+            ->where('announcement_id', $announcement->id)
+            ->where('user_id', $request->user()->id)
+            ->exists();
+
+        abort_unless($received, 404);
+
+        return response()->json([
+            'data' => [
+                'id'         => $announcement->id,
+                'kind'       => $announcement->kind,
+                'title'      => $announcement->title,
+                'body'       => $announcement->body,
+                'created_by' => $announcement->created_by,
+                'sent_at'    => optional($announcement->sent_at)->toIso8601String(),
+                'created_at' => optional($announcement->created_at)->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /**
      * Delivery + engagement analytics for one announcement. Reads come straight
      * from the per-recipient feed rows (`app_notifications.read_at`); the device
      * picture comes from those recipients' registered tokens. Shape is consumed
