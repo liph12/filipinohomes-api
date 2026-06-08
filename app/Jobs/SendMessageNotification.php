@@ -25,6 +25,35 @@ class SendMessageNotification implements ShouldQueue
         public int $senderId,
     ) {}
 
+    /**
+     * First usable image URL for a listing — its featured photo, falling back
+     * to the related property's photos. Tolerates both array-cast and raw JSON
+     * string storage. Used as the notification avatar so inquiry rows show the
+     * property instead of a generic icon.
+     */
+    private function listingPhoto($listing): ?string
+    {
+        if (! $listing) {
+            return null;
+        }
+
+        $raw = $listing->featured_photo ?? null;
+        if (is_string($raw) && $raw !== '') {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : [$raw];
+        }
+        if (is_array($raw) && ! empty($raw[0]) && is_string($raw[0])) {
+            return $raw[0];
+        }
+
+        $propertyPhotos = $listing->property?->photos;
+        if (is_array($propertyPhotos) && ! empty($propertyPhotos[0]) && is_string($propertyPhotos[0])) {
+            return $propertyPhotos[0];
+        }
+
+        return null;
+    }
+
     public function handle(): void
     {
         $conversation = Conversation::with(['chat.user', 'chat.listing', 'users.role'])->find($this->conversationId);
@@ -101,6 +130,8 @@ class SendMessageNotification implements ShouldQueue
                 'sender_name' => $senderName,
                 'sender_avatar' => $sender->avatar,
                 're_label' => $isDirect ? null : ($chat->listing->name ?? null),
+                'listing_id' => $isDirect ? null : ($chat->listing->id ?? null),
+                'listing_photo' => $isDirect ? null : $this->listingPhoto($chat->listing ?? null),
                 'is_direct' => $isDirect,
                 'message_id' => $message->id,
                 'body' => $message->body,
