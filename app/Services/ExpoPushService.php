@@ -44,6 +44,12 @@ class ExpoPushService
         // callers that route on data.id are unaffected.
         $data['notification_id'] = $notification->id;
 
+        // Category toggle (Settings): the feed row above is always recorded;
+        // only the push is muted when the user has this category turned off.
+        if (! $user->allowsPushCategory($type)) {
+            return;
+        }
+
         $tokens = DeviceToken::where('user_id', $user->id)
             ->pluck('expo_token')
             ->all();
@@ -72,13 +78,20 @@ class ExpoPushService
      */
     public function notifyMessage(User $user, string $title, string $body, array $data = []): void
     {
+        $type = $data['type'] ?? 'inquiry';
+
         AppNotification::create([
             'user_id' => $user->id,
-            'type' => $data['type'] ?? 'inquiry',
+            'type' => $type,
             'title' => $title,
             'body' => $body,
             'data' => $data,
         ]);
+
+        // Category toggle: keep the feed row, mute only the push.
+        if (! $user->allowsPushCategory($type)) {
+            return;
+        }
 
         $tokens = DeviceToken::where('user_id', $user->id)->pluck('expo_token')->all();
         if (empty($tokens)) {

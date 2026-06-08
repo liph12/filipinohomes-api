@@ -49,6 +49,9 @@ class User extends Authenticatable implements Auditable
         'verification',
         'active_at',
         'inquiry_notify_channel',
+        'notify_new_inquiry',
+        'notify_listing_verified',
+        'notify_status_change',
     ];
 
     /**
@@ -73,6 +76,9 @@ class User extends Authenticatable implements Auditable
             'avatar' => 'string',
             'active_at' => 'datetime',
             'last_online_at' => 'datetime',
+            'notify_new_inquiry' => 'boolean',
+            'notify_listing_verified' => 'boolean',
+            'notify_status_change' => 'boolean',
         ];
     }
 
@@ -166,6 +172,22 @@ class User extends Authenticatable implements Auditable
     public function prefersInquiryPush(): bool
     {
         return ($this->inquiry_notify_channel ?? 'push') === 'push' && $this->hasRegisteredDevice();
+    }
+
+    /**
+     * Whether this user wants a push for the given notification type. Maps each
+     * push type onto its Settings category toggle; unknown/uncategorised types
+     * (e.g. announcements) are always allowed. The in-app feed row is recorded
+     * regardless — this gates only the push delivery.
+     */
+    public function allowsPushCategory(string $type): bool
+    {
+        return match ($type) {
+            'inquiry', 'listing_inquiry' => (bool) ($this->notify_new_inquiry ?? true),
+            'listing_verified', 'listing_flagged' => (bool) ($this->notify_listing_verified ?? true),
+            'listing_status' => (bool) ($this->notify_status_change ?? true),
+            default => true,
+        };
     }
 
     public function appNotifications()

@@ -1024,6 +1024,33 @@ class ListingController extends Controller
         );
         $listing->property->update($data);
 
+        // Push the owning agent when their listing is marked as a transaction
+        // (sold / rented / leased). Skip 'active' (reactivation) and skip when
+        // the agent made the change themselves — they already know. Non-fatal;
+        // gated by the agent's "Status changes" toggle inside ExpoPushService.
+        if (in_array($data['status'], ['sold', 'rented', 'leased'], true)) {
+            try {
+                $agentUser = optional($listing->agent)->user
+                    ?? optional($listing->load('agent.user')->agent)->user;
+                if ($agentUser && $agentUser->id !== $request->user()?->id) {
+                    $verb = ['sold' => 'sold', 'rented' => 'rented', 'leased' => 'leased'][$data['status']];
+                    app(\App\Services\ExpoPushService::class)->notify(
+                        $agentUser,
+                        'listing_status',
+                        'Listing '.$verb,
+                        "“{$listing->name}” was marked {$verb}.",
+                        ['type' => 'listing_status', 'id' => $listing->id, 'status' => $data['status']],
+                    );
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Push notify (listing status) failed', [
+                    'listing_id' => $listing->id,
+                    'status'     => $data['status'],
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+        }
+
         return response()->json([
             'status'             => $listing->property->status,
             'status_change_date' => $listing->property->status_change_date,
@@ -1190,31 +1217,44 @@ class ListingController extends Controller
             }
         }
 
-        // Push the agent when their listing is flagged (action required). The
-        // mobile listing route is keyed on the listing id. Non-fatal — a push
-        // failure must not roll back the saved audit status.
-        if ($status === 'flagged') {
+        // Push the agent on an audit outcome. Flagged = action required;
+        // verified = good news (their listing passed). The mobile listing route
+        // is keyed on the listing id. Non-fatal — a push failure must not roll
+        // back the saved audit status. Gated by the agent's "Listing verified"
+        // category toggle inside ExpoPushService.
+        if ($status === 'flagged' || $status === 'verified') {
             try {
                 $agentUser = optional($listing->agent)->user
                     ?? optional($listing->load('agent.user')->agent)->user;
                 if ($agentUser) {
-                    // Surface why it was flagged (audit_notes) so the agent gets
-                    // actionable detail, not just "needs your attention".
-                    $reason = trim((string) ($validated['audit_notes'] ?? ''));
-                    $body   = $reason !== ''
-                        ? "“{$listing->name}” was flagged: " . \Illuminate\Support\Str::limit($reason, 140)
-                        : "“{$listing->name}” needs your attention.";
-                    app(\App\Services\ExpoPushService::class)->notify(
-                        $agentUser,
-                        'listing_flagged',
-                        'Listing flagged',
-                        $body,
-                        ['type' => 'listing_flagged', 'id' => $listing->id, 'reason' => $reason ?: null],
-                    );
+                    if ($status === 'flagged') {
+                        // Surface why it was flagged (audit_notes) so the agent
+                        // gets actionable detail, not just "needs attention".
+                        $reason = trim((string) ($validated['audit_notes'] ?? ''));
+                        $body   = $reason !== ''
+                            ? "“{$listing->name}” was flagged: " . \Illuminate\Support\Str::limit($reason, 140)
+                            : "“{$listing->name}” needs your attention.";
+                        app(\App\Services\ExpoPushService::class)->notify(
+                            $agentUser,
+                            'listing_flagged',
+                            'Listing flagged',
+                            $body,
+                            ['type' => 'listing_flagged', 'id' => $listing->id, 'reason' => $reason ?: null],
+                        );
+                    } else {
+                        app(\App\Services\ExpoPushService::class)->notify(
+                            $agentUser,
+                            'listing_verified',
+                            'Listing verified',
+                            "“{$listing->name}” has been verified.",
+                            ['type' => 'listing_verified', 'id' => $listing->id],
+                        );
+                    }
                 }
             } catch (\Throwable $e) {
-                Log::warning('Push notify (listing flagged) failed', [
+                Log::warning('Push notify (listing audit) failed', [
                     'listing_id' => $listing->id,
+                    'status'     => $status,
                     'error'      => $e->getMessage(),
                 ]);
             }

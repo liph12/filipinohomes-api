@@ -45,28 +45,42 @@ class NotificationController extends Controller
         return response()->json(['data' => $notification]);
     }
 
-    /** Read the authenticated user's listing-inquiry channel preference. */
+    /** Read the authenticated user's notification preferences. */
     public function preferences(Request $request)
     {
-        return response()->json([
-            'inquiry_notify_channel' => $request->user()->inquiry_notify_channel ?? 'push',
-        ]);
+        return response()->json($this->preferencePayload($request->user()));
     }
 
-    /** Update the authenticated user's listing-inquiry channel preference. */
+    /**
+     * Update the authenticated user's notification preferences. Every field is
+     * optional so the mobile app can PATCH a single toggle; only the provided
+     * keys are written.
+     */
     public function updatePreferences(Request $request)
     {
         $validated = $request->validate([
-            'inquiry_notify_channel' => 'required|in:push,email',
+            'inquiry_notify_channel'  => 'sometimes|in:push,email',
+            'notify_new_inquiry'      => 'sometimes|boolean',
+            'notify_listing_verified' => 'sometimes|boolean',
+            'notify_status_change'    => 'sometimes|boolean',
         ]);
 
         $user = $request->user();
-        $user->inquiry_notify_channel = $validated['inquiry_notify_channel'];
+        $user->fill($validated);
         $user->save();
 
-        return response()->json([
-            'inquiry_notify_channel' => $user->inquiry_notify_channel,
-        ]);
+        return response()->json($this->preferencePayload($user));
+    }
+
+    /** @return array<string,mixed> */
+    private function preferencePayload($user): array
+    {
+        return [
+            'inquiry_notify_channel'  => $user->inquiry_notify_channel ?? 'push',
+            'notify_new_inquiry'      => (bool) ($user->notify_new_inquiry ?? true),
+            'notify_listing_verified' => (bool) ($user->notify_listing_verified ?? true),
+            'notify_status_change'    => (bool) ($user->notify_status_change ?? true),
+        ];
     }
 
     public function unreadCount(Request $request)
