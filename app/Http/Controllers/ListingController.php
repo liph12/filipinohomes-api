@@ -1198,12 +1198,18 @@ class ListingController extends Controller
                 $agentUser = optional($listing->agent)->user
                     ?? optional($listing->load('agent.user')->agent)->user;
                 if ($agentUser) {
+                    // Surface why it was flagged (audit_notes) so the agent gets
+                    // actionable detail, not just "needs your attention".
+                    $reason = trim((string) ($validated['audit_notes'] ?? ''));
+                    $body   = $reason !== ''
+                        ? "“{$listing->name}” was flagged: " . \Illuminate\Support\Str::limit($reason, 140)
+                        : "“{$listing->name}” needs your attention.";
                     app(\App\Services\ExpoPushService::class)->notify(
                         $agentUser,
                         'listing_flagged',
                         'Listing flagged',
-                        "“{$listing->name}” needs your attention.",
-                        ['type' => 'listing_flagged', 'id' => $listing->id],
+                        $body,
+                        ['type' => 'listing_flagged', 'id' => $listing->id, 'reason' => $reason ?: null],
                     );
                 }
             } catch (\Throwable $e) {
