@@ -23,10 +23,6 @@ class SendMessageNotification implements ShouldQueue
         public int $conversationId,
         public int $messageId,
         public int $senderId,
-        // Push-only: skip the email path. Used for the first inquiry message,
-        // whose submission/acceptance email is already sent by
-        // ChatController::store — re-sending it here would duplicate.
-        public bool $pushOnly = false,
     ) {}
 
     /**
@@ -166,12 +162,6 @@ class SendMessageNotification implements ShouldQueue
                     ]);
                 }
             }
-        }
-
-        // Push-only callers (first inquiry message) stop here — the email was
-        // already dispatched by the caller.
-        if ($this->pushOnly) {
-            return;
         }
 
         // ── EMAIL recipient (throttled channel — unchanged targeting) ──

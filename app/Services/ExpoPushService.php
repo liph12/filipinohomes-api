@@ -31,13 +31,18 @@ class ExpoPushService
     {
         // Always record the in-app feed row even if the user has no device
         // registered yet — the Notifications screen still shows it.
-        AppNotification::create([
+        $notification = AppNotification::create([
             'user_id' => $user->id,
             'type' => $type,
             'title' => $title,
             'body' => $body,
             'data' => $data,
         ]);
+
+        // Carry the row id so a deep link (e.g. listing_inquiry →
+        // notification/{id}) can load the detail on a cold push tap. Additive;
+        // callers that route on data.id are unaffected.
+        $data['notification_id'] = $notification->id;
 
         $tokens = DeviceToken::where('user_id', $user->id)
             ->pluck('expo_token')

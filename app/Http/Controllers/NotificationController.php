@@ -33,6 +33,42 @@ class NotificationController extends Controller
         ]);
     }
 
+    /**
+     * Single notification, scoped to the authenticated user. Lets a cold push
+     * tap (e.g. listing_inquiry → notification/{id}) load the detail when the
+     * row isn't in the app's list cache yet.
+     */
+    public function show(Request $request, AppNotification $notification)
+    {
+        abort_if($notification->user_id !== $request->user()->id, 403);
+
+        return response()->json(['data' => $notification]);
+    }
+
+    /** Read the authenticated user's listing-inquiry channel preference. */
+    public function preferences(Request $request)
+    {
+        return response()->json([
+            'inquiry_notify_channel' => $request->user()->inquiry_notify_channel ?? 'push',
+        ]);
+    }
+
+    /** Update the authenticated user's listing-inquiry channel preference. */
+    public function updatePreferences(Request $request)
+    {
+        $validated = $request->validate([
+            'inquiry_notify_channel' => 'required|in:push,email',
+        ]);
+
+        $user = $request->user();
+        $user->inquiry_notify_channel = $validated['inquiry_notify_channel'];
+        $user->save();
+
+        return response()->json([
+            'inquiry_notify_channel' => $user->inquiry_notify_channel,
+        ]);
+    }
+
     public function unreadCount(Request $request)
     {
         $count = AppNotification::where('user_id', $request->user()->id)

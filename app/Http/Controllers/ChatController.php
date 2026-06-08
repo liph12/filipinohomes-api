@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\ChatResource;
-use App\Jobs\SendMessageNotification;
+use App\Jobs\SendInquiryReviewNotification;
 use App\Mail\MessageNotificationMailer;
 use App\Models\BlockedUser;
 use App\Models\Chat;
@@ -585,19 +585,19 @@ class ChatController extends Controller
             }
 
             // Push the moderators (admins + the agent's team leader, already
-            // attached above) so a new listing inquiry alerts them in real time
-            // — emails alone are easy to miss. The first message is created
-            // inside the transaction and never flows through MessageController,
-            // so we dispatch the push job here. Push-only: the email was just
-            // dispatched above, so the job must not re-send it.
+            // attached above) with a rich "listing_inquiry" review notification
+            // that names the property and deep-links to the in-app review
+            // screen — emails alone are easy to miss. The first message is
+            // created inside the transaction and never flows through
+            // MessageController, so we dispatch here. The job only pushes
+            // recipients who prefer push; the rest got the email just above.
             $conversation = $chat->activeConversation;
             $firstMessage = $conversation?->latestMessage;
             if ($conversation && $firstMessage) {
-                SendMessageNotification::dispatch(
+                SendInquiryReviewNotification::dispatch(
                     $conversation->id,
                     $firstMessage->id,
                     $user->id,
-                    true,
                 );
             }
         } elseif ($validated['type'] === 'agent') {

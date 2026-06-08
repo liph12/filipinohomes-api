@@ -297,7 +297,11 @@ class MessageNotificationMailer extends Mailable
             $adminEmailsLower = array_map('strtolower', $adminEmails);
             $alreadyEmailed   = in_array(strtolower($leaderEmail), $adminEmailsLower, true);
 
-            if ($leader && $leaderEmail !== '' && !$isSender && !$alreadyEmailed) {
+            // Team leader who prefers push (and has a device) gets the in-app
+            // push instead — skip their email.
+            $leaderPrefersPush = $leader && self::prefersInquiryPush($leader);
+
+            if ($leader && $leaderEmail !== '' && !$isSender && !$alreadyEmailed && !$leaderPrefersPush) {
                 Mail::to($sharedInbox)->bcc([$leaderEmail])->send(new self(
                     sender:           $sender,
                     receiver:         $leader,
@@ -337,6 +341,12 @@ class MessageNotificationMailer extends Mailable
             Log::warning('dispatchForAcceptance: agent has no email — skipping send', [
                 'agent_user_id' => $agentUserId,
             ]);
+            return;
+        }
+
+        // Agent who prefers push (and is signed in on a device) gets the in-app
+        // listing_inquiry push instead of this acceptance email.
+        if ($agent instanceof User && self::prefersInquiryPush($agent)) {
             return;
         }
 
@@ -414,15 +424,41 @@ class MessageNotificationMailer extends Mailable
      * exclude the sender (an admin testing the form should not BCC
      * themselves).
      *
+     * Admins who prefer push for listing inquiries AND are signed in on a
+     * device are dropped here — they get the in-app push instead of the email
+     * (see SendInquiryReviewNotification). Admins on 'email', or push-preferring
+     * admins with no registered device, still receive the email.
+     *
      * @param array<int, string> $excludeEmails
      * @return array<int, string>
      */
     private static function resolveAdminEmails(array $excludeEmails): array
     {
-        return array_values(array_unique(array_filter(
-            User::where('role_id', 1)->pluck('email')->all(),
-            fn ($email) => $email && !self::emailMatchesAny((string) $email, $excludeEmails),
-        )));
+        return User::where('role_id', 1)
+            ->withCount('deviceTokens')
+            ->get(['id', 'email', 'inquiry_notify_channel'])
+            ->reject(fn ($u) => self::prefersInquiryPush($u))
+            ->pluck('email')
+            ->filter(fn ($email) => $email && !self::emailMatchesAny((string) $email, $excludeEmails))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Mirror of User::prefersInquiryPush but reads the eager `device_tokens_count`
+     * (set via withCount) when present, so a fan-out doesn't run one device-token
+     * query per admin. Falls back to the model method for single users.
+     */
+    private static function prefersInquiryPush(User $user): bool
+    {
+        $channel = $user->inquiry_notify_channel ?? 'push';
+        if ($channel !== 'push') {
+            return false;
+        }
+        $hasDevice = $user->device_tokens_count ?? null;
+
+        return $hasDevice !== null ? $hasDevice > 0 : $user->hasRegisteredDevice();
     }
 
     /**

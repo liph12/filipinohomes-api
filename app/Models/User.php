@@ -48,6 +48,7 @@ class User extends Authenticatable implements Auditable
         "role_id",
         'verification',
         'active_at',
+        'inquiry_notify_channel',
     ];
 
     /**
@@ -149,6 +150,22 @@ class User extends Authenticatable implements Auditable
     public function deviceTokens()
     {
         return $this->hasMany(DeviceToken::class);
+    }
+
+    /** True when the user is signed in on at least one device (has a push token). */
+    public function hasRegisteredDevice(): bool
+    {
+        return $this->deviceTokens()->exists();
+    }
+
+    /**
+     * Whether listing-inquiry alerts should reach this user by push rather than
+     * email. Requires both the 'push' preference AND a registered device — a
+     * user who chose push but isn't signed in on a phone falls back to email.
+     */
+    public function prefersInquiryPush(): bool
+    {
+        return ($this->inquiry_notify_channel ?? 'push') === 'push' && $this->hasRegisteredDevice();
     }
 
     public function appNotifications()
