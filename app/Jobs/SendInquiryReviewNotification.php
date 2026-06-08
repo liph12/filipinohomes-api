@@ -8,6 +8,7 @@ use App\Models\Listing;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\ExpoPushService;
+use App\Services\TeamLeadershipService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -92,6 +93,16 @@ class SendInquiryReviewNotification implements ShouldQueue
         $listingName = $listingCard['name'] ?? 'a listing';
         $clientName = $client->name ?? 'A client';
 
+        // Agent team context — drives the in-app "Agent Team" / "Action Needed
+        // — Agent Not On A Team" box and the team-leader footer, mirroring the
+        // email blades. Resolved once for all recipients.
+        $agentUserId = $listing?->agent?->user_id;
+        $teamContext = $agentUserId
+            ? app(TeamLeadershipService::class)->findTeamInfoForAgent($agentUserId)
+            : null;
+        $teamName = $teamContext['team_name'] ?? null;
+        $leaderUserId = $teamContext['leader_user_id'] ?? null;
+
         $payload = array_merge($listingCard, [
             'type' => 'listing_inquiry',
             'chat_id' => $chat->id,
@@ -103,6 +114,8 @@ class SendInquiryReviewNotification implements ShouldQueue
             'client_phone' => $client->mobile_no ?? null,
             'message' => $message->body,
             'sent_at' => optional($message->created_at)->toIso8601String(),
+            'team_name' => $teamName,
+            'has_team' => (bool) $teamName,
         ]);
 
         $title = 'New listing inquiry to review';
@@ -117,13 +130,29 @@ class SendInquiryReviewNotification implements ShouldQueue
             if (! $recipient->prefersInquiryPush()) {
                 continue;
             }
+
+            // Per-recipient perspective so the detail screen reads like the
+            // email that recipient would have received (admin / team-leader /
+            // agent variants of greeting, callout and footer).
+            if ($leaderUserId && $recipient->id === $leaderUserId) {
+                $recipientRole = 'team_leader';
+            } elseif ($agentUserId && $recipient->id === $agentUserId) {
+                $recipientRole = 'agent';
+            } else {
+                $recipientRole = 'admin';
+            }
+            $recipientPayload = array_merge($payload, [
+                'recipient_role' => $recipientRole,
+                'recipient_name' => $recipient->name,
+            ]);
+
             try {
                 app(ExpoPushService::class)->notify(
                     $recipient,
                     'listing_inquiry',
                     $title,
                     $body,
-                    $payload,
+                    $recipientPayload,
                 );
             } catch (\Throwable $e) {
                 Log::warning('Push notify (listing inquiry) failed', [
