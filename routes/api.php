@@ -298,6 +298,7 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/announcements', [AnnouncementController::class, 'index']);
                 Route::post('/admin/announcements', [AnnouncementController::class, 'store']);
                 Route::get('/admin/announcements/{announcement}', [AnnouncementController::class, 'show']);
+                Route::get('/admin/announcements/{announcement}/stats', [AnnouncementController::class, 'stats']);
             });
 
             // Magazine, Office & Ad management (admin + editor only)
