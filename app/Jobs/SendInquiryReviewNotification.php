@@ -76,14 +76,16 @@ class SendInquiryReviewNotification implements ShouldQueue
         }
 
         // Load the listing with the relation graph buildListingPayload reads
-        // (same shape ChatController uses for the email card).
-        $listing = $chat->listing_id
+        // (same shape ChatController uses for the email card). The listing FK
+        // on `chats` is the polymorphic `type_id` column, not `listing_id`.
+        $listingId = $chat->type_id;
+        $listing = $listingId
             ? Listing::with([
                 'agent',
                 'category',
                 'property.barangay.city.province',
                 'property.propertyAttribute.subtype.type',
-            ])->find($chat->listing_id)
+            ])->find($listingId)
             : null;
 
         $listingCard = MessageNotificationMailer::buildListingPayload($listing) ?? [];
@@ -93,7 +95,7 @@ class SendInquiryReviewNotification implements ShouldQueue
         $payload = array_merge($listingCard, [
             'type' => 'listing_inquiry',
             'chat_id' => $chat->id,
-            'listing_id' => $chat->listing_id,
+            'listing_id' => $listingId,
             'conversation_id' => $conversation->id,
             'client_name' => $clientName,
             'client_avatar' => $client->avatar ?? null,
