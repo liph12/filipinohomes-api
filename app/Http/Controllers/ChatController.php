@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\ChatResource;
+use App\Jobs\SendMessageNotification;
 use App\Mail\MessageNotificationMailer;
 use App\Models\BlockedUser;
 use App\Models\Chat;
@@ -580,6 +581,23 @@ class ChatController extends Controller
                     agentUserId:  (int) $validated['target_user_id'],
                     message:      $validated['message'] ?? '',
                     sender:       $user,
+                );
+            }
+
+            // Push the moderators (admins + the agent's team leader, already
+            // attached above) so a new listing inquiry alerts them in real time
+            // — emails alone are easy to miss. The first message is created
+            // inside the transaction and never flows through MessageController,
+            // so we dispatch the push job here. Push-only: the email was just
+            // dispatched above, so the job must not re-send it.
+            $conversation = $chat->activeConversation;
+            $firstMessage = $conversation?->latestMessage;
+            if ($conversation && $firstMessage) {
+                SendMessageNotification::dispatch(
+                    $conversation->id,
+                    $firstMessage->id,
+                    $user->id,
+                    true,
                 );
             }
         } elseif ($validated['type'] === 'agent') {
