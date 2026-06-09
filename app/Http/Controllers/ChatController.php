@@ -191,7 +191,7 @@ class ChatController extends Controller
         if ($request->boolean('unread_only')) {
             $visible = (clone $query)
                 ->setEagerLoads([])
-                ->with('activeConversation:id,chat_id')
+                ->with(['activeConversation' => fn ($q) => $q->select('conversations.id', 'conversations.chat_id')])
                 ->get(['chats.id', 'chats.type']);
 
             $typeByConv = [];
