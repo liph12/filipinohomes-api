@@ -355,6 +355,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('chats/{chat}/trash',     [ChatController::class, 'trash']);
             Route::post('chats/{chat}/restore',   [ChatController::class, 'restore']);
             Route::post('chats/{chat}/purge',     [ChatController::class, 'purge']);
+            // Admin-only hard delete: permanently removes EVERY chat owned by
+            // the given user (their inquiries/threads) for all participants.
+            Route::delete('chats/purge-by-user/{user}', [ChatController::class, 'purgeByUser']);
             Route::apiResource('messages', MessageController::class)->only(['index', 'store', 'update', 'destroy']);
             Route::post('messages/{message}/reactions', [ReactionController::class, 'toggle']);
             Route::get('blocked-users', [BlockedUserController::class, 'index']);

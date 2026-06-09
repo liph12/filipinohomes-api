@@ -977,6 +977,57 @@ class ChatController extends Controller
     }
 
     /**
+     * Admin-only hard delete of every chat OWNED by a user (their inquiries
+     * and threads where they are `chat.user_id`). Unlike per-participant
+     * purge, this removes the rows from the database for ALL participants —
+     * there is no recovery. Used to clear out a confirmed spam/abuse
+     * account's conversation history platform-wide.
+     *
+     * Implementation: `forceDelete()` issues a real DELETE on chats, so the
+     * existing `cascadeOnDelete` foreign keys wipe the dependent
+     * conversations, messages, conversation_users pivots and message
+     * reactions in one shot. `withTrashed()` is used so soft-deleted chats
+     * are purged too. The confirmation (typing the user's name) is enforced
+     * client-side; the server only re-checks admin authority.
+     */
+    public function purgeByUser(User $user)
+    {
+        $actor = Auth::user();
+        if ($actor?->role?->name !== 'admin') {
+            return response()->json(
+                ['message' => 'Only admins can permanently delete a user\'s conversations.'],
+                403,
+            );
+        }
+
+        $chatIds = Chat::withTrashed()->where('user_id', $user->id)->pluck('id');
+        $count = $chatIds->count();
+
+        if ($count === 0) {
+            return response()->json([
+                'message' => 'No conversations found for this user.',
+                'deleted' => 0,
+            ]);
+        }
+
+        DB::transaction(function () use ($chatIds) {
+            Chat::withTrashed()->whereIn('id', $chatIds)->forceDelete();
+        });
+
+        Log::warning('Admin permanently deleted a user\'s conversations.', [
+            'actor_id'     => $actor->id,
+            'target_user'  => $user->id,
+            'target_name'  => $user->name,
+            'chats_deleted' => $count,
+        ]);
+
+        return response()->json([
+            'message' => "Permanently deleted {$count} conversation(s).",
+            'deleted' => $count,
+        ]);
+    }
+
+    /**
      * Shared pivot mutation for archive / unarchive / trash / restore.
      * Authorizes via the existing `view` ability so admins (who bypass
      * the participant check via ChatPolicy) can still act on chats they
