@@ -179,6 +179,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/notification-preferences', [NotificationController::class, 'updatePreferences']);
             Route::get('/notifications/{notification}', [NotificationController::class, 'show']);
             Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
+            Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
 
             // Recipient-facing announcement detail (broadcast a user received).
             Route::get('/announcements/{announcement}', [AnnouncementController::class, 'showForRecipient']);
