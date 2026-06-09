@@ -69,6 +69,7 @@ class AnnouncementController extends Controller
                 'kind'       => $a->kind,
                 'title'      => $a->title,
                 'body'       => $a->body,
+                'data'       => $a->data,
                 'created_by' => $a->created_by,
                 'sent_at'    => optional($a->sent_at)->toIso8601String(),
                 'created_at' => optional($a->created_at)->toIso8601String(),
@@ -91,32 +92,43 @@ class AnnouncementController extends Controller
     public function store(Request $request, ExpoPushService $push)
     {
         $validated = $request->validate([
-            'kind'     => 'required|in:announcement,maintenance,custom',
-            'title'    => 'required|string|max:255',
-            'body'     => 'required|string|max:2000',
-            'scope'    => 'required|in:all,agents,platform',
-            'platform' => 'required_if:scope,platform|nullable|in:ios,android',
+            'kind'               => 'required|in:announcement,maintenance,custom',
+            'title'              => 'required|string|max:255',
+            // Body may be Markdown now, so it needs headroom for inline image
+            // URLs and formatting beyond the old 2000-char plain-text cap.
+            'body'               => 'required|string|max:20000',
+            'scope'              => 'required|in:all,agents,platform',
+            'platform'           => 'required_if:scope,platform|nullable|in:ios,android',
+            'data'               => 'nullable|array',
+            'data.format'        => 'nullable|in:markdown',
+            'data.cover_image_url' => 'nullable|url',
         ]);
 
         $platform = $validated['scope'] === 'platform' ? $validated['platform'] : null;
+        $data = $validated['data'] ?? null;
 
-        $announcement = DB::transaction(function () use ($validated, $platform, $request, $push) {
+        $announcement = DB::transaction(function () use ($validated, $platform, $data, $request, $push) {
             $announcement = Announcement::create([
                 'created_by' => $request->user()->id,
                 'kind'       => $validated['kind'],
                 'title'      => $validated['title'],
                 'body'       => $validated['body'],
+                'data'       => $data,
                 'audience'   => ['scope' => $validated['scope'], 'platform' => $platform],
                 'sent_at'    => now(),
             ]);
 
             $recipients = $this->resolveRecipients($validated['scope'], $platform);
 
+            // The push (and the in-app feed row inserted from the same body)
+            // must be plain text — raw Markdown would surface literal `**`,
+            // `#`, `![](…)` in the OS notification. The full Markdown stays in
+            // the saved announcement for the in-app detail view.
             $count = $push->broadcast(
                 $recipients,
                 $validated['kind'],
                 $validated['title'],
-                $validated['body'],
+                $this->plainTextFromMarkdown($validated['body']),
                 ['type' => 'announcement', 'announcement_id' => $announcement->id, 'kind' => $validated['kind']],
                 $announcement->id,
                 $platform,
@@ -155,6 +167,7 @@ class AnnouncementController extends Controller
                 'kind'       => $announcement->kind,
                 'title'      => $announcement->title,
                 'body'       => $announcement->body,
+                'data'       => $announcement->data,
                 'created_by' => $announcement->created_by,
                 'sent_at'    => optional($announcement->sent_at)->toIso8601String(),
                 'created_at' => optional($announcement->created_at)->toIso8601String(),
@@ -232,6 +245,38 @@ class AnnouncementController extends Controller
             ->sortByDesc('count')
             ->values()
             ->all();
+    }
+
+    /**
+     * Flatten a Markdown body to plain text for the push notification / in-app
+     * feed row. Images collapse to their alt text (or drop), links to their
+     * label, and inline/block formatting markers are stripped. Best-effort —
+     * the canonical rich body is the stored Markdown.
+     */
+    private function plainTextFromMarkdown(string $markdown): string
+    {
+        $text = $markdown;
+
+        // Images: ![alt](url) -> alt (then drop empty residue).
+        $text = preg_replace('/!\[([^\]]*)\]\([^)]*\)/', '$1', $text);
+        // Links: [label](url) -> label.
+        $text = preg_replace('/\[([^\]]*)\]\([^)]*\)/', '$1', $text);
+        // Fenced/inline code fences and backticks.
+        $text = preg_replace('/```[\s\S]*?```/', '', $text);
+        $text = str_replace('`', '', $text);
+        // Heading hashes, blockquote markers, and unordered list bullets at
+        // line starts.
+        $text = preg_replace('/^\s{0,3}#{1,6}\s*/m', '', $text);
+        $text = preg_replace('/^\s{0,3}>\s?/m', '', $text);
+        $text = preg_replace('/^\s{0,3}[-*+]\s+/m', '', $text);
+        // Ordered list markers: "1. " -> "".
+        $text = preg_replace('/^\s{0,3}\d+\.\s+/m', '', $text);
+        // Bold/italic/strikethrough emphasis markers.
+        $text = preg_replace('/(\*\*|__|\*|_|~~)/', '', $text);
+        // Collapse 3+ newlines and trim.
+        $text = preg_replace('/\n{3,}/', "\n\n", $text);
+
+        return trim($text);
     }
 
     /**
