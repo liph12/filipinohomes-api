@@ -40,7 +40,10 @@ class AdController extends Controller
             'ad_campaign_id' => 'required|exists:ad_campaigns,id',
             'title' => 'required|string|max:255',
             'image_path' => 'required|string',
-            'click_url' => 'required|url|max:2048',
+            // Optional — ad creatives without a click target are valid
+            // (e.g. brand-impression ads). When provided it still has
+            // to be a syntactically valid URL.
+            'click_url' => 'nullable|url|max:2048',
             'alt_text' => 'nullable|string|max:255',
             'status' => 'required|in:active,inactive',
             'starts_at' => 'nullable|date',
