@@ -28,6 +28,17 @@ class Chat extends Model
 
     public function activeConversation()
     {
-        return $this->hasOne(Conversation::class)->whereIn('status', ['pending', 'accepted', 'rejected', 'closed'])->latestOfMany();
+        // Constrain the status INSIDE the one-of-many aggregate (closure form of
+        // ofMany) rather than chaining whereIn(...)->latestOfMany(). The chained
+        // form pushes the status filter onto the outer join, producing an
+        // ambiguous `chat_id` self-join (SQLSTATE 1052) when eager-loaded across
+        // many chats (e.g. GET /chats). This form keeps the same semantics —
+        // the latest conversation among those statuses — with valid SQL.
+        return $this->hasOne(Conversation::class)->ofMany(
+            ['id' => 'max'],
+            function ($query) {
+                $query->whereIn('status', ['pending', 'accepted', 'rejected', 'closed']);
+            },
+        );
     }
 }
