@@ -179,6 +179,63 @@ class ChatController extends Controller
         // of view, even if a future view branch forgets the exclusion.
         $query->whereDoesntHave('activeConversation.users', $purgedExclusion);
 
+        // Lightweight unread-badge feed. The bottom-nav / sub-tab badges only
+        // need the unread totals, not a page of rich chat objects. Reusing the
+        // fully-filtered $query keeps the counts identical to what the inbox
+        // list would show (role scope, inbox view, archived/trashed/purged
+        // exclusions all already applied) with zero divergence risk — but we
+        // skip the ChatResource serialization and pagination and instead sum
+        // unread in a single aggregate, the same rule as computed_unread_count
+        // below. Uncapped, so it can't undercount the way a fixed page size
+        // would once a viewer has many conversations.
+        if ($request->boolean('unread_only')) {
+            $visible = (clone $query)
+                ->setEagerLoads([])
+                ->with('activeConversation:id,chat_id')
+                ->get(['chats.id', 'chats.type']);
+
+            $typeByConv = [];
+            foreach ($visible as $chat) {
+                $cid = $chat->activeConversation?->id;
+                if ($cid) {
+                    $typeByConv[$cid] = $chat->type;
+                }
+            }
+
+            $result = ['total' => 0, 'inquiries' => 0, 'messages' => 0];
+
+            if (!empty($typeByConv)) {
+                $unreadByConversation = DB::table('messages')
+                    ->select('messages.conversation_id', DB::raw('COUNT(*) as unread'))
+                    ->join('conversation_users', function ($join) use ($user) {
+                        $join->on('conversation_users.conversation_id', '=', 'messages.conversation_id')
+                            ->where('conversation_users.user_id', '=', $user->id);
+                    })
+                    ->whereIn('messages.conversation_id', array_keys($typeByConv))
+                    ->where('messages.user_id', '!=', $user->id)
+                    ->whereIn('messages.status', ['active', 'updated'])
+                    ->where(function ($w) {
+                        $w->whereNull('conversation_users.last_read_at')
+                            ->orWhereColumn('messages.created_at', '>', 'conversation_users.last_read_at');
+                    })
+                    ->groupBy('messages.conversation_id')
+                    ->pluck('unread', 'messages.conversation_id');
+
+                foreach ($unreadByConversation as $cid => $n) {
+                    $n = (int) $n;
+                    $result['total'] += $n;
+                    $type = $typeByConv[$cid] ?? null;
+                    if ($type === 'listing') {
+                        $result['inquiries'] += $n;
+                    } elseif ($type === 'agent') {
+                        $result['messages'] += $n;
+                    }
+                }
+            }
+
+            return response()->json($result);
+        }
+
         $perPage = (int) $request->query('per_page', 10);
         $chats = $query->latest()->paginate(min(max($perPage, 1), 50));
 
