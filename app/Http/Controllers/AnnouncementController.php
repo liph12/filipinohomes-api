@@ -39,6 +39,50 @@ class AnnouncementController extends Controller
     }
 
     /**
+     * Recipient-facing list of broadcasts the caller actually received, newest
+     * first. Shape mirrors the mobile `Paginated<ReceivedAnnouncement>` type —
+     * no analytics, poster exposed as `created_by` only.
+     */
+    public function indexForRecipient(Request $request)
+    {
+        $validated = $request->validate([
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'page'     => 'nullable|integer|min:1',
+        ]);
+
+        $receivedIds = AppNotification::query()
+            ->where('user_id', $request->user()->id)
+            ->whereNotNull('announcement_id')
+            ->distinct()
+            ->pluck('announcement_id');
+
+        $paginator = Announcement::query()
+            ->whereIn('id', $receivedIds)
+            ->orderByRaw('sent_at IS NULL')
+            ->orderByDesc('sent_at')
+            ->orderByDesc('created_at')
+            ->paginate($validated['per_page'] ?? 20);
+
+        return response()->json([
+            'data' => collect($paginator->items())->map(fn (Announcement $a) => [
+                'id'         => $a->id,
+                'kind'       => $a->kind,
+                'title'      => $a->title,
+                'body'       => $a->body,
+                'created_by' => $a->created_by,
+                'sent_at'    => optional($a->sent_at)->toIso8601String(),
+                'created_at' => optional($a->created_at)->toIso8601String(),
+            ])->all(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page'    => $paginator->lastPage(),
+                'per_page'     => $paginator->perPage(),
+                'total'        => $paginator->total(),
+            ],
+        ]);
+    }
+
+    /**
      * Compose + send a broadcast. Records the source announcement, fans out a
      * feed row per recipient and pushes to their devices, then snapshots the
      * recipient count. The whole fan-out is wrapped in a transaction so a

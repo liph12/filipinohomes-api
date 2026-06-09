@@ -181,7 +181,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
             Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
 
-            // Recipient-facing announcement detail (broadcast a user received).
+            // Recipient-facing announcements the caller received. The list route
+            // is declared before the {announcement} param route so "/announcements"
+            // isn't swallowed as an id.
+            Route::get('/announcements', [AnnouncementController::class, 'indexForRecipient']);
             Route::get('/announcements/{announcement}', [AnnouncementController::class, 'showForRecipient']);
 
             Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
