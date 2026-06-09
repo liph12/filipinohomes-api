@@ -48,6 +48,23 @@ class ImageUploadController extends Controller
 
     public function handleS3Upload($file, $dir)
     {
+        // GIFs bypass the Intervention/Image pipeline. GD's GIF
+        // reader only decodes the first frame, so re-encoding to
+        // WebP silently flattens the animation. The /admin/ads
+        // upload path explicitly accepts GIFs as ad creatives —
+        // killing the animation defeats the purpose. Store the
+        // original bytes as .gif so the animation survives. The
+        // 50 MB validation cap still applies.
+        if ($file->getMimeType() === 'image/gif') {
+            $fileName = $dir . "/" . Str::uuid() . ".gif";
+            Storage::disk('s3')->put(
+                $fileName,
+                file_get_contents($file->getRealPath()),
+                'public'
+            );
+            return config('filesystems.disks.s3.url') . $fileName;
+        }
+
         $fileName = $dir . "/" . Str::uuid() . ".webp";
 
         $manager = new ImageManager(new Driver());
