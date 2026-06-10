@@ -825,7 +825,33 @@ class ListingController extends Controller
             ->filter()
             ->all();
 
-        $agents = \App\Models\Agent::whereIn('id', $agentIds)->get(['id', 'gender', 'birthdate']);
+        $agents = \App\Models\Agent::whereIn('id', $agentIds)
+            ->get(['id', 'gender', 'birthdate', 'first_name', 'last_name', 'avatar']);
+
+        // Per-agent transaction tally (sold/rented/leased) within the period —
+        // shown in the per-age drill-down. Single grouped aggregate (no row
+        // hydration); same filter as $agentIds above.
+        $txByAgent = []; // agentId => ['sold' => n, 'rented' => n, 'leased' => n]
+        $txRows = Listing::query()
+            ->join('properties', 'listings.property_id', '=', 'properties.id')
+            ->whereIn('properties.status', ['sold', 'rented', 'leased'])
+            ->whereNotNull('properties.status_change_date')
+            ->whereBetween('properties.status_change_date', [$start . ' 00:00:00', $end . ' 23:59:59'])
+            ->when(!$isAdmin, fn ($q) => $q->where('listings.agent_id', optional($user->agent)->id))
+            ->whereNotNull('listings.agent_id')
+            ->groupBy('listings.agent_id', 'properties.status')
+            ->get([
+                'listings.agent_id as agent_id',
+                'properties.status as status',
+                DB::raw('count(*) as c'),
+            ]);
+        foreach ($txRows as $row) {
+            $aid = $row->agent_id;
+            if (!isset($txByAgent[$aid])) {
+                $txByAgent[$aid] = ['sold' => 0, 'rented' => 0, 'leased' => 0];
+            }
+            $txByAgent[$aid][$row->status] = (int) $row->c;
+        }
 
         $gender = ['male' => 0, 'female' => 0, 'unknown' => 0];
         $age    = ['18-24' => 0, '25-34' => 0, '35-44' => 0, '45-54' => 0, '55+' => 0, 'unknown' => 0];
@@ -833,11 +859,26 @@ class ListingController extends Controller
         $withAge     = 0;
         $ageSum      = 0;
         $ageByGender = []; // exactAge => ['male' => n, 'female' => n]
+        $ageAgents   = []; // exactAge => [ ['id','name','avatar','gender'], ... ]
 
         foreach ($agents as $a) {
             $g = in_array($a->gender, ['male', 'female'], true) ? $a->gender : 'unknown';
             $gender[$g]++;
             if ($g !== 'unknown') $withGender++;
+
+            // Identity + transactions for the per-age drill-down. Avatar is
+            // cast to array; take the first URL.
+            $avatar = is_array($a->avatar) ? ($a->avatar[0] ?? null) : $a->avatar;
+            $tx = $txByAgent[$a->id] ?? ['sold' => 0, 'rented' => 0, 'leased' => 0];
+            $entry = [
+                'id'     => $a->id,
+                'name'   => trim(($a->first_name ?? '') . ' ' . ($a->last_name ?? '')),
+                'avatar' => $avatar,
+                'gender' => $g,
+                'sold'   => $tx['sold'],
+                'rented' => $tx['rented'],
+                'leased' => $tx['leased'],
+            ];
 
             if ($a->birthdate) {
                 $yrs = $a->birthdate->age;
@@ -848,6 +889,8 @@ class ListingController extends Controller
                 $age[$bracket]++;
                 $withAge++;
                 $ageSum += $yrs;
+
+                $ageAgents[$yrs][] = $entry;
 
                 // Per-exact-age tally by gender. An agent with a birthdate
                 // always has a gender too (both fill together on login), so
@@ -860,12 +903,15 @@ class ListingController extends Controller
                 }
             } else {
                 $age['unknown']++;
+                // Agents without a birthdate — listed under the "Unknown" row.
+                $ageAgents['unknown'][] = $entry;
             }
         }
 
         $avgAge = $withAge > 0 ? (int) round($ageSum / $withAge) : null;
 
         ksort($ageByGender);
+        ksort($ageAgents);
         $ageRows = [];
         foreach ($ageByGender as $yrs => $c) {
             $ageRows[] = ['age' => $yrs, 'male' => $c['male'], 'female' => $c['female']];
@@ -880,6 +926,7 @@ class ListingController extends Controller
             'gender'        => $toSeries($gender),
             'age'           => $toSeries($age),
             'age_by_gender' => $ageRows,
+            'age_agents'    => (object) $ageAgents,
             'totals' => [
                 'agents'      => count($agents),
                 'with_gender' => $withGender,
