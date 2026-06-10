@@ -10,6 +10,8 @@ use App\Http\Controllers\{
     PropertyAttributesController,
     PropertyController,
     ListingController,
+    AudienceInsightsController,
+    VisitController,
     FullListingController,
     PropertySubtypeController,
     ProjectController,
@@ -74,6 +76,8 @@ Route::middleware('strip.tags')->group(function(){
 
         Route::post('/inquiry', [UserController::class, 'sendInquiry']);
         Route::post('/contact-us', [UserController::class, 'sendContactUs']);
+        // Public acquisition ping — visitor source tracking (once per session).
+        Route::post('/track/visit', [VisitController::class, 'store']);
         Route::get('/blogs', [PostController::class, 'index']);
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
         Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
@@ -297,6 +301,9 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
+
+                // Audience Insights — client/visitor counts (admin-only).
+                Route::get('/user/audience-insights', [AudienceInsightsController::class, 'show']);
 
                 // App version download links (CRUD for the web downloads page).
                 Route::post('/admin/app-versions', [AppVersionController::class, 'store']);
