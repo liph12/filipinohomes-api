@@ -34,6 +34,15 @@ class ListingInsightsService
     private ?array $agentIds = null;
 
     /**
+     * Per-request date window (on listings.created_at). When set, every
+     * aggregation only counts listings created within the range. Null means
+     * "all-time". Applied centrally in baseListingQuery() so all sub-queries
+     * stay consistent.
+     */
+    private ?string $dateStart = null;
+    private ?string $dateEnd = null;
+
+    /**
      * Base join chain — listings → properties → location resolution.
      * Every aggregation query layers on top of this closure.
      */
@@ -59,6 +68,13 @@ class ListingInsightsService
             $query->whereIn('listings.agent_id', $this->agentIds);
         }
 
+        if ($this->dateStart !== null && $this->dateStart !== '') {
+            $query->where('listings.created_at', '>=', $this->dateStart . ' 00:00:00');
+        }
+        if ($this->dateEnd !== null && $this->dateEnd !== '') {
+            $query->where('listings.created_at', '<=', $this->dateEnd . ' 23:59:59');
+        }
+
         return $query;
     }
 
@@ -76,9 +92,11 @@ class ListingInsightsService
      * Province-level breakdown. Returns one row per (province, city) with
      * listing-count metrics, then groups into provinces with cities[].
      */
-    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null): array
+    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null, ?string $dateStart = null, ?string $dateEnd = null): array
     {
-        $this->agentIds = $agentIds;
+        $this->agentIds  = $agentIds;
+        $this->dateStart = $dateStart;
+        $this->dateEnd   = $dateEnd;
 
         // Cities — count listings per (province, city).
         $cityRows = $this->baseListingQuery()
@@ -168,6 +186,24 @@ class ListingInsightsService
             ')
             ->get();
 
+        // ATS per (province, city, ats_status) — only listings that actually
+        // carry attachment files, so the count reflects viewable ATS docs.
+        $cityAtsRows = $this->withAtsAttachments($this->baseListingQuery())
+            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
+            ->whereNotNull(DB::raw('COALESCE(projects.city_id, property_cities.id)'))
+            ->select(
+                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
+                DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id'),
+                'properties.ats_status as ats_status',
+                DB::raw('COUNT(listings.id) as listing_count')
+            )
+            ->groupByRaw('
+                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
+                COALESCE(projects.city_id, property_cities.id),
+                properties.ats_status
+            ')
+            ->get();
+
         // Pivot into per-province maps.
         $categoryByProvince = [];
         foreach ($categoryRows as $row) {
@@ -210,6 +246,16 @@ class ListingInsightsService
             }
         }
 
+        $atsByCity = [];
+        foreach ($cityAtsRows as $row) {
+            $key = (int) $row->province_id . ':' . (int) $row->city_id;
+            $atsByCity[$key] ??= self::emptyAtsBreakdown();
+            $status = (string) $row->ats_status;
+            if (array_key_exists($status, $atsByCity[$key])) {
+                $atsByCity[$key][$status] = (int) $row->listing_count;
+            }
+        }
+
         // Assemble province array.
         $provinces = [];
         foreach ($cityRows as $row) {
@@ -237,6 +283,7 @@ class ListingInsightsService
                 'listing_count' => $count,
                 'listing_breakdown' => $categoryByCity[$cityKey] ?? ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
                 'transaction_breakdown' => $transactionByCity[$cityKey] ?? ['sold' => 0, 'rented' => 0, 'leased' => 0],
+                'ats_breakdown' => $atsByCity[$cityKey] ?? self::emptyAtsBreakdown(),
             ];
         }
 
@@ -291,6 +338,8 @@ class ListingInsightsService
                 'total_rented'      => $totals['rented'],
                 'total_leased'      => $totals['leased'],
                 'sort_by'           => $sortBy,
+                'date_start'        => $this->dateStart,
+                'date_end'          => $this->dateEnd,
             ],
         ];
     }
@@ -432,7 +481,7 @@ class ListingInsightsService
      * $dateStart / $dateEnd optionally constrain counts to listings created
      * within the inclusive window (YYYY-MM-DD).
      */
-    public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null): array
+    public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null, ?int $cityId = null): array
     {
         $this->agentIds = $agentIds;
 
@@ -448,6 +497,17 @@ class ListingInsightsService
             ->whereNull('listings.deleted_at')
             ->whereNull('properties.deleted_at')
             ->whereIn('categories.name', self::STANDARD_CATEGORIES);
+
+        // City filter — only then pay for the location joins needed to resolve
+        // a listing's city (project's city, else the property's barangay → city).
+        if ($cityId !== null) {
+            $query->leftJoin('projects', function ($join) {
+                $join->on('projects.id', '=', 'properties.project_id')->whereNull('projects.deleted_at');
+            })
+                ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+                ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
+                ->where(DB::raw('COALESCE(projects.city_id, property_cities.id)'), $cityId);
+        }
 
         if ($this->agentIds !== null) {
             $query->whereIn('listings.agent_id', $this->agentIds);
@@ -676,6 +736,166 @@ class ListingInsightsService
                 'status'       => $status,
                 'category'     => $categoryFilter,
                 'province_id'  => $provinceId,
+            ],
+        ];
+    }
+
+    /** Zeroed ATS-status tally, in the enum's display order. */
+    private static function emptyAtsBreakdown(): array
+    {
+        return ['approve' => 0, 'pending' => 0, 'expired' => 0, 'rejected' => 0];
+    }
+
+    /** Constrain a query to listings whose property carries ATS attachment files. */
+    private function withAtsAttachments($query)
+    {
+        return $query
+            ->whereNotNull('properties.ats_attachments')
+            ->where(function ($q) {
+                $q->whereRaw("JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.photos')) > 0")
+                    ->orWhereRaw("JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.documents')) > 0");
+            });
+    }
+
+    /**
+     * Paginated listings in one city that have ATS attachments — powers the
+     * "Listings by City" ATS drill-down drawer. Each row carries its
+     * ats_status + the attachment URLs so the frontend can open them in the
+     * shared MediaLightbox.
+     *
+     * @param array{page?:int, per_page?:int, province_id?:int|null, date_start?:string|null, date_end?:string|null, category?:string, status?:string, ats_status?:string, attachment?:string} $params
+     */
+    public function listingsForCity(int $cityId, array $params, ?array $agentIds = null): array
+    {
+        $this->agentIds  = $agentIds;
+        $this->dateStart = $params['date_start'] ?? null;
+        $this->dateEnd   = $params['date_end'] ?? null;
+
+        $page       = max(1, (int) ($params['page'] ?? 1));
+        $perPage    = max(1, min(100, (int) ($params['per_page'] ?? 20)));
+        $provinceId = isset($params['province_id']) ? (int) $params['province_id'] : null;
+
+        // Drill-down filters.
+        $category   = trim((string) ($params['category'] ?? ''));      // exact categories.name
+        $status     = strtolower(trim((string) ($params['status'] ?? '')));    // properties.status
+        $atsStatus  = strtolower(trim((string) ($params['ats_status'] ?? ''))); // approve/pending/expired/rejected
+        $attachment = strtolower(trim((string) ($params['attachment'] ?? 'with'))); // with|without|all
+
+        $base = $this->baseListingQuery()
+            ->where(DB::raw('COALESCE(projects.city_id, property_cities.id)'), $cityId)
+            ->when(
+                $provinceId !== null,
+                fn ($q) => $q->where(
+                    DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'),
+                    $provinceId
+                )
+            )
+            ->when($category !== '', fn ($q) => $q->where('categories.name', $category))
+            ->when($atsStatus !== '', fn ($q) => $q->where('properties.ats_status', $atsStatus))
+            ->when($status !== '', function ($q) use ($status) {
+                if ($status === 'active') {
+                    $q->where(fn ($qq) => $qq->where('properties.status', 'active')->orWhereNull('properties.status'));
+                } else {
+                    $q->where('properties.status', $status);
+                }
+            });
+
+        if ($attachment === 'with') {
+            $this->withAtsAttachments($base);
+        } elseif ($attachment === 'without') {
+            $base->where(function ($q) {
+                $q->whereNull('properties.ats_attachments')
+                    ->orWhereRaw("COALESCE(JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.photos')), 0) = 0 AND COALESCE(JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.documents')), 0) = 0");
+            });
+        }
+
+        $totalCount = (clone $base)->count('listings.id');
+
+        $rows = (clone $base)
+            ->leftJoin('agents', 'agents.id', '=', 'listings.agent_id')
+            ->select(
+                'listings.id',
+                'listings.code',
+                'listings.name as listing_name',
+                'listings.slug',
+                'listings.featured_photo',
+                'categories.name as category_name',
+                'properties.status as property_status',
+                'properties.ats_status',
+                'properties.ats_expiration_date',
+                'properties.ats_remarks',
+                'properties.ats_attachments',
+                'agents.first_name as agent_first',
+                'agents.last_name as agent_last',
+                DB::raw('COALESCE(project_cities.name, property_cities.name) as city_name'),
+                DB::raw('COALESCE(project_provinces.name, property_provinces.name) as province_name')
+            )
+            ->orderByDesc('properties.ats_expiration_date')
+            ->offset(($page - 1) * $perPage)
+            ->limit($perPage)
+            ->get();
+
+        $listings = $rows->map(function ($row) {
+            $attachments = $row->ats_attachments;
+            if (is_string($attachments)) {
+                $decoded = json_decode($attachments, true);
+                $attachments = is_array($decoded) ? $decoded : [];
+            }
+            if (!is_array($attachments)) {
+                $attachments = [];
+            }
+
+            $photos    = is_array($attachments['photos'] ?? null) ? array_values($attachments['photos']) : [];
+            $documents = is_array($attachments['documents'] ?? null) ? array_values($attachments['documents']) : [];
+
+            // featured_photo may be a JSON array string — normalize to the first URL.
+            $featured = $row->featured_photo;
+            if (is_string($featured)) {
+                $trimmed = trim($featured);
+                if ($trimmed !== '' && ($trimmed[0] === '[' || $trimmed[0] === '"')) {
+                    $decoded = json_decode($trimmed, true);
+                    if (is_array($decoded)) {
+                        $featured = !empty($decoded[0]) ? $decoded[0] : null;
+                    } elseif (is_string($decoded)) {
+                        $featured = $decoded;
+                    }
+                }
+            } elseif (is_array($featured)) {
+                $featured = !empty($featured[0]) ? $featured[0] : null;
+            }
+
+            return [
+                'id'                  => (int) $row->id,
+                'code'                => (string) $row->code,
+                'name'                => (string) $row->listing_name,
+                'slug'                => $row->slug,
+                'image'               => $featured,
+                'category_name'       => $row->category_name,
+                'property_status'     => $row->property_status,
+                'ats_status'          => $row->ats_status,
+                'ats_expiration_date' => $row->ats_expiration_date,
+                'ats_remarks'         => $row->ats_remarks,
+                'ats_photos'          => $photos,
+                'ats_documents'       => $documents,
+                'agent_name'          => trim(((string) $row->agent_first) . ' ' . ((string) $row->agent_last)),
+                'city_name'           => $row->city_name,
+                'province_name'       => $row->province_name,
+            ];
+        });
+
+        return [
+            'data' => $listings,
+            'meta' => [
+                'current_page' => $page,
+                'last_page'    => max(1, (int) ceil($totalCount / $perPage)),
+                'per_page'     => $perPage,
+                'total'        => $totalCount,
+                'city_id'      => $cityId,
+                'province_id'  => $provinceId,
+                'category'     => $category ?: null,
+                'status'       => $status ?: null,
+                'ats_status'   => $atsStatus ?: null,
+                'attachment'   => $attachment,
             ],
         ];
     }

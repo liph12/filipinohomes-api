@@ -1580,8 +1580,16 @@ class ListingController extends Controller
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
 
-        $sortBy = (string) $request->query('sort_by', 'city_count');
-        return response()->json($insights->provinceBreakdown($sortBy, $agentIds));
+        $sortBy    = (string) $request->query('sort_by', 'city_count');
+        $dateStart = $request->query('date_start');
+        $dateEnd   = $request->query('date_end');
+
+        return response()->json($insights->provinceBreakdown(
+            $sortBy,
+            $agentIds,
+            is_string($dateStart) ? $dateStart : null,
+            is_string($dateEnd) ? $dateEnd : null
+        ));
     }
 
     /**
@@ -1605,11 +1613,13 @@ class ListingController extends Controller
         $agentIds  = $this->resolveInsightsAgentScope($request);
         $dateStart = $request->query('date_start');
         $dateEnd   = $request->query('date_end');
+        $cityId    = $request->query('city_id');
 
         return response()->json($insights->typeBreakdown(
             is_string($dateStart) ? $dateStart : null,
             is_string($dateEnd) ? $dateEnd : null,
-            $agentIds
+            $agentIds,
+            $cityId !== null ? (int) $cityId : null
         ));
     }
 
@@ -1629,6 +1639,32 @@ class ListingController extends Controller
             'province_id' => $request->query('province_id') !== null
                 ? (int) $request->query('province_id')
                 : null,
+        ], $agentIds));
+    }
+
+    /**
+     * Listing Insights — paginated ATS listings for a single city. Powers the
+     * "Listings by City" ATS drill-down drawer (each row carries its ats_status
+     * + attachment URLs for the MediaLightbox).
+     */
+    public function insightsCityAtsListings(Request $request, ListingInsightsService $insights, int $city): JsonResponse
+    {
+        $agentIds  = $this->resolveInsightsAgentScope($request);
+        $dateStart = $request->query('date_start');
+        $dateEnd   = $request->query('date_end');
+
+        return response()->json($insights->listingsForCity($city, [
+            'page'        => (int) $request->query('page', 1),
+            'per_page'    => (int) $request->query('per_page', 20),
+            'province_id' => $request->query('province_id') !== null
+                ? (int) $request->query('province_id')
+                : null,
+            'date_start'  => is_string($dateStart) ? $dateStart : null,
+            'date_end'    => is_string($dateEnd) ? $dateEnd : null,
+            'category'    => (string) $request->query('category', ''),
+            'status'      => (string) $request->query('status', ''),
+            'ats_status'  => (string) $request->query('ats_status', ''),
+            'attachment'  => (string) $request->query('attachment', 'with'),
         ], $agentIds));
     }
 

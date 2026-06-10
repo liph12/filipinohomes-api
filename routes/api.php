@@ -259,6 +259,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
                 ->where('status', '[a-z_-]+');
+            Route::get('/listings/insights/by-city/{city}/ats', [ListingController::class, 'insightsCityAtsListings'])
+                ->where('city', '[0-9]+');
             Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);
