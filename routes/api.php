@@ -47,6 +47,7 @@ use App\Http\Controllers\{
     GuestTokenController,
     InquiryController,
     ActivityLogController,
+    MobileStatisticsController,
     DeviceTokenController,
     NotificationController,
     AnnouncementController,
@@ -309,6 +310,12 @@ Route::middleware('strip.tags')->group(function(){
                 Route::post('/admin/announcements', [AnnouncementController::class, 'store']);
                 Route::get('/admin/announcements/{announcement}', [AnnouncementController::class, 'show']);
                 Route::get('/admin/announcements/{announcement}/stats', [AnnouncementController::class, 'stats']);
+
+                // Mobile Statistics page — who's on the Expo app, their devices,
+                // and their push/email config (which admins can edit here).
+                Route::get('/admin/mobile-stats', [MobileStatisticsController::class, 'stats']);
+                Route::get('/admin/mobile-users', [MobileStatisticsController::class, 'users']);
+                Route::patch('/admin/users/{user}/notification-preferences', [NotificationController::class, 'adminUpdatePreferences']);
             });
 
             // Magazine, Office & Ad management (admin + editor only)

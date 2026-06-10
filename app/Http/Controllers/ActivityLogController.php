@@ -137,6 +137,16 @@ class ActivityLogController extends Controller
             $query->where('source', $source);
         }
 
+        // Origin filters — populated on auth rows by AuditAuthService.
+        // client ∈ mobile|web, platform ∈ android|ios|web.
+        if ($client = trim((string) $request->input('client', ''))) {
+            $query->where('client', $client);
+        }
+
+        if ($platform = trim((string) $request->input('platform', ''))) {
+            $query->where('device_platform', $platform);
+        }
+
         if ($userId = $request->input('user_id')) {
             $query->where('user_id', (int) $userId);
         }
@@ -445,6 +455,7 @@ class ActivityLogController extends Controller
         // old_values/new_values so a forensic export keeps the diff.
         $csvColumns = [
             'id', 'created_at', 'category', 'event', 'source',
+            'client', 'device_platform',
             'user_id', 'user_role', 'user_name',
             'auditable_type', 'auditable_id', 'subject_label',
             'description', 'ip_address', 'url',

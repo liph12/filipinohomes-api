@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\AppNotification;
+use App\Models\User;
 use Illuminate\Http\Request;
 
 class NotificationController extends Controller
@@ -66,6 +67,29 @@ class NotificationController extends Controller
         ]);
 
         $user = $request->user();
+        $user->fill($validated);
+        $user->save();
+
+        return response()->json($this->preferencePayload($user));
+    }
+
+    /**
+     * Admin edit of *another* user's notification preferences, from the
+     * Mobile Statistics page. Same validation as updatePreferences but the
+     * target is the route-bound user, not the caller. Admin-role is enforced
+     * by the RoleMiddleware:admin group on the route. The field change is
+     * audited automatically by the User model's LogsActivity trait (category
+     * 'users'), attributed to the acting admin.
+     */
+    public function adminUpdatePreferences(Request $request, User $user)
+    {
+        $validated = $request->validate([
+            'inquiry_notify_channel'  => 'sometimes|in:push,email',
+            'notify_new_inquiry'      => 'sometimes|boolean',
+            'notify_listing_verified' => 'sometimes|boolean',
+            'notify_status_change'    => 'sometimes|boolean',
+        ]);
+
         $user->fill($validated);
         $user->save();
 
