@@ -753,15 +753,15 @@ class ListingInsightsService
         return ['approve' => 0, 'pending' => 0, 'expired' => 0, 'rejected' => 0];
     }
 
-    /** Constrain a query to listings whose property carries ATS attachment files. */
+    /**
+     * Constrain a query to listings whose property carries ATS attachment files.
+     * Uses the indexed generated column properties.has_ats_files (see the
+     * add_insights_indexes migration) so this is index-backed, not a per-row
+     * JSON_LENGTH scan.
+     */
     private function withAtsAttachments($query)
     {
-        return $query
-            ->whereNotNull('properties.ats_attachments')
-            ->where(function ($q) {
-                $q->whereRaw("JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.photos')) > 0")
-                    ->orWhereRaw("JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.documents')) > 0");
-            });
+        return $query->where('properties.has_ats_files', 1);
     }
 
     /**
@@ -810,10 +810,7 @@ class ListingInsightsService
         if ($attachment === 'with') {
             $this->withAtsAttachments($base);
         } elseif ($attachment === 'without') {
-            $base->where(function ($q) {
-                $q->whereNull('properties.ats_attachments')
-                    ->orWhereRaw("COALESCE(JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.photos')), 0) = 0 AND COALESCE(JSON_LENGTH(JSON_EXTRACT(properties.ats_attachments, '$.documents')), 0) = 0");
-            });
+            $base->where('properties.has_ats_files', 0);
         }
 
         $totalCount = (clone $base)->count('listings.id');
