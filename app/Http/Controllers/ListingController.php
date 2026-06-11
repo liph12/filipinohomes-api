@@ -1610,16 +1610,18 @@ class ListingController extends Controller
      */
     public function insightsByType(Request $request, ListingInsightsService $insights): JsonResponse
     {
-        $agentIds  = $this->resolveInsightsAgentScope($request);
-        $dateStart = $request->query('date_start');
-        $dateEnd   = $request->query('date_end');
-        $cityId    = $request->query('city_id');
+        $agentIds   = $this->resolveInsightsAgentScope($request);
+        $dateStart  = $request->query('date_start');
+        $dateEnd    = $request->query('date_end');
+        $cityId     = $request->query('city_id');
+        $provinceId = $request->query('province_id');
 
         return response()->json($insights->typeBreakdown(
             is_string($dateStart) ? $dateStart : null,
             is_string($dateEnd) ? $dateEnd : null,
             $agentIds,
-            $cityId !== null ? (int) $cityId : null
+            $cityId !== null ? (int) $cityId : null,
+            $provinceId !== null ? (int) $provinceId : null
         ));
     }
 

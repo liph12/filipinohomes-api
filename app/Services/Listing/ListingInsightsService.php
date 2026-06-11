@@ -481,7 +481,7 @@ class ListingInsightsService
      * $dateStart / $dateEnd optionally constrain counts to listings created
      * within the inclusive window (YYYY-MM-DD).
      */
-    public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null, ?int $cityId = null): array
+    public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null, ?int $cityId = null, ?int $provinceId = null): array
     {
         $this->agentIds = $agentIds;
 
@@ -498,15 +498,22 @@ class ListingInsightsService
             ->whereNull('properties.deleted_at')
             ->whereIn('categories.name', self::STANDARD_CATEGORIES);
 
-        // City filter — only then pay for the location joins needed to resolve
-        // a listing's city (project's city, else the property's barangay → city).
-        if ($cityId !== null) {
+        // City / province filter — only then pay for the location joins needed to
+        // resolve a listing's location (project's city/prov, else the property's
+        // barangay → city → province).
+        if ($cityId !== null || $provinceId !== null) {
             $query->leftJoin('projects', function ($join) {
                 $join->on('projects.id', '=', 'properties.project_id')->whereNull('projects.deleted_at');
             })
                 ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
-                ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
-                ->where(DB::raw('COALESCE(projects.city_id, property_cities.id)'), $cityId);
+                ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id');
+
+            if ($cityId !== null) {
+                $query->where(DB::raw('COALESCE(projects.city_id, property_cities.id)'), $cityId);
+            }
+            if ($provinceId !== null) {
+                $query->where(DB::raw('COALESCE(projects.prov_id, property_cities.province_id)'), $provinceId);
+            }
         }
 
         if ($this->agentIds !== null) {
