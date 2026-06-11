@@ -348,14 +348,43 @@ class ListingInsightsService
      * Status-level breakdown. Returns one row per properties.status, with the
      * listing count, category breakdown, and the top provinces for that status.
      */
-    public function statusBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null): array
-    {
-        $this->agentIds = $agentIds;
+    public function statusBreakdown(
+        string $sortBy = 'listing_count',
+        ?array $agentIds = null,
+        ?string $dateStart = null,
+        ?string $dateEnd = null,
+        ?int $provinceId = null,
+        ?int $cityId = null,
+        string $groupBy = 'province'
+    ): array {
+        $this->agentIds  = $agentIds;
+        $this->dateStart = $dateStart;
+        $this->dateEnd   = $dateEnd;
 
-        // This breakdown only covers transaction statuses (Sold / Rented /
-        // Leased). Active listings live elsewhere (province + category cards)
-        // and aren't shown here so the section stays focused on outcomes.
-        $statusCategoryRows = $this->baseListingQuery()
+        $groupBy = $groupBy === 'city' ? 'city' : 'province';
+
+        // Location resolution expressions shared by the filter + grouping.
+        $provIdExpr  = 'COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)';
+        $cityIdExpr  = 'COALESCE(projects.city_id, property_cities.id)';
+        $locIdExpr   = $groupBy === 'city' ? $cityIdExpr : $provIdExpr;
+        $locNameExpr = $groupBy === 'city'
+            ? 'COALESCE(project_cities.name, property_cities.name)'
+            : 'COALESCE(project_provinces.name, property_provinces.name)';
+
+        // Apply the optional province/city filter to any status query.
+        $applyLoc = function ($q) use ($provinceId, $cityId, $provIdExpr, $cityIdExpr) {
+            if ($provinceId !== null) {
+                $q->where(DB::raw($provIdExpr), $provinceId);
+            }
+            if ($cityId !== null) {
+                $q->where(DB::raw($cityIdExpr), $cityId);
+            }
+            return $q;
+        };
+
+        // This breakdown covers all listings whose transaction status is one of
+        // Sold / Rented / Leased, optionally scoped by date + province/city.
+        $statusCategoryRows = $applyLoc($this->baseListingQuery())
             ->whereIn('properties.status', self::TRANSACTION_STATUSES)
             ->select(
                 'properties.status as status',
@@ -365,27 +394,23 @@ class ListingInsightsService
             ->groupByRaw('properties.status, categories.name')
             ->get();
 
-        // Top provinces per status — order by listing count desc, keep top 5.
-        $statusProvinceRows = $this->baseListingQuery()
+        // Locations per status — grouped by province or city, ordered desc.
+        $statusLocationRows = $applyLoc($this->baseListingQuery())
             ->whereIn('properties.status', self::TRANSACTION_STATUSES)
-            ->whereNotNull(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'))
+            ->whereNotNull(DB::raw($locIdExpr))
             ->select(
                 'properties.status as status',
-                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
-                DB::raw('COALESCE(project_provinces.name, property_provinces.name) as province_name'),
+                DB::raw("$locIdExpr as location_id"),
+                DB::raw("$locNameExpr as location_name"),
                 DB::raw('COUNT(listings.id) as listing_count')
             )
-            ->groupByRaw('
-                properties.status,
-                COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id),
-                COALESCE(project_provinces.name, property_provinces.name)
-            ')
+            ->groupByRaw("properties.status, $locIdExpr, $locNameExpr")
             ->orderBy('properties.status')
             ->orderByDesc('listing_count')
             ->get();
 
         // Visibility split per status — public vs private.
-        $statusVisibilityRows = $this->baseListingQuery()
+        $statusVisibilityRows = $applyLoc($this->baseListingQuery())
             ->whereIn('properties.status', self::TRANSACTION_STATUSES)
             ->select(
                 'properties.status as status',
@@ -405,7 +430,7 @@ class ListingInsightsService
                     'listing_count' => 0,
                     'listing_breakdown' => ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
                     'visibility_breakdown' => ['public' => 0, 'private' => 0],
-                    'top_provinces' => [],
+                    'locations' => [],
                 ];
             }
             $count = (int) $row->listing_count;
@@ -426,17 +451,14 @@ class ListingInsightsService
             $statuses[$status]['visibility_breakdown'][$bucket] += (int) $row->listing_count;
         }
 
-        foreach ($statusProvinceRows as $row) {
+        foreach ($statusLocationRows as $row) {
             $status = (string) ($row->status ?? 'unspecified');
             if (!isset($statuses[$status])) {
                 continue;
             }
-            if (count($statuses[$status]['top_provinces']) >= 5) {
-                continue;
-            }
-            $statuses[$status]['top_provinces'][] = [
-                'province_id'   => (int) $row->province_id,
-                'province_name' => (string) $row->province_name,
+            $statuses[$status]['locations'][] = [
+                'location_id'   => (int) $row->location_id,
+                'location_name' => (string) $row->location_name,
                 'listing_count' => (int) $row->listing_count,
             ];
         }
@@ -469,6 +491,11 @@ class ListingInsightsService
                 'total_statuses' => count($statusData),
                 'total_listings' => $totalListings,
                 'sort_by'        => $sortBy,
+                'group_by'       => $groupBy,
+                'province_id'    => $provinceId,
+                'city_id'        => $cityId,
+                'date_start'     => $this->dateStart,
+                'date_end'       => $this->dateEnd,
             ],
         ];
     }

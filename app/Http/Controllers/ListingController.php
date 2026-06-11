@@ -1598,10 +1598,20 @@ class ListingController extends Controller
      */
     public function insightsByStatus(Request $request, ListingInsightsService $insights): JsonResponse
     {
-        $agentIds = $this->resolveInsightsAgentScope($request);
+        $agentIds  = $this->resolveInsightsAgentScope($request);
+        $sortBy    = (string) $request->query('sort_by', 'priority');
+        $dateStart = $request->query('date_start');
+        $dateEnd   = $request->query('date_end');
 
-        $sortBy = (string) $request->query('sort_by', 'priority');
-        return response()->json($insights->statusBreakdown($sortBy, $agentIds));
+        return response()->json($insights->statusBreakdown(
+            $sortBy,
+            $agentIds,
+            is_string($dateStart) ? $dateStart : null,
+            is_string($dateEnd) ? $dateEnd : null,
+            $request->query('province_id') !== null ? (int) $request->query('province_id') : null,
+            $request->query('city_id') !== null ? (int) $request->query('city_id') : null,
+            (string) $request->query('group_by', 'province')
+        ));
     }
 
     /**
