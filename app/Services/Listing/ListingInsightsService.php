@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
  * Soft-delete invariants enforced everywhere:
  *   listings.deleted_at IS NULL
  *   properties.deleted_at IS NULL
+ *   properties.status != 'deleted'   (deleted via status, not soft-delete)
  *
  * "Standard categories" = For Sale / For Rent / Foreclosure. Other categories
  * are excluded from every count.
@@ -43,6 +44,13 @@ class ListingInsightsService
     private ?string $dateEnd = null;
 
     /**
+     * Optional province / city scope. When set, baseListingQuery() narrows to
+     * the matching location (resolved via project or property → barangay).
+     */
+    private ?int $provinceId = null;
+    private ?int $cityId = null;
+
+    /**
      * Base join chain — listings → properties → location resolution.
      * Every aggregation query layers on top of this closure.
      */
@@ -62,6 +70,8 @@ class ListingInsightsService
             ->leftJoin('provinces as property_provinces', 'property_provinces.id', '=', 'property_cities.province_id')
             ->whereNull('listings.deleted_at')
             ->whereNull('properties.deleted_at')
+            // Exclude listings whose property was marked deleted (status, not soft-delete).
+            ->where('properties.status', '!=', 'deleted')
             ->whereIn('categories.name', self::STANDARD_CATEGORIES);
 
         if ($this->agentIds !== null) {
@@ -73,6 +83,13 @@ class ListingInsightsService
         }
         if ($this->dateEnd !== null && $this->dateEnd !== '') {
             $query->where('listings.created_at', '<=', $this->dateEnd . ' 23:59:59');
+        }
+
+        if ($this->provinceId !== null) {
+            $query->where(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'), $this->provinceId);
+        }
+        if ($this->cityId !== null) {
+            $query->where(DB::raw('COALESCE(projects.city_id, property_cities.id)'), $this->cityId);
         }
 
         return $query;
@@ -92,11 +109,13 @@ class ListingInsightsService
      * Province-level breakdown. Returns one row per (province, city) with
      * listing-count metrics, then groups into provinces with cities[].
      */
-    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null, ?string $dateStart = null, ?string $dateEnd = null): array
+    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null, ?string $dateStart = null, ?string $dateEnd = null, ?int $provinceId = null, ?int $cityId = null): array
     {
-        $this->agentIds  = $agentIds;
-        $this->dateStart = $dateStart;
-        $this->dateEnd   = $dateEnd;
+        $this->agentIds   = $agentIds;
+        $this->dateStart  = $dateStart;
+        $this->dateEnd    = $dateEnd;
+        $this->provinceId = $provinceId;
+        $this->cityId     = $cityId;
 
         // Cities — count listings per (province, city).
         $cityRows = $this->baseListingQuery()
@@ -409,6 +428,19 @@ class ListingInsightsService
             ->orderByDesc('listing_count')
             ->get();
 
+        // Category mix per (status, location) — feeds the per-location pills.
+        $statusLocationCategoryRows = $applyLoc($this->baseListingQuery())
+            ->whereIn('properties.status', self::TRANSACTION_STATUSES)
+            ->whereNotNull(DB::raw($locIdExpr))
+            ->select(
+                'properties.status as status',
+                DB::raw("$locIdExpr as location_id"),
+                'categories.name as category_name',
+                DB::raw('COUNT(listings.id) as listing_count')
+            )
+            ->groupByRaw("properties.status, $locIdExpr, categories.name")
+            ->get();
+
         // Visibility split per status — public vs private.
         $statusVisibilityRows = $applyLoc($this->baseListingQuery())
             ->whereIn('properties.status', self::TRANSACTION_STATUSES)
@@ -451,15 +483,38 @@ class ListingInsightsService
             $statuses[$status]['visibility_breakdown'][$bucket] += (int) $row->listing_count;
         }
 
+        // status|location_id => category breakdown.
+        $locationCategory = [];
+        foreach ($statusLocationCategoryRows as $row) {
+            $status = (string) ($row->status ?? 'unspecified');
+            $key = $status . '|' . (int) $row->location_id;
+            if (!isset($locationCategory[$key])) {
+                $locationCategory[$key] = ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0];
+            }
+            $ck = $this->categoryKey((string) $row->category_name);
+            if ($ck !== null) {
+                $locationCategory[$key][$ck] = (int) $row->listing_count;
+            }
+        }
+
         foreach ($statusLocationRows as $row) {
             $status = (string) ($row->status ?? 'unspecified');
             if (!isset($statuses[$status])) {
                 continue;
             }
+            $locId = (int) $row->location_id;
+            $count = (int) $row->listing_count;
             $statuses[$status]['locations'][] = [
-                'location_id'   => (int) $row->location_id,
+                'location_id'   => $locId,
                 'location_name' => (string) $row->location_name,
-                'listing_count' => (int) $row->listing_count,
+                'listing_count' => $count,
+                'listing_breakdown' => $locationCategory[$status . '|' . $locId] ?? ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
+                // Status is fixed per card — the location's transaction mix is just this status.
+                'transaction_breakdown' => [
+                    'sold'   => $status === 'sold' ? $count : 0,
+                    'rented' => $status === 'rented' ? $count : 0,
+                    'leased' => $status === 'leased' ? $count : 0,
+                ],
             ];
         }
 
@@ -523,6 +578,8 @@ class ListingInsightsService
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
             ->whereNull('listings.deleted_at')
             ->whereNull('properties.deleted_at')
+            // Exclude listings whose property was marked deleted (status, not soft-delete).
+            ->where('properties.status', '!=', 'deleted')
             ->whereIn('categories.name', self::STANDARD_CATEGORIES);
 
         // City / province filter — only then pay for the location joins needed to
@@ -656,6 +713,13 @@ class ListingInsightsService
         $category = (string) ($params['category'] ?? '');
         $visibility = strtolower((string) ($params['visibility'] ?? ''));
         $provinceId = isset($params['province_id']) ? (int) $params['province_id'] : null;
+        $cityId     = isset($params['city_id']) ? (int) $params['city_id'] : null;
+
+        // Province / city / date scope are applied centrally in baseListingQuery().
+        $this->provinceId = $provinceId;
+        $this->cityId     = $cityId;
+        $this->dateStart  = isset($params['date_start']) && $params['date_start'] !== '' ? (string) $params['date_start'] : null;
+        $this->dateEnd    = isset($params['date_end']) && $params['date_end'] !== '' ? (string) $params['date_end'] : null;
 
         $categoryFilter = match (strtolower($category)) {
             'for-sale'    => 'For Sale',
@@ -673,7 +737,12 @@ class ListingInsightsService
                         ->orWhereNull('properties.status');
                 });
             }, function ($q) use ($status) {
-                $q->where('properties.status', $status);
+                // 'all' = every transaction status (Sold / Rented / Leased).
+                if ($status === 'all') {
+                    $q->whereIn('properties.status', self::TRANSACTION_STATUSES);
+                } else {
+                    $q->where('properties.status', $status);
+                }
             })
             ->when($categoryFilter, fn ($q) => $q->where('categories.name', $categoryFilter))
             ->when($visibilityFilter, function ($q) use ($visibilityFilter) {
@@ -687,14 +756,7 @@ class ListingInsightsService
                             ->orWhereNull('listings.visibility');
                     });
                 }
-            })
-            ->when(
-                $provinceId !== null,
-                fn ($q) => $q->where(
-                    DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'),
-                    $provinceId
-                )
-            );
+            });
 
         $totalCount = (clone $base)->count('listings.id');
 
@@ -770,6 +832,7 @@ class ListingInsightsService
                 'status'       => $status,
                 'category'     => $categoryFilter,
                 'province_id'  => $provinceId,
+                'city_id'      => $cityId,
             ],
         ];
     }

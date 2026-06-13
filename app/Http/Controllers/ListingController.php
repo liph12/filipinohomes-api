@@ -1580,15 +1580,19 @@ class ListingController extends Controller
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
 
-        $sortBy    = (string) $request->query('sort_by', 'city_count');
-        $dateStart = $request->query('date_start');
-        $dateEnd   = $request->query('date_end');
+        $sortBy     = (string) $request->query('sort_by', 'city_count');
+        $dateStart  = $request->query('date_start');
+        $dateEnd    = $request->query('date_end');
+        $provinceId = $request->query('province_id');
+        $cityId     = $request->query('city_id');
 
         return response()->json($insights->provinceBreakdown(
             $sortBy,
             $agentIds,
             is_string($dateStart) ? $dateStart : null,
-            is_string($dateEnd) ? $dateEnd : null
+            is_string($dateEnd) ? $dateEnd : null,
+            is_numeric($provinceId) ? (int) $provinceId : null,
+            is_numeric($cityId) ? (int) $cityId : null
         ));
     }
 
@@ -1651,6 +1655,11 @@ class ListingController extends Controller
             'province_id' => $request->query('province_id') !== null
                 ? (int) $request->query('province_id')
                 : null,
+            'city_id'     => $request->query('city_id') !== null
+                ? (int) $request->query('city_id')
+                : null,
+            'date_start'  => $request->query('date_start'),
+            'date_end'    => $request->query('date_end'),
         ], $agentIds));
     }
 
