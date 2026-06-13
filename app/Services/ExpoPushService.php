@@ -197,6 +197,20 @@ class ExpoPushService
             $response = $request->post(self::ENDPOINT, $messages);
 
             if (! $response->successful()) {
+                // Expo rejects the whole request with PUSH_TOO_MANY_EXPERIENCE_IDS
+                // when a batch mixes tokens from more than one Expo project — e.g.
+                // a leftover dev-build token (@filipinohomes-dev/...) sitting in the
+                // table next to production tokens (@johnmaizo/filipinohomes-app).
+                // Re-send each message on its own so the valid production tokens
+                // still get delivered instead of the whole batch being dropped.
+                if (count($messages) > 1 && str_contains($response->body(), 'PUSH_TOO_MANY_EXPERIENCE_IDS')) {
+                    foreach ($messages as $i => $message) {
+                        $this->postMessages([$message], [$chunk[$i]]);
+                    }
+
+                    return;
+                }
+
                 Log::warning('Expo push request failed', [
                     'status' => $response->status(),
                     'body' => $response->body(),
