@@ -139,36 +139,10 @@ class ListingInsightsService
             ->orderBy('city_name')
             ->get();
 
-        // Categories — listing count per (province, category).
-        $categoryRows = $this->baseListingQuery()
-            ->where(function ($query) {
-                $query->whereNotNull('projects.prov_id')
-                    ->orWhereNotNull('project_cities.province_id')
-                    ->orWhereNotNull('property_cities.province_id');
-            })
-            ->select(
-                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
-                'categories.name as category_name',
-                DB::raw('COUNT(listings.id) as listing_count')
-            )
-            ->groupByRaw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id), categories.name')
-            ->get();
-
-        // Transactions — listing count per (province, properties.status), for sold/rented/leased only.
-        $transactionRows = $this->baseListingQuery()
-            ->whereIn('properties.status', self::TRANSACTION_STATUSES)
-            ->where(function ($query) {
-                $query->whereNotNull('projects.prov_id')
-                    ->orWhereNotNull('project_cities.province_id')
-                    ->orWhereNotNull('property_cities.province_id');
-            })
-            ->select(
-                DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id) as province_id'),
-                'properties.status as status',
-                DB::raw('COUNT(listings.id) as listing_count')
-            )
-            ->groupByRaw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id), properties.status')
-            ->get();
+        // Province-level category/transaction breakdowns are NOT queried
+        // separately — they're summed from the per-city pivots below (one fewer
+        // pair of GROUP-BY scans), which also keeps them consistent with each
+        // province's city-derived listing_count.
 
         // Categories per (province, city) — feeds the city-row breakdown chips.
         $cityCategoryRows = $this->baseListingQuery()
@@ -223,27 +197,6 @@ class ListingInsightsService
             ')
             ->get();
 
-        // Pivot into per-province maps.
-        $categoryByProvince = [];
-        foreach ($categoryRows as $row) {
-            $provinceId = (int) $row->province_id;
-            $categoryByProvince[$provinceId] ??= ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0];
-            $key = $this->categoryKey((string) $row->category_name);
-            if ($key !== null) {
-                $categoryByProvince[$provinceId][$key] = (int) $row->listing_count;
-            }
-        }
-
-        $transactionByProvince = [];
-        foreach ($transactionRows as $row) {
-            $provinceId = (int) $row->province_id;
-            $status = (string) $row->status;
-            $transactionByProvince[$provinceId] ??= ['sold' => 0, 'rented' => 0, 'leased' => 0];
-            if (in_array($status, self::TRANSACTION_STATUSES, true)) {
-                $transactionByProvince[$provinceId][$status] = (int) $row->listing_count;
-            }
-        }
-
         // Per-city pivots — keyed by "provinceId:cityId" for fast merge below.
         $categoryByCity = [];
         foreach ($cityCategoryRows as $row) {
@@ -272,6 +225,25 @@ class ListingInsightsService
             $status = (string) $row->ats_status;
             if (array_key_exists($status, $atsByCity[$key])) {
                 $atsByCity[$key][$status] = (int) $row->listing_count;
+            }
+        }
+
+        // Province-level breakdowns = sum of their cities (no separate query).
+        $categoryByProvince = [];
+        foreach ($categoryByCity as $key => $cats) {
+            $provinceId = (int) explode(':', $key)[0];
+            $categoryByProvince[$provinceId] ??= ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0];
+            foreach ($cats as $k => $v) {
+                $categoryByProvince[$provinceId][$k] += $v;
+            }
+        }
+
+        $transactionByProvince = [];
+        foreach ($transactionByCity as $key => $tx) {
+            $provinceId = (int) explode(':', $key)[0];
+            $transactionByProvince[$provinceId] ??= ['sold' => 0, 'rented' => 0, 'leased' => 0];
+            foreach ($tx as $k => $v) {
+                $transactionByProvince[$provinceId][$k] += $v;
             }
         }
 
@@ -413,32 +385,19 @@ class ListingInsightsService
             ->groupByRaw('properties.status, categories.name')
             ->get();
 
-        // Locations per status — grouped by province or city, ordered desc.
-        $statusLocationRows = $applyLoc($this->baseListingQuery())
-            ->whereIn('properties.status', self::TRANSACTION_STATUSES)
-            ->whereNotNull(DB::raw($locIdExpr))
-            ->select(
-                'properties.status as status',
-                DB::raw("$locIdExpr as location_id"),
-                DB::raw("$locNameExpr as location_name"),
-                DB::raw('COUNT(listings.id) as listing_count')
-            )
-            ->groupByRaw("properties.status, $locIdExpr, $locNameExpr")
-            ->orderBy('properties.status')
-            ->orderByDesc('listing_count')
-            ->get();
-
-        // Category mix per (status, location) — feeds the per-location pills.
+        // Category mix per (status, location) — also feeds the location list
+        // itself (its total = sum of categories), so no separate location query.
         $statusLocationCategoryRows = $applyLoc($this->baseListingQuery())
             ->whereIn('properties.status', self::TRANSACTION_STATUSES)
             ->whereNotNull(DB::raw($locIdExpr))
             ->select(
                 'properties.status as status',
                 DB::raw("$locIdExpr as location_id"),
+                DB::raw("$locNameExpr as location_name"),
                 'categories.name as category_name',
                 DB::raw('COUNT(listings.id) as listing_count')
             )
-            ->groupByRaw("properties.status, $locIdExpr, categories.name")
+            ->groupByRaw("properties.status, $locIdExpr, $locNameExpr, categories.name")
             ->get();
 
         // Visibility split per status — public vs private.
@@ -483,32 +442,41 @@ class ListingInsightsService
             $statuses[$status]['visibility_breakdown'][$bucket] += (int) $row->listing_count;
         }
 
-        // status|location_id => category breakdown.
-        $locationCategory = [];
+        // Aggregate the (status, location, category) rows into one entry per
+        // (status, location): name + total (sum of categories) + category mix.
+        $locationAgg = [];
         foreach ($statusLocationCategoryRows as $row) {
             $status = (string) ($row->status ?? 'unspecified');
-            $key = $status . '|' . (int) $row->location_id;
-            if (!isset($locationCategory[$key])) {
-                $locationCategory[$key] = ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0];
+            $locId = (int) $row->location_id;
+            $key = $status . '|' . $locId;
+            if (!isset($locationAgg[$key])) {
+                $locationAgg[$key] = [
+                    'status' => $status,
+                    'location_id' => $locId,
+                    'location_name' => (string) $row->location_name,
+                    'listing_count' => 0,
+                    'listing_breakdown' => ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
+                ];
             }
+            $count = (int) $row->listing_count;
+            $locationAgg[$key]['listing_count'] += $count;
             $ck = $this->categoryKey((string) $row->category_name);
             if ($ck !== null) {
-                $locationCategory[$key][$ck] = (int) $row->listing_count;
+                $locationAgg[$key]['listing_breakdown'][$ck] += $count;
             }
         }
 
-        foreach ($statusLocationRows as $row) {
-            $status = (string) ($row->status ?? 'unspecified');
+        foreach ($locationAgg as $loc) {
+            $status = $loc['status'];
             if (!isset($statuses[$status])) {
                 continue;
             }
-            $locId = (int) $row->location_id;
-            $count = (int) $row->listing_count;
+            $count = $loc['listing_count'];
             $statuses[$status]['locations'][] = [
-                'location_id'   => $locId,
-                'location_name' => (string) $row->location_name,
+                'location_id'   => $loc['location_id'],
+                'location_name' => $loc['location_name'],
                 'listing_count' => $count,
-                'listing_breakdown' => $locationCategory[$status . '|' . $locId] ?? ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
+                'listing_breakdown' => $loc['listing_breakdown'],
                 // Status is fixed per card — the location's transaction mix is just this status.
                 'transaction_breakdown' => [
                     'sold'   => $status === 'sold' ? $count : 0,
@@ -517,6 +485,12 @@ class ListingInsightsService
                 ],
             ];
         }
+
+        // Aggregated from an unordered map — order each status's list desc.
+        foreach ($statuses as &$st) {
+            usort($st['locations'], fn ($a, $b) => $b['listing_count'] <=> $a['listing_count']);
+        }
+        unset($st);
 
         $statusData = array_values($statuses);
 
