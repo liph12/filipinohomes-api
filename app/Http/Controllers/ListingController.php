@@ -16,7 +16,10 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Mail\ListingFlaggedMailer;
 use App\Mail\ListingVerifiedMailer;
-use App\Services\Listing\ListingInsightsService;
+use App\Services\Listing\ListingByProvinceService;
+use App\Services\Listing\ListingByStatusService;
+use App\Services\Listing\ListingByTypeService;
+use App\Services\Listing\ListingByCityService;
 use App\Services\TeamLeadershipService;
 use Illuminate\Support\Facades\Event;
 use OwenIt\Auditing\Events\AuditCustom;
@@ -1576,7 +1579,7 @@ class ListingController extends Controller
      * Listing Insights — province breakdown. Mirrors ProjectController::byProvince
      * but counts ALL listings (project + standalone) and uses listing-row counts.
      */
-    public function insightsByProvince(Request $request, ListingInsightsService $insights): JsonResponse
+    public function insightsByProvince(Request $request, ListingByProvinceService $insights): JsonResponse
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
 
@@ -1600,7 +1603,7 @@ class ListingController extends Controller
      * Listing Insights — status breakdown. One row per properties.status with
      * category mix + top provinces.
      */
-    public function insightsByStatus(Request $request, ListingInsightsService $insights): JsonResponse
+    public function insightsByStatus(Request $request, ListingByStatusService $insights): JsonResponse
     {
         $agentIds  = $this->resolveInsightsAgentScope($request);
         $sortBy    = (string) $request->query('sort_by', 'priority');
@@ -1622,7 +1625,7 @@ class ListingController extends Controller
      * Listing Insights — property-type breakdown. One row per property type
      * with subtype children and per-category + per-transaction-status counts.
      */
-    public function insightsByType(Request $request, ListingInsightsService $insights): JsonResponse
+    public function insightsByType(Request $request, ListingByTypeService $insights): JsonResponse
     {
         $agentIds   = $this->resolveInsightsAgentScope($request);
         $dateStart  = $request->query('date_start');
@@ -1643,7 +1646,7 @@ class ListingController extends Controller
      * Listing Insights — paginated listings for a single status. Used by the
      * "Listings by Status" drawer drill-down.
      */
-    public function insightsListingsForStatus(Request $request, ListingInsightsService $insights, string $status): JsonResponse
+    public function insightsListingsForStatus(Request $request, ListingByStatusService $insights, string $status): JsonResponse
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
 
@@ -1668,7 +1671,7 @@ class ListingController extends Controller
      * "Listings by City" ATS drill-down drawer (each row carries its ats_status
      * + attachment URLs for the MediaLightbox).
      */
-    public function insightsCityAtsListings(Request $request, ListingInsightsService $insights, int $city): JsonResponse
+    public function insightsCityAtsListings(Request $request, ListingByCityService $insights, int $city): JsonResponse
     {
         $agentIds  = $this->resolveInsightsAgentScope($request);
         $dateStart = $request->query('date_start');

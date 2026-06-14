@@ -3,7 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Services\Project\ProjectService;
-use App\Services\Project\ProjectInsightsService;
+use App\Services\Project\ProjectByProvinceService;
+use App\Services\Project\ProjectByNameService;
 use App\Models\Project;
 use App\Models\Listing;
 use App\Http\Resources\ListingResourceCollection;
@@ -211,7 +212,7 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function byProvince(Request $request, ProjectInsightsService $insights): JsonResponse
+    public function byProvince(Request $request, ProjectByProvinceService $insights): JsonResponse
     {
         $user = $request->user();
         if (($user->role->name ?? null) !== 'admin') {
@@ -219,7 +220,13 @@ class ProjectController extends Controller
         }
 
         $sortBy = (string) $request->query('sort_by', 'city_count');
-        return response()->json($insights->provinceBreakdown($sortBy));
+        return response()->json($insights->provinceBreakdown(
+            $sortBy,
+            $request->query('province_id') !== null ? (int) $request->query('province_id') : null,
+            $request->query('city_id') !== null ? (int) $request->query('city_id') : null,
+            $request->query('date_start'),
+            $request->query('date_end'),
+        ));
     }
 
     /**
@@ -234,7 +241,7 @@ class ProjectController extends Controller
      *   sort_by      ('name' | 'total_listings' | 'recent', default 'total_listings')
      *   category     (optional: 'for-sale' | 'for-rent' | 'foreclosure')
      */
-    public function byName(Request $request, ProjectInsightsService $insights): JsonResponse
+    public function byName(Request $request, ProjectByNameService $insights): JsonResponse
     {
         $user = $request->user();
         if (($user->role->name ?? null) !== 'admin') {
@@ -242,11 +249,15 @@ class ProjectController extends Controller
         }
 
         return response()->json($insights->projectsByName([
-            'page'     => (int) $request->query('page', 1),
-            'per_page' => (int) $request->query('per_page', 20),
-            'search'   => (string) $request->query('search', ''),
-            'sort_by'  => (string) $request->query('sort_by', 'total_listings'),
-            'category' => (string) $request->query('category', ''),
+            'page'        => (int) $request->query('page', 1),
+            'per_page'    => (int) $request->query('per_page', 20),
+            'search'      => (string) $request->query('search', ''),
+            'sort_by'     => (string) $request->query('sort_by', 'total_listings'),
+            'category'    => (string) $request->query('category', ''),
+            'province_id' => $request->query('province_id') !== null ? (int) $request->query('province_id') : null,
+            'city_id'     => $request->query('city_id') !== null ? (int) $request->query('city_id') : null,
+            'date_start'  => $request->query('date_start'),
+            'date_end'    => $request->query('date_end'),
         ]));
     }
     /**
@@ -255,7 +266,7 @@ class ProjectController extends Controller
      * Returns the project entity + aggregate totals + a paginated list of
      * its listings.
      */
-    public function insightsDetail(Request $request, ProjectInsightsService $insights, string $projectKey): JsonResponse
+    public function insightsDetail(Request $request, ProjectByNameService $insights, string $projectKey): JsonResponse
     {
         $user = $request->user();
         if (($user->role->name ?? null) !== 'admin') {
