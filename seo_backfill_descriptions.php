@@ -105,10 +105,22 @@ function parseLocation(?string $address): array
         if (preg_match('/^\d{3,5}$/', $p)) return false; // zip
         return true;
     }));
+    // Strip leaked Filipino administrative prefixes (e.g. "Lalawigan ng
+    // Cebu" -> "Cebu", "Lungsod ng Cebu" -> "Cebu").
+    $parts = array_map(
+        fn($p) => preg_replace('/^(Lalawigan|Lungsod|Bayan|Barangay)\s+ng\s+/iu', '', $p),
+        $parts
+    );
     $n = count($parts);
     if ($n === 0) return [null, null];
     if ($n === 1) return [$parts[0], null];
     return [$parts[$n - 2], $parts[$n - 1]]; // city, province
+}
+
+/** "a" / "an" by leading vowel sound (good enough for property nouns). */
+function aOrAn(string $word): string
+{
+    return preg_match('/^[aeiou]/i', ltrim($word)) ? 'an' : 'a';
 }
 
 function saleWord(int $categoryId): string
@@ -138,7 +150,7 @@ function buildIntro(array $d): string
     $openers = [
         ucfirst($subtype) . " {$sale}{$where}.",
         "Discover this {$subtype} {$sale}{$where}.",
-        "Now available: a {$subtype} {$sale}{$where}.",
+        "Now available: " . aOrAn($subtype) . " {$subtype} {$sale}{$where}.",
     ];
     $sentences = [$openers[$d['id'] % 3]];
 
