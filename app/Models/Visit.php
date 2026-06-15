@@ -22,5 +22,8 @@ class Visit extends Model
         'landing_path',
         'user_id',
         'ip',
+        'country',
+        'region',
+        'city',
     ];
 }
