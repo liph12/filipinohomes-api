@@ -2,477 +2,78 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\Audience\AudienceGeographyService;
+use App\Services\Audience\AudienceInsightsService;
+use App\Services\Audience\EngagementOverviewService;
+use App\Services\Audience\GeoTopChartsService;
+use App\Services\Audience\SourceBreakdownService;
+use App\Services\Audience\TrafficSourceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 /**
- * Aggregates for the admin "Audience Insights" page. Currently exposes the
- * audience-size counts (total / new / returning clients + distinct visitors)
- * for a date range. Admin-only (route gated by RoleMiddleware:admin); the
- * date-range param mirrors the other dashboard endpoints.
+ * Thin controller for the admin "Audience Insights" page. Resolves the date
+ * range and delegates each card to its dedicated service, named to match the
+ * front-end components (EngagementOverview, TrafficSource, SourceBreakdown,
+ * AudienceGeography, GeoTopCharts). Admin-only (routes gated by
+ * RoleMiddleware:admin).
  */
 class AudienceInsightsController extends Controller
 {
-    public function show(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'date_start' => 'nullable|date',
-            'date_end'   => 'nullable|date|after_or_equal:date_start',
-        ]);
-
-        // No date_start → all-time (from the earliest record). The frontend
-        // ships a Jun-10-2026 default, so this only kicks in when the user
-        // clears the filter.
-        $start   = $validated['date_start'] ?? $this->earliestDate();
-        $end     = $validated['date_end']   ?? now()->toDateString();
-        $startDt = $start . ' 00:00:00';
-        $endDt   = $end . ' 23:59:59';
+    public function show(
+        Request $request,
+        EngagementOverviewService $overview,
+        TrafficSourceService $trafficSource,
+        SourceBreakdownService $sourceBreakdown
+    ): JsonResponse {
+        [$start, $end] = $this->range($request, $overview);
+        $overview->range($start, $end);
 
         return response()->json([
-            'size'         => $this->size($startDt, $endDt),
-            'acquisition'  => $this->acquisition($startDt, $endDt),
-            'trend'        => $this->trend($startDt, $endDt, $start, $end),
-            'source_trend' => $this->sourceTrend($startDt, $endDt, $start, $end),
+            'size'         => $overview->size(),
+            'acquisition'  => $trafficSource->range($start, $end)->channels(),
+            'trend'        => $overview->trend(),
+            'source_trend' => $sourceBreakdown->range($start, $end)->build(),
             'meta'         => ['from' => $start, 'to' => $end],
         ]);
     }
 
     /**
-     * Per-day anonymous-visitor counts split by acquisition channel — powers the
-     * "Source Breakdown" multi-line chart. Same recent-≤400-day window as trend.
-     * Returns aligned date labels + one zero-filled series per channel (ordered
-     * by total, biggest first).
+     * Geography breakdown on its own endpoint so the AudienceGeography +
+     * GeoTopCharts cards can filter by an independent date range. Admin-only
+     * (route-gated).
      */
-    private function sourceTrend(string $startDt, string $endDt, string $start, string $end): array
-    {
-        $rows = DB::table('visits')
-            ->whereBetween('created_at', [$startDt, $endDt])
-            ->whereNull('user_id')
-            ->groupBy(DB::raw('DATE(created_at)'), 'channel')
-            ->select(DB::raw('DATE(created_at) as d'), 'channel', DB::raw('COUNT(DISTINCT visitor_id) as c'))
-            ->get();
+    public function geographyShow(
+        Request $request,
+        AudienceGeographyService $geography,
+        GeoTopChartsService $geoCharts
+    ): JsonResponse {
+        [$start, $end] = $this->range($request, $geography);
 
-        // Pivot: byChannel[channel][date] = count, plus per-channel totals.
-        $byChannel = [];
-        $totals = [];
-        foreach ($rows as $r) {
-            $ch = (string) $r->channel;
-            $byChannel[$ch][$r->d] = (int) $r->c;
-            $totals[$ch] = ($totals[$ch] ?? 0) + (int) $r->c;
-        }
-        arsort($totals);
-
-        // Date axis starts at the first day with data.
-        $allKeys = [];
-        foreach ($byChannel as $m) {
-            $allKeys = array_merge($allKeys, array_keys($m));
-        }
-        $dates = $this->buildDates($allKeys ? min($allKeys) : null, $start, $end);
-
-        $channels = [];
-        foreach (array_keys($totals) as $ch) {
-            $channels[] = [
-                'channel' => $ch,
-                'data'    => array_map(fn ($d) => $byChannel[$ch][$d] ?? 0, $dates),
-            ];
-        }
-
-        return ['dates' => $dates, 'channels' => $channels];
+        return response()->json([
+            'geography' => $geography->range($start, $end)->breakdown(),
+            'trend'     => $geoCharts->range($start, $end)->build(),
+            'meta'      => ['from' => $start, 'to' => $end],
+        ]);
     }
 
     /**
-     * Per-day series so the dashboard can chart whether the audience is rising
-     * or falling: unique visitors per day (DISTINCT visitor_id), new clients
-     * per day (registrations), and returning clients per day (logged in that
-     * day but registered before the range start). Zero-filled across the range
-     * for a continuous line; capped at 400 points to keep wide ranges sane.
+     * Validate + resolve the date window shared by every endpoint. No date_start
+     * → all-time (from the earliest record). The frontend ships a default, so
+     * that only kicks in when the user clears the filter.
+     *
+     * @return array{0:string,1:string} [start, end] as 'Y-m-d'
      */
-    private function trend(string $startDt, string $endDt, string $start, string $end): array
-    {
-        // Audience visitors per day (anonymous + clients, agents/admins excluded).
-        $visitorsByDay = $this->audienceVisits($startDt, $endDt)
-            ->groupBy(DB::raw('DATE(visits.created_at)'))
-            ->select(DB::raw('DATE(visits.created_at) as d'), DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
-            ->pluck('c', 'd');
-
-        $clientsByDay = DB::table('users')
-            ->join('roles', 'roles.id', '=', 'users.role_id')
-            ->where('roles.name', 'client')
-            ->whereBetween('users.created_at', [$startDt, $endDt])
-            ->groupBy(DB::raw('DATE(users.created_at)'))
-            ->select(DB::raw('DATE(users.created_at) as d'), DB::raw('COUNT(*) as c'))
-            ->pluck('c', 'd');
-
-        // Returning = client logged in that day, registered before the range.
-        $returningByDay = DB::table('login_logs')
-            ->join('users', 'users.id', '=', 'login_logs.user_id')
-            ->join('roles', 'roles.id', '=', 'users.role_id')
-            ->where('roles.name', 'client')
-            ->whereBetween('login_logs.logged_in_at', [$startDt, $endDt])
-            ->where('users.created_at', '<', $startDt)
-            ->groupBy(DB::raw('DATE(login_logs.logged_in_at)'))
-            ->select(DB::raw('DATE(login_logs.logged_in_at) as d'), DB::raw('COUNT(DISTINCT login_logs.user_id) as c'))
-            ->pluck('c', 'd');
-
-        // Date axis starts at the first day that actually has data.
-        $allKeys = array_merge(
-            array_keys($visitorsByDay->all()),
-            array_keys($clientsByDay->all()),
-            array_keys($returningByDay->all()),
-        );
-        $dates = $this->buildDates($allKeys ? min($allKeys) : null, $start, $end);
-
-        return array_map(fn ($key) => [
-            'date'      => $key,
-            'visitors'  => (int) ($visitorsByDay[$key] ?? 0),
-            'clients'   => (int) ($clientsByDay[$key] ?? 0),
-            'returning' => (int) ($returningByDay[$key] ?? 0),
-        ], $dates);
-    }
-
-    /**
-     * Geography breakdown on its own endpoint so the Audience Insights map card
-     * can filter by an independent date range. Admin-only (route-gated).
-     */
-    public function geographyShow(Request $request): JsonResponse
+    private function range(Request $request, AudienceInsightsService $service): array
     {
         $validated = $request->validate([
             'date_start' => 'nullable|date',
             'date_end'   => 'nullable|date|after_or_equal:date_start',
         ]);
 
-        $start = $validated['date_start'] ?? $this->earliestDate();
-        $end   = $validated['date_end']   ?? now()->toDateString();
-
-        return response()->json([
-            'geography' => $this->geography($start . ' 00:00:00', $end . ' 23:59:59'),
-            'trend'     => $this->geoTrend($start . ' 00:00:00', $end . ' 23:59:59', $start, $end),
-            'meta'      => ['from' => $start, 'to' => $end],
-        ]);
-    }
-
-    /**
-     * Per-day geography series for the Top-10 line charts. For each dimension
-     * (country / region / city) returns the top-10 locations by total and their
-     * daily counts: client registrations (by users.created_at) + anonymous
-     * visits (by visit date), matching the geography totals. Recent ≤400 days.
-     */
-    private function geoTrend(string $startDt, string $endDt, string $start, string $end): array
-    {
-        // Build each dimension's pivot (byName[date] + totals) without an axis yet.
-        $dim = function (string $userCol, string $visitCol) use ($startDt, $endDt) {
-            $byName = [];
-            $totals = [];
-            $add = function ($rows) use (&$byName, &$totals) {
-                foreach ($rows as $r) {
-                    $name = trim((string) $r->name);
-                    if ($name === '' || strcasecmp($name, 'unknown') === 0) {
-                        continue;
-                    }
-                    $byName[$name][$r->d] = ($byName[$name][$r->d] ?? 0) + (int) $r->c;
-                    $totals[$name] = ($totals[$name] ?? 0) + (int) $r->c;
-                }
-            };
-
-            $add(DB::table('user_info')
-                ->join('users', 'users.id', '=', 'user_info.user_id')
-                ->join('roles', 'roles.id', '=', 'users.role_id')
-                ->where('roles.name', 'client')
-                ->whereBetween('users.created_at', [$startDt, $endDt])
-                ->whereNotNull('user_info.' . $userCol)
-                ->where('user_info.' . $userCol, '!=', '')
-                ->groupBy(DB::raw('DATE(users.created_at)'), 'user_info.' . $userCol)
-                ->select(DB::raw('DATE(users.created_at) as d'), 'user_info.' . $userCol . ' as name', DB::raw('COUNT(DISTINCT user_info.user_id) as c'))
-                ->get());
-
-            $add(DB::table('visits')
-                ->whereBetween('created_at', [$startDt, $endDt])
-                ->whereNull('user_id')
-                ->whereNotNull($visitCol)
-                ->where($visitCol, '!=', '')
-                ->groupBy(DB::raw('DATE(created_at)'), $visitCol)
-                ->select(DB::raw('DATE(created_at) as d'), $visitCol . ' as name', DB::raw('COUNT(DISTINCT visitor_id) as c'))
-                ->get());
-
-            return ['byName' => $byName, 'totals' => $totals];
-        };
-
-        $country = $dim('country', 'country');
-        $region  = $dim('state', 'region');
-        $city    = $dim('city', 'city');
-
-        // Shared axis starting at the first day with data across all dimensions.
-        $allKeys = [];
-        foreach ([$country, $region, $city] as $d) {
-            foreach ($d['byName'] as $m) {
-                $allKeys = array_merge($allKeys, array_keys($m));
-            }
-        }
-        $dates = $this->buildDates($allKeys ? min($allKeys) : null, $start, $end);
-
-        $top = function (array $d) use ($dates) {
-            arsort($d['totals']);
-            $names = array_slice(array_keys($d['totals']), 0, 10);
-            return array_map(fn ($name) => [
-                'name' => $name,
-                'data' => array_map(fn ($dt) => $d['byName'][$name][$dt] ?? 0, $dates),
-            ], $names);
-        };
-
         return [
-            'dates'   => $dates,
-            'country' => $top($country),
-            'region'  => $top($region),
-            'city'    => $top($city),
-        ];
-    }
-
-    /**
-     * Where the audience is located — country / state / city, geo resolved by
-     * ipinfo.io. Combines two non-overlapping sources so the count is unique
-     * per person/device with no double counting, both scoped to the date range:
-     *   - clients  : their stored user_info location, by registration date.
-     *   - visitors : anonymous visits only (user_id IS NULL), DISTINCT device,
-     *                by visit date. Logged-in clients' visits are skipped here
-     *                because they're already counted via user_info.
-     * Top 10 per level.
-     */
-    private function geography(string $startDt, string $endDt): array
-    {
-        // Unique clients by stored location (+ their country, for the flag),
-        // scoped to registrations in range.
-        $clientGeo = function (string $column) use ($startDt, $endDt) {
-            return DB::table('user_info')
-                ->join('users', 'users.id', '=', 'user_info.user_id')
-                ->join('roles', 'roles.id', '=', 'users.role_id')
-                ->where('roles.name', 'client')
-                ->whereBetween('users.created_at', [$startDt, $endDt])
-                ->whereNotNull('user_info.' . $column)
-                ->where('user_info.' . $column, '!=', '')
-                ->groupBy('user_info.' . $column, 'user_info.country')
-                ->select('user_info.' . $column . ' as name', 'user_info.country as country', DB::raw('COUNT(DISTINCT user_info.user_id) as c'))
-                ->get();
-        };
-
-        // Unique anonymous visitor devices in range (+ their country).
-        $visitorGeo = function (string $column) use ($startDt, $endDt) {
-            return DB::table('visits')
-                ->whereBetween('created_at', [$startDt, $endDt])
-                ->whereNull('user_id')
-                ->whereNotNull($column)
-                ->where($column, '!=', '')
-                ->groupBy($column, 'country')
-                ->select($column . ' as name', 'country as country', DB::raw('COUNT(DISTINCT visitor_id) as c'))
-                ->get();
-        };
-
-        // Merge both sources (same ipinfo vocabulary): sum per name, pick the
-        // dominant country for the flag, take the top 10.
-        $merge = function ($clients, $visitors): array {
-            $totals = [];
-            $countryVotes = [];
-            foreach ([$clients, $visitors] as $rows) {
-                foreach ($rows as $r) {
-                    $name = trim((string) $r->name);
-                    if ($name === '' || strcasecmp($name, 'unknown') === 0) {
-                        continue;
-                    }
-                    $count = (int) $r->c;
-                    $totals[$name] = ($totals[$name] ?? 0) + $count;
-                    $ct = trim((string) ($r->country ?? ''));
-                    if ($ct !== '' && strcasecmp($ct, 'unknown') !== 0) {
-                        $countryVotes[$name][$ct] = ($countryVotes[$name][$ct] ?? 0) + $count;
-                    }
-                }
-            }
-            arsort($totals);
-            $totals = array_slice($totals, 0, 10, true);
-
-            return array_map(function ($name, $count) use ($countryVotes) {
-                $country = null;
-                if (!empty($countryVotes[$name])) {
-                    arsort($countryVotes[$name]);
-                    $country = array_key_first($countryVotes[$name]);
-                }
-                return ['name' => $name, 'value' => $count, 'country' => $country];
-            }, array_keys($totals), array_values($totals));
-        };
-
-        return [
-            'countries' => $merge($clientGeo('country'), $visitorGeo('country')),
-            'states'    => $merge($clientGeo('state'),   $visitorGeo('region')),
-            'cities'    => $merge($clientGeo('city'),    $visitorGeo('city')),
-        ];
-    }
-
-    /**
-     * Acquisition channels within the range, each split into:
-     *   - visitors  : unique anonymous devices from that channel (DISTINCT visitor_id)
-     *   - new       : clients (role=client) who visited via that channel AND
-     *                 registered within the range
-     *   - returning : clients who visited via that channel but registered before
-     *                 the range start (came back)
-     * New/returning are real clients, attributed to a channel via visits that
-     * carry their user_id (i.e. they browsed while signed in). A channel shows
-     * even if it only has client activity (no anonymous visitors).
-     */
-    private function acquisition(string $startDt, string $endDt): array
-    {
-        // Unique audience devices per channel (anonymous + clients).
-        $visitors = $this->audienceVisits($startDt, $endDt)
-            ->whereNotNull('visits.visitor_id')
-            ->groupBy('visits.channel')
-            ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
-            ->pluck('c', 'channel');
-
-        // Clients (role=client) per channel, split by registration date.
-        $clientByChannel = function (bool $registeredInRange) use ($startDt, $endDt) {
-            return DB::table('visits')
-                ->join('users', 'users.id', '=', 'visits.user_id')
-                ->join('roles', 'roles.id', '=', 'users.role_id')
-                ->where('roles.name', 'client')
-                ->whereBetween('visits.created_at', [$startDt, $endDt])
-                ->when(
-                    $registeredInRange,
-                    fn ($q) => $q->whereBetween('users.created_at', [$startDt, $endDt]),
-                    fn ($q) => $q->where('users.created_at', '<', $startDt),
-                )
-                ->groupBy('visits.channel')
-                ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.user_id) as c'))
-                ->pluck('c', 'channel');
-        };
-
-        $newByChannel       = $clientByChannel(true);
-        $returningByChannel = $clientByChannel(false);
-
-        // Channel universe = every channel that had any traffic (anonymous or client).
-        $channelKeys = collect($visitors->keys())
-            ->merge($newByChannel->keys())
-            ->merge($returningByChannel->keys())
-            ->unique();
-
-        $channels = $channelKeys
-            ->map(fn ($channel) => [
-                'channel'   => $channel,
-                'value'     => (int) ($visitors[$channel] ?? 0),
-                'new'       => (int) ($newByChannel[$channel] ?? 0),
-                'returning' => (int) ($returningByChannel[$channel] ?? 0),
-            ])
-            ->sortByDesc('value')
-            ->values()
-            ->all();
-
-        return ['channels' => $channels];
-    }
-
-    /**
-     * Earliest activity date across users + visits — the "all-time" start used
-     * when no date_start is supplied. Falls back to today if there's no data.
-     */
-    private function earliestDate(): string
-    {
-        $dates = array_filter([
-            DB::table('users')->min('created_at'),
-            DB::table('visits')->min('created_at'),
-        ]);
-
-        return empty($dates)
-            ? now()->toDateString()
-            : Carbon::parse(min($dates))->toDateString();
-    }
-
-    /**
-     * Build the daily date axis for a trend chart. Starts at the first date that
-     * actually has data (so all-time charts begin where data exists rather than
-     * showing empty leading space or dropping older data), ends at the requested
-     * end, with a safety cap of ~1500 most-recent days. Empty when no data.
-     *
-     * @param string|null $minData earliest 'Y-m-d' present in the series
-     */
-    private function buildDates(?string $minData, string $start, string $end): array
-    {
-        if ($minData === null) {
-            return [];
-        }
-        $startC = Carbon::parse($start);
-        $minC   = Carbon::parse($minData);
-        if ($minC->gt($startC)) {
-            $startC = $minC; // begin where the data begins
-        }
-        $endC = Carbon::parse($end);
-        if ($startC->gt($endC)) {
-            return [];
-        }
-        $floor = (clone $endC)->subDays(1499);
-        if ($startC->lt($floor)) {
-            $startC = $floor;
-        }
-
-        $dates = [];
-        $cursor = $startC->copy();
-        while ($cursor->lte($endC)) {
-            $dates[] = $cursor->toDateString();
-            $cursor->addDay();
-        }
-
-        return $dates;
-    }
-
-    /**
-     * Visits that count as "audience": anonymous OR made by a client account.
-     * Agent/admin browsing is excluded. Used for every Visitors count so the
-     * number is consistent across the page.
-     */
-    private function audienceVisits(string $startDt, string $endDt)
-    {
-        return DB::table('visits')
-            ->leftJoin('users', 'users.id', '=', 'visits.user_id')
-            ->leftJoin('roles', 'roles.id', '=', 'users.role_id')
-            ->whereBetween('visits.created_at', [$startDt, $endDt])
-            ->where(function ($q) {
-                $q->whereNull('visits.user_id')->orWhere('roles.name', 'client');
-            });
-    }
-
-    /** Clients are scoped via roles.name = 'client'. */
-    private function clientsBase()
-    {
-        return DB::table('users')
-            ->join('roles', 'roles.id', '=', 'users.role_id')
-            ->where('roles.name', 'client');
-    }
-
-    private function size(string $startDt, string $endDt): array
-    {
-        $totalClients = (clone $this->clientsBase())->count();
-
-        $newClients = (clone $this->clientsBase())
-            ->whereBetween('users.created_at', [$startDt, $endDt])
-            ->count();
-
-        // Returning = client logged in during the range AND registered before it.
-        $returning = DB::table('login_logs')
-            ->join('users', 'users.id', '=', 'login_logs.user_id')
-            ->join('roles', 'roles.id', '=', 'users.role_id')
-            ->where('roles.name', 'client')
-            ->whereBetween('login_logs.logged_in_at', [$startDt, $endDt])
-            ->where('users.created_at', '<', $startDt)
-            ->distinct('login_logs.user_id')
-            ->count('login_logs.user_id');
-
-        // Visitors = unique devices across anonymous + client visits (agents/
-        // admins excluded). The single source of truth used everywhere.
-        $visitors = $this->audienceVisits($startDt, $endDt)
-            ->distinct('visits.visitor_id')
-            ->count('visits.visitor_id');
-
-        return [
-            'total_clients'     => $totalClients,
-            'new_clients'       => $newClients,
-            'returning_clients' => $returning,
-            'visitors'          => $visitors,
+            $validated['date_start'] ?? $service->earliestDate(),
+            $validated['date_end']   ?? now()->toDateString(),
         ];
     }
 }
