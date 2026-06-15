@@ -528,6 +528,8 @@ class UserController extends Controller
     {
         $validated = $request->validate([
             'email' => 'required|email',
+            // First-touch acquisition id from the web's localStorage (fh_vid).
+            'visitor_id' => 'nullable|string|max:64',
         ]);
 
         $email = $validated['email'];
@@ -544,6 +546,7 @@ class UserController extends Controller
                     'password' => Str::random(32),
                     'role_id' => 3,
                     'verification' => 'pending',
+                    'visitor_id' => $request->input('visitor_id'),
                 ]);
             } else {
                 if (!$lrService->isAllowedRole($lrData)) {

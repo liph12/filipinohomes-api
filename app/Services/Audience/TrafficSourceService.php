@@ -8,13 +8,15 @@ use Illuminate\Support\Facades\DB;
  * Powers the front-end TrafficSource card: the acquisition-channel table.
  * Each channel within the range is split into:
  *   - visitors  : unique anonymous devices from that channel (DISTINCT visitor_id)
- *   - new       : clients (role=client) who visited via that channel AND
- *                 registered within the range
- *   - returning : clients who visited via that channel but registered before
- *                 the range start (came back)
- * New/returning are real clients, attributed to a channel via visits that carry
- * their user_id (i.e. they browsed while signed in). A channel shows even if it
- * only has client activity (no anonymous visitors).
+ *   - new       : clients (role=client) registered within the range whose
+ *                 first-touch channel is this one
+ *   - returning : clients registered before the range who logged in during it,
+ *                 whose first-touch channel is this one (came back)
+ * New/returning use FIRST-TOUCH attribution: a client carries the visitor_id of
+ * the device they signed up on (users.visitor_id, stamped at signup), and we
+ * map that to the channel of their earliest visit — i.e. how they were actually
+ * acquired, not where they happened to log in. A channel shows even if it only
+ * has client activity (no anonymous visitors).
  */
 class TrafficSourceService extends AudienceInsightsService
 {
@@ -27,20 +29,45 @@ class TrafficSourceService extends AudienceInsightsService
             ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
             ->pluck('c', 'channel');
 
-        // Clients (role=client) per channel, split by registration date.
-        $clientByChannel = function (bool $registeredInRange) {
-            return DB::table('visits')
-                ->join('users', 'users.id', '=', 'visits.user_id')
+        // First-touch channel per visitor_id = the channel of that device's
+        // earliest visit row (ids are monotonic with insert time, so MIN(id)
+        // is the first visit). Joined to clients via users.visitor_id below.
+        $firstVisitIds = DB::table('visits')
+            ->whereNotNull('visitor_id')
+            ->groupBy('visitor_id')
+            ->select('visitor_id', DB::raw('MIN(id) as first_id'));
+
+        $firstTouch = DB::table('visits')
+            ->joinSub($firstVisitIds, 'fv', fn ($j) => $j->on('visits.id', '=', 'fv.first_id'))
+            ->select('visits.visitor_id', 'visits.channel');
+
+        // Clients (role=client) grouped by their first-touch channel, split by
+        // registration date. Mirrors EngagementOverviewService::size() new/
+        // returning definitions, just attributed to a channel.
+        $clientByChannel = function (bool $registeredInRange) use ($firstTouch) {
+            $query = DB::table('users')
                 ->join('roles', 'roles.id', '=', 'users.role_id')
+                ->joinSub($firstTouch, 'ft', fn ($j) => $j->on('ft.visitor_id', '=', 'users.visitor_id'))
                 ->where('roles.name', 'client')
-                ->whereBetween('visits.created_at', [$this->startDt, $this->endDt])
-                ->when(
-                    $registeredInRange,
-                    fn ($q) => $q->whereBetween('users.created_at', [$this->startDt, $this->endDt]),
-                    fn ($q) => $q->where('users.created_at', '<', $this->startDt),
-                )
-                ->groupBy('visits.channel')
-                ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.user_id) as c'))
+                ->whereNotNull('users.visitor_id');
+
+            if ($registeredInRange) {
+                // New = registered within the range.
+                $query->whereBetween('users.created_at', [$this->startDt, $this->endDt]);
+            } else {
+                // Returning = registered before the range AND logged in during it.
+                $query->where('users.created_at', '<', $this->startDt)
+                    ->whereExists(function ($q) {
+                        $q->select(DB::raw(1))
+                            ->from('login_logs')
+                            ->whereColumn('login_logs.user_id', 'users.id')
+                            ->whereBetween('login_logs.logged_in_at', [$this->startDt, $this->endDt]);
+                    });
+            }
+
+            return $query
+                ->groupBy('ft.channel')
+                ->select('ft.channel as channel', DB::raw('COUNT(DISTINCT users.id) as c'))
                 ->pluck('c', 'channel');
         };
 

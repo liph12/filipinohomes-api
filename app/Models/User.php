@@ -36,6 +36,7 @@ class User extends Authenticatable implements Auditable
         'name',
         'email',
         'google_id',
+        'visitor_id',
         'mobile_no',
         'password',
         'avatar',

@@ -72,6 +72,7 @@ class GoogleAuthController extends Controller
                 'password' => Str::random(32),
                 'role_id' => 3,
                 'verification' => 'verified',
+                'visitor_id' => $request->input('visitor_id'),
             ]);
         } else {
             if (!$lrService->isAllowedRole($lrData)) {
