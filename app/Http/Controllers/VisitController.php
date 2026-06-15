@@ -24,6 +24,10 @@ class VisitController extends Controller
             'click_id'     => 'nullable|string|max:32',
             'referrer'     => 'nullable|string|max:512',
             'landing_path' => 'nullable|string|max:512',
+            // Geo resolved client-side by ipinfo.io (same source as user_info).
+            'country'      => 'nullable|string|max:64',
+            'region'       => 'nullable|string|max:96',
+            'city'         => 'nullable|string|max:96',
         ]);
 
         $visitorId = $data['visitor_id'] ?? null;
@@ -51,6 +55,9 @@ class VisitController extends Controller
             'landing_path' => $data['landing_path'] ?? null,
             'user_id'      => $request->user()?->id,
             'ip'           => $request->ip(),
+            'country'      => $data['country'] ?? null,
+            'region'       => $data['region'] ?? null,
+            'city'         => $data['city'] ?? null,
         ]);
 
         return response()->json(['ok' => true, 'channel' => $channel]);

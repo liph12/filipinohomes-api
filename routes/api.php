@@ -306,6 +306,8 @@ Route::middleware('strip.tags')->group(function(){
 
                 // Audience Insights — client/visitor counts (admin-only).
                 Route::get('/user/audience-insights', [AudienceInsightsController::class, 'show']);
+                // Geography breakdown (own date range so the card filters independently).
+                Route::get('/user/audience-insights/geography', [AudienceInsightsController::class, 'geographyShow']);
 
                 // App version download links (CRUD for the web downloads page).
                 Route::post('/admin/app-versions', [AppVersionController::class, 'store']);
