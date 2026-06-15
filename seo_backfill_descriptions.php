@@ -76,11 +76,19 @@ $types      = PropertyType::pluck('name', 'id')->all();  // 1 Condominium .. 4 C
 
 // --- helpers ---------------------------------------------------------------
 
-/** "23500000.00" -> "PHP 23,500,000" (+ " per month" for rentals). */
-function fmtPrice($price, int $categoryId): ?string
+/**
+ * "23500000.00" -> "PHP 23,500,000" (+ " per month" for rentals).
+ * Returns null (omit) when the figure can't be stated truthfully:
+ *   - Land: price is stored inconsistently (per-sqm vs total) -> omit.
+ *   - Rent under PHP 1,000: almost always a data-entry typo (e.g. "20"
+ *     meaning 20k) -> omit rather than print "PHP 20 per month".
+ */
+function fmtPrice($price, int $categoryId, bool $isLand): ?string
 {
     $n = (float) $price;
     if ($n <= 0) return null;
+    if ($isLand) return null;
+    if ($categoryId === 2 && $n < 1000) return null;
     $s = 'PHP ' . number_format($n, 0);
     if ($categoryId === 2) $s .= ' per month';
     return $s;
@@ -160,8 +168,10 @@ function buildIntro(array $d): string
     }
 
     // Closer with location + CTA (gives length + a real internal CTA).
+    // Use the generic "property" — saying "This Commercial"/"This Land"/
+    // "This House" for a townhouse all read wrong.
     $here = $loc ? " in {$loc}" : '';
-    $sentences[] = "This {$type}{$here} is presented by Filipino Homes — contact us to schedule a viewing or request full details and pricing.";
+    $sentences[] = "This property{$here} is presented by Filipino Homes — contact us to schedule a viewing or request full details and pricing.";
 
     return trim(implode(' ', array_filter($sentences)));
 }
@@ -225,19 +235,37 @@ $query->orderBy('id')->chunkById($LIMIT ? min(200, $LIMIT) : 200, function ($lis
         $sub  = $attr?->subtype;
         [$city, $province] = parseLocation($p->address);
 
+        $typeName = $sub ? ($types[$sub->property_type_id] ?? null) : null;
+        $isLand   = $typeName && strcasecmp($typeName, 'Land') === 0;
+        $isCondo  = $typeName && strcasecmp($typeName, 'Condominium') === 0;
+
+        // Sanity caps — drop physically-impossible values rather than print
+        // them (e.g. "123 bathrooms", a 114,890,000 sqm lot). 0 = omit.
+        $beds   = (int) ($attr->bedroom_count ?? 0);
+        $baths  = (int) ($attr->bathroom_count ?? 0);
+        $garage = (int) ($attr->garage_count ?? 0);
+        $floor  = (float) ($attr->floor_area ?? 0);
+        $lot    = (float) ($attr->lot_area ?? 0);
+        if ($beds   > 50)        $beds = 0;
+        if ($baths  > 50)        $baths = 0;
+        if ($garage > 50)        $garage = 0;
+        if ($floor  > 50000)     $floor = 0;   // >5 ha of floor: bad data
+        if ($lot    > 1000000)   $lot = 0;     // >100 ha: bad data
+        if ($isCondo)            $lot = 0;     // condos have no individual lot
+
         $d = [
             'id'         => $listing->id,
-            'type'       => $sub ? ($types[$sub->property_type_id] ?? null) : null,
+            'type'       => $typeName,
             'subtype'    => $sub?->name,
             'sale'       => saleWord((int) $listing->category_id),
             'city'       => $city,
             'province'   => $province,
-            'price'      => fmtPrice($listing->price, (int) $listing->category_id),
-            'beds'       => (int) ($attr->bedroom_count ?? 0),
-            'baths'      => (int) ($attr->bathroom_count ?? 0),
-            'garage'     => (int) ($attr->garage_count ?? 0),
-            'floor'      => (float) ($attr->floor_area ?? 0),
-            'lot'        => (float) ($attr->lot_area ?? 0),
+            'price'      => fmtPrice($listing->price, (int) $listing->category_id, $isLand),
+            'beds'       => $beds,
+            'baths'      => $baths,
+            'garage'     => $garage,
+            'floor'      => $floor,
+            'lot'        => $lot,
             'furnishing' => $p->furnishing?->name,
             'amenities'  => normAmenities($p->amenities),
         ];
