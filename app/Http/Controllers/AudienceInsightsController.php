@@ -64,18 +64,12 @@ class AudienceInsightsController extends Controller
         }
         arsort($totals);
 
-        // Date axis — most recent ≤400 days (mirrors trend()).
-        $last   = Carbon::parse($end);
-        $cursor = Carbon::parse($start);
-        $floor  = (clone $last)->subDays(399);
-        if ($cursor->lt($floor)) {
-            $cursor = $floor;
+        // Date axis starts at the first day with data.
+        $allKeys = [];
+        foreach ($byChannel as $m) {
+            $allKeys = array_merge($allKeys, array_keys($m));
         }
-        $dates = [];
-        while ($cursor->lte($last)) {
-            $dates[] = $cursor->toDateString();
-            $cursor->addDay();
-        }
+        $dates = $this->buildDates($allKeys ? min($allKeys) : null, $start, $end);
 
         $channels = [];
         foreach (array_keys($totals) as $ch) {
@@ -124,28 +118,20 @@ class AudienceInsightsController extends Controller
             ->select(DB::raw('DATE(login_logs.logged_in_at) as d'), DB::raw('COUNT(DISTINCT login_logs.user_id) as c'))
             ->pluck('c', 'd');
 
-        // Show at most 400 days. For wide ranges (e.g. all-time) keep the most
-        // recent 400 days rather than the oldest, so the line stays relevant.
-        $last   = Carbon::parse($end);
-        $cursor = Carbon::parse($start);
-        $floor  = (clone $last)->subDays(399);
-        if ($cursor->lt($floor)) {
-            $cursor = $floor;
-        }
+        // Date axis starts at the first day that actually has data.
+        $allKeys = array_merge(
+            array_keys($visitorsByDay->all()),
+            array_keys($clientsByDay->all()),
+            array_keys($returningByDay->all()),
+        );
+        $dates = $this->buildDates($allKeys ? min($allKeys) : null, $start, $end);
 
-        $series = [];
-        while ($cursor->lte($last)) {
-            $key = $cursor->toDateString();
-            $series[] = [
-                'date'      => $key,
-                'visitors'  => (int) ($visitorsByDay[$key] ?? 0),
-                'clients'   => (int) ($clientsByDay[$key] ?? 0),
-                'returning' => (int) ($returningByDay[$key] ?? 0),
-            ];
-            $cursor->addDay();
-        }
-
-        return $series;
+        return array_map(fn ($key) => [
+            'date'      => $key,
+            'visitors'  => (int) ($visitorsByDay[$key] ?? 0),
+            'clients'   => (int) ($clientsByDay[$key] ?? 0),
+            'returning' => (int) ($returningByDay[$key] ?? 0),
+        ], $dates);
     }
 
     /**
@@ -177,19 +163,8 @@ class AudienceInsightsController extends Controller
      */
     private function geoTrend(string $startDt, string $endDt, string $start, string $end): array
     {
-        $last   = Carbon::parse($end);
-        $cursor = Carbon::parse($start);
-        $floor  = (clone $last)->subDays(399);
-        if ($cursor->lt($floor)) {
-            $cursor = $floor;
-        }
-        $dates = [];
-        while ($cursor->lte($last)) {
-            $dates[] = $cursor->toDateString();
-            $cursor->addDay();
-        }
-
-        $dim = function (string $userCol, string $visitCol) use ($startDt, $endDt, $dates) {
+        // Build each dimension's pivot (byName[date] + totals) without an axis yet.
+        $dim = function (string $userCol, string $visitCol) use ($startDt, $endDt) {
             $byName = [];
             $totals = [];
             $add = function ($rows) use (&$byName, &$totals) {
@@ -223,20 +198,36 @@ class AudienceInsightsController extends Controller
                 ->select(DB::raw('DATE(created_at) as d'), $visitCol . ' as name', DB::raw('COUNT(DISTINCT visitor_id) as c'))
                 ->get());
 
-            arsort($totals);
-            $top = array_slice(array_keys($totals), 0, 10);
+            return ['byName' => $byName, 'totals' => $totals];
+        };
 
+        $country = $dim('country', 'country');
+        $region  = $dim('state', 'region');
+        $city    = $dim('city', 'city');
+
+        // Shared axis starting at the first day with data across all dimensions.
+        $allKeys = [];
+        foreach ([$country, $region, $city] as $d) {
+            foreach ($d['byName'] as $m) {
+                $allKeys = array_merge($allKeys, array_keys($m));
+            }
+        }
+        $dates = $this->buildDates($allKeys ? min($allKeys) : null, $start, $end);
+
+        $top = function (array $d) use ($dates) {
+            arsort($d['totals']);
+            $names = array_slice(array_keys($d['totals']), 0, 10);
             return array_map(fn ($name) => [
                 'name' => $name,
-                'data' => array_map(fn ($d) => $byName[$name][$d] ?? 0, $dates),
-            ], $top);
+                'data' => array_map(fn ($dt) => $d['byName'][$name][$dt] ?? 0, $dates),
+            ], $names);
         };
 
         return [
             'dates'   => $dates,
-            'country' => $dim('country', 'country'),
-            'region'  => $dim('state', 'region'),
-            'city'    => $dim('city', 'city'),
+            'country' => $top($country),
+            'region'  => $top($region),
+            'city'    => $top($city),
         ];
     }
 
@@ -351,8 +342,8 @@ class AudienceInsightsController extends Controller
                     fn ($q) => $q->where('users.created_at', '<', $startDt),
                 )
                 ->groupBy('visits.channel')
-                ->select('visits.channel', DB::raw('COUNT(DISTINCT visits.user_id) as c'))
-                ->pluck('c', 'visits.channel');
+                ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.user_id) as c'))
+                ->pluck('c', 'channel');
         };
 
         $newByChannel       = $clientByChannel(true);
@@ -386,6 +377,43 @@ class AudienceInsightsController extends Controller
         return empty($dates)
             ? now()->toDateString()
             : Carbon::parse(min($dates))->toDateString();
+    }
+
+    /**
+     * Build the daily date axis for a trend chart. Starts at the first date that
+     * actually has data (so all-time charts begin where data exists rather than
+     * showing empty leading space or dropping older data), ends at the requested
+     * end, with a safety cap of ~1500 most-recent days. Empty when no data.
+     *
+     * @param string|null $minData earliest 'Y-m-d' present in the series
+     */
+    private function buildDates(?string $minData, string $start, string $end): array
+    {
+        if ($minData === null) {
+            return [];
+        }
+        $startC = Carbon::parse($start);
+        $minC   = Carbon::parse($minData);
+        if ($minC->gt($startC)) {
+            $startC = $minC; // begin where the data begins
+        }
+        $endC = Carbon::parse($end);
+        if ($startC->gt($endC)) {
+            return [];
+        }
+        $floor = (clone $endC)->subDays(1499);
+        if ($startC->lt($floor)) {
+            $startC = $floor;
+        }
+
+        $dates = [];
+        $cursor = $startC->copy();
+        while ($cursor->lte($endC)) {
+            $dates[] = $cursor->toDateString();
+            $cursor->addDay();
+        }
+
+        return $dates;
     }
 
     /** Clients are scoped via roles.name = 'client'. */
