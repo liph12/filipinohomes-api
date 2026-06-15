@@ -91,12 +91,10 @@ class AudienceInsightsController extends Controller
      */
     private function trend(string $startDt, string $endDt, string $start, string $end): array
     {
-        // Anonymous visitors only (not logged-in users).
-        $visitorsByDay = DB::table('visits')
-            ->whereBetween('created_at', [$startDt, $endDt])
-            ->whereNull('user_id')
-            ->groupBy(DB::raw('DATE(created_at)'))
-            ->select(DB::raw('DATE(created_at) as d'), DB::raw('COUNT(DISTINCT visitor_id) as c'))
+        // Audience visitors per day (anonymous + clients, agents/admins excluded).
+        $visitorsByDay = $this->audienceVisits($startDt, $endDt)
+            ->groupBy(DB::raw('DATE(visits.created_at)'))
+            ->select(DB::raw('DATE(visits.created_at) as d'), DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
             ->pluck('c', 'd');
 
         $clientsByDay = DB::table('users')
@@ -311,25 +309,25 @@ class AudienceInsightsController extends Controller
 
     /**
      * Acquisition channels within the range, each split into:
-     *   - visitors  : unique devices from that channel (DISTINCT visitor_id)
-     *   - new       : clients who visited via that channel AND registered in
-     *                 the range (DISTINCT logged-in user_id, created in range)
-     *   - returning : clients who visited via that channel but registered
-     *                 before the range start
-     * New/returning rely on the visit carrying a logged-in user_id, so they
-     * only count clients who browsed while signed in.
+     *   - visitors  : unique anonymous devices from that channel (DISTINCT visitor_id)
+     *   - new       : clients (role=client) who visited via that channel AND
+     *                 registered within the range
+     *   - returning : clients who visited via that channel but registered before
+     *                 the range start (came back)
+     * New/returning are real clients, attributed to a channel via visits that
+     * carry their user_id (i.e. they browsed while signed in). A channel shows
+     * even if it only has client activity (no anonymous visitors).
      */
     private function acquisition(string $startDt, string $endDt): array
     {
-        // Unique anonymous devices per channel (not logged-in users).
-        $visitors = DB::table('visits')
-            ->whereBetween('created_at', [$startDt, $endDt])
-            ->whereNull('user_id')
-            ->groupBy('channel')
-            ->select('channel', DB::raw('COUNT(DISTINCT visitor_id) as c'))
+        // Unique audience devices per channel (anonymous + clients).
+        $visitors = $this->audienceVisits($startDt, $endDt)
+            ->whereNotNull('visits.visitor_id')
+            ->groupBy('visits.channel')
+            ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
             ->pluck('c', 'channel');
 
-        // Logged-in client visits per channel, split by registration date.
+        // Clients (role=client) per channel, split by registration date.
         $clientByChannel = function (bool $registeredInRange) use ($startDt, $endDt) {
             return DB::table('visits')
                 ->join('users', 'users.id', '=', 'visits.user_id')
@@ -349,10 +347,16 @@ class AudienceInsightsController extends Controller
         $newByChannel       = $clientByChannel(true);
         $returningByChannel = $clientByChannel(false);
 
-        $channels = collect($visitors)
-            ->map(fn ($count, $channel) => [
+        // Channel universe = every channel that had any traffic (anonymous or client).
+        $channelKeys = collect($visitors->keys())
+            ->merge($newByChannel->keys())
+            ->merge($returningByChannel->keys())
+            ->unique();
+
+        $channels = $channelKeys
+            ->map(fn ($channel) => [
                 'channel'   => $channel,
-                'value'     => (int) $count,
+                'value'     => (int) ($visitors[$channel] ?? 0),
                 'new'       => (int) ($newByChannel[$channel] ?? 0),
                 'returning' => (int) ($returningByChannel[$channel] ?? 0),
             ])
@@ -416,6 +420,22 @@ class AudienceInsightsController extends Controller
         return $dates;
     }
 
+    /**
+     * Visits that count as "audience": anonymous OR made by a client account.
+     * Agent/admin browsing is excluded. Used for every Visitors count so the
+     * number is consistent across the page.
+     */
+    private function audienceVisits(string $startDt, string $endDt)
+    {
+        return DB::table('visits')
+            ->leftJoin('users', 'users.id', '=', 'visits.user_id')
+            ->leftJoin('roles', 'roles.id', '=', 'users.role_id')
+            ->whereBetween('visits.created_at', [$startDt, $endDt])
+            ->where(function ($q) {
+                $q->whereNull('visits.user_id')->orWhere('roles.name', 'client');
+            });
+    }
+
     /** Clients are scoped via roles.name = 'client'. */
     private function clientsBase()
     {
@@ -442,13 +462,11 @@ class AudienceInsightsController extends Controller
             ->distinct('login_logs.user_id')
             ->count('login_logs.user_id');
 
-        // Visitors = anonymous only (not a logged-in user — excludes agents,
-        // admins, and signed-in clients, who are counted via the client metrics).
-        $visitors = DB::table('visits')
-            ->whereBetween('created_at', [$startDt, $endDt])
-            ->whereNull('user_id')
-            ->distinct('visitor_id')
-            ->count('visitor_id');
+        // Visitors = unique devices across anonymous + client visits (agents/
+        // admins excluded). The single source of truth used everywhere.
+        $visitors = $this->audienceVisits($startDt, $endDt)
+            ->distinct('visits.visitor_id')
+            ->count('visits.visitor_id');
 
         return [
             'total_clients'     => $totalClients,
