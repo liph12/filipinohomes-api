@@ -968,6 +968,149 @@ class AgentReviewController extends Controller
     }
 
     /**
+     * Agent-facing leaderboard. Unlike leaderboards()/teamsRollup()/trends()
+     * (admin-only, full board + moderation context), this is open to any
+     * authenticated agent and returns ONLY public-safe aggregate rows plus
+     * the caller's own rank. Reuses the public-aggregate policy verbatim:
+     * visible reviews authored by a role.name='client' user.
+     *
+     * Ranking is computed without window functions (portable to MySQL 5.7):
+     * the caller's rank is the count of qualifying agents who outrank them,
+     * plus one. Gated at >=3 reviews like the admin top_by_rating board, so a
+     * lone 5.0 doesn't outrank a battle-tested 4.6; agents below the gate are
+     * returned unranked (rank = null) with their raw stats.
+     */
+    public function agentLeaderboard(Request $request)
+    {
+        $user = Auth::user();
+        $minReviews = 3;
+        $limit = 10;
+
+        // Top board — public-safe rows, ordered by avg then volume. Position
+        // in this ordered slice is the displayed rank (1..N).
+        $top = DB::query()
+            ->fromSub($this->qualifyingAgentsSub($minReviews), 's')
+            ->orderByRaw('s.avg_rating DESC, s.total_reviews DESC')
+            ->limit($limit)
+            ->get()
+            ->values()
+            ->map(fn ($r, $i) => $this->leaderRow($r, $i + 1))
+            ->all();
+
+        $total = DB::query()
+            ->fromSub($this->qualifyingAgentsSub($minReviews), 's')
+            ->count();
+
+        // The caller's own qualifying row (null if below the review gate).
+        $mine = DB::query()
+            ->fromSub($this->qualifyingAgentsSub($minReviews), 's')
+            ->where('s.agent_user_id', $user->id)
+            ->first();
+
+        if ($mine) {
+            $ahead = DB::query()
+                ->fromSub($this->qualifyingAgentsSub($minReviews), 's')
+                ->where(function ($q) use ($mine) {
+                    $q->where('s.avg_rating', '>', $mine->avg_rating)
+                      ->orWhere(function ($q2) use ($mine) {
+                          $q2->where('s.avg_rating', $mine->avg_rating)
+                             ->where('s.total_reviews', '>', $mine->total_reviews);
+                      });
+                })
+                ->count();
+            $me = $this->leaderRow($mine, $ahead + 1);
+        } else {
+            $me = $this->agentSelfStats($user->id);
+        }
+
+        return response()->json([
+            'top' => $top,
+            'me' => $me,
+            'total_ranked' => $total,
+            'min_reviews' => $minReviews,
+        ]);
+    }
+
+    /**
+     * Per-agent aggregate (visible + client-authored only) gated at
+     * $minReviews, as a fresh query builder so it can be wrapped in fromSub()
+     * by agentLeaderboard(). Mirrors aggregateAgents()'s join/policy exactly.
+     */
+    private function qualifyingAgentsSub(int $minReviews)
+    {
+        return DB::table('agent_reviews as r')
+            ->join('users as u', 'u.id', '=', 'r.agent_user_id')
+            ->join('users as cu', 'cu.id', '=', 'r.client_user_id')
+            ->leftJoin('roles as cro', 'cro.id', '=', 'cu.role_id')
+            ->leftJoin('agents as a', 'a.user_id', '=', 'r.agent_user_id')
+            ->leftJoin('team_agents as ta', function ($j) {
+                $j->on('ta.agent_id', '=', 'a.id')
+                  ->where('ta.status', '=', 'active');
+            })
+            ->leftJoin('teams as t', 't.id', '=', 'ta.team_id')
+            ->where('r.status', 'visible')
+            ->where('cro.name', 'client')
+            ->groupBy('r.agent_user_id', 'u.name', 'u.avatar', 't.name')
+            ->havingRaw('COUNT(*) >= ?', [$minReviews])
+            ->select(
+                'r.agent_user_id',
+                'u.name',
+                'u.avatar',
+                't.name as team_name',
+                DB::raw('COUNT(*) as total_reviews'),
+                DB::raw('ROUND(AVG(r.overall_rating), 2) as avg_rating'),
+            );
+    }
+
+    /** Shape a leaderboard row (public-safe fields only) with its rank. */
+    private function leaderRow(object $r, int $rank): array
+    {
+        return [
+            'agent_user_id' => (int) $r->agent_user_id,
+            'name' => $r->name,
+            'avatar' => $r->avatar,
+            'team_name' => $r->team_name,
+            'total_reviews' => (int) $r->total_reviews,
+            'avg_rating' => (float) $r->avg_rating,
+            'rank' => $rank,
+        ];
+    }
+
+    /**
+     * The caller's raw stats when they haven't met the review gate — same
+     * visible + client-authored policy, but ungated, with rank = null so the
+     * UI can show "N more reviews to qualify".
+     */
+    private function agentSelfStats(int $userId): array
+    {
+        $row = DB::table('agent_reviews as r')
+            ->join('users as u', 'u.id', '=', 'r.agent_user_id')
+            ->join('users as cu', 'cu.id', '=', 'r.client_user_id')
+            ->leftJoin('roles as cro', 'cro.id', '=', 'cu.role_id')
+            ->where('r.agent_user_id', $userId)
+            ->where('r.status', 'visible')
+            ->where('cro.name', 'client')
+            ->groupBy('r.agent_user_id', 'u.name', 'u.avatar')
+            ->select(
+                'u.name',
+                'u.avatar',
+                DB::raw('COUNT(*) as total_reviews'),
+                DB::raw('ROUND(AVG(r.overall_rating), 2) as avg_rating'),
+            )
+            ->first();
+
+        return [
+            'agent_user_id' => $userId,
+            'name' => $row->name ?? Auth::user()->name,
+            'avatar' => $row->avatar ?? null,
+            'team_name' => null,
+            'total_reviews' => (int) ($row->total_reviews ?? 0),
+            'avg_rating' => $row && $row->avg_rating !== null ? (float) $row->avg_rating : null,
+            'rank' => null,
+        ];
+    }
+
+    /**
      * Shared agent-rollup query for the leaderboard endpoints. Returns
      * one row per agent matching the predicate, ordered by either avg
      * rating or total count. Joins users + agents + team_agents so the

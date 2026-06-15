@@ -245,6 +245,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/user/settings', [UserController::class, 'userSettings']);
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
+            // Agent-facing rankings: public-safe top board + the caller's own
+            // rank. Open to any authenticated agent (NOT admin-gated), unlike
+            // the admin leaderboards/teams/trends endpoints.
+            Route::get('/agent/leaderboard', [AgentReviewController::class, 'agentLeaderboard']);
             Route::post('/user/email-change/initiate', [EmailChangeController::class, 'initiateUserEmail']);
             Route::post('/user/email-change/confirm', [EmailChangeController::class, 'confirmUserEmail']);
             Route::post('/agent/lr-email-change/initiate', [EmailChangeController::class, 'initiateLrEmail']);
