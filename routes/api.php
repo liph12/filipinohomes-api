@@ -214,6 +214,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
             Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);
+            // Listings needing audit, role-scoped in the controller (admin = all,
+            // team leader = their team's listings). Registered before any
+            // /listings/{listing} segment so "audit-queue" is never read as an id.
+            Route::get('/listings/audit-queue', [ListingController::class, 'auditFeed']);
             // Per-listing audit history (admin + team leader of that listing).
             Route::get('/listings/{listing}/activity', [ListingController::class, 'activity']);
 
