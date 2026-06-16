@@ -1527,16 +1527,14 @@ class ListingController extends Controller
         $failed = [];
         if ($redownload) {
             $uploader = app(RemovedPhotoUploadController::class);
-            $map = []; // sourceUrl => newUrl|null
-            foreach (array_values(array_unique(array_merge($featuredIn, $photosIn))) as $url) {
-                try {
-                    // Flat output: filipinohomes-new/{uuid}.webp
-                    $map[$url] = $uploader->uploadFromUrl($url, "/filipinohomes-new");
-                } catch (\Throwable $e) {
-                    $map[$url] = null;
-                    $failed[]  = $url;
+            // Re-host all URLs in one pass — downloads run concurrently inside
+            // uploadManyFromUrls (was a sequential per-URL loop before).
+            $map = $uploader->uploadManyFromUrls(array_merge($featuredIn, $photosIn), "/filipinohomes-new");
+            foreach ($map as $url => $newUrl) {
+                if ($newUrl === null) {
+                    $failed[] = $url;
                     Log::warning('removed-photos redownload failed', [
-                        'listing_id' => $listing->id, 'url' => $url, 'error' => $e->getMessage(),
+                        'listing_id' => $listing->id, 'url' => $url,
                     ]);
                 }
             }
