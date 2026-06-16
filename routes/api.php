@@ -17,6 +17,7 @@ use App\Http\Controllers\{
     ProjectController,
     AmenityController,
     ImageUploadController,
+    GifUploadController,
     RemovedPhotoUploadController,
     BlogCategoryController,
     PostController,
@@ -284,6 +285,8 @@ Route::middleware('strip.tags')->group(function(){
             // larger files to JPEG ≤5MB without downscaling.
             Route::post('/upload-ats', [ImageUploadController::class, 'uploadAts']);
             Route::post('/upload-pdf', [FileUploadController::class, 'uploadFile']);
+            // No-compression uploader (GIF + photos), stored as-is. Used by ads.
+            Route::post('/upload-gif', [GifUploadController::class, 'upload']);
             Route::post('/logout', [UserController::class, 'logout']);
             Route::post('/logout-all', [UserController::class, 'logoutAll']);
 
