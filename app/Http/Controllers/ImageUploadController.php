@@ -14,7 +14,7 @@ class ImageUploadController extends Controller
     {
         if ($request->hasFile('file')) {
             $request->validate([
-                'file' => 'required|image|max:51200'
+                'file' => 'required|image|mimes:jpeg,jpg,png,webp|max:51200'
             ]);
 
             try {
@@ -48,67 +48,57 @@ class ImageUploadController extends Controller
 
     public function handleS3Upload($file, $dir)
     {
-        // GIFs bypass the Intervention/Image pipeline. GD's GIF
-        // reader only decodes the first frame, so re-encoding to
-        // WebP silently flattens the animation. The /admin/ads
-        // upload path explicitly accepts GIFs as ad creatives —
-        // killing the animation defeats the purpose. Store the
-        // original bytes as .gif so the animation survives. The
-        // 50 MB validation cap still applies.
-        if ($file->getMimeType() === 'image/gif') {
-            $fileName = $dir . "/" . Str::uuid() . ".gif";
-            Storage::disk('s3')->put(
-                $fileName,
-                file_get_contents($file->getRealPath()),
-                'public'
-            );
-            return config('filesystems.disks.s3.url') . $fileName;
-        }
-
         $fileName = $dir . "/" . Str::uuid() . ".webp";
 
         $manager = new ImageManager(new Driver());
         $image = $manager->read($file->getRealPath())->scaleDown(width: 1200);
 
-        $targetBytes = 50 * 1024;
-        $q = 92;
-        $encoded = '';
-        do {
-            $encoded = (string) $image->toWebp($q);
-            if (strlen($encoded) <= $targetBytes || $q <= 4) break;
-            $q -= 4;
-        } while (true);
+        $encoded = $this->encodeUnderTarget(
+            fn ($q) => (string) $image->toWebp($q),
+            50 * 1024,
+            4,
+            92,
+        );
 
         Storage::disk('s3')->put($fileName, $encoded, 'public');
 
         return config('filesystems.disks.s3.url') . $fileName;
     }
 
-    // ATS upload: keep originals ≤ 5 MB, compress larger files to JPEG ≤ 5 MB
-    // at full resolution. Documents need legible detail, so we never downscale.
+    private function encodeUnderTarget(callable $encode, int $targetBytes, int $minQ, int $maxQ): string
+    {
+        $best = $encode($maxQ);
+        if (strlen($best) <= $targetBytes) {
+            return $best;
+        }
+
+        $lo   = $minQ;
+        $hi   = $maxQ - 1;
+        $best = $encode($minQ);
+        while ($lo <= $hi) {
+            $mid       = intdiv($lo + $hi, 2);
+            $candidate = $encode($mid);
+            if (strlen($candidate) <= $targetBytes) {
+                $best = $candidate; 
+                $lo   = $mid + 1;
+            } else {
+                $hi = $mid - 1;   
+            }
+        }
+
+        return $best;
+    }
+
     public function uploadAts(Request $request)
     {
         $request->validate(['file' => 'required|image|max:51200']);
 
         $file = $request->file('file');
         $dir = "/filipinohomes-new/" . trim($request->input('folder', 'ats'), '/');
-        $threshold = 5 * 1024 * 1024;
 
-        if ($file->getSize() <= $threshold) {
-            $ext = strtolower($file->getClientOriginalExtension() ?: 'jpg');
-            $fileName = $dir . "/" . Str::uuid() . "." . $ext;
-            Storage::disk('s3')->put($fileName, file_get_contents($file->getRealPath()), 'public');
-        } else {
-            $image = (new ImageManager(new Driver()))->read($file->getRealPath());
-            $q = 92;
-            do {
-                $encoded = (string) $image->toJpeg($q);
-                if (strlen($encoded) <= $threshold || $q <= 30) break;
-                $q -= 4;
-            } while (true);
-            $fileName = $dir . "/" . Str::uuid() . ".jpg";
-            Storage::disk('s3')->put($fileName, $encoded, 'public');
-        }
+        $ext = strtolower($file->getClientOriginalExtension() ?: 'jpg');
+        $fileName = $dir . "/" . Str::uuid() . "." . $ext;
+        Storage::disk('s3')->put($fileName, file_get_contents($file->getRealPath()), 'public');
 
         return response()->json([
             'success' => true,
