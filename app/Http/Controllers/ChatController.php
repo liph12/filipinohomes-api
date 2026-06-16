@@ -942,6 +942,12 @@ class ChatController extends Controller
         $chat->load([
             'user',
             'listing.property',
+            // Listing owner → surfaced as the second participant in the
+            // app's conversation-info sheet. Load role for the badge and the
+            // user's own agent row so UserResource resolves mobile_no without
+            // an N+1 (mirrors the 'user.agent:id,user_id,mobile_no' load in index()).
+            'listing.agent.user.role',
+            'listing.agent.user.agent:id,user_id,mobile_no',
             'conversations.latestMessage.user',
             'conversations.users',
             'activeConversation.agentUser',

@@ -36,6 +36,20 @@ class ChatResource extends JsonResource
                     'property_status' => $this->listing->property?->status ?? 'active',
                 ];
             }),
+            // The listing's owning agent, surfaced as a second participant
+            // alongside the inquirer (chat.user). This is the listing OWNER
+            // (listings.agent_id), which is well-defined even before a
+            // conversation is accepted/assigned — distinct from the
+            // conversation's assigned agent_user_id. Only present for listing
+            // inquiries with the relation chain loaded (see ChatController@show).
+            'agent' => $this->when(
+                $this->type === 'listing'
+                    && $this->relationLoaded('listing')
+                    && $this->listing?->relationLoaded('agent')
+                    && $this->listing->agent?->relationLoaded('user')
+                    && $this->listing->agent->user !== null,
+                fn () => new UserResource($this->listing->agent->user),
+            ),
             'active_conversation' => new ConversationResource($this->whenLoaded('activeConversation')),
             'is_archived_for_me' => $isArchivedForMe,
             'is_trashed_for_me'  => $isTrashedForMe,
