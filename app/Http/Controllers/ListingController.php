@@ -1353,7 +1353,6 @@ class ListingController extends Controller
                 'agent.user',
                 'property.propertyAttribute.subtype.type',
                 'category',
-                'auditedBy',
             ]);
 
         if (!$isAdmin) {
