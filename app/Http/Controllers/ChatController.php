@@ -1034,11 +1034,20 @@ class ChatController extends Controller
     }
 
     /**
-     * Admin-only hard delete of every chat OWNED by a user (their inquiries
-     * and threads where they are `chat.user_id`). Unlike per-participant
-     * purge, this removes the rows from the database for ALL participants —
-     * there is no recovery. Used to clear out a confirmed spam/abuse
-     * account's conversation history platform-wide.
+     * Admin-only hard delete of a user's conversations, platform-wide. This
+     * covers both chats they OWN (their inquiries + threads they started,
+     * `chat.user_id`) AND agent-to-agent direct threads where they are the
+     * OTHER party — i.e. someone else (often an admin) started the DM *to*
+     * them, so the owner column points at the initiator, not them. Without
+     * the second case an admin can't purge a thread they themselves opened
+     * with an agent (the symptom: "No conversations found for this user").
+     *
+     * The participant match is scoped to `type = 'agent'` on purpose, so it
+     * never reaches into listing inquiries the user merely handles as the
+     * assigned agent — those rows belong to the inquiring client and must
+     * not be collateral. Unlike per-participant purge, this removes the rows
+     * from the database for ALL participants — there is no recovery. Used to
+     * clear out a confirmed spam/abuse account's conversation history.
      *
      * Implementation: `forceDelete()` issues a real DELETE on chats, so the
      * existing `cascadeOnDelete` foreign keys wipe the dependent
@@ -1057,7 +1066,29 @@ class ChatController extends Controller
             );
         }
 
-        $chatIds = Chat::withTrashed()->where('user_id', $user->id)->pluck('id');
+        // Chats the user owns outright — their inquiries and any thread they
+        // started (chat.user_id). Original behaviour.
+        $ownedIds = Chat::withTrashed()
+            ->where('user_id', $user->id)
+            ->pluck('id');
+
+        // Agent-to-agent direct threads where the user is the OTHER party:
+        // a conversation participant or the conversation's agent, but NOT the
+        // chat owner (someone else opened the DM to them). Scoped to
+        // type='agent' so listing inquiries they handle as the assigned agent
+        // are never swept in. withTrashed() on the conversation subquery so a
+        // soft-deleted thread is still matched, mirroring the parent query.
+        $dmIds = Chat::withTrashed()
+            ->where('type', 'agent')
+            ->whereHas('conversations', function ($cq) use ($user) {
+                $cq->withTrashed()->where(function ($q) use ($user) {
+                    $q->where('agent_user_id', $user->id)
+                        ->orWhereHas('users', fn ($uq) => $uq->where('users.id', $user->id));
+                });
+            })
+            ->pluck('id');
+
+        $chatIds = $ownedIds->merge($dmIds)->unique()->values();
         $count = $chatIds->count();
 
         if ($count === 0) {
