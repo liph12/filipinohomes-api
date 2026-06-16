@@ -1176,11 +1176,30 @@ class ListingCommandService
 
     protected function extractToolResponse($response): ?array
     {
-        $toolCall = $response->choices[0]->message->functionCall ?? null;
+        $message = $response->choices[0]->message ?? null;
 
-        if (!$toolCall) return null;
+        // Prefer the function-call arguments. But the model sometimes ignores
+        // the function call and returns the same JSON as plain text content
+        // instead (the prompt explicitly allows this as a fallback). Reading
+        // only functionCall used to drop that valid answer → silent null →
+        // "Failed to generate title suggestions." So fall back to content.
+        $raw = $message->functionCall->arguments ?? $message->content ?? null;
+        if (!is_string($raw) || trim($raw) === '') {
+            return null;
+        }
 
-        return json_decode($toolCall->arguments, true);
+        // Strip ```json … ``` fences the model wraps bare-JSON fallbacks in.
+        $raw = trim(preg_replace('/^\s*```(?:json)?|```\s*$/m', '', trim($raw)));
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            // Was invisible before — log so truncated/malformed output is
+            // diagnosable instead of just surfacing as a generic failure.
+            Log::warning('openai.extract_failed', ['raw' => mb_substr($raw, 0, 500)]);
+            return null;
+        }
+
+        return $decoded;
     }
 
     /**
