@@ -68,8 +68,12 @@ class InquiryController extends Controller
     public function reply(Request $request, Inquiry $inquiry)
     {
         $validated = $request->validate([
-            'subject' => 'nullable|string|max:255',
-            'body'    => 'required|string|max:10000',
+            'subject'       => 'nullable|string|max:255',
+            'body'          => 'required|string|max:10000',
+            // Already-hosted S3 image URLs (uploaded via /upload before send) —
+            // rendered inline in the email. No file handling happens here.
+            'attachments'   => 'nullable|array|max:6',
+            'attachments.*' => 'url|max:2048',
         ]);
 
         $admin = $request->user();
@@ -79,6 +83,7 @@ class InquiryController extends Controller
             'admin_user_id' => $admin->id,
             'subject'       => $validated['subject'] ?? 'Re: Filipino Homes — your message',
             'body'          => $validated['body'],
+            'attachments'   => $validated['attachments'] ?? [],
         ]);
 
         try {

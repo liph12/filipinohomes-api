@@ -18,11 +18,13 @@ class InquiryReply extends Model implements Auditable
         'admin_user_id',
         'subject',
         'body',
+        'attachments',
         'sent_at',
     ];
 
     protected $casts = [
-        'sent_at' => 'datetime',
+        'attachments' => 'array',
+        'sent_at'     => 'datetime',
     ];
 
     public function inquiry()

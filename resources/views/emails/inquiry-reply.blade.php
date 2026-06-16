@@ -86,6 +86,19 @@
                                     </td>
                                 </tr>
 
+                                {{-- INLINE ATTACHMENTS — hosted S3 images rendered directly in
+                                     the body so the recipient sees them without downloading. --}}
+                                @if (!empty($reply->attachments))
+                                    <tr>
+                                        <td align="left" valign="top" style="background-color:#ffffff;padding:0 40px 20px;">
+                                            @foreach ($reply->attachments as $img)
+                                                <img src="{{ $img }}" alt="Attachment"
+                                                    style="display:block;width:100%;max-width:560px;height:auto;border:1px solid #d6dee8;border-radius:14px;margin:0 0 12px;" />
+                                            @endforeach
+                                        </td>
+                                    </tr>
+                                @endif
+
                                 {{-- REPLIER signature — generic "FH Staff" label, never the
                                      individual admin's name. Avatar uses a static "FH" seed
                                      so initials always render "FH", regardless of whether
