@@ -59,13 +59,17 @@ class StoreListingRequest extends FormRequest
             'amenities' => 'nullable|array',
             'amenities.*' => 'string',
             'geo_coordinates' => 'nullable|array:lat,lng',
+            // ATS attachments are optional (when none, agent_ats_remarks is
+            // required — see withValidator). The expiration date is ALWAYS
+            // required, even without an attachment.
             'ats_expiration_date' => 'required|date',
-            'ats_attachments'              => 'required|array',
+            'ats_attachments'              => 'nullable|array',
             'ats_attachments.photos'       => 'nullable|array',
             'ats_attachments.photos.*'     => 'string|url',
             'ats_attachments.documents'    => 'nullable|array',
             'ats_attachments.documents.*'  => 'string|url',
             'ats_remarks'                  => 'nullable|string',
+            'agent_ats_remarks'            => 'nullable|string|max:2000',
             'is_project' => 'nullable|boolean',
             'project_id' => 'nullable|exists:projects,id',
             'address_id' =>  'nullable|exists:barangays,id',
@@ -97,6 +101,31 @@ class StoreListingRequest extends FormRequest
             // Accept flexible structures; normalization happens in service
             'nearby_facilities' => 'nullable|array',
         ];
+    }
+
+    /**
+     * ATS attachments are optional, but if the listing has NO ATS attachment
+     * (no photos and no documents) the agent must explain why in
+     * agent_ats_remarks. Enforced here so the rule reads off the actual payload.
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($v) {
+            $atts   = $this->input('ats_attachments', []);
+            $photos = is_array($atts) ? ($atts['photos'] ?? []) : [];
+            $docs   = is_array($atts) ? ($atts['documents'] ?? []) : [];
+            $hasAttachment = (is_array($photos) && count($photos) > 0)
+                || (is_array($docs) && count($docs) > 0);
+
+            $remarks = trim((string) $this->input('agent_ats_remarks', ''));
+
+            if (!$hasAttachment && $remarks === '') {
+                $v->errors()->add(
+                    'agent_ats_remarks',
+                    'ATS remarks are required when there is no ATS attachment.',
+                );
+            }
+        });
     }
 
     public function messages(): array

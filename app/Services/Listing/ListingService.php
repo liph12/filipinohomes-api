@@ -363,6 +363,7 @@ class ListingService
                 'documents' => [],    
             ],
             'ats_remarks'          => $data['ats_remarks'] ?? null,
+            'agent_ats_remarks'    => $data['agent_ats_remarks'] ?? null,
             'ats_status'           => 'pending',
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
@@ -554,7 +555,7 @@ class ListingService
 
             $propertyFields = [
                 'address', 'photos', 'amenities', 'description',
-                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'is_project', 'furnishing_id','address_id'
+                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'agent_ats_remarks', 'is_project', 'furnishing_id','address_id'
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
@@ -567,14 +568,37 @@ class ListingService
                 $propertyData['project_id'] = null;
             }
 
-            if (array_key_exists('ats_attachments', $data)) {
-                $incoming = $data['ats_attachments'];
-                $existing = $property->ats_attachments;
-                if ($this->attachmentsChanged($existing, $incoming)) {
-                    $propertyData['ats_status'] = 'pending';
-                    // Reset reviewer when going back to pending
-                    $propertyData['reviewed_by'] = null;
+            // Any ATS change re-opens review: attachments, expiration date, or
+            // the agent's ATS remark. All three send ats_status back to pending
+            // and clear the reviewer.
+            $atsChanged = false;
+
+            if (array_key_exists('ats_attachments', $data)
+                && $this->attachmentsChanged($property->ats_attachments, $data['ats_attachments'])) {
+                $atsChanged = true;
+            }
+
+            if (array_key_exists('ats_expiration_date', $data)) {
+                $incomingExp = !empty($data['ats_expiration_date'])
+                    ? \Illuminate\Support\Carbon::parse($data['ats_expiration_date'])->toDateString()
+                    : null;
+                $existingExp = $property->ats_expiration_date
+                    ? $property->ats_expiration_date->toDateString()
+                    : null;
+                if ($incomingExp !== $existingExp) {
+                    $atsChanged = true;
                 }
+            }
+
+            if (array_key_exists('agent_ats_remarks', $data)
+                && trim((string) ($data['agent_ats_remarks'] ?? '')) !== trim((string) ($property->agent_ats_remarks ?? ''))) {
+                $atsChanged = true;
+            }
+
+            if ($atsChanged) {
+                $propertyData['ats_status'] = 'pending';
+                // Reset reviewer when going back to pending
+                $propertyData['reviewed_by'] = null;
             }
 
             // If ats_status is explicitly provided and changed, record reviewer

@@ -62,6 +62,9 @@ class UpdateListingRequest extends FormRequest
             'ats_attachments.documents'    => 'sometimes|array',
             'ats_attachments.documents.*'  => 'string|url',
             'ats_remarks'                  => 'nullable|string',
+            // Agent's own ATS note. Required only when this edit leaves the ATS
+            // attachments empty — enforced in withValidator() below.
+            'agent_ats_remarks'            => 'nullable|string',
             'is_project'          => 'nullable|boolean',
             'project_id'          => 'nullable|exists:projects,id',
             'project'             => 'nullable|array',
@@ -93,6 +96,35 @@ class UpdateListingRequest extends FormRequest
             'ats_status'        => 'sometimes|in:approve,pending,expired,rejected',
     ];
     } 
+
+    /**
+     * If this edit sets ATS attachments but leaves them empty (no photos and
+     * no documents), the agent must explain why in agent_ats_remarks. Only
+     * enforced when ats_attachments is actually present in the payload, so
+     * edits that don't touch ATS aren't falsely blocked.
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($v) {
+            if (!$this->has('ats_attachments')) {
+                return;
+            }
+            $atts   = $this->input('ats_attachments', []);
+            $photos = is_array($atts) ? ($atts['photos'] ?? []) : [];
+            $docs   = is_array($atts) ? ($atts['documents'] ?? []) : [];
+            $hasAttachment = (is_array($photos) && count($photos) > 0)
+                || (is_array($docs) && count($docs) > 0);
+
+            $remarks = trim((string) $this->input('agent_ats_remarks', ''));
+
+            if (!$hasAttachment && $remarks === '') {
+                $v->errors()->add(
+                    'agent_ats_remarks',
+                    'ATS remarks are required when there is no ATS attachment.',
+                );
+            }
+        });
+    }
 
     protected function failedAuthorization()
     {
