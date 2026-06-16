@@ -98,6 +98,11 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
             Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
             Route::get('/listings/featured', [ListingController::class, 'featured']);
+            // Listings needing audit, role-scoped in the controller (admin = all,
+            // team leader = their team's listings). Authed via auth:sanctum, but
+            // registered here — before `/listings/{slug}` — so the literal
+            // "audit-queue" segment is never bound as a {slug} and 404'd by show().
+            Route::get('/listings/audit-queue', [ListingController::class, 'auditFeed'])->middleware('auth:sanctum');
             Route::get('/listings/{slug}', [ListingController::class, 'show']);
             Route::get('/listings', [ListingController::class, 'index']);
             Route::get('/categories', [CategoryController::class, 'index']);
@@ -215,11 +220,10 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
             Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);
-            // Listings needing audit, role-scoped in the controller (admin = all,
-            // team leader = their team's listings). Registered before any
-            // /listings/{listing} segment so "audit-queue" is never read as an id.
-            Route::get('/listings/audit-queue', [ListingController::class, 'auditFeed']);
             // Per-listing audit history (admin + team leader of that listing).
+            // NOTE: the audit-queue list route lives up in the guest-token group
+            // (before `/listings/{slug}`) so its literal segment isn't read as a
+            // slug. This two-segment route can't collide, so it stays here.
             Route::get('/listings/{listing}/activity', [ListingController::class, 'activity']);
 
             // Activity logs (admin-only — enforced in controller)
