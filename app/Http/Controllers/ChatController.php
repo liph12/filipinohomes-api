@@ -120,6 +120,14 @@ class ChatController extends Controller
                 $query->whereHas('activeConversation', fn ($c) => $c->where('status', $status));
             }
         }
+
+        // Filter inquiries by the inquirer's role (agents also send inquiries,
+        // so this lets moderators isolate client vs. agent inquiries).
+        if ($inquirerRole = $request->query('inquirer_role')) {
+            if ($inquirerRole !== 'all') {
+                $query->whereHas('user.role', fn ($r) => $r->where('name', $inquirerRole));
+            }
+        }
         if ($q = trim((string) $request->query('q'))) {
             $like = '%' . $q . '%';
             $query->where(function ($outer) use ($like) {
