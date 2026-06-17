@@ -63,7 +63,7 @@ class Listing extends Model implements Auditable
 
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
-        'featured_photo', 'is_featured', 'clicks','impressions',
+        'featured_photo', 'is_featured', 'featured_until', 'clicks','impressions',
         'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at',
         'verification_status', 'audit_notes', 'audit_checklist', 'audited_by', 'audited_at',
         'agent_edited_fields', 'audit_edited_fields', 're_submitted_at',
@@ -72,6 +72,7 @@ class Listing extends Model implements Auditable
     protected $casts = [
         'price'           => 'decimal:2',
         'is_featured'     => 'boolean',
+        'featured_until'  => 'datetime',
         'clicks'          => 'integer',
         'featured_photo'  => 'array',
         'seo_tags'        => 'array',

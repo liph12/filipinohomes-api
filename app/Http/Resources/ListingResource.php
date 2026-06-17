@@ -28,6 +28,7 @@ class ListingResource extends JsonResource
             'price'          => $this->price,
             'featured_photo' => $this->featured_photo,
             'is_featured'    => $this->is_featured,
+            'featured_until' => $this->featured_until,
             'clicks'         => $this->clicks,
             'seo_tags'       => $this->seo_tags,
             'created_at'          => $this->updated_at->diffForHumans(),
