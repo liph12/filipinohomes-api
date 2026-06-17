@@ -311,6 +311,7 @@ class ListingController extends Controller
         $category   = $request->input('category');
         $featured   = $request->input('featured'); // '1' | '0' | 'true' | 'false' | 'all' | null
         $atsStatus  = $request->input('ats_status'); // 'pending' | 'approved' | 'expired'
+        $subtypes   = $request->input('subtypes'); // array or comma-separated ids
 
         // ── Helper to apply a filter to a query clone ─────────────────────────
         $applyStatus = function ($q) use ($status, $propHas) {
@@ -354,8 +355,17 @@ class ListingController extends Controller
             return $propHas($q, fn($sub) => $sub->where('ats_status', $dbVal));
         };
 
+        // Subtype filter via ids (comma-separated or array)
+        $applySubtypes = function ($q) use ($subtypes) {
+            if (!$subtypes) return $q;
+            $ids = is_array($subtypes) ? $subtypes : explode(',', (string)$subtypes);
+            $ids = array_filter(array_map('intval', $ids));
+            if (empty($ids)) return $q;
+            return $q->whereHas('property.propertyAttribute.subtype', fn($sub) => $sub->whereIn('id', $ids));
+        };
+
         // ── Status counts: respect visibility + category filters, NOT status ──
-        $statusBase = $applyAtsStatus($applyFeatured($applyCategory($applyVisibility(clone $query))));
+        $statusBase = $applySubtypes($applyAtsStatus($applyFeatured($applyCategory($applyVisibility(clone $query)))));
         $statusCounts = [
             'active' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'active'))->count(),
             'rented' => $propHas(clone $statusBase, fn($q) => $q->where('status', 'rented'))->count(),
@@ -364,18 +374,18 @@ class ListingController extends Controller
         ];
 
         // ── Visibility counts: respect status + category filters, NOT visibility ──
-        $visibilityBase = $applyAtsStatus($applyFeatured($applyCategory($applyStatus(clone $query))));
+        $visibilityBase = $applySubtypes($applyAtsStatus($applyFeatured($applyCategory($applyStatus(clone $query)))));
         $visibilityCounts = (clone $visibilityBase)
             ->selectRaw('visibility, COUNT(*) as count')
             ->groupBy('visibility')
             ->pluck('count', 'visibility')
             ->toArray();
-        // Featured count: respects status/category/ats filters, not featured/visibility
-        $visibilityCounts['featured'] = $applyAtsStatus($applyCategory($applyStatus(clone $query)))
+        // Featured count: respects status/category/ats/subtypes filters, not featured/visibility
+        $visibilityCounts['featured'] = $applySubtypes($applyAtsStatus($applyCategory($applyStatus(clone $query))))
             ->where('listings.is_featured', 1)->count();
 
         // ── Category counts: respect status + visibility filters, NOT category ──
-        $categoryBase = $applyAtsStatus($applyFeatured($applyStatus($applyVisibility(clone $query))));
+        $categoryBase = $applySubtypes($applyAtsStatus($applyFeatured($applyStatus($applyVisibility(clone $query)))));
         $categoryCountsRaw = (clone $categoryBase)
             ->selectRaw('categories.name as category_name, COUNT(*) as count')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -389,8 +399,8 @@ class ListingController extends Controller
             $categoryCounts[$catName] = $categoryCountsRaw[$catName] ?? 0;
         }
 
-        // ── ATS counts: respect status + visibility + category filters, NOT ats_status ──
-        $atsBase   = $applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query))));
+        // ── ATS counts: respect status + visibility + category + subtypes filters, NOT ats_status ──
+        $atsBase   = $applySubtypes($applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query)))));
         $atsCounts = [
             'pending'  => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'pending'))->count(),
             'approved' => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'approve'))->count(),
@@ -404,6 +414,7 @@ class ListingController extends Controller
         $query = $applyCategory($query);
         $query = $applyFeatured($query);
         $query = $applyAtsStatus($query);
+        $query = $applySubtypes($query);
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
