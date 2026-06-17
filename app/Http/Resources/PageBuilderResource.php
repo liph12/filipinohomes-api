@@ -22,6 +22,7 @@ class PageBuilderResource extends JsonResource
             'video_url'   => $this->video_url,
             'clicks'      => $this->clicks,
             'impressions' => $this->impressions,
+            'created_at'  => $this->created_at,
             'agent'       => new AgentPageResource($this->agent)
         ];
     }

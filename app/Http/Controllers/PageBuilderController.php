@@ -33,7 +33,64 @@ class PageBuilderController extends Controller
     {
         $perPage = (int) ($request->input('per_page', 12));
 
-        return PageBuilderResource::collection(PageBuilder::paginate($perPage));
+        $query = PageBuilder::query();
+        $this->applyPageSearch($query, (string) $request->input('search', ''));
+        $this->applyPageSort($query, $request);
+
+        return PageBuilderResource::collection($query->paginate($perPage));
+    }
+
+    /**
+     * Filter agent pages by title or the page agent's name. Shared by the
+     * active list (index) and the trashed list (deleted).
+     */
+    protected function applyPageSearch($query, string $search): void
+    {
+        $search = trim($search);
+        if ($search === '') {
+            return;
+        }
+
+        $query->where(function ($q) use ($search) {
+            $q->where('title', 'like', "%{$search}%")
+                ->orWhereHas('agent', function ($a) use ($search) {
+                    $a->where('first_name', 'like', "%{$search}%")
+                        ->orWhere('last_name', 'like', "%{$search}%");
+                });
+        });
+    }
+
+    /**
+     * Server-side sort across the WHOLE dataset (not just the current page).
+     * Supported: title, views (clicks), agent (by the page agent's name).
+     * Returns false (no order applied) when no/unknown sort is requested so
+     * the caller can fall back to its default ordering.
+     */
+    protected function applyPageSort($query, Request $request): bool
+    {
+        $sortBy  = (string) $request->input('sort_by', '');
+        $sortDir = strtolower((string) $request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
+
+        switch ($sortBy) {
+            case 'title':
+                $query->orderBy('title', $sortDir);
+                return true;
+            case 'views':
+                $query->orderBy('clicks', $sortDir);
+                return true;
+            case 'created':
+                $query->orderBy('created_at', $sortDir);
+                return true;
+            case 'agent':
+                // Order by the related agent's name via a correlated subquery
+                // so pagination + select(*) stay intact (no join duplication).
+                $query
+                    ->orderBy(Agent::select('first_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir)
+                    ->orderBy(Agent::select('last_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir);
+                return true;
+            default:
+                return false;
+        }
     }
 
     public function checkSlug(Request $request): JsonResponse
@@ -151,7 +208,12 @@ public function store(Request $request)
         $this->authorize('viewDeleted', PageBuilder::class);
 
         $perPage = (int)($request->input('per_page', 12));
-        $q = PageBuilder::onlyTrashed()->orderByDesc('deleted_at');
+        $q = PageBuilder::onlyTrashed();
+        $this->applyPageSearch($q, (string) $request->input('search', ''));
+        // Use the requested sort if any; otherwise default to newest-deleted.
+        if (!$this->applyPageSort($q, $request)) {
+            $q->orderByDesc('deleted_at');
+        }
         return PageBuilderResource::collection($q->paginate($perPage));
     }
 
