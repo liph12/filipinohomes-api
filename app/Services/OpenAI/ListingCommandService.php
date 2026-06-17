@@ -230,10 +230,26 @@ class ListingCommandService
         // can verify it against the listing's actual category. Wrong intent
         // (e.g. "For Rent" on a sale listing) should be penalized harder
         // than no intent at all.
+        // Recognized intents include PH transaction variants the agent may
+        // deliberately use ("For Assume"/"Assume Balance"/"Rent to Own"/
+        // "Pre-selling") — these are valid intent even when the system
+        // category is For Sale/For Rent, so they must not be penalized.
         $matchedIntentPhrase = null;
-        if (preg_match('/\b(for sale|for rent|foreclosure)\b/i', $title, $m)) {
-            $matchedIntentPhrase = mb_strtolower($m[1]);
+        if (preg_match('/\b(for sale|for rent|foreclosure|for assume|assume balance|assumption|rent[\s-]?to[\s-]?own|pre[\s-]?selling)\b/i', $title, $m)) {
+            // Normalize spacing/hyphens so "rent-to-own" and "rent to own"
+            // compare equal downstream.
+            $matchedIntentPhrase = preg_replace('/[\s-]+/', ' ', mb_strtolower($m[1]));
         }
+
+        // Land detection: land/lot listings have no bedrooms, so the bedroom
+        // axis is N/A for them (lot size carries the spec weight instead — see
+        // scoreFromFeatures). Detect via property_type "Land" or any land
+        // subtype (the "Lot" subtypes, plus Island/Memorial which omit "Lot").
+        $ctxType    = mb_strtolower((string) ($context['property_type'] ?? ''));
+        $ctxSubtype = mb_strtolower((string) ($context['property_subtype'] ?? ''));
+        $isLand = str_contains($ctxType, 'land')
+            || str_contains($ctxSubtype, 'lot')
+            || in_array($ctxSubtype, ['island', 'memorial'], true);
 
         // Bedroom count: "3BR", "3 BR", "3-bedroom", "2 bedroom", etc.
         // "Studio" also counts — Studio listings have no bedrooms by
@@ -333,6 +349,7 @@ class ListingCommandService
             'has_transaction_intent' => $matchedIntentPhrase !== null,
             'matched_intent_phrase'  => $matchedIntentPhrase, // 'for sale'|'for rent'|'foreclosure'|null
             'has_bedroom_count'      => $hasBedroom,
+            'is_land'                => $isLand,
             'has_property_type'      => $hasType,
             'has_size_quantifier'    => $hasSize,
             'location_signals'       => array_values(array_unique($locationSignals)),
@@ -460,11 +477,18 @@ class ListingCommandService
             'rich_entity_density' => 0,
         ];
 
-        // keyword_match: intent/type/bedroom = 10 each (core), size = 5 (bonus)
+        // keyword_match: intent/type = 10 each (core). Bedroom = 10 + size = 5
+        // for dwellings. For LAND, bedrooms are N/A — lot size carries the spec
+        // weight instead (size worth 15) so a correct land title (no bedroom)
+        // isn't penalized and stays able to reach the same max.
         if ($features['has_transaction_intent']) $breakdown['keyword_match'] += 10;
         if ($features['has_property_type'])      $breakdown['keyword_match'] += 10;
-        if ($features['has_bedroom_count'])      $breakdown['keyword_match'] += 10;
-        if ($features['has_size_quantifier'])    $breakdown['keyword_match'] += 5;
+        if (!empty($features['is_land'])) {
+            if ($features['has_size_quantifier']) $breakdown['keyword_match'] += 15;
+        } else {
+            if ($features['has_bedroom_count'])   $breakdown['keyword_match'] += 10;
+            if ($features['has_size_quantifier']) $breakdown['keyword_match'] += 5;
+        }
 
         // location_strength: highest specificity wins, plus a small stacking
         // bonus when the title cites multiple levels (e.g., barangay + city).
@@ -490,8 +514,15 @@ class ListingCommandService
             str_contains($ctxCategory, 'foreclosure') => 'foreclosure',
             default                                   => '',
         };
+        // Agent-chosen PH transaction variants (assume balance / rent-to-own /
+        // pre-selling / foreclosure) are valid intent in their own right — give
+        // full credit and never treat them as a category mismatch, even when
+        // the system category is For Sale/For Rent.
+        $altIntents = ['for assume', 'assume balance', 'assumption', 'rent to own', 'pre selling'];
         if ($titleIntent === null) {
             $breakdown['intent_clarity'] = 8;
+        } elseif (in_array($titleIntent, $altIntents, true)) {
+            $breakdown['intent_clarity'] = 20;
         } elseif ($contextIntent === '') {
             $breakdown['intent_clarity'] = 15;
         } elseif ($titleIntent === $contextIntent) {
@@ -564,82 +595,26 @@ class ListingCommandService
         $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
-        You are an SEO writer for Philippine real estate listings. Your job: (a) give concise feedback on the input title and (b) write 3 stronger alternatives. PHP scores titles deterministically (0–100). Aim for 85+ on EVERY suggestion. Do NOT include any scores or ratings in your output — only text.
+        You are an SEO writer for Philippine real estate listings. Do two things: (a) give 2–3 sentences of specific, actionable feedback on the INPUT title (missing intent/keywords/location, fluff, or spam signals), and (b) write exactly 3 stronger alternatives. PHP scores titles deterministically (0–100) — aim for 85+ on every suggestion. Do NOT output any scores or ratings, only text.
 
-        ════════════════════════════════════════════════════════════════
-        TASK:
-        ════════════════════════════════════════════════════════════════
-        1. **Feedback**: 2–3 specific, actionable sentences on the INPUT title. Call out missing intent, missing keywords, missing location, fluff, or spam signals concretely.
-        2. **Suggest exactly 3 improved titles**. Each MUST hit the mandatory rules below.
+        MANDATORY — every suggestion needs ALL FOUR or it scores low:
+        1. Transaction intent — the EXACT phrase from "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). Never omit; never substitute the property type ("Condominium:") for intent. EXCEPTION: PH transaction variants the agent typed — "For Assume"/"Assume Balance"/"Rent to Own"/"Pre-selling" — are ALSO valid intent. If the INPUT title already uses one, RESPECT and PRESERVE it in your feedback and in all 3 suggestions; do NOT flag it as wrong/missing and do NOT replace it with the system category.
+        2. Property keyword — use the MOST-SEARCHED term for the type: Condominium → "Condo" + the bedroom count (subtype "2 Bedrooms" → "2BR Condo"; subtype Studio/Penthouse/Loft → that word); House → the SUBTYPE (Townhouse, House and Lot, Apartment, Beach House), NOT the bare word "House"; Commercial → the SUBTYPE (Warehouse, Office, Building, Hotel); Land → SUBTYPE only, never "Land" (see LAND LISTINGS). Abbreviations ok.
+        3. Most specific location — barangay AND city when both are available, else city alone.
+        4. Bedroom count ("NBR"/"N-Bedroom") when context provides bedrooms — DWELLINGS ONLY (see LAND LISTINGS).
 
-        ════════════════════════════════════════════════════════════════
-        MANDATORY — every suggestion MUST include ALL FOUR or it scores low:
-        ════════════════════════════════════════════════════════════════
-        1. **Transaction intent** — the EXACT phrase from "Listing category": "For Sale", "For Rent", or "Foreclosure". Worth ~25 points. NEVER omit. Never substitute property type ("Condominium:") for intent.
-        2. **Property type or subtype** keyword from context ("Condo", "Penthouse", "Townhouse", "House"). Abbreviations like "Condo" for "Condominium" are fine.
-        3. **Most specific location** — include barangay AND city when both available; else city alone. Stack both for max score.
-        4. **Bedroom count** ("NBR" or "N-Bedroom") when context provides bedrooms.
+        LAND LISTINGS (when Property type is "Land"): do NOT include any bedroom count, even if context shows a bedroom value — land has no bedrooms. The property keyword MUST be the SUBTYPE alone — NEVER append the word "Land" (that is the type, not a keyword). So write "Island" (NOT "Island Land"), "Memorial Lot" (write "Memorial" as "Memorial Lot"), and every other land subtype verbatim since it already contains "Lot" (Residential Lot, Commercial Lot, Agricultural Lot, Beach Lot, Industrial Lot). Lot/floor area ("N sqm") is the headline spec for land — always include it when context provides it.
 
-        ════════════════════════════════════════════════════════════════
-        HIGH-SCORE BONUSES (include when they fit naturally):
-        ════════════════════════════════════════════════════════════════
-        - **Size**: "N sqm" (only if context has floor/lot area).
-        - **A landmark from the "Nearby:" line** — verbatim. Never invent.
-        - **Project name verbatim** when provided.
-        - **Query-shape phrase**: titles that READ like real Google queries score higher ("for sale in Mandaue", "3BR condo near Mandani Bay").
+        BONUSES (include when they fit naturally): size "N sqm" (only if context has floor/lot area); a landmark from the "Nearby:" line, verbatim; project name verbatim; query-shape phrasing that reads like a real Google search ("for sale in Mandaue", "3BR condo near Mandani Bay").
 
-        ════════════════════════════════════════════════════════════════
-        HALLUCINATION GUARD:
-        ════════════════════════════════════════════════════════════════
-        - NEVER invent a location. If none is provided, your FEEDBACK should say "adding a city/barangay would improve SEO" but your SUGGESTIONS must NOT add a city you guessed. The validator strips invented locations.
-        - NEVER invent a nearby landmark. Only reference landmarks in the "Nearby:" line.
-        - If project or location IS provided, use them verbatim — never substitute.
+        HALLUCINATION GUARD: never invent a location, landmark, or project. If none is provided, say so in FEEDBACK but do NOT add a guessed one to the suggestions (the validator strips invented values). When provided, use them verbatim.
 
-        ════════════════════════════════════════════════════════════════
-        LENGTH & TONE:
-        ════════════════════════════════════════════════════════════════
-        - **9–13 words is the sweet spot.** Allow up to 18 if PH names force it. Soft char cap ~75.
-        - No ALL CAPS. No "!". No emojis. No filler ("dream home", "must see", "amazing", "beautiful", "rare opportunity").
+        LENGTH & TONE: 9–13 words ideal (up to 18 if PH names force it, ~75 char soft cap). No ALL CAPS, "!", emojis, or filler ("dream home", "must see", "amazing", "beautiful", "rare opportunity").
 
-        ════════════════════════════════════════════════════════════════
-        THREE VARIATIONS — each MUST hit the four MANDATORY points AND target a DIFFERENT angle:
-        ════════════════════════════════════════════════════════════════
-        ⚠️ Each title must be SUBSTANTIVELY different — not just word-shuffles. They should feel like 3 distinct ads, each emphasizing a different selling point. Include at least one fact in each variation that the other two omit.
-
-        **Variation 1 — Keyword/feature-led** (hardest SEO form):
-           "For [Sale/Rent/Foreclosure]: NBR [Subtype] in [Barangay], [City] — [Size or Quantified Feature]"
-           Emphasis: pack quantified specs (size, parking, RFO year). Most likely to rank for direct "[NBR] [type] for sale in [city]" queries.
-
-        **Variation 2 — Landmark or lifestyle-led** (long-tail):
-           "NBR [Subtype] for [Sale/Rent] Near [Landmark], [City] — [Photo Keyword or Amenity]"
-           MUST include a photo keyword or amenity that variations 1 and 3 omit. If no landmark, anchor the title on a unique photo keyword/amenity instead.
-
-        **Variation 3 — Project or buyer-benefit led**:
-           "[Project] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Buyer Persona Hook]"
-           The hook should target a buyer persona (investor, family, young professional, retiree) that variations 1 and 2 don't address. If no project name, use a size-led form.
-
-        ════════════════════════════════════════════════════════════════
-        UNIQUENESS RULE:
-        ════════════════════════════════════════════════════════════════
-        If two of your titles share more than ~70% of their words, REWRITE. The user picks ONE — give 3 genuinely different choices, not 3 takes on the same sentence.
-
-        ════════════════════════════════════════════════════════════════
-        ANTI-EXAMPLES — these score 30–50:
-        ════════════════════════════════════════════════════════════════
-        - "Condominium: 1BR Penthouse in Centro, Mandaue City" ← scores ~38 — MISSING "For Sale". Property type is NOT intent.
-        - "Nice House in Cebu" ← fluff + missing intent + missing specifics
-        - "AMAZING UNIT!!!" ← spam (×0.6 penalty)
-        - Three near-identical titles ← user can't distinguish; variation task FAILED.
-
-        ════════════════════════════════════════════════════════════════
-        SELF-CHECK before returning each title (silently verify):
-        ════════════════════════════════════════════════════════════════
-        ✓ Contains "For Sale" / "For Rent" / "Foreclosure"?
-        ✓ Contains property type/subtype?
-        ✓ Contains city (and barangay when available)?
-        ✓ Contains bedroom count when applicable?
-        ✓ Word count 9–13?
-        If any NO → REWRITE before returning.
+        THREE VARIATIONS — each hits all four mandatory points, targets a DIFFERENT angle, and includes at least one fact the other two omit (not word-shuffles; if two share >70% of words, rewrite):
+        1. Keyword/feature-led: "For [Sale/Rent/Foreclosure]: NBR [Subtype] in [Barangay], [City] — [Size or Quantified Feature]" — pack quantified specs (size, parking, RFO year); most likely to rank for direct "[NBR] [type] for sale in [city]" queries.
+        2. Landmark/lifestyle-led: "NBR [Subtype] for [Sale/Rent] Near [Landmark], [City] — [Photo Keyword or Amenity]" — must include a photo keyword/amenity the others omit; if no landmark, anchor on a unique amenity.
+        3. Project/buyer-benefit-led: "[Project] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Buyer Persona Hook]" — target a persona (investor, family, professional, retiree) the others don't; if no project, use a size-led form.
 
         {$contextBlock}
 
@@ -753,77 +728,26 @@ class ListingCommandService
         $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
-        You are an SEO writer for Philippine real estate. Your job: write 3 listing titles that have the best chance of ranking on Google for what PH buyers/renters actually type. PHP scores titles deterministically (0–100). Aim for 85+ on EVERY suggestion. Do NOT include any scores or ratings in your output — only title strings.
+        You are an SEO writer for Philippine real estate. Write 3 listing titles with the best chance of ranking on Google for what PH buyers/renters actually type. PHP scores titles deterministically (0–100) — aim for 85+ on every suggestion. Do NOT output any scores or ratings, only title strings.
 
-        ════════════════════════════════════════════════════════════════
-        MANDATORY — every title MUST include ALL FOUR of these or it scores low:
-        ════════════════════════════════════════════════════════════════
-        1. **Transaction intent** — the EXACT phrase from the listing's "Listing category": "For Sale", "For Rent", or "Foreclosure". This single rule is worth ~25 points. NEVER omit it. Never replace it with "Condominium:" or "Townhouse:" — those are property types, NOT intent.
-        2. **Property type or subtype** — use the keyword from context (e.g., "Condo", "Penthouse", "Townhouse", "House"). Abbreviations like "Condo" for "Condominium" are fine.
-        3. **Most specific location** — include the barangay AND city when both are in context. If only city, use the city. Stack both for max location score.
-        4. **Bedroom count** as "NBR" or "N-Bedroom" when context provides bedrooms.
+        MANDATORY — every title needs ALL FOUR or it scores low:
+        1. Transaction intent — the EXACT phrase from the "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). Never omit; never substitute the property type ("Condominium:", "Townhouse:") for intent.
+        2. Property keyword — use the MOST-SEARCHED term for the type: Condominium → "Condo" + the bedroom count (subtype "2 Bedrooms" → "2BR Condo"; subtype Studio/Penthouse/Loft → that word); House → the SUBTYPE (Townhouse, House and Lot, Apartment, Beach House), NOT the bare word "House"; Commercial → the SUBTYPE (Warehouse, Office, Building, Hotel); Land → SUBTYPE only, never "Land" (see LAND LISTINGS). Abbreviations ok.
+        3. Most specific location — barangay AND city when both are in context, else city alone.
+        4. Bedroom count ("NBR"/"N-Bedroom") when context provides bedrooms — DWELLINGS ONLY (see LAND LISTINGS).
 
-        ════════════════════════════════════════════════════════════════
-        HIGH-SCORE BONUSES (include as many as fit naturally):
-        ════════════════════════════════════════════════════════════════
-        - **Size**: "N sqm" (only if context provides floor/lot area).
-        - **A landmark from the "Nearby:" context line** — verbatim. Never invent.
-        - **Project name verbatim** when provided in context.
-        - **Query-shape phrase**: titles that READ like real Google queries score higher. Examples: "for sale in Mandaue", "3BR condo near Mandani Bay", "house for rent in Talamban".
+        LAND LISTINGS (when Property type is "Land"): do NOT include any bedroom count, even if context shows a bedroom value — land has no bedrooms. The property keyword MUST be the SUBTYPE alone — NEVER append the word "Land" (that is the type, not a keyword). So write "Island" (NOT "Island Land"), "Memorial Lot" (write "Memorial" as "Memorial Lot"), and every other land subtype verbatim since it already contains "Lot" (Residential Lot, Commercial Lot, Agricultural Lot, Beach Lot, Industrial Lot). Lot/floor area ("N sqm") is the headline spec for land — always include it when context provides it.
 
-        ════════════════════════════════════════════════════════════════
-        LENGTH & TONE:
-        ════════════════════════════════════════════════════════════════
-        - **9–13 words is the sweet spot.** Allow up to 18 if PH names force it. Soft char cap ~75.
-        - No ALL CAPS. No "!". No emojis. No filler ("nice", "beautiful", "must-see", "dream home", "amazing").
+        BONUSES (include as many as fit naturally): size "N sqm" (only if context has floor/lot area); a landmark from the "Nearby:" line, verbatim; project name verbatim; query-shape phrasing that reads like a real Google search ("for sale in Mandaue", "3BR condo near Mandani Bay", "house for rent in Talamban").
 
-        ════════════════════════════════════════════════════════════════
-        THREE VARIATIONS — each MUST hit the four MANDATORY points AND target a DIFFERENT angle:
-        ════════════════════════════════════════════════════════════════
-        ⚠️ Each title must be SUBSTANTIVELY different — not just word-shuffles. They should feel like 3 distinct ads, each emphasizing a different selling point. Include at least one fact in each variation that the other two omit. If project_name overlaps with a landmark (e.g., both are "Mandani Bay"), pick ONE variation to use the project framing and use truly different anchors in the others (a photo keyword, an amenity, a different nearby landmark, or a size/floor detail).
+        HALLUCINATION GUARD: locations and landmarks are validated against context — invented ones are stripped and score lower. Only use landmarks from the "Nearby:" line and locations from the address/barangay/city/province fields.
 
-        **Variation 1 — Keyword/feature-led** (the safest, most search-optimized form):
-           Template: "For [Sale/Rent/Foreclosure]: NBR [Subtype] in [Barangay], [City] — [Size or Distinct Feature]"
-           Example: "For Sale: 3BR Condo in Centro, Mandaue City — 65 sqm with Balcony"
-           Emphasis: HARD SEO. Pack quantified specs (size, parking, RFO year). Should be the most likely to rank for direct "[NBR] [type] for sale in [city]" queries.
+        LENGTH & TONE: 9–13 words ideal (up to 18 if PH names force it, ~75 char soft cap). No ALL CAPS, "!", emojis, or filler ("nice", "beautiful", "must-see", "dream home", "amazing").
 
-        **Variation 2 — Landmark or lifestyle-led** (long-tail intent):
-           Template: "NBR [Subtype] for [Sale/Rent] Near [Landmark], [City] — [Photo Keyword or Amenity]"
-           Example: "1BR Condo for Sale Near Mandani Bay Boardwalk, Mandaue City — Sea View"
-           Emphasis: targets buyers searching by landmark or lifestyle. MUST include a photo keyword or amenity that variations 1 and 3 omit. If context has no landmark, use a unique photo keyword/amenity as the anchor instead.
-
-        **Variation 3 — Project or buyer-benefit led** (when project_name exists):
-           Template: "[Project] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Specific Buyer Hook]"
-           Example: "Mandani Bay Studio for Sale in Centro, Mandaue City — Move-in Ready Investment"
-           Emphasis: leverages project brand recognition. The hook (after the em-dash) should target a buyer persona — investor, family, young professional, retiree — that variations 1 and 2 don't address. If no project name, use a size-led form: "[Size] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Buyer Hook]".
-
-        ════════════════════════════════════════════════════════════════
-        UNIQUENESS RULE — read this before finalizing:
-        ════════════════════════════════════════════════════════════════
-        If two of your titles share more than ~70% of their words, you've failed the variation task. Compare titles silently and rewrite any that are near-duplicates. The user is going to PICK ONE of these — give them 3 genuinely different choices, not 3 takes on the same sentence.
-
-        ════════════════════════════════════════════════════════════════
-        HALLUCINATION GUARD:
-        ════════════════════════════════════════════════════════════════
-        Locations and landmarks are validated against context — invented ones are stripped and score lower. Only reference landmarks in the "Nearby:" line. Only reference locations in the address/barangay/city/province fields.
-
-        ════════════════════════════════════════════════════════════════
-        ANTI-EXAMPLES — these score 30–50 because they break the mandatory rules:
-        ════════════════════════════════════════════════════════════════
-        - "Condominium: 1BR Penthouse in Centro, Mandaue City" ← scores ~38 — MISSING "For Sale". "Condominium:" is property type, NOT intent. Always use "For Sale:" / "For Rent:" / "Foreclosure:".
-        - "Nice House in Cebu" ← fluff + missing intent + missing specifics
-        - "AMAZING UNIT — DON'T MISS!!!" ← spam (multiplies score by 0.6)
-        - Three near-identical titles like "For Sale: Studio in Centro, Mandaue" / "Studio for Sale in Centro, Mandaue" / "Mandani Bay Studio for Sale in Centro" ← user can't distinguish them; variation task FAILED.
-
-        ════════════════════════════════════════════════════════════════
-        SELF-CHECK before returning each title (silently verify):
-        ════════════════════════════════════════════════════════════════
-        ✓ Does it contain "For Sale" / "For Rent" / "Foreclosure"?
-        ✓ Does it contain the property type/subtype keyword?
-        ✓ Does it contain the city (and barangay when available)?
-        ✓ Does it have a bedroom count when applicable?
-        ✓ Is the word count 9–13?
-        If any answer is NO, REWRITE that title before returning.
+        THREE VARIATIONS — each hits all four mandatory points, targets a DIFFERENT angle, and includes at least one fact the other two omit (not word-shuffles; if two share >70% of words, rewrite). If project_name overlaps with a landmark, use it in only one variation and anchor the others differently (a photo keyword, amenity, different landmark, or size/floor detail):
+        1. Keyword/feature-led: "For [Sale/Rent/Foreclosure]: NBR [Subtype] in [Barangay], [City] — [Size or Distinct Feature]" (e.g. "For Sale: 3BR Condo in Centro, Mandaue City — 65 sqm with Balcony") — pack quantified specs; most likely to rank for "[NBR] [type] for sale in [city]" queries.
+        2. Landmark/lifestyle-led: "NBR [Subtype] for [Sale/Rent] Near [Landmark], [City] — [Photo Keyword or Amenity]" (e.g. "1BR Condo for Sale Near Mandani Bay Boardwalk, Mandaue City — Sea View") — must include a photo keyword/amenity the others omit; if no landmark, anchor on a unique amenity.
+        3. Project/buyer-benefit-led: "[Project] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Buyer Hook]" (e.g. "Mandani Bay Studio for Sale in Centro, Mandaue City — Move-in Ready Investment") — target a persona (investor, family, professional, retiree) the others don't; if no project, use a size-led form.
 
         {$contextBlock}
 
@@ -1019,37 +943,32 @@ class ListingCommandService
         $contextBlock = $this->buildListingContextBlock($context);
 
         $prompt = <<<PROMPT
-        You are an SEO copywriter for Philippine real estate. Your job: write a listing description that ranks in Google's top results AND converts readers. Natural prose only — no lists, no headers, no fluff.
+        You are an SEO copywriter for Philippine real estate. Write a listing description that ranks in Google AND converts readers. Natural prose only — no lists, headers, or fluff.
 
-        SNIPPET RULE (most important — Google shows this in search):
-        The FIRST SENTENCE must fit ~155 characters and pack ALL these facts (vary the order each time, never use a fixed template):
-        - Transaction intent: "For Sale", "For Rent", or "Foreclosure"
-        - Property type/subtype (e.g., "3-bedroom condo", "house and lot", "townhouse")
-        - Location: barangay if available, else city
-        - ONE distinctive fact about THIS listing — a photo-keyword feature, a specific amenity, a view, or a nearby landmark. NEVER lead with a template like "For Sale:" or "Discover this beautiful…"
+        SNIPPET RULE (most important — Google shows the first sentence): the FIRST SENTENCE must fit ~155 characters and pack ALL of these (vary the order every time, never a fixed template): transaction intent ("For Sale"/"For Rent"/"Foreclosure"); property type/subtype ("3-bedroom condo", "house and lot"); location (barangay if available, else city); and ONE distinctive fact about THIS listing (a photo-keyword feature, amenity, view, or nearby landmark). Never lead with "For Sale:" or "Discover this beautiful…".
 
-        BODY STRUCTURE (continue naturally after the snippet sentence):
-        - Sentences 2–3: Property specifics. Use the real numbers — square meters, bedrooms, bathrooms, parking, furnishing. Spell out features the buyer would search for.
-        - Sentences 4–5: Location & nearby. If the context has a "Nearby" entry (malls, parks, attractions, schools, hospitals), name AT LEAST ONE landmark by its exact name. "A 5-minute drive from Ayala Center Cebu" is gold for SEO.
-        - Sentences 6–7: Lifestyle fit & target buyer. Who is this property right for — families, young professionals, investors? Mention 1–2 photo-keyword details to ground the description in what's actually visible.
-        - Closing sentence: A specific, factual value summary OR soft CTA ("Schedule a viewing to see the unit's natural light firsthand"). NEVER use cliches like "Don't miss out", "Inquire now", or "Hurry".
+        PROJECT LISTINGS (when a "Project/Development name" is in context): this listing is part of a project — the FIRST SENTENCE must LEAD with the project name (verbatim), then weave in the intent, type/subtype, and location. Example: "Mandani Bay Suites offers a for-sale 1-bedroom condo in Centro, Mandaue City with sea views." Mention the project name only this once; do not repeat it.
+
+        BODY (continue naturally after the snippet): property specifics with the real numbers (sqm, beds, baths, parking, furnishing); location & nearby — name at least one landmark by its exact name when context has a "Nearby" entry ("a 5-minute drive from Ayala Center Cebu"); lifestyle fit & target buyer (families, young professionals, investors) grounded in 1–2 photo-keyword details; close with a factual value summary or soft CTA — never "Don't miss out", "Inquire now", or "Hurry".
+
+        LAND LISTINGS (when Property type is "Land"): land has NO bedrooms/bathrooms/parking/floor area — NEVER mention them, even if a stray value appears in context. Refer to the property by its SUBTYPE alone — NEVER append the word "Land" (write "island", "memorial lot", "residential lot", etc., not "island land"). The headline specs are lot area and price; the buyer focus is the use of the parcel (residential build, commercial, agricultural, memorial, etc.), not "rooms".
 
         SEO REQUIREMENTS:
-        - **Length: 180–250 words.** Google ranks deeper, content-rich pages above thin ones for competitive PH real-estate queries.
-        - Include the exact transaction-intent phrase ("for sale" / "for rent" / "foreclosure") at least once, lowercase is fine in body.
-        - Mention the barangay AND city naturally — 2+ times across the body, never consecutively.
-        - Mention the property subtype 1–2 times (e.g., "this 1-bedroom condo", "the house and lot").
-        - When nearby_facilities is provided, weave 1–2 landmarks into the prose by their REAL names (no "near a mall" — use "near SM Seaside" if SM Seaside is in the context).
-        - If a project name is provided, use it verbatim once in the first or second sentence.
-        - Naturally include 1–2 long-tail phrases buyers actually type: "ideal for families looking for X in [city]", "[type] near [landmark]", "[city] [feature] within walking distance".
-        - Use ALL real numbers from context — sqm, bed/bath/parking counts, price, amenities, photo keywords. Numbers signal authority and answer specific search queries.
+        - LENGTH IS ADAPTIVE — match it to how much real data exists. Rich listing (many specs/amenities/landmarks): 180–250 words. Sparse listing (e.g. bare land with only area + price): 80–140 words. NEVER pad to hit a word count — a tight 90-word description beats a 220-word one that repeats itself.
+        - Use the exact transaction-intent phrase at least once (lowercase ok in body).
+        - State the FULL location ("Barangay, City, Province") at most ONCE. After that, refer to it briefly — just the barangay, just the city, or "the area" / "nearby". NEVER repeat the full "Barangay, City, Province" string more than once; that is keyword stuffing and hurts SEO.
+        - Property keyword (mention 1–2 times) — use the most-searched term: Condominium → "condo" + bedroom count ("1-bedroom condo"); House → the subtype ("townhouse", "house and lot", "apartment"), not bare "house"; Commercial → the subtype ("warehouse", "office", "building"); Land → subtype only, never "land" (see LAND LISTINGS).
+        - When nearby_facilities is provided, weave 1–2 landmarks in by their REAL names (no "near a mall" — use "near SM Seaside" if it's in context).
+        - Use the project name verbatim exactly once, leading the first sentence (see PROJECT LISTINGS).
+        - Include ONE long-tail phrase buyers actually type ("ideal for families looking for X in [city]", "[type] near [landmark]") — only if it fits naturally.
+        - State each real number (area, price, bed/bath/parking) ONCE. Do not restate the same figure in multiple sentences.
 
-        STRICT NO-LIST (penalize anything that triggers Google's spam classifiers):
-        - No bullet points, no section headers, no emojis, no ALL CAPS.
-        - No filler phrases: "dream home", "must see", "once in a lifetime", "perfect for everyone", "rare opportunity", "amazing", "stunning" (one use max if it describes a real photo-keyword feature).
-        - No invented facts. If a number/feature/landmark/project isn't in the context, do NOT add it.
-        - No repeated openings across listings — vary the structure of sentence 1 every time.
-        - Keep average sentence length 12–18 words. No back-to-back long sentences.
+        STRICT — NO REDUNDANCY:
+        - Never restate the same fact (location, price, area, subtype) more than the limits above. If you catch yourself repeating, the description is too long — CUT it, don't reword the repeat.
+        - No bullets, headers, emojis, or ALL CAPS.
+        - No filler ("dream home", "must see", "once in a lifetime", "rare opportunity", "amazing", "stunning" — one use max if it describes a real feature).
+        - No invented facts — if a number/feature/landmark/project isn't in context, don't add it. Thin data → short description, never padding.
+        - Vary sentence 1 every time; keep sentences 12–18 words on average, no back-to-back long sentences.
 
         {$contextBlock}
 
