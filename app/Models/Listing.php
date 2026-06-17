@@ -349,6 +349,12 @@ class Listing extends Model implements Auditable
             $query->whereHas('property', fn ($q) => $q->whereIn('furnishing_id', $ids));
         }
 
+        // Programmatic-SEO "best" modifier: restrict to verified listings.
+        // (is_featured is intentionally NOT used — it is dormant site-wide.)
+        if ($request->boolean('verified_only')) {
+            $query->whereIn('verification_status', ['verified', 'fully_verified']);
+        }
+
         return $query;
     }
 

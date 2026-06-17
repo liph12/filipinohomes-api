@@ -164,6 +164,144 @@ class SitemapController extends Controller
     }
 
     /**
+     * Per-cohort "affordable" price ceilings, read from the precomputed
+     * modifier_price_thresholds table (refreshed daily by
+     * `seo:compute-modifier-thresholds`). The frontend matches a cohort by the
+     * same city/province slug it already builds for location pages and applies
+     * `price_max = percentile_price` when rendering an affordable modifier page.
+     */
+    public function modifierThresholds(): JsonResponse
+    {
+        $rows = DB::table('modifier_price_thresholds')
+            ->select(
+                'modifier',
+                'category',
+                'type',
+                'city',
+                'province',
+                'percentile_price',
+                'sample_size'
+            )
+            ->orderBy('category')
+            ->orderBy('type')
+            ->orderBy('province')
+            ->orderBy('city')
+            ->get();
+
+        return response()->json($rows);
+    }
+
+    /**
+     * Post-filter listing counts per (modifier × category × type × city/province)
+     * combo, gated at MODIFIER_MIN_LISTINGS so the modifier sitemap shard never
+     * emits thin "Crawled - currently not indexed" pages. One flat list across all
+     * v1 modifiers; the frontend builds /{cat}/{type}/{modifier}/in-{city-province}.
+     *
+     * Modifier → filter mapping (all backed by real, queryable columns):
+     *   affordable      → listings.price <= cohort percentile (from thresholds table)
+     *   furnished       → properties.furnishing_id = 1
+     *   semi-furnished  → properties.furnishing_id = 2
+     *   unfurnished     → properties.furnishing_id = 3
+     *   best            → verification_status IN (verified, fully_verified)
+     *                     (NOT is_featured — that flag is dormant site-wide)
+     */
+    public function queryCounts(): JsonResponse
+    {
+        $minListings = 10;
+        $results = [];
+
+        // --- affordable: join the precomputed thresholds, count at/below ceiling
+        $affordable = $this->publicActiveListingsJoin()
+            ->join('modifier_price_thresholds as mpt', function ($j) {
+                $j->on('mpt.category_id', '=', 'listings.category_id')
+                  ->on('mpt.property_type_id', '=', 'property_types.id')
+                  ->on('mpt.city_id', '=', 'cities.id')
+                  ->where('mpt.modifier', '=', 'affordable');
+            })
+            ->whereColumn('listings.price', '<=', 'mpt.percentile_price')
+            ->select(
+                'categories.name as category',
+                'property_types.name as type',
+                'cities.name as city',
+                'provinces.name as province',
+                DB::raw('COUNT(*) as total')
+            )
+            ->groupBy('categories.name', 'property_types.name', 'cities.name', 'provinces.name')
+            ->having('total', '>=', $minListings)
+            ->get();
+        foreach ($affordable as $r) {
+            $results[] = $this->queryCountRow('affordable', $r);
+        }
+
+        // --- furnishing trio + best: simple per-cohort predicates
+        $predicates = [
+            'furnished'      => fn ($q) => $q->where('properties.furnishing_id', 1),
+            'semi-furnished' => fn ($q) => $q->where('properties.furnishing_id', 2),
+            'unfurnished'    => fn ($q) => $q->where('properties.furnishing_id', 3),
+            'best'           => fn ($q) => $q->whereIn('listings.verification_status', ['verified', 'fully_verified']),
+        ];
+
+        foreach ($predicates as $modifier => $apply) {
+            $query = $this->publicActiveListingsJoin()
+                ->select(
+                    'categories.name as category',
+                    'property_types.name as type',
+                    'cities.name as city',
+                    'provinces.name as province',
+                    DB::raw('COUNT(*) as total')
+                )
+                ->groupBy('categories.name', 'property_types.name', 'cities.name', 'provinces.name')
+                ->having('total', '>=', $minListings);
+            $apply($query);
+
+            foreach ($query->get() as $r) {
+                $results[] = $this->queryCountRow($modifier, $r);
+            }
+        }
+
+        return response()->json($results);
+    }
+
+    /**
+     * Shape one query-count row for the frontend sitemap shard.
+     */
+    private function queryCountRow(string $modifier, $r): array
+    {
+        return [
+            'modifier' => $modifier,
+            'category' => $r->category,
+            'type'     => $r->type,
+            'city'     => $r->city,
+            'province' => $r->province,
+            'total'    => (int) $r->total,
+        ];
+    }
+
+    /**
+     * Join chain + public/active predicate shared by the modifier query counts,
+     * mirroring locationCounts() and Listing::scopePubliclyListed (visibility
+     * public, not flagged) + active property.
+     */
+    private function publicActiveListingsJoin()
+    {
+        return DB::table('listings')
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->join('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+            ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+            ->where('listings.visibility', 'public')
+            ->where(function ($q) {
+                $q->whereNull('listings.verification_status')
+                  ->orWhere('listings.verification_status', '!=', 'flagged');
+            })
+            ->where('properties.status', 'active');
+    }
+
+    /**
      * Agent images for image-sitemap.xml
      */
     public function agentImages(Request $request): JsonResponse
