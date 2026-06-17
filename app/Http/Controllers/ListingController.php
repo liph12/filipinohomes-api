@@ -364,6 +364,13 @@ class ListingController extends Controller
             return $q->whereHas('property.propertyAttribute.subtype', fn($sub) => $sub->whereIn('id', $ids));
         };
 
+        $verificationStatus = $request->input('verification_status');
+        $applyVerification = function ($q) use ($verificationStatus) {
+            if (!$verificationStatus) return $q;
+            if ($verificationStatus === 'unverified') return $q->whereNull('verification_status');
+            return $q->where('verification_status', $verificationStatus);
+        };
+
         // ── Status counts: respect visibility + category filters, NOT status ──
         $statusBase = $applySubtypes($applyAtsStatus($applyFeatured($applyCategory($applyVisibility(clone $query)))));
         $statusCounts = [
@@ -408,6 +415,16 @@ class ListingController extends Controller
             'rejected' => $propHas(clone $atsBase, fn($q) => $q->where('ats_status', 'rejected'))->count(),
         ];
 
+        // ── Verification counts: respect all other filters, NOT verification ──
+        $verificationBase = $applySubtypes($applyAtsStatus($applyFeatured($applyCategory($applyVisibility($applyStatus(clone $query))))));
+        $verificationCounts = [
+            'unverified'     => (clone $verificationBase)->whereNull('verification_status')->count(),
+            'verified'       => (clone $verificationBase)->where('verification_status', 'verified')->count(),
+            'fully_verified' => (clone $verificationBase)->where('verification_status', 'fully_verified')->count(),
+            'flagged'        => (clone $verificationBase)->where('verification_status', 'flagged')->count(),
+            'pending_review' => (clone $verificationBase)->where('verification_status', 'pending_review')->count(),
+        ];
+
         // ── Apply ALL filters for pagination ─────────────────────────────────
         $query = $applyStatus($query);
         $query = $applyVisibility($query);
@@ -415,6 +432,7 @@ class ListingController extends Controller
         $query = $applyFeatured($query);
         $query = $applyAtsStatus($query);
         $query = $applySubtypes($query);
+        $query = $applyVerification($query);
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
@@ -447,10 +465,10 @@ class ListingController extends Controller
 
         return (new ListingResourceCollection($listings))->additional([
             'counts' => [
-                'status'     => $statusCounts,
-                'visibility' => $visibilityCounts,
-                'category'   => $categoryCounts,
-                'ats'        => $atsCounts,
+                'status'       => $statusCounts,
+                'visibility'   => $visibilityCounts,
+                'ats'          => $atsCounts,
+                'verification' => $verificationCounts,
             ],
         ]);
     }
@@ -691,7 +709,6 @@ class ListingController extends Controller
             'counts' => [
                 'status'       => $statusCounts,
                 'visibility'   => $visibilityCounts,
-                'category'     => $categoryCounts,
                 'ats'          => $atsCounts,
                 'views'        => $totalViews,
                 'verification' => $verificationCounts,
