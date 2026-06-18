@@ -11,3 +11,4 @@ Artisan::command('inspire', function () {
 Schedule::command('listings:expire-featured')->daily();
 Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlapping();
 Schedule::command('seo:compute-modifier-thresholds')->dailyAt('03:30')->withoutOverlapping();
+Schedule::command('seo:compute-facility-counts')->dailyAt('04:00')->withoutOverlapping();

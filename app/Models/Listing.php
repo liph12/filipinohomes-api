@@ -355,6 +355,16 @@ class Listing extends Model implements Auditable
             $query->whereIn('verification_status', ['verified', 'fully_verified']);
         }
 
+        // Programmatic-SEO "near {facility}" pages: restrict to listings whose
+        // property coordinates fall within near_radius_km of (near_lat, near_lng).
+        if ($request->filled('near_lat') && $request->filled('near_lng')) {
+            $query->nearPoint(
+                (float) $request->input('near_lat'),
+                (float) $request->input('near_lng'),
+                (float) ($request->input('near_radius_km') ?: 1.5),
+            );
+        }
+
         return $query;
     }
 
@@ -388,6 +398,35 @@ class Listing extends Model implements Auditable
         return $query
             ->orderByRaw("GREATEST(COALESCE(property_attributes.lot_area, 0), COALESCE(property_attributes.floor_area, 0)) {$direction}")
             ->select('listings.*');
+    }
+
+    /**
+     * Restrict to listings whose property's geo_coordinates fall within
+     * $radiusKm of ($lat, $lng). Two-stage to stay fast without a spatial
+     * index: a cheap lat/lng bounding-box prefilter prunes most rows, then a
+     * haversine refine enforces the true great-circle radius. The JSON_EXTRACT
+     * idiom mirrors ProjectService's coordinate matching.
+     */
+    public function scopeNearPoint(Builder $query, float $lat, float $lng, float $radiusKm = 1.5): Builder
+    {
+        $latDelta = abs($radiusKm / 111.045);
+        $cos = cos(deg2rad($lat));
+        $lngDelta = abs($radiusKm / (111.045 * (abs($cos) < 1e-9 ? 1e-9 : $cos)));
+
+        $latExpr = "CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lat')) AS DECIMAL(12,8))";
+        $lngExpr = "CAST(JSON_UNQUOTE(JSON_EXTRACT(geo_coordinates, '$.lng')) AS DECIMAL(12,8))";
+
+        return $query->whereHas('property', function ($q) use ($lat, $lng, $latDelta, $lngDelta, $radiusKm, $latExpr, $lngExpr) {
+            $q->whereRaw("$latExpr BETWEEN ? AND ?", [$lat - $latDelta, $lat + $latDelta])
+              ->whereRaw("$lngExpr BETWEEN ? AND ?", [$lng - $lngDelta, $lng + $lngDelta])
+              // LEAST/GREATEST clamp guards acos() against float rounding outside [-1,1].
+              ->whereRaw(
+                  "(6371 * acos(LEAST(1.0, GREATEST(-1.0, "
+                  . "cos(radians(?)) * cos(radians($latExpr)) * cos(radians($lngExpr) - radians(?)) "
+                  . "+ sin(radians(?)) * sin(radians($latExpr)))))) <= ?",
+                  [$lat, $lng, $lat, $radiusKm]
+              );
+        });
     }
 
     public function property()  { return $this->belongsTo(Property::class); }

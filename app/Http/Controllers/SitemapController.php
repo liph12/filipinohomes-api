@@ -302,6 +302,50 @@ class SitemapController extends Controller
     }
 
     /**
+     * Precomputed nearby-listing counts per (facility × category × type), read
+     * from facility_listing_counts (refreshed daily by seo:compute-facility-counts).
+     * Drives the "near {facility}" sitemap shard + SSG gating. Already gated at
+     * the MIN_LISTINGS floor by the compute job.
+     */
+    public function facilityCounts(): JsonResponse
+    {
+        $rows = DB::table('facility_listing_counts')
+            ->select(
+                'facility_slug',
+                'facility_name',
+                'facility_category',
+                'city',
+                'province',
+                'category',
+                'type',
+                'total'
+            )
+            ->orderBy('facility_name')
+            ->orderBy('category')
+            ->orderBy('type')
+            ->get();
+
+        return response()->json($rows);
+    }
+
+    /**
+     * Active, geocoded facility registry for the frontend — slug -> coords used
+     * to resolve a `near-{facility}` URL into the radius filter and on-page copy.
+     */
+    public function facilities(): JsonResponse
+    {
+        $rows = DB::table('facilities')
+            ->where('is_active', true)
+            ->whereNotNull('lat')
+            ->whereNotNull('lng')
+            ->select('slug', 'name', 'category', 'lat', 'lng', 'city', 'province')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json($rows);
+    }
+
+    /**
      * Agent images for image-sitemap.xml
      */
     public function agentImages(Request $request): JsonResponse
