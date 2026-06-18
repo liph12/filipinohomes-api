@@ -54,8 +54,9 @@ return Application::configure(basePath: dirname(__DIR__))
         ], headers: SymfonyRequest::HEADER_X_FORWARDED_FOR);
 
         $middleware->alias([
-            'strip.tags'         => \App\Http\Middleware\StripHtmlTags::class,
-            'verify.guest.token' => \App\Http\Middleware\VerifyGuestToken::class,
+            'strip.tags'           => \App\Http\Middleware\StripHtmlTags::class,
+            'verify.guest.token'   => \App\Http\Middleware\VerifyGuestToken::class,
+            'verify.fh.agent.token' => \App\Http\Middleware\VerifyFhAgentToken::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

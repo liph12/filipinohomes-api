@@ -8,6 +8,7 @@ use App\Models\ListingInquiry;
 use App\Models\LoginLog;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
+use App\Http\Resources\ExternalAgentResource;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -556,6 +557,43 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         );
 
         return new AgentResource($agent);
+    }
+
+    public function showByEmail(Request $request, string $email)
+    {
+        $email = trim(urldecode($email));
+        if ($email === '') {
+            return response()->json(['message' => 'The email path segment is required.'], 422);
+        }
+
+        $agent = Agent::with('user')
+            ->withCount(['listings' => fn ($q) => $q->where('visibility', 'public')])
+            ->whereHas('user', fn ($q) => $q->whereRaw('LOWER(email) = ?', [strtolower($email)]))
+            ->first();
+
+        if (!$agent) {
+            return response()->json(['message' => 'Agent not found.'], 404);
+        }
+
+        $listingsQuery = $agent->listings()
+            ->where('visibility', 'public')
+            ->with([
+                'property.propertyAttribute.subtype.type',
+                'property.furnishing',
+                'property.barangay.city.province',
+                'category',
+            ])
+            ->orderByDesc('created_at');
+
+        // Read ?page= explicitly and pass it to paginate() so page 2+ always
+        // returns the correct slice (no reliance on the global request resolver).
+        $page = max(1, (int) $request->query('page', 1));
+        $agent->setRelation(
+            'listings',
+            $listingsQuery->paginate(10, ['*'], 'page', $page)->appends(['page' => $page])
+        );
+
+        return new ExternalAgentResource($agent);
     }
 
     public function profile()

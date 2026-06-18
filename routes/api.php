@@ -74,6 +74,16 @@ Route::middleware('strip.tags')->group(function(){
     Route::middleware('throttle:api')->group(function(){
         // Issues a short-lived HMAC guest token for public API access
         Route::post('/guest-token', [GuestTokenController::class, 'issue']);
+        // Separate token for the external partner /fh-agent endpoint (own secret).
+        Route::post('/fh-agent/token', [GuestTokenController::class, 'issueFhAgent']);
+
+        // External partner agent lookup by EMAIL — gated by its OWN token
+        // (X-FH-Agent-Token), independent of the site-wide guest token.
+        //   POST /api/fh-agent/token            → { token }
+        //   GET  /api/fh-agent/{email}          (header: X-FH-Agent-Token)
+        Route::middleware('verify.fh.agent.token')->group(function () {
+            Route::get('/fh-agent/{email}', [AgentController::class, 'showByEmail'])->where('email', '.*');
+        });
 
         Route::post('/inquiry', [UserController::class, 'sendInquiry']);
         Route::post('/contact-us', [UserController::class, 'sendContactUs']);

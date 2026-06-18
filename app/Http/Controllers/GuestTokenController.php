@@ -10,8 +10,16 @@ class GuestTokenController extends Controller
     {
         // Read via config() so the value survives `php artisan config:cache`.
         // env() returns null outside config files once the cache is built.
-        $secret = config('app.guest_api_secret', '');
+        return $this->mint(config('app.guest_api_secret', ''));
+    }
 
+    public function issueFhAgent(): JsonResponse
+    {
+        return $this->mint(config('app.fh_agent_api_secret', ''));
+    }
+
+    private function mint(string $secret): JsonResponse
+    {
         if (!$secret) {
             return response()->json(['error' => 'Not configured'], 500);
         }

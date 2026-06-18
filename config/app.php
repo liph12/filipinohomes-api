@@ -138,6 +138,11 @@ return [
     // 401s because VerifyGuestToken can't HMAC-verify without the secret.
     'guest_api_secret' => env('GUEST_API_SECRET'),
 
+    // Separate secret for the external partner endpoint (/fh-agent). A token
+    // signed with this secret is NOT accepted on the site-wide guest-token
+    // routes, and vice versa — so /fh-agent access is independently gated.
+    'fh_agent_api_secret' => env('FH_AGENT_API_SECRET'),
+
     'providers' => [
         /*
         * Laravel Framework Service Providers...
