@@ -28,6 +28,8 @@ return [
         'https://www.filipinohomes.com',
         'https://leuteriorealty.com',
         'https://www.leuteriorealty.com',
+        'https://www.homes.ph',
+        'https://homes.ph',
     ],
 
     'allowed_origins_patterns' => [],
