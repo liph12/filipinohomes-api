@@ -35,7 +35,12 @@ class PageBuilderController extends Controller
 
         $query = PageBuilder::query();
         $this->applyPageSearch($query, (string) $request->input('search', ''));
-        $this->applyPageSort($query, $request);
+
+        // Default order: most-viewed first (biggest clicks → smallest) when no
+        // explicit sort is requested.
+        if (! $this->applyPageSort($query, $request)) {
+            $query->orderByDesc('clicks');
+        }
 
         return PageBuilderResource::collection($query->paginate($perPage));
     }
