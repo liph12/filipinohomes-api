@@ -185,7 +185,7 @@ class User extends Authenticatable implements Auditable
     {
         return match ($type) {
             'inquiry', 'listing_inquiry' => (bool) ($this->notify_new_inquiry ?? true),
-            'listing_verified', 'listing_flagged' => (bool) ($this->notify_listing_verified ?? true),
+            'listing_verified', 'listing_flagged', 'listing_fully_verified' => (bool) ($this->notify_listing_verified ?? true),
             'listing_status' => (bool) ($this->notify_status_change ?? true),
             default => true,
         };

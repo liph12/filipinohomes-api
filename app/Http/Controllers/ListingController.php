@@ -1115,8 +1115,8 @@ class ListingController extends Controller
                     app(\App\Services\ExpoPushService::class)->notify(
                         $agentUser,
                         'listing_status',
-                        'Listing '.$verb,
-                        "“{$listing->name}” was marked {$verb}.",
+                        'Listing '.$verb.' 🎉',
+                        "“{$listing->name}” was marked {$verb}. Congratulations on closing the deal!",
                         ['type' => 'listing_status', 'id' => $listing->id, 'status' => $data['status']],
                     );
                 }
@@ -1295,12 +1295,14 @@ class ListingController extends Controller
             }
         }
 
-        // Push the agent on an audit outcome. Flagged = action required;
-        // verified = good news (their listing passed). The mobile listing route
-        // is keyed on the listing id. Non-fatal — a push failure must not roll
-        // back the saved audit status. Gated by the agent's "Listing verified"
-        // category toggle inside ExpoPushService.
-        if ($status === 'flagged' || $status === 'verified') {
+        // Push the agent on an audit outcome so they hear about every decision:
+        //   flagged        = action required (routes to the audit screen),
+        //   verified       = passed review,
+        //   fully_verified = the gold "Fully Verified" badge — a congratulations.
+        // The mobile listing route is keyed on the listing id. Non-fatal — a push
+        // failure must not roll back the saved audit status. Gated by the agent's
+        // "Listing verification" category toggle inside ExpoPushService.
+        if (in_array($status, ['flagged', 'verified', 'fully_verified'], true)) {
             try {
                 $agentUser = optional($listing->agent)->user
                     ?? optional($listing->load('agent.user')->agent)->user;
@@ -1310,21 +1312,29 @@ class ListingController extends Controller
                         // gets actionable detail, not just "needs attention".
                         $reason = trim((string) ($validated['audit_notes'] ?? ''));
                         $body   = $reason !== ''
-                            ? "“{$listing->name}” was flagged: " . \Illuminate\Support\Str::limit($reason, 140)
-                            : "“{$listing->name}” needs your attention.";
+                            ? "“{$listing->name}” needs attention: " . \Illuminate\Support\Str::limit($reason, 140)
+                            : "“{$listing->name}” needs your attention before it can be verified.";
                         app(\App\Services\ExpoPushService::class)->notify(
                             $agentUser,
                             'listing_flagged',
-                            'Listing flagged',
+                            'Listing needs attention ⚠️',
                             $body,
                             ['type' => 'listing_flagged', 'id' => $listing->id, 'reason' => $reason ?: null],
+                        );
+                    } elseif ($status === 'fully_verified') {
+                        app(\App\Services\ExpoPushService::class)->notify(
+                            $agentUser,
+                            'listing_fully_verified',
+                            'Fully Verified 🎉',
+                            "Congratulations! “{$listing->name}” is now Fully Verified — authentic, reviewed & trusted.",
+                            ['type' => 'listing_fully_verified', 'id' => $listing->id],
                         );
                     } else {
                         app(\App\Services\ExpoPushService::class)->notify(
                             $agentUser,
                             'listing_verified',
-                            'Listing verified',
-                            "“{$listing->name}” has been verified.",
+                            'Listing verified ✅',
+                            "“{$listing->name}” passed review and is now verified.",
                             ['type' => 'listing_verified', 'id' => $listing->id],
                         );
                     }
