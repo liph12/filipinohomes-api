@@ -482,6 +482,9 @@ class UserController extends Controller
             // 'password' => 'sometimes|string|min:6',
             'avatar'            => 'nullable|string|url',
             'mobile_no'         => 'nullable|string|max:20',
+            // Client demographics — same enum as agents (in:male,female).
+            'birthdate'         => 'nullable|date',
+            'gender'            => 'nullable|string|in:male,female',
             'role_id' => 'sometimes|exists:roles,id',
         ]);
         $user->update($validated);

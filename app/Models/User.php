@@ -38,6 +38,9 @@ class User extends Authenticatable implements Auditable
         'google_id',
         'visitor_id',
         'mobile_no',
+        // Client demographics (parallel to agents.birthdate/gender).
+        'birthdate',
+        'gender',
         'password',
         'avatar',
         // Editorial / Person-schema author fields. Optional on every
@@ -75,6 +78,10 @@ class User extends Authenticatable implements Auditable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'avatar' => 'string',
+            // Date cast so $user->birthdate->age works in the client
+            // demographics aggregation. No `age` accessor — age is derived
+            // where needed (backend brackets / frontend display).
+            'birthdate' => 'date',
             'active_at' => 'datetime',
             'last_online_at' => 'datetime',
             'notify_new_inquiry' => 'boolean',

@@ -968,6 +968,93 @@ class ListingController extends Controller
         ]);
     }
 
+    /**
+     * Demographics (gender + age brackets) of CLIENT users (role 'client').
+     * Admin-only. Mirrors dashboardAgentDemographics but over `users`
+     * (clients have no `agents` row) and without the per-agent transaction
+     * drill-down — clients vastly outnumber agents, so we keep the payload
+     * to aggregate buckets only. Missing data lands in a "not_provided"
+     * bucket (surfaced as "Not provided" in the UI). Optional date window
+     * filters by users.created_at (registration cohort).
+     */
+    public function dashboardClientDemographics(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'date_start'  => 'nullable|date',
+            'date_end'    => 'nullable|date|after_or_equal:date_start',
+            'granularity' => 'nullable|in:day,month,year', // parity with other charts
+        ]);
+
+        // Default to all-time so the stat isn't empty before any cohort
+        // filtering; the frontend can narrow via date_start/date_end.
+        $start = $validated['date_start'] ?? '2000-01-01';
+        $end   = $validated['date_end']   ?? now()->toDateString();
+
+        $clients = \App\Models\User::query()
+            ->client()
+            ->whereBetween('created_at', [$start . ' 00:00:00', $end . ' 23:59:59'])
+            ->get(['id', 'gender', 'birthdate']);
+
+        $gender = ['male' => 0, 'female' => 0, 'not_provided' => 0];
+        $age    = ['18-24' => 0, '25-34' => 0, '35-44' => 0, '45-54' => 0, '55+' => 0, 'not_provided' => 0];
+        $withGender  = 0;
+        $withAge     = 0;
+        $ageSum      = 0;
+        $ageByGender = []; // exactAge => ['male' => n, 'female' => n]
+
+        foreach ($clients as $c) {
+            $g = in_array($c->gender, ['male', 'female'], true) ? $c->gender : 'not_provided';
+            $gender[$g]++;
+            if ($g !== 'not_provided') $withGender++;
+
+            if ($c->birthdate) {
+                $yrs = $c->birthdate->age;
+                $bracket = $yrs < 25 ? '18-24'
+                    : ($yrs < 35 ? '25-34'
+                    : ($yrs < 45 ? '35-44'
+                    : ($yrs < 55 ? '45-54' : '55+')));
+                $age[$bracket]++;
+                $withAge++;
+                $ageSum += $yrs;
+
+                if ($g !== 'not_provided') {
+                    if (!isset($ageByGender[$yrs])) {
+                        $ageByGender[$yrs] = ['male' => 0, 'female' => 0];
+                    }
+                    $ageByGender[$yrs][$g]++;
+                }
+            } else {
+                $age['not_provided']++;
+            }
+        }
+
+        $avgAge = $withAge > 0 ? (int) round($ageSum / $withAge) : null;
+
+        ksort($ageByGender);
+        $ageRows = [];
+        foreach ($ageByGender as $yrs => $c) {
+            $ageRows[] = ['age' => $yrs, 'male' => $c['male'], 'female' => $c['female']];
+        }
+
+        $toSeries = fn (array $map) => collect($map)
+            ->map(fn ($v, $k) => ['label' => $k, 'value' => $v])
+            ->values()
+            ->all();
+
+        return response()->json([
+            'gender'        => $toSeries($gender),
+            'age'           => $toSeries($age),
+            'age_by_gender' => $ageRows,
+            'totals' => [
+                'clients'     => $clients->count(),
+                'with_gender' => $withGender,
+                'with_age'    => $withAge,
+                'avg_age'     => $avgAge,
+            ],
+            'meta' => ['from' => $start, 'to' => $end],
+        ]);
+    }
+
     public function dashboardStatusByDate(Request $request): JsonResponse
     {
         $validated = $request->validate([

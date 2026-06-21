@@ -49,6 +49,7 @@ use App\Http\Controllers\{
     FeatureTokenController,
     GuestTokenController,
     InquiryController,
+    InquiryAnalyticsController,
     ActivityLogController,
     MobileStatisticsController,
     DeviceTokenController,
@@ -332,6 +333,21 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
+
+                // Client Demographics — gender + age brackets of registered
+                // clients (admin-only; agents have their own non-gated stat).
+                Route::get('/user/client-demographics', [ListingController::class, 'dashboardClientDemographics']);
+
+                // Inquiry Analytics — deep drill-down over listing inquiries
+                // (chats type='listing'): overview breakdowns, hierarchical
+                // location drill-down, and top inquiring clients.
+                Route::get('/admin/inquiry-analytics/overview', [InquiryAnalyticsController::class, 'overview']);
+                Route::get('/admin/inquiry-analytics/locations', [InquiryAnalyticsController::class, 'locations']);
+                Route::get('/admin/inquiry-analytics/clients', [InquiryAnalyticsController::class, 'clients']);
+                Route::get('/admin/inquiry-analytics/heatmap', [InquiryAnalyticsController::class, 'heatmap']);
+                Route::get('/admin/inquiry-analytics/clusters', [InquiryAnalyticsController::class, 'clusters']);
+                Route::get('/admin/inquiry-analytics/listings', [InquiryAnalyticsController::class, 'listings']);
+                Route::get('/admin/inquiry-analytics/listing-inquiries', [InquiryAnalyticsController::class, 'listingInquiries']);
 
                 // Audience Insights — client/visitor counts (admin-only).
                 Route::get('/user/audience-insights', [AudienceInsightsController::class, 'show']);

@@ -29,6 +29,11 @@ class UserResource extends JsonResource
             'name'      => $this->name,
             'email'     => $this->email,
             'mobile_no' => $this->agent->mobile_no ?? $this->mobile_no ?? "",
+            // Client demographics (null until provided). Age is intentionally
+            // NOT exposed — birthdate is present and age is a trivial
+            // frontend computation.
+            'birthdate' => $this->birthdate,
+            'gender'    => $this->gender,
             'avatar'    => $this->avatar,
             'role'      => $this->role?->name,
             'is_team_leader' => $isTeamLeader,

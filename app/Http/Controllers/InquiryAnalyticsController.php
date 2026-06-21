@@ -1,0 +1,136 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Services\Inquiry\InquiryHeatmapService;
+use App\Services\Inquiry\InquiryListingsService;
+use App\Services\Inquiry\InquiryLocationService;
+use App\Services\Inquiry\InquiryOverviewService;
+use App\Services\Inquiry\InquiryTopClientsService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+/**
+ * Admin-only deep Inquiry Analytics over the live chats (type='listing')
+ * inquiry model. Route-gated by RoleMiddleware:admin. Distinct from
+ * InquiryController, which handles the unrelated Contact-Us inbox.
+ */
+class InquiryAnalyticsController extends Controller
+{
+    /** Filters shared by every endpoint. */
+    private function validateFilters(Request $request, array $extra = []): array
+    {
+        return $request->validate(array_merge([
+            'date_from'     => 'nullable|date',
+            'date_to'       => 'nullable|date|after_or_equal:date_from',
+            'category_id'   => 'nullable|integer|exists:categories,id',
+            'property_type' => 'nullable|string|max:100',
+            'island'        => 'nullable|in:luzon,visayas,mindanao',
+            'province_id'   => 'nullable|integer|exists:provinces,id',
+            'city_id'       => 'nullable|integer|exists:cities,id',
+            'barangay_id'   => 'nullable|integer|exists:barangays,id',
+        ], $extra));
+    }
+
+    public function overview(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request);
+
+        return response()->json(
+            (new InquiryOverviewService())->configure($filters)->overview()
+        );
+    }
+
+    public function locations(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request);
+
+        return response()->json(
+            (new InquiryLocationService())->configure($filters)->locations()
+        );
+    }
+
+    public function clients(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request, [
+            'page'     => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'sort_by'  => 'nullable|in:count,name',
+            'sort_dir' => 'nullable|in:asc,desc',
+        ]);
+
+        return response()->json(
+            (new InquiryTopClientsService())->configure($filters)->clients(
+                (int) ($filters['page'] ?? 1),
+                (int) ($filters['per_page'] ?? 25),
+                $filters['sort_by'] ?? 'count',
+                $filters['sort_dir'] ?? 'desc',
+            )
+        );
+    }
+
+    public function heatmap(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request);
+
+        return response()->json(
+            (new InquiryHeatmapService())->configure($filters)->points()
+        );
+    }
+
+    public function clusters(Request $request): JsonResponse
+    {
+        // Viewport-driven: zoom-derived level + on-screen bounding box.
+        $filters = $this->validateFilters($request, [
+            'level'   => 'nullable|in:island,province,city,barangay',
+            'min_lat' => 'nullable|numeric',
+            'max_lat' => 'nullable|numeric',
+            'min_lng' => 'nullable|numeric',
+            'max_lng' => 'nullable|numeric',
+        ]);
+
+        return response()->json(
+            (new InquiryHeatmapService())->configure($filters)->clusters()
+        );
+    }
+
+    /** Per-listing list behind an inquiry count (location / client / cluster scope). */
+    public function listings(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request, [
+            'client_id' => 'nullable|integer|exists:users,id',
+            'page'      => 'nullable|integer|min:1',
+            'per_page'  => 'nullable|integer|min:1|max:100',
+            'sort_by'   => 'nullable|in:inquiries,price,newest',
+            'sort_dir'  => 'nullable|in:asc,desc',
+        ]);
+
+        return response()->json(
+            (new InquiryListingsService())->configure($filters)->listings(
+                (int) ($filters['page'] ?? 1),
+                (int) ($filters['per_page'] ?? 25),
+                $filters['sort_by'] ?? 'inquiries',
+                $filters['sort_dir'] ?? 'desc',
+            )
+        );
+    }
+
+    /** Individual inquiries on a single listing (client + date), within scope. */
+    public function listingInquiries(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request, [
+            'listing_id' => 'required|integer|exists:listings,id',
+            'client_id'  => 'nullable|integer|exists:users,id',
+            'page'       => 'nullable|integer|min:1',
+            'per_page'   => 'nullable|integer|min:1|max:100',
+        ]);
+
+        return response()->json(
+            (new InquiryListingsService())->configure($filters)->listingInquiries(
+                (int) $filters['listing_id'],
+                (int) ($filters['page'] ?? 1),
+                (int) ($filters['per_page'] ?? 25),
+            )
+        );
+    }
+}
