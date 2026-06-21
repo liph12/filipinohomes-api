@@ -496,7 +496,17 @@ class Listing extends Model implements Auditable
      */
     public function inquiryChats()
     {
-        return $this->hasMany(Chat::class, 'type_id')->where('chats.type', 'listing');
+        // Only count chats that have an accepted/closed conversation — i.e.
+        // inquiries the agent has actually taken on. This mirrors what the
+        // Inquiries list shows (ChatController@index scopes a regular agent to
+        // conversations they participate in with status accepted/closed), so
+        // pending/unaccepted threads aren't counted and the card matches the
+        // agent's inbox.
+        return $this->hasMany(Chat::class, 'type_id')
+            ->where('chats.type', 'listing')
+            ->whereHas('conversations', function ($q) {
+                $q->whereIn('status', ['accepted', 'closed']);
+            });
     }
 
     public function creator()
