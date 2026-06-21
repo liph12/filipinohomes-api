@@ -487,6 +487,18 @@ class Listing extends Model implements Auditable
         return $this->hasMany(ListingInquiry::class);
     }
 
+    /**
+     * Inquiry chat threads about this listing. Chats are polymorphic via
+     * (type, type_id); a listing inquiry is a Chat with type='listing' and
+     * type_id = this listing's id (see Chat::listing()). This is the source
+     * the Inquiries page (/chats?type=listing) uses, NOT the legacy
+     * listing_inquiries table.
+     */
+    public function inquiryChats()
+    {
+        return $this->hasMany(Chat::class, 'type_id')->where('chats.type', 'listing');
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

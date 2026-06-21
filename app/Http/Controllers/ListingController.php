@@ -461,6 +461,7 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
+            ->withCount(['inquiryChats as inquiries_count'])
             ->paginate($perPage);
 
         return (new ListingResourceCollection($listings))->additional([
@@ -703,6 +704,7 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
+            ->withCount(['inquiryChats as inquiries_count'])
             ->paginate($request->query('per_page', 12));
 
         return (new ListingResourceCollection($listings))->additional([

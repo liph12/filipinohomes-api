@@ -30,6 +30,7 @@ class ListingResource extends JsonResource
             'is_featured'    => $this->is_featured,
             'featured_until' => $this->featured_until,
             'clicks'         => $this->clicks,
+            'inquiries_count' => $this->inquiries_count ?? 0,
             'seo_tags'       => $this->seo_tags,
             'created_at'          => $this->updated_at->diffForHumans(),
             'date_added'          => $this->created_at->toDateString(),
