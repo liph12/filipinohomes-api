@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use App\Models\Project;
 use App\Models\Property;
+use App\Models\Listing;
 use Illuminate\Support\Str;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
@@ -72,15 +73,42 @@ class ProjectService
             ->groupBy('project_id');
     }
 
+    // Public listing counts per project, split by category — powers the
+    // sale/rent/foreclosure breakdown the directory + sitemap need to know
+    // which /projects/{slug}/{category} pages actually have units.
+    private function projectCategoryCountsSubquery()
+    {
+        return Listing::query()
+            ->publiclyListed()
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->where('properties.is_project', true)
+            ->whereNotNull('properties.project_id')
+            ->selectRaw(
+                "properties.project_id as project_id,
+                 SUM(categories.name = 'For Sale') as sale_count,
+                 SUM(categories.name = 'For Rent') as rent_count,
+                 SUM(categories.name = 'Foreclosure') as foreclosure_count"
+            )
+            ->groupBy('properties.project_id');
+    }
+
     private function baseProjectListQuery(bool $withListingsOnly = false)
     {
         $counts = $this->projectCountsSubquery();
+        $categoryCounts = $this->projectCategoryCountsSubquery();
 
         $query = Project::query()
             ->select([
                 ...self::PROJECT_LIST_COLUMNS,
                 DB::raw('COALESCE(project_property_counts.properties_count, 0) as properties_count'),
-            ]);
+                DB::raw('COALESCE(project_category_counts.sale_count, 0) as sale_count'),
+                DB::raw('COALESCE(project_category_counts.rent_count, 0) as rent_count'),
+                DB::raw('COALESCE(project_category_counts.foreclosure_count, 0) as foreclosure_count'),
+            ])
+            ->leftJoinSub($categoryCounts, 'project_category_counts', function ($join) {
+                $join->on('project_category_counts.project_id', '=', 'projects.id');
+            });
 
         if ($withListingsOnly) {
             return $query->joinSub($counts, 'project_property_counts', function ($join) {
