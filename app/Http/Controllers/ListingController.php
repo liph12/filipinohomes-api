@@ -436,12 +436,17 @@ class ListingController extends Controller
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
-        // Removed view sorts by audited_at newest→oldest; everything else by
-        // newest created first.
+        // Removed view sorts by audited_at newest→oldest. The normal My
+        // Listings view surfaces the listings that need attention first:
+        // most inquiries → most views (clicks) → newest created.
+        // (inquiries_count is provided by the withCount below.)
         if ($removed) {
             $query->orderByDesc('listings.audited_at');
         } else {
-            $query->orderBy('created_at', 'desc');
+            $query
+                ->orderByDesc('inquiries_count')
+                ->orderByDesc('listings.clicks')
+                ->orderByDesc('listings.created_at');
         }
 
         $listings = $query
