@@ -820,6 +820,19 @@ class ListingController extends Controller
         $statistics['private_listings'] = (clone $baseQuery)->where('visibility', 'private')->count();
         $statistics['agent'] = 1;
 
+        // Category breakdown (For Sale / For Rent / Foreclosure) for the
+        // dashboard Category card — scoped to this agent's own listings.
+        $categoryCountsRaw = Listing::where('agent_id', $user->agent->id)
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->selectRaw('categories.name as name, COUNT(*) as count')
+            ->groupBy('categories.name')
+            ->pluck('count', 'name');
+        $statistics['category'] = [
+            'For Sale'    => (int) ($categoryCountsRaw['For Sale'] ?? 0),
+            'For Rent'    => (int) ($categoryCountsRaw['For Rent'] ?? 0),
+            'Foreclosure' => (int) ($categoryCountsRaw['Foreclosure'] ?? 0),
+        ];
+
         return response()->json($statistics);
     }
 
