@@ -206,15 +206,10 @@ class InquiryLocationService extends InquiryInsightsService
             $typeKey = $r->gid === null ? '__null__' : (string) $r->gid;
 
             if ($id === null) {
+                // Don't rank the catch-all as a row (it has no drill target and
+                // would outrank real places); it's disclosed via the footnote
+                // meta.unclassified_count instead — matching the island level.
                 $unclassifiedCount += $count;
-                $data[] = [
-                    'level'          => $level,
-                    'id'             => null,
-                    'name'           => 'Unclassified location',
-                    'inquiry_count'  => $count,
-                    'unique_clients' => (int) $r->unique_clients,
-                    'composition'    => $this->composition($r, $topTypes[$typeKey] ?? null),
-                ];
                 continue;
             }
 

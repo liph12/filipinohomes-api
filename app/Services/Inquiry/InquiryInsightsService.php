@@ -146,18 +146,20 @@ abstract class InquiryInsightsService
         return 'COALESCE(geo_cities.name, project_cities.name, property_cities.name)';
     }
 
-    // Barangay: prefer the geocoded barangay. Fall back to the address_id
-    // barangay ONLY when the property hasn't been geocoded to a city — once we
-    // trust the pin's city, the agent's address_id barangay (which may belong
-    // to a different city) must not leak in.
+    // Barangay: prefer the geocoded barangay. Fall back to the agent-picked
+    // address_id barangay when EITHER the property isn't geocoded to a city, OR
+    // that barangay actually belongs to the verified geo city. Only a barangay
+    // that contradicts the pin's city (the bug that put a Cebu listing in
+    // Bacolod) is dropped — so a confirmed-city pin with no Google sublocality
+    // still keeps the agent's (consistent) barangay instead of going unclassified.
     protected function barangayIdExpr(): string
     {
-        return 'COALESCE(properties.geo_barangay_id, CASE WHEN properties.geo_city_id IS NULL THEN properties.address_id ELSE NULL END)';
+        return 'COALESCE(properties.geo_barangay_id, CASE WHEN properties.geo_city_id IS NULL OR barangays.city_id = properties.geo_city_id THEN properties.address_id ELSE NULL END)';
     }
 
     protected function barangayNameExpr(): string
     {
-        return 'COALESCE(geo_barangays.name, CASE WHEN properties.geo_city_id IS NULL THEN barangays.name ELSE NULL END)';
+        return 'COALESCE(geo_barangays.name, CASE WHEN properties.geo_city_id IS NULL OR barangays.city_id = properties.geo_city_id THEN barangays.name ELSE NULL END)';
     }
 
     /**
