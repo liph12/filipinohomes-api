@@ -436,12 +436,19 @@ class ListingController extends Controller
 
         $perPage = min((int) $request->input('per_page', 12), 500);
 
-        // Removed view sorts by audited_at newest→oldest. The normal My
-        // Listings view surfaces the listings that need attention first:
-        // most inquiries → most views (clicks) → newest created.
+        // Removed view sorts by audited_at newest→oldest. Otherwise the user
+        // picks the sort (default "inquiries" surfaces what needs attention
+        // first: most inquiries → most views → newest created).
         // (inquiries_count is provided by the withCount below.)
+        $sort = (string) $request->query('sort', 'inquiries');
         if ($removed) {
             $query->orderByDesc('listings.audited_at');
+        } elseif ($sort === 'views') {
+            $query
+                ->orderByDesc('listings.clicks')
+                ->orderByDesc('listings.created_at');
+        } elseif ($sort === 'created') {
+            $query->orderByDesc('listings.created_at');
         } else {
             $query
                 ->orderByDesc('inquiries_count')
@@ -696,12 +703,24 @@ class ListingController extends Controller
 
         $totalViews = (int) (clone $query)->sum('clicks');
 
-        // Removed view sorts by audited_at newest→oldest; everything else by
-        // newest created first.
+        // Removed view sorts by audited_at newest→oldest. Otherwise the user
+        // picks the sort; default "inquiries" matches My Listings (most
+        // inquiries → most views → newest created). inquiries_count comes from
+        // the withCount below.
+        $sort = (string) $request->query('sort', 'inquiries');
         if ($removed) {
             $query->orderByDesc('listings.audited_at');
+        } elseif ($sort === 'views') {
+            $query
+                ->orderByDesc('listings.clicks')
+                ->orderByDesc('listings.created_at');
+        } elseif ($sort === 'created') {
+            $query->orderByDesc('listings.created_at');
         } else {
-            $query->orderBy('created_at', 'desc');
+            $query
+                ->orderByDesc('inquiries_count')
+                ->orderByDesc('listings.clicks')
+                ->orderByDesc('listings.created_at');
         }
 
         $listings = $query
