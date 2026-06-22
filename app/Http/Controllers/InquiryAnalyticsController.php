@@ -25,6 +25,10 @@ class InquiryAnalyticsController extends Controller
             'date_to'       => 'nullable|date|after_or_equal:date_from',
             'category_id'   => 'nullable|integer|exists:categories,id',
             'property_type' => 'nullable|string|max:100',
+            // Multi-select (CSV of ids) — preferred over the singular params above.
+            'category_ids'  => ['nullable', 'string', 'max:255', 'regex:/^\d+(,\d+)*$/'],
+            'type_ids'      => ['nullable', 'string', 'max:255', 'regex:/^\d+(,\d+)*$/'],
+            'subtype_ids'   => ['nullable', 'string', 'max:500', 'regex:/^\d+(,\d+)*$/'],
             'island'        => 'nullable|in:luzon,visayas,mindanao',
             'province_id'   => 'nullable|integer|exists:provinces,id',
             'city_id'       => 'nullable|integer|exists:cities,id',
@@ -111,6 +115,28 @@ class InquiryAnalyticsController extends Controller
                 (int) ($filters['per_page'] ?? 25),
                 $filters['sort_by'] ?? 'inquiries',
                 $filters['sort_dir'] ?? 'desc',
+            )
+        );
+    }
+
+    /** Master table: every inquiry in scope (flat, searchable, paginated). */
+    public function inquiries(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request, [
+            'page'     => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'sort_by'  => 'nullable|in:date,price,client,listing',
+            'sort_dir' => 'nullable|in:asc,desc',
+            'search'   => 'nullable|string|max:120',
+        ]);
+
+        return response()->json(
+            (new InquiryListingsService())->configure($filters)->inquiries(
+                (int) ($filters['page'] ?? 1),
+                (int) ($filters['per_page'] ?? 25),
+                $filters['sort_by'] ?? 'date',
+                $filters['sort_dir'] ?? 'desc',
+                $filters['search'] ?? null,
             )
         );
     }

@@ -45,7 +45,7 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw('property_subtypes.name'),
                 DB::raw($this->cityNameExpr()),
                 DB::raw($this->provinceNameExpr()),
-                DB::raw('barangays.name'),
+                DB::raw($this->barangayNameExpr()),
                 DB::raw('agents.first_name'),
                 DB::raw('agents.last_name')
             )
@@ -65,7 +65,7 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw('property_subtypes.name as subtype'),
                 DB::raw($this->cityNameExpr() . ' as city_name'),
                 DB::raw($this->provinceNameExpr() . ' as province_name'),
-                DB::raw('barangays.name as barangay_name'),
+                DB::raw($this->barangayNameExpr() . ' as barangay_name'),
                 DB::raw("TRIM(CONCAT(COALESCE(agents.first_name,''),' ',COALESCE(agents.last_name,''))) as agent_name"),
                 DB::raw('COUNT(*) as inquiry_count'),
                 DB::raw('COUNT(DISTINCT chats.user_id) as unique_clients'),
@@ -156,6 +156,88 @@ class InquiryListingsService extends InquiryInsightsService
                 'page'      => $page,
                 'per_page'  => $perPage,
                 'last_page' => max(1, (int) ceil($total / $perPage)),
+            ],
+        ];
+    }
+
+    /**
+     * Master table: one row per inquiry (chat) in scope — the flat "see it all"
+     * view. Sortable by date / price / client / listing; searchable by client
+     * or listing name; paginated.
+     */
+    public function inquiries(int $page = 1, int $perPage = 25, string $sortBy = 'date', string $sortDir = 'desc', ?string $search = null): array
+    {
+        $perPage = max(1, min($perPage, 100));
+        $page = max(1, $page);
+        $dir = strtolower($sortDir) === 'asc' ? 'asc' : 'desc';
+
+        $base = function () use ($search) {
+            $q = $this->baseInquiryQuery();
+            if ($search !== null && trim($search) !== '') {
+                $term = '%' . trim($search) . '%';
+                $q->where(function ($w) use ($term) {
+                    $w->where('inq.name', 'like', $term)
+                      ->orWhere('listings.name', 'like', $term);
+                });
+            }
+            return $q;
+        };
+
+        $orderCol = match ($sortBy) {
+            'price'   => 'listings.price',
+            'client'  => 'inq.name',
+            'listing' => 'listings.name',
+            default   => 'chats.created_at',
+        };
+
+        $total = (int) $base()->count();
+
+        $rows = $base()
+            ->orderBy($orderCol, $dir)
+            ->orderBy('chats.id', 'desc')
+            ->forPage($page, $perPage)
+            ->get([
+                DB::raw('chats.id as chat_id'),
+                DB::raw('chats.created_at as inquired_at'),
+                DB::raw('inq.name as client_name'),
+                DB::raw('listings.id as listing_id'),
+                DB::raw('listings.name as listing_name'),
+                DB::raw('listings.slug as listing_slug'),
+                DB::raw('listings.price as price'),
+                DB::raw('properties.status as status'),
+                DB::raw('categories.name as category'),
+                DB::raw('property_types.name as property_type'),
+                DB::raw($this->cityNameExpr() . ' as city_name'),
+                DB::raw($this->provinceNameExpr() . ' as province_name'),
+            ]);
+
+        $data = $rows->map(function ($r) {
+            $loc = array_filter([$r->city_name, $r->province_name]);
+
+            return [
+                'chat_id'       => (int) $r->chat_id,
+                'inquired_at'   => $r->inquired_at,
+                'client_name'   => (string) ($r->client_name ?? 'Unknown'),
+                'listing_id'    => (int) $r->listing_id,
+                'listing_name'  => (string) ($r->listing_name ?? 'Untitled listing'),
+                'listing_slug'  => $r->listing_slug,
+                'price'         => $r->price !== null ? (float) $r->price : null,
+                'status'        => $r->status,
+                'category'      => $r->category,
+                'property_type' => $r->property_type,
+                'location'      => implode(', ', $loc),
+            ];
+        })->all();
+
+        return [
+            'data'   => $data,
+            'totals' => ['total_inquiries' => $total],
+            'meta'   => [
+                'page'      => $page,
+                'per_page'  => $perPage,
+                'last_page' => max(1, (int) ceil($total / $perPage)),
+                'sort_by'   => $sortBy,
+                'sort_dir'  => $dir,
             ],
         ];
     }

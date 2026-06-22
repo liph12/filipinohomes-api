@@ -30,6 +30,12 @@ abstract class InquiryInsightsService
     protected ?string $dateTo = null;       // 'YYYY-MM-DD'
     protected ?int $categoryId = null;
     protected ?string $propertyType = null; // property_types.name
+    /** @var int[] Multi-select category ids (preferred over $categoryId). */
+    protected array $categoryIds = [];
+    /** @var int[] Fully-selected property_type ids (match whole type). */
+    protected array $typeIds = [];
+    /** @var int[] Specific property_subtype ids (match individual subtypes). */
+    protected array $subtypeIds = [];
     protected ?int $provinceId = null;
     protected ?int $cityId = null;
     protected ?int $barangayId = null;
@@ -63,6 +69,9 @@ abstract class InquiryInsightsService
         $this->dateTo       = $filters['date_to']       ?? null;
         $this->categoryId   = isset($filters['category_id']) ? (int) $filters['category_id'] : null;
         $this->propertyType = $filters['property_type'] ?? null;
+        $this->categoryIds  = $this->parseIdList($filters['category_ids'] ?? null);
+        $this->typeIds      = $this->parseIdList($filters['type_ids'] ?? null);
+        $this->subtypeIds   = $this->parseIdList($filters['subtype_ids'] ?? null);
         $this->provinceId   = isset($filters['province_id']) ? (int) $filters['province_id'] : null;
         $this->cityId       = isset($filters['city_id']) ? (int) $filters['city_id'] : null;
         $this->barangayId   = isset($filters['barangay_id']) ? (int) $filters['barangay_id'] : null;
@@ -85,6 +94,23 @@ abstract class InquiryInsightsService
         return $this;
     }
 
+    /** Parse a CSV string or array of ids into a clean list of positive ints. */
+    private function parseIdList($value): array
+    {
+        if (is_array($value)) {
+            $items = $value;
+        } elseif (is_string($value) && $value !== '') {
+            $items = explode(',', $value);
+        } else {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map('intval', $items),
+            fn ($v) => $v > 0
+        )));
+    }
+
     /** [province_id => name] from the provinces table (cached, ~82 rows). */
     protected function provinceNames(): array
     {
@@ -96,24 +122,42 @@ abstract class InquiryInsightsService
     }
 
     // Location resolution expressions — shared by every grouped query.
+    // GEO-FIRST: the reverse-geocoded pin (geo_cities/geo_provinces, cached on
+    // the property) is the most reliable signal, so it takes precedence; the
+    // project path and the agent-picked address_id (property) path are
+    // fallbacks for properties not yet geocoded.
     protected function provinceIdExpr(): string
     {
-        return 'COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)';
+        return 'COALESCE(geo_cities.province_id, projects.prov_id, project_cities.province_id, property_cities.province_id)';
     }
 
     protected function provinceNameExpr(): string
     {
-        return 'COALESCE(project_provinces.name, property_provinces.name)';
+        return 'COALESCE(geo_provinces.name, project_provinces.name, property_provinces.name)';
     }
 
     protected function cityIdExpr(): string
     {
-        return 'COALESCE(projects.city_id, property_cities.id)';
+        return 'COALESCE(properties.geo_city_id, projects.city_id, property_cities.id)';
     }
 
     protected function cityNameExpr(): string
     {
-        return 'COALESCE(project_cities.name, property_cities.name)';
+        return 'COALESCE(geo_cities.name, project_cities.name, property_cities.name)';
+    }
+
+    // Barangay: prefer the geocoded barangay. Fall back to the address_id
+    // barangay ONLY when the property hasn't been geocoded to a city — once we
+    // trust the pin's city, the agent's address_id barangay (which may belong
+    // to a different city) must not leak in.
+    protected function barangayIdExpr(): string
+    {
+        return 'COALESCE(properties.geo_barangay_id, CASE WHEN properties.geo_city_id IS NULL THEN properties.address_id ELSE NULL END)';
+    }
+
+    protected function barangayNameExpr(): string
+    {
+        return 'COALESCE(geo_barangays.name, CASE WHEN properties.geo_city_id IS NULL THEN barangays.name ELSE NULL END)';
     }
 
     /**
@@ -147,6 +191,11 @@ abstract class InquiryInsightsService
             ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
             ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
             ->leftJoin('provinces as property_provinces', 'property_provinces.id', '=', 'property_cities.province_id')
+            // Reverse-geocoded (pin-derived) location — takes precedence over
+            // the dirty address_id chain in the resolution expressions above.
+            ->leftJoin('cities as geo_cities', 'geo_cities.id', '=', 'properties.geo_city_id')
+            ->leftJoin('provinces as geo_provinces', 'geo_provinces.id', '=', 'geo_cities.province_id')
+            ->leftJoin('barangays as geo_barangays', 'geo_barangays.id', '=', 'properties.geo_barangay_id')
             // Real client inquirers only (exclude admin/agent inquirers).
             ->join('users as inq', 'inq.id', '=', 'chats.user_id')
             ->join('roles as inq_role', 'inq_role.id', '=', 'inq.role_id')
@@ -160,11 +209,30 @@ abstract class InquiryInsightsService
             $q->where('chats.created_at', '<=', $this->dateTo . ' 23:59:59');
         }
 
-        // Cross-filters — apply at every level.
-        if ($this->categoryId) {
+        // Cross-filters — apply at every level. Multi-select arrays take
+        // precedence over the legacy single-value params.
+        if (! empty($this->categoryIds)) {
+            $q->whereIn('listings.category_id', $this->categoryIds);
+        } elseif ($this->categoryId) {
             $q->where('listings.category_id', $this->categoryId);
         }
-        if ($this->propertyType) {
+
+        // Type/subtype. The frontend sends fully-selected types ($typeIds) and
+        // specific subtypes ($subtypeIds) separately, so a mixed pick like
+        // "all Land + only Studio condos" matches as (type IN ...) OR
+        // (subtype IN ...) rather than an over-narrow AND.
+        $hasType = ! empty($this->typeIds);
+        $hasSub  = ! empty($this->subtypeIds);
+        if ($hasType && $hasSub) {
+            $q->where(function ($w) {
+                $w->whereIn('property_types.id', $this->typeIds)
+                    ->orWhereIn('property_subtypes.id', $this->subtypeIds);
+            });
+        } elseif ($hasType) {
+            $q->whereIn('property_types.id', $this->typeIds);
+        } elseif ($hasSub) {
+            $q->whereIn('property_subtypes.id', $this->subtypeIds);
+        } elseif ($this->propertyType) {
             $q->where('property_types.name', $this->propertyType);
         }
 
@@ -174,9 +242,10 @@ abstract class InquiryInsightsService
             $q->where('chats.user_id', $this->clientId);
         }
 
-        // Location scope.
+        // Location scope. Use the geo-first barangay expression so a drill into
+        // a (geo-resolved) barangay matches the same id used for grouping.
         if ($this->barangayId) {
-            $q->where('barangays.id', $this->barangayId);
+            $q->where(DB::raw($this->barangayIdExpr()), $this->barangayId);
         }
         if ($this->cityId) {
             $q->where(DB::raw($this->cityIdExpr()), $this->cityId);

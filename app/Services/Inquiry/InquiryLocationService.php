@@ -186,7 +186,7 @@ class InquiryLocationService extends InquiryInsightsService
         [$idExpr, $nameExpr] = match ($level) {
             'province' => [$this->provinceIdExpr(), $this->provinceNameExpr()],
             'city'     => [$this->cityIdExpr(), $this->cityNameExpr()],
-            'barangay' => ['barangays.id', 'barangays.name'],
+            'barangay' => [$this->barangayIdExpr(), $this->barangayNameExpr()],
         };
 
         $rows = $this->baseInquiryQuery()

@@ -349,7 +349,7 @@ class ListingService
             $propertyName = $data['project']['name'];
         }
 
-        return Property::create([
+        $property = Property::create([
             'name'                 => $propertyName,
             'project_id'           => $project?->id,
             'address'              => $data['address'],
@@ -360,7 +360,7 @@ class ListingService
             'ats_expiration_date'  => $data['ats_expiration_date'] ?? null,
             'ats_attachments'      => $data['ats_attachments'] ?? [
                 'photos' => [],
-                'documents' => [],    
+                'documents' => [],
             ],
             'ats_remarks'          => $data['ats_remarks'] ?? null,
             'agent_ats_remarks'    => $data['agent_ats_remarks'] ?? null,
@@ -370,6 +370,13 @@ class ListingService
             'furnishing_id'        => $furnishingId,
             'address_id'           => $data['address_id'] ?? null,
         ]);
+
+        // Resolve the true location from the map pin (for Inquiry Analytics)
+        // after the response — the barangay dropdown is unreliable.
+        $pid = $property->id;
+        defer(fn () => app(PropertyGeoResolver::class)->resolveById($pid));
+
+        return $property;
     }
 
     protected function resolveProject(array $data): ?Project
@@ -609,7 +616,17 @@ class ListingService
                     $propertyData['reviewed_by'] = Auth::id();
                 }
             }
+            // Detect a pin change before persisting so we can re-resolve the
+            // geocoded location only when it actually moved.
+            $geoChanged = array_key_exists('geo_coordinates', $propertyData)
+                && json_encode($propertyData['geo_coordinates']) !== json_encode($property->geo_coordinates);
+
             $property->update($propertyData);
+
+            if ($geoChanged) {
+                $pid = $property->id;
+                defer(fn () => app(PropertyGeoResolver::class)->resolveById($pid, true));
+            }
 
             $slug = $listing->slug;
             if (isset($data['name']) && $data['name'] !== $listing->name) {
