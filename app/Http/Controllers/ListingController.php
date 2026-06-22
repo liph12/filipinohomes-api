@@ -466,7 +466,19 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
-            ->withCount(['inquiryChats as inquiries_count'])
+            ->withCount(['inquiryChats as inquiries_count' => function ($q) use ($user) {
+                // Match the Inbox: don't count inquiries this viewer has
+                // archived / trashed / purged (per-participant state on
+                // conversation_users — see ChatController@index).
+                $q->whereDoesntHave('activeConversation.users', function ($u) use ($user) {
+                    $u->where('users.id', $user->id)
+                      ->where(function ($w) {
+                          $w->whereNotNull('conversation_users.archived_at')
+                            ->orWhereNotNull('conversation_users.removed_at')
+                            ->orWhereNotNull('conversation_users.purged_at');
+                      });
+                });
+            }])
             ->paginate($perPage);
 
         return (new ListingResourceCollection($listings))->additional([
@@ -709,7 +721,18 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
-            ->withCount(['inquiryChats as inquiries_count'])
+            ->withCount(['inquiryChats as inquiries_count' => function ($q) use ($user) {
+                // Match the Inbox: exclude inquiries this viewer archived /
+                // trashed / purged (per-participant conversation_users state).
+                $q->whereDoesntHave('activeConversation.users', function ($u) use ($user) {
+                    $u->where('users.id', $user->id)
+                      ->where(function ($w) {
+                          $w->whereNotNull('conversation_users.archived_at')
+                            ->orWhereNotNull('conversation_users.removed_at')
+                            ->orWhereNotNull('conversation_users.purged_at');
+                      });
+                });
+            }])
             ->paginate($request->query('per_page', 12));
 
         return (new ListingResourceCollection($listings))->additional([
