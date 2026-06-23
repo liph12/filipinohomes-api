@@ -434,6 +434,25 @@ class ListingController extends Controller
         $query = $applySubtypes($query);
         $query = $applyVerification($query);
 
+        // Price range + minimum beds/baths (used by the chat "Share a listing"
+        // picker's More-filters). Applied to the paginated result set only.
+        $priceMin = $request->input('price_min');
+        $priceMax = $request->input('price_max');
+        $minBeds  = $request->input('beds');
+        $minBaths = $request->input('baths');
+        if (is_numeric($priceMin)) {
+            $query->where('listings.price', '>=', (float) $priceMin);
+        }
+        if (is_numeric($priceMax)) {
+            $query->where('listings.price', '<=', (float) $priceMax);
+        }
+        if (is_numeric($minBeds) && (int) $minBeds > 0) {
+            $query->whereHas('property.propertyAttribute', fn($q) => $q->where('bedroom_count', '>=', (int) $minBeds));
+        }
+        if (is_numeric($minBaths) && (int) $minBaths > 0) {
+            $query->whereHas('property.propertyAttribute', fn($q) => $q->where('bathroom_count', '>=', (int) $minBaths));
+        }
+
         $perPage = min((int) $request->input('per_page', 12), 500);
 
         // Removed view sorts by audited_at newest→oldest. Otherwise the user
