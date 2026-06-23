@@ -249,6 +249,7 @@ class InquiryLocationService extends InquiryInsightsService
         if (!$row) {
             return [
                 'top_category' => ['key' => 'for_sale', 'count' => 0],
+                'by_category'  => ['for_sale' => 0, 'for_rent' => 0, 'foreclosure' => 0],
                 'top_type'     => null,
                 'price_min'    => null,
                 'price_max'    => null,
@@ -257,6 +258,13 @@ class InquiryLocationService extends InquiryInsightsService
 
         return [
             'top_category' => $this->topCategory($row),
+            // Per-row category counts so the table can show For Sale / For Rent /
+            // Foreclosure as their own columns (not just the top one).
+            'by_category'  => [
+                'for_sale'    => (int) ($row->for_sale ?? 0),
+                'for_rent'    => (int) ($row->for_rent ?? 0),
+                'foreclosure' => (int) ($row->foreclosure ?? 0),
+            ],
             'top_type'     => $topType,
             'price_min'    => $row->price_min !== null ? (float) $row->price_min : null,
             'price_max'    => $row->price_max !== null ? (float) $row->price_max : null,
