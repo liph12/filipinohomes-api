@@ -113,6 +113,22 @@ class ChatController extends Controller
                           $c->where('agent_user_id', $user->id);
                       });
             }
+        } elseif ($scope === 'team' && $roleName === 'admin') {
+            // Admin-only "Team" filter: conversations assigned to an agent who
+            // is an active member of any team.
+            $teamUserIds = \App\Models\Agent::whereIn(
+                'id',
+                \App\Models\TeamAgent::where('status', 'active')->pluck('agent_id')
+            )->whereNotNull('user_id')->pluck('user_id')->all();
+            $query->whereHas('activeConversation', function ($c) use ($teamUserIds) {
+                $c->whereIn('agent_user_id', $teamUserIds);
+            });
+            // Eager-load the assigned agent's active team so the inbox can
+            // group inquiries by team (square logo + name → agents' inquiries).
+            $query->with([
+                'activeConversation.agentUser.agent.teamMembers' => fn ($q) => $q->where('status', 'active'),
+                'activeConversation.agentUser.agent.teamMembers.team',
+            ]);
         }
 
         if ($status = $request->query('status')) {

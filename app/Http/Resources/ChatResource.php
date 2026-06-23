@@ -51,10 +51,49 @@ class ChatResource extends JsonResource
                 fn () => new UserResource($this->listing->agent->user),
             ),
             'active_conversation' => new ConversationResource($this->whenLoaded('activeConversation')),
+            // The team the assigned agent belongs to — only populated when the
+            // team relations are eager-loaded (admin "Team" scope). Drives the
+            // team-grouped inbox view. Null otherwise.
+            'team' => $this->resolveAssignedAgentTeam(),
             'is_archived_for_me' => $isArchivedForMe,
             'is_trashed_for_me'  => $isTrashedForMe,
             'is_purged_for_me'   => $isPurgedForMe,
             'created_at' => $this->created_at,
+        ];
+    }
+
+    /**
+     * The team the conversation's assigned agent actively belongs to.
+     * Returns null unless the chain
+     * activeConversation.agentUser.agent.teamMembers.team is eager-loaded
+     * (done only for the admin "Team" scope to avoid extra joins elsewhere).
+     */
+    private function resolveAssignedAgentTeam(): ?array
+    {
+        if (!$this->relationLoaded('activeConversation') || !$this->activeConversation) {
+            return null;
+        }
+        $conv = $this->activeConversation;
+        if (!$conv->relationLoaded('agentUser') || !$conv->agentUser) {
+            return null;
+        }
+        $agentUser = $conv->agentUser;
+        if (!$agentUser->relationLoaded('agent') || !$agentUser->agent) {
+            return null;
+        }
+        $agent = $agentUser->agent;
+        if (!$agent->relationLoaded('teamMembers')) {
+            return null;
+        }
+        $membership = $agent->teamMembers->firstWhere('status', 'active');
+        $team = $membership && $membership->relationLoaded('team') ? $membership->team : null;
+        if (!$team) {
+            return null;
+        }
+        return [
+            'id' => $team->id,
+            'name' => $team->name,
+            'logo' => $team->logo,
         ];
     }
 
