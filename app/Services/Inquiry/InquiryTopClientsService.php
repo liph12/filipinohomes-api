@@ -24,7 +24,7 @@ class InquiryTopClientsService extends InquiryInsightsService
         $dir = strtolower($sortDir) === 'asc' ? 'asc' : 'desc';
 
         $query = $this->baseInquiryQuery()
-            ->groupBy('chats.user_id', 'inq.name', 'inq.birthdate', 'inq.gender')
+            ->groupBy('chats.user_id', 'inq.name', 'inq.birthdate', 'inq.gender', 'inq.avatar', 'inq.mobile_no', 'inq.email')
             ->orderBy($orderCol, $dir);
         // Stable tiebreaker so pagination is deterministic.
         if ($orderCol !== 'inquiry_count') {
@@ -37,6 +37,9 @@ class InquiryTopClientsService extends InquiryInsightsService
             ->get([
                 DB::raw('chats.user_id as user_id'),
                 DB::raw('inq.name as name'),
+                DB::raw('inq.avatar as avatar'),
+                DB::raw('inq.mobile_no as mobile_no'),
+                DB::raw('inq.email as email'),
                 DB::raw('inq.birthdate as birthdate'),
                 DB::raw('inq.gender as gender'),
                 DB::raw('COUNT(*) as inquiry_count'),
@@ -56,6 +59,11 @@ class InquiryTopClientsService extends InquiryInsightsService
                 'rank'          => $offset + $i + 1,
                 'user_id'       => $uid,
                 'name'          => (string) ($r->name ?? 'Unknown'),
+                // Avatar returned raw (full URL or storage path / JSON array) —
+                // the frontend resolves it the same way as everywhere else.
+                'photo'         => $r->avatar ?: null,
+                'phone'         => $r->mobile_no ?: null,
+                'email'         => $r->email ?: null,
                 'birthdate'     => $r->birthdate ? substr((string) $r->birthdate, 0, 10) : null,
                 'gender'        => $r->gender ?: null,
                 'inquiry_count' => (int) $r->inquiry_count,

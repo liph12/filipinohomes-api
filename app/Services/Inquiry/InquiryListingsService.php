@@ -47,7 +47,8 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw($this->provinceNameExpr()),
                 DB::raw($this->barangayNameExpr()),
                 DB::raw('agents.first_name'),
-                DB::raw('agents.last_name')
+                DB::raw('agents.last_name'),
+                DB::raw('listings.agent_id')
             )
             ->orderBy($orderCol, $dir)
             ->orderBy('listings.id', 'asc') // stable tiebreaker for pagination
@@ -67,13 +68,20 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw($this->provinceNameExpr() . ' as province_name'),
                 DB::raw($this->barangayNameExpr() . ' as barangay_name'),
                 DB::raw("TRIM(CONCAT(COALESCE(agents.first_name,''),' ',COALESCE(agents.last_name,''))) as agent_name"),
+                DB::raw('listings.agent_id as agent_id'),
                 DB::raw('COUNT(*) as inquiry_count'),
                 DB::raw('COUNT(DISTINCT chats.user_id) as unique_clients'),
                 DB::raw('MAX(chats.created_at) as latest_inquiry_at'),
             ]);
 
-        $data = $rows->map(function ($r) {
+        // Resolve each agent's photo + team + leadership separately (NOT a join)
+        // so the one-to-many team_agents rows can't inflate the inquiry COUNT(*).
+        $agentInfo = $this->agentInfoForAgents($rows->pluck('agent_id')->all());
+
+        $data = $rows->map(function ($r) use ($agentInfo) {
             $loc = array_filter([$r->barangay_name, $r->city_name, $r->province_name]);
+            $aid = $r->agent_id ? (int) $r->agent_id : null;
+            $team = $aid ? ($agentInfo[$aid] ?? null) : null;
 
             return [
                 'id'                => (int) $r->id,
@@ -88,6 +96,9 @@ class InquiryListingsService extends InquiryInsightsService
                 'subtype'           => $r->subtype,
                 'location'          => implode(', ', $loc),
                 'agent_name'        => $r->agent_name ?: null,
+                'agent_photo'       => $team['photo'] ?? null,
+                'agent_role'        => $aid ? (($team['is_leader'] ?? false) ? 'Team Leader' : 'Agent') : null,
+                'team_name'         => $team['team_name'] ?? null,
                 'inquiry_count'     => (int) $r->inquiry_count,
                 'unique_clients'    => (int) $r->unique_clients,
                 'latest_inquiry_at' => $r->latest_inquiry_at,
@@ -127,6 +138,9 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw('chats.id as chat_id'),
                 DB::raw('inq.id as client_id'),
                 DB::raw('inq.name as client_name'),
+                DB::raw('inq.avatar as avatar'),
+                DB::raw('inq.mobile_no as mobile_no'),
+                DB::raw('inq.email as email'),
                 DB::raw('inq.birthdate as birthdate'),
                 DB::raw('inq.gender as gender'),
                 DB::raw('chats.created_at as inquired_at'),
@@ -139,6 +153,9 @@ class InquiryListingsService extends InquiryInsightsService
             'chat_id'     => (int) $r->chat_id,
             'client_id'   => (int) $r->client_id,
             'client_name' => (string) ($r->client_name ?? 'Unknown'),
+            'photo'       => $r->avatar ?: null,
+            'phone'       => $r->mobile_no ?: null,
+            'email'       => $r->email ?: null,
             'birthdate'   => $r->birthdate ? substr((string) $r->birthdate, 0, 10) : null,
             'gender'      => $r->gender ?: null,
             'inquired_at' => $r->inquired_at,
@@ -200,9 +217,11 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw('chats.id as chat_id'),
                 DB::raw('chats.created_at as inquired_at'),
                 DB::raw('inq.name as client_name'),
+                DB::raw('inq.avatar as client_photo'),
                 DB::raw('listings.id as listing_id'),
                 DB::raw('listings.name as listing_name'),
                 DB::raw('listings.slug as listing_slug'),
+                DB::raw('listings.agent_id as agent_id'),
                 DB::raw('listings.price as price'),
                 DB::raw('properties.status as status'),
                 DB::raw('categories.name as category'),
@@ -211,13 +230,18 @@ class InquiryListingsService extends InquiryInsightsService
                 DB::raw($this->provinceNameExpr() . ' as province_name'),
             ]);
 
-        $data = $rows->map(function ($r) {
+        $agentInfo = $this->agentInfoForAgents($rows->pluck('agent_id')->all());
+
+        $data = $rows->map(function ($r) use ($agentInfo) {
             $loc = array_filter([$r->city_name, $r->province_name]);
+            $aid = $r->agent_id ? (int) $r->agent_id : null;
+            $agent = $aid ? ($agentInfo[$aid] ?? null) : null;
 
             return [
                 'chat_id'       => (int) $r->chat_id,
                 'inquired_at'   => $r->inquired_at,
                 'client_name'   => (string) ($r->client_name ?? 'Unknown'),
+                'client_photo'  => $r->client_photo ?: null,
                 'listing_id'    => (int) $r->listing_id,
                 'listing_name'  => (string) ($r->listing_name ?? 'Untitled listing'),
                 'listing_slug'  => $r->listing_slug,
@@ -226,6 +250,10 @@ class InquiryListingsService extends InquiryInsightsService
                 'category'      => $r->category,
                 'property_type' => $r->property_type,
                 'location'      => implode(', ', $loc),
+                'agent_name'    => $agent['name'] ?? null,
+                'agent_photo'   => $agent['photo'] ?? null,
+                'agent_role'    => $aid ? (($agent['is_leader'] ?? false) ? 'Team Leader' : 'Agent') : null,
+                'team_name'     => $agent['team_name'] ?? null,
             ];
         })->all();
 
@@ -240,6 +268,64 @@ class InquiryListingsService extends InquiryInsightsService
                 'sort_dir'  => $dir,
             ],
         ];
+    }
+
+    /**
+     * [agent_id => ['name', 'photo', 'team_name', 'is_leader']] for the given
+     * agent ids. Name = first+last (fallback linked user name); photo =
+     * agents.avatar falling back to the user's avatar (mirrors AgentResource).
+     * Team/leadership from the active team_agents pivot; a leader designation
+     * wins if the agent appears on more than one active team row.
+     */
+    private function agentInfoForAgents(array $agentIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map(fn ($v) => (int) $v, $agentIds))));
+        if (empty($ids)) {
+            return [];
+        }
+
+        $rows = DB::table('agents')
+            ->leftJoin('users as agent_user', 'agent_user.id', '=', 'agents.user_id')
+            ->leftJoin('team_agents', function ($j) {
+                $j->on('team_agents.agent_id', '=', 'agents.id')
+                    ->where('team_agents.status', '=', 'active');
+            })
+            ->leftJoin('teams', 'teams.id', '=', 'team_agents.team_id')
+            ->whereIn('agents.id', $ids)
+            ->get([
+                'agents.id as agent_id',
+                DB::raw("TRIM(CONCAT(COALESCE(agents.first_name,''),' ',COALESCE(agents.last_name,''))) as agent_name"),
+                DB::raw('agent_user.name as user_name'),
+                'agents.avatar as agent_avatar',
+                DB::raw('agent_user.avatar as user_avatar'),
+                'team_agents.is_leader as is_leader',
+                'teams.name as team_name',
+            ]);
+
+        $map = [];
+        foreach ($rows as $r) {
+            $aid = (int) $r->agent_id;
+            $photo = $r->agent_avatar ?: ($r->user_avatar ?: null);
+            $name = trim((string) $r->agent_name) ?: ($r->user_name ?: null);
+            if (! isset($map[$aid])) {
+                $map[$aid] = [
+                    'name'      => $name,
+                    'photo'     => $photo,
+                    'team_name' => $r->team_name,
+                    'is_leader' => (bool) $r->is_leader,
+                ];
+            } else {
+                if ($r->is_leader) {
+                    $map[$aid]['is_leader'] = true;
+                    $map[$aid]['team_name'] = $r->team_name;
+                }
+                if (empty($map[$aid]['photo']) && $photo) {
+                    $map[$aid]['photo'] = $photo;
+                }
+            }
+        }
+
+        return $map;
     }
 
     /** First photo URL from the featured_photo JSON column. */
