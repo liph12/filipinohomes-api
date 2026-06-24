@@ -36,6 +36,7 @@ class MessageResource extends JsonResource
                 return [
                     'id' => $this->replyTo->id,
                     'body' => $this->replyTo->body,
+                    'attachments' => $this->replyTo->attachments ?? [],
                     'user' => [
                         'id' => $this->replyTo->user->id,
                         'name' => $this->replyTo->user->name,

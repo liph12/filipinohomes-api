@@ -388,12 +388,29 @@ class ConversationController extends Controller
         $user = Auth::user();
         $now = now();
 
-        // Pivot last_read_at is always stamped — moderators (admin / TL)
-        // still need accurate unread counts in their own inbox. The
-        // pivot is private per participant; it never leaks across users.
-        $conversation->users()->syncWithoutDetaching([
-            $user->id => ['last_read_at' => $now],
-        ]);
+        $conversation->loadMissing('chat');
+        $isChatOwner = (int) $conversation->chat?->user_id === (int) $user->id;
+        $isAssignedAgent = (int) $conversation->agent_user_id === (int) $user->id;
+        $isAgentDirectPeer = $conversation->chat?->type === 'agent'
+            && (int) $conversation->chat?->type_id === (int) $user->id;
+
+        // Stamp last_read_at. First-class participants (chat owner / assigned
+        // agent / agent-direct peer) are attached if not already present.
+        // Moderators (admin, team leader, browsing agent) are stamped ONLY
+        // when they're already a participant (e.g. they once sent a message) —
+        // we no longer auto-attach observers. syncWithoutDetaching had been
+        // adding everyone who ever opened a thread, bloating conversation_users
+        // to dozens of "participants" and fanning every realtime event out to
+        // all of them. updateExistingPivot no-ops when there's no row.
+        if ($isChatOwner || $isAssignedAgent || $isAgentDirectPeer) {
+            $conversation->users()->syncWithoutDetaching([
+                $user->id => ['last_read_at' => $now],
+            ]);
+        } else {
+            $conversation->users()->updateExistingPivot($user->id, [
+                'last_read_at' => $now,
+            ]);
+        }
 
         // messages.read_at is the public "seen" signal — visible to the
         // other party as the seen-receipt + avatar at the bottom of the
@@ -402,10 +419,6 @@ class ConversationController extends Controller
         // Admins, team leaders, and anyone else who happens to be in the
         // pivot stay invisible in the seen system so a client never
         // learns from the UI that a moderator is reading along.
-        $conversation->loadMissing('chat');
-        $isChatOwner = (int) $conversation->chat?->user_id === (int) $user->id;
-        $isAssignedAgent = (int) $conversation->agent_user_id === (int) $user->id;
-
         if ($isChatOwner || $isAssignedAgent) {
             $conversation->messages()
                 ->where('user_id', '!=', $user->id)

@@ -70,10 +70,16 @@ class MessageController extends Controller
 
         $conversation = Conversation::findOrFail($validated['conversation_id']);
 
-        if (!$conversation->users()->where('users.id', Auth::id())->exists()
-            && Auth::user()->role?->name !== 'admin') {
-            abort(403, 'You are not a participant in this conversation.');
-        }
+        // Authorize sending the same way we authorize viewing (matches the
+        // index() method above): admin, anyone in the conversation_users pivot,
+        // the assigned agent, and any team leader of that agent. This lets a
+        // TL/admin INTERVENE in a thread they moderate without first being
+        // attached to the pivot. Previously a TL relied on markRead
+        // auto-attaching them on open — which we removed so the pivot stops
+        // bloating with every observer — so the old pivot-only check here would
+        // now 403 them. They're attached below once they actually post; the
+        // status + block checks further down still gate the send.
+        $this->authorize('view', $conversation);
 
         if (in_array($conversation->status, ['rejected', 'closed'])) {
             abort(403, 'Cannot send messages to a ' . $conversation->status . ' conversation.');
