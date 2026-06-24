@@ -180,12 +180,19 @@ class ListingController extends Controller
     {
         $listings = Listing::publiclyListed()
             ->with([
-                'property.propertyAttribute.subtype',
+                // Eager-load every relation the Resource touches so a 12-item page
+                // hydrates in a fixed number of queries instead of N+1 per listing:
+                // PropertyResource reads barangay→city→province + furnishing;
+                // PropertySubtypeResource reads ->type; AgentResource reads ->user.
+                'property.propertyAttribute.subtype.type',
                 'property.nearbyFacility',
+                'property.barangay.city.province',
+                'property.furnishing',
                 'category',
                 'agent' => function ($q) {
                     $q->withCount('listings');
                 },
+                'agent.user',
             ])
             ->filter($request)
             ->orderByDesc('updated_at')
@@ -198,28 +205,36 @@ class ListingController extends Controller
     {
         $listing = null;
         if ($slug = $request->input('slug')) {
-            $currListing = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])->first();
+            // One hydrated lookup (was two: a bare lookup for click-tracking + a
+            // public lookup for display). Eager-load the full Resource graph to
+            // avoid the barangay/city/province + agent.user N+1 on the detail page.
+            $found = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])
+                ->with([
+                    'property.propertyAttribute.subtype.type',
+                    'property.nearbyFacility',
+                    'property.barangay.city.province',
+                    'property.furnishing',
+                    'category',
+                    'agent' => function ($q) {
+                        $q->withCount('listings');
+                    },
+                    'agent.user',
+                ])
+                ->first();
 
-            if ($currListing) {
+            if ($found) {
                 $deviceId = $request->input('device_id');
-                $cacheKey = "listing_{$currListing->id}_clicked_by_{$deviceId}";
+                $cacheKey = "listing_{$found->id}_clicked_by_{$deviceId}";
 
                 if (! Cache::has($cacheKey)) {
-                    $currListing->timestamps = false;
-                    $currListing->increment('clicks');
-                    $currListing->timestamps = true;
+                    $found->timestamps = false;
+                    $found->increment('clicks');
+                    $found->timestamps = true;
                     Cache::put($cacheKey, true, now()->addDay());
                 }
 
-                $listing = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])->where('visibility', 'public')
-                    ->with([
-                        'property.propertyAttribute.subtype',
-                        'property.nearbyFacility',
-                        'category',
-                        'agent' => function ($q) {
-                            $q->withCount('listings');
-                        }
-                    ])->first();
+                // Only public listings are exposed (matches the prior visibility guard).
+                $listing = $found->visibility === 'public' ? $found : null;
             }
         }
 
@@ -1892,6 +1907,7 @@ class ListingController extends Controller
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
                 'property.nearbyFacility',
+                'property.barangay.city.province',
                 'category',
                 'agent.user',
             ])

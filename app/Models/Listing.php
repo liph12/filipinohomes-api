@@ -2,25 +2,26 @@
 
 namespace App\Models;
 
+use App\Auditing\LogsActivity;
+use App\Jobs\PingIndexNow;
+use App\Services\IndexNowService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Str;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Jobs\PingIndexNow;
-use App\Models\Province;
-use App\Services\IndexNowService;
-use App\Auditing\LogsActivity;
+use Illuminate\Support\Str;
 use OwenIt\Auditing\Contracts\Auditable;
+
 class Listing extends Model implements Auditable
 {
     use HasFactory;
-    use SoftDeletes;
     use LogsActivity;
+    use SoftDeletes;
 
     protected string $auditCategory = 'listings';
+
     protected array $auditLabelAttributes = ['name', 'code'];
 
     /**
@@ -33,10 +34,17 @@ class Listing extends Model implements Auditable
         $code = trim((string) ($this->code ?? ''));
         $name = trim((string) ($this->name ?? ''));
 
-        if ($code && $name) return "{$code} — {$name}";
-        if ($code) return $code;
-        if ($name) return $name;
-        return 'Listing #' . $this->getKey();
+        if ($code && $name) {
+            return "{$code} — {$name}";
+        }
+        if ($code) {
+            return $code;
+        }
+        if ($name) {
+            return $name;
+        }
+
+        return 'Listing #'.$this->getKey();
     }
 
     /**
@@ -63,32 +71,32 @@ class Listing extends Model implements Auditable
 
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
-        'featured_photo', 'is_featured', 'featured_until', 'clicks','impressions',
-        'property_id', 'category_id', 'agent_id', 'seo_tags','created_at','updated_at',
+        'featured_photo', 'is_featured', 'featured_until', 'clicks', 'impressions',
+        'property_id', 'category_id', 'agent_id', 'seo_tags', 'created_at', 'updated_at',
         'verification_status', 'audit_notes', 'audit_checklist', 'audited_by', 'audited_at',
         'agent_edited_fields', 'audit_edited_fields', 're_submitted_at',
     ];
 
     protected $casts = [
-        'price'           => 'decimal:2',
-        'is_featured'     => 'boolean',
-        'featured_until'  => 'datetime',
-        'clicks'          => 'integer',
-        'featured_photo'  => 'array',
-        'seo_tags'        => 'array',
-        'audit_checklist'    => 'array',
-        'audited_at'         => 'datetime',
-        'agent_edited_fields'=> 'array',
-        'audit_edited_fields'=> 'array',
-        're_submitted_at'    => 'datetime',
+        'price' => 'decimal:2',
+        'is_featured' => 'boolean',
+        'featured_until' => 'datetime',
+        'clicks' => 'integer',
+        'featured_photo' => 'array',
+        'seo_tags' => 'array',
+        'audit_checklist' => 'array',
+        'audited_at' => 'datetime',
+        'agent_edited_fields' => 'array',
+        'audit_edited_fields' => 'array',
+        're_submitted_at' => 'datetime',
     ];
 
     protected static function booted()
     {
         static::creating(function ($listing) {
             $token = Str::lower(Str::random(10));
-            $listing->slug = 'tmp-' . $token;
-            $listing->code = 'TMP-' . Str::upper($token);
+            $listing->slug = 'tmp-'.$token;
+            $listing->code = 'TMP-'.Str::upper($token);
         });
 
         static::created(function ($listing) {
@@ -96,7 +104,7 @@ class Listing extends Model implements Auditable
             $finalSlug = $baseSlug;
 
             if (self::withTrashed()->where('slug', $baseSlug)->where('id', '!=', $listing->id)->exists()) {
-                $finalSlug = $baseSlug . '-' . $listing->id;
+                $finalSlug = $baseSlug.'-'.$listing->id;
             }
 
             $address = optional($listing->property)->address;
@@ -104,7 +112,7 @@ class Listing extends Model implements Auditable
 
             $listing->updateQuietly([
                 'slug' => $finalSlug,
-                'code' => $provinceCode . '-' . str_pad((string) $listing->id, 4, '0', STR_PAD_LEFT),
+                'code' => $provinceCode.'-'.str_pad((string) $listing->id, 4, '0', STR_PAD_LEFT),
             ]);
 
             // The slug is only canonical after this updateQuietly,
@@ -154,7 +162,7 @@ class Listing extends Model implements Auditable
      */
     private static function dispatchIndexNowFor(self $listing): void
     {
-        if (!config('services.indexnow.enabled')) {
+        if (! config('services.indexnow.enabled')) {
             return;
         }
         $slug = (string) $listing->slug;
@@ -199,28 +207,38 @@ class Listing extends Model implements Auditable
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
-        $brgy = $request->input('barangay') ?? '';
-        $city = $request->input('city') ?? '';
-        $prov = $request->input('province') ?? '';
+        $brgy = trim($request->input('barangay') ?? '');
+        $city = trim($request->input('city') ?? '');
+        $prov = trim($request->input('province') ?? '');
 
-        $query->whereHas('property', function($q) use($brgy, $city, $prov){
-            $q->whereHas('barangay', function($q) use($brgy, $city, $prov){
-                $q->where('name', 'LIKE', "%{$brgy}%")
-                ->whereHas('city', function($q) use($city, $prov){
-                    $q->where('name', 'LIKE', "%{$city}%")
-                    ->whereHas('province', function($q) use($prov){
-                        $q->where('name', 'LIKE', "%{$prov}%");
+        // Only filter by location when at least one level is actually provided,
+        // and only apply the LIKE at the level(s) given. The previous code ran a
+        // triple-nested barangay→city→province `name LIKE "%%"` EXISTS on EVERY
+        // search (the dominant cost behind the slow filter / RDS hot query); with
+        // no location params that chain is a no-op match, so we skip it entirely.
+        if ($brgy !== '' || $city !== '' || $prov !== '') {
+            $query->whereHas('property.barangay', function ($q) use ($brgy, $city, $prov) {
+                if ($brgy !== '') {
+                    $q->where('name', 'LIKE', "%{$brgy}%");
+                }
+                if ($city !== '' || $prov !== '') {
+                    $q->whereHas('city', function ($q) use ($city, $prov) {
+                        if ($city !== '') {
+                            $q->where('name', 'LIKE', "%{$city}%");
+                        }
+                        if ($prov !== '') {
+                            $q->whereHas('province', fn ($q) => $q->where('name', 'LIKE', "%{$prov}%"));
+                        }
                     });
-                });
+                }
             });
-        });
+        }
 
-        if($request->input('ai') === 'true')
-        {
+        if ($request->input('ai') === 'true') {
             if ($key_word = $request->input('key_word')) {
                 $array_words = explode(' ', $key_word);
-        
-                $query->whereHas('property', function($q) use($array_words){
+
+                $query->whereHas('property', function ($q) use ($array_words) {
                     $q->where(function ($q) use ($array_words) {
                         foreach ($array_words as $w) {
                             $q->where(function ($sub) use ($w) {
@@ -230,13 +248,12 @@ class Listing extends Model implements Auditable
                     });
                 });
             }
-        }else{
+        } else {
             $search = $request->input('search') ?? '';
             $search = trim($request->input('search', ''));
             $address = $request->input('address');
 
-            if(!empty($address))
-            {
+            if (! empty($address)) {
                 // Tokenize the address string and AND-match each term as a
                 // LIKE substring — same approach the `search` branch below
                 // already uses. The single-LIKE form was breaking
@@ -248,15 +265,15 @@ class Listing extends Model implements Auditable
                 // returned 136. Tokenizing makes both forms match the
                 // same listings.
                 $terms = array_filter(explode(' ', $address));
-                $query->whereHas('property', function($q) use($terms){
+                $query->whereHas('property', function ($q) use ($terms) {
                     $q->where(function ($q) use ($terms) {
                         foreach ($terms as $w) {
                             $q->where('address', 'LIKE', "%{$w}%");
                         }
                     });
                 });
-            }else{
-                if (!empty($search)) {
+            } else {
+                if (! empty($search)) {
                     $terms = array_filter(explode(' ', $search));
 
                     // Match either listings.code (raw search string,
@@ -303,44 +320,40 @@ class Listing extends Model implements Auditable
         }
 
         if ($request->filled('sqm_min')) {
-            $query->whereHas('property.propertyAttribute', fn ($q) =>
-                $q->whereRaw(
-                    "GREATEST(COALESCE(lot_area, 0), COALESCE(floor_area, 0)) >= ?",
-                    [$request->sqm_min]
-                )
+            $query->whereHas('property.propertyAttribute', fn ($q) => $q->whereRaw(
+                'GREATEST(COALESCE(lot_area, 0), COALESCE(floor_area, 0)) >= ?',
+                [$request->sqm_min]
+            )
             );
         }
 
         if ($request->filled('sqm_max')) {
-            $query->whereHas('property.propertyAttribute', fn ($q) =>
-                $q->whereRaw(
-                    "GREATEST(COALESCE(lot_area, 0), COALESCE(floor_area, 0)) <= ?",
-                    [$request->sqm_max]
-                )
+            $query->whereHas('property.propertyAttribute', fn ($q) => $q->whereRaw(
+                'GREATEST(COALESCE(lot_area, 0), COALESCE(floor_area, 0)) <= ?',
+                [$request->sqm_max]
+            )
             );
         }
 
         if ($request->filled('beds')) {
-            $beds          = (int) $request->input('beds');
+            $beds = (int) $request->input('beds');
             $bedsCondition = $request->input('beds_condition', 'equal');
-            $query->whereHas('property.propertyAttribute', fn ($q) =>
-                $q->where('bedroom_count', match ($bedsCondition) {
-                    'plus'  => '>=',
-                    'minus' => '<=',
-                    default => '=',
-                }, $beds)
+            $query->whereHas('property.propertyAttribute', fn ($q) => $q->where('bedroom_count', match ($bedsCondition) {
+                'plus' => '>=',
+                'minus' => '<=',
+                default => '=',
+            }, $beds)
             );
         }
 
         if ($request->filled('baths')) {
-            $baths          = (int) $request->input('baths');
+            $baths = (int) $request->input('baths');
             $bathsCondition = $request->input('baths_condition', 'equal');
-            $query->whereHas('property.propertyAttribute', fn ($q) =>
-                $q->where('bathroom_count', match ($bathsCondition) {
-                    'plus'  => '>=',
-                    'minus' => '<=',
-                    default => '=',
-                }, $baths)
+            $query->whereHas('property.propertyAttribute', fn ($q) => $q->where('bathroom_count', match ($bathsCondition) {
+                'plus' => '>=',
+                'minus' => '<=',
+                default => '=',
+            }, $baths)
             );
         }
 
@@ -371,15 +384,15 @@ class Listing extends Model implements Auditable
     public function scopeSorted(Builder $query, ?string $sortBy): Builder
     {
         return match ($sortBy) {
-            'featured'    => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
+            'featured' => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
             'most-viewed' => $query->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
-            'newest'      => $query->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
-            'oldest'      => $query->orderBy('updated_at', 'asc')->orderBy('id', 'asc'),
-            'latest'      => $query->orderBy('updated_at', 'desc'),
-            'price-low'   => $query->orderBy('price', 'asc'),
-            'price-high'  => $query->orderBy('price', 'desc'),
+            'newest' => $query->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
+            'oldest' => $query->orderBy('updated_at', 'asc')->orderBy('id', 'asc'),
+            'latest' => $query->orderBy('updated_at', 'desc'),
+            'price-low' => $query->orderBy('price', 'asc'),
+            'price-high' => $query->orderBy('price', 'desc'),
             'sqm-low', 'sqm-high' => $this->applySqmSort($query, $sortBy),
-            default       => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
+            default => $query->orderByDesc('is_featured')->orderBy('clicks', 'desc')->orderBy('updated_at', 'desc')->orderBy('id', 'desc'),
         };
     }
 
@@ -418,21 +431,32 @@ class Listing extends Model implements Auditable
 
         return $query->whereHas('property', function ($q) use ($lat, $lng, $latDelta, $lngDelta, $radiusKm, $latExpr, $lngExpr) {
             $q->whereRaw("$latExpr BETWEEN ? AND ?", [$lat - $latDelta, $lat + $latDelta])
-              ->whereRaw("$lngExpr BETWEEN ? AND ?", [$lng - $lngDelta, $lng + $lngDelta])
+                ->whereRaw("$lngExpr BETWEEN ? AND ?", [$lng - $lngDelta, $lng + $lngDelta])
               // LEAST/GREATEST clamp guards acos() against float rounding outside [-1,1].
-              ->whereRaw(
-                  "(6371 * acos(LEAST(1.0, GREATEST(-1.0, "
-                  . "cos(radians(?)) * cos(radians($latExpr)) * cos(radians($lngExpr) - radians(?)) "
-                  . "+ sin(radians(?)) * sin(radians($latExpr)))))) <= ?",
-                  [$lat, $lng, $lat, $radiusKm]
-              );
+                ->whereRaw(
+                    '(6371 * acos(LEAST(1.0, GREATEST(-1.0, '
+                    ."cos(radians(?)) * cos(radians($latExpr)) * cos(radians($lngExpr) - radians(?)) "
+                    ."+ sin(radians(?)) * sin(radians($latExpr)))))) <= ?",
+                    [$lat, $lng, $lat, $radiusKm]
+                );
         });
     }
 
-    public function property()  { return $this->belongsTo(Property::class); }
-    public function category()  { return $this->belongsTo(Category::class); }
-    public function agent()     { return $this->belongsTo(Agent::class); }
-    
+    public function property()
+    {
+        return $this->belongsTo(Property::class);
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    public function agent()
+    {
+        return $this->belongsTo(Agent::class);
+    }
+
     public function scopePublic($q)
     {
         return $q->where('visibility', 'public');
@@ -450,34 +474,34 @@ class Listing extends Model implements Auditable
         return $q->where('visibility', 'public')
             ->where(function ($q) {
                 $q->whereNull('verification_status')
-                  ->orWhere('verification_status', '!=', 'flagged');
+                    ->orWhere('verification_status', '!=', 'flagged');
             });
     }
 
     public function scopeActive($q)
     {
-        return $q->whereHas('property', function($q) {
+        return $q->whereHas('property', function ($q) {
             $q->where('status', 'active');
         });
     }
-    
+
     public function scopeRented($q)
     {
-        return $q->whereHas('property', function($q) {
+        return $q->whereHas('property', function ($q) {
             $q->where('status', 'rented');
         });
     }
 
     public function scopeSold($q)
     {
-        return $q->whereHas('property', function($q) {
+        return $q->whereHas('property', function ($q) {
             $q->where('status', 'sold');
         });
     }
 
     public function scopeLeased($q)
     {
-        return $q->whereHas('property', function($q) {
+        return $q->whereHas('property', function ($q) {
             $q->where('status', 'leased');
         });
     }
