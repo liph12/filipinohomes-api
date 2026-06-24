@@ -29,6 +29,11 @@ class UserResource extends JsonResource
             'name'      => $this->name,
             'email'     => $this->email,
             'mobile_no' => $this->agent->mobile_no ?? $this->mobile_no ?? "",
+            // WhatsApp lives only on the agent profile (no users column), so a
+            // plain client resolves to null. Email above stays the users-table
+            // value for everyone; for an agent participant mobile/WhatsApp come
+            // from their agents profile via the eager-loaded `agent` relation.
+            'whats_app_no' => $this->agent?->whats_app_no ?? null,
             // Client demographics (null until provided). Age is intentionally
             // NOT exposed — birthdate is present and age is a trivial
             // frontend computation.

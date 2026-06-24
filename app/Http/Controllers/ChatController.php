@@ -31,16 +31,16 @@ class ChatController extends Controller
         // Show endpoint hydrates the rest on demand.
         $query = Chat::with([
             'user.role',
-            'user.agent:id,user_id,mobile_no',
+            'user.agent:id,user_id,mobile_no,whats_app_no',
             'listing:id,name,slug,price,featured_photo,property_id',
             'listing.property:id,status',
             'activeConversation',
             'activeConversation.users.role',
-            'activeConversation.users.agent:id,user_id,mobile_no',
+            'activeConversation.users.agent:id,user_id,mobile_no,whats_app_no',
             'activeConversation.agentUser.role',
-            'activeConversation.agentUser.agent:id,user_id,mobile_no',
+            'activeConversation.agentUser.agent:id,user_id,mobile_no,whats_app_no',
             'activeConversation.latestMessage.user.role',
-            'activeConversation.latestMessage.user.agent:id,user_id,mobile_no',
+            'activeConversation.latestMessage.user.agent:id,user_id,mobile_no,whats_app_no',
         ]);
 
         if ($roleName === 'admin') {
@@ -963,7 +963,7 @@ class ChatController extends Controller
             // user's own agent row so UserResource resolves mobile_no without
             // an N+1 (mirrors the 'user.agent:id,user_id,mobile_no' load in index()).
             'listing.agent.user.role',
-            'listing.agent.user.agent:id,user_id,mobile_no',
+            'listing.agent.user.agent:id,user_id,mobile_no,whats_app_no',
             'conversations.latestMessage.user',
             'conversations.users',
             'activeConversation.agentUser',
