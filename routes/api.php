@@ -257,6 +257,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/feature-tokens/{id}/apply', [FeatureTokenController::class, 'apply']);
             Route::get('/my-listings', [ListingController::class, 'myListings']);
             Route::get('/all-listings', [ListingController::class, 'allListings']);
+            Route::get('/all-listings/map-markers', [ListingController::class, 'mapMarkers']);
+            Route::get('/admin/map-boundaries', [\App\Http\Controllers\BoundaryController::class, 'index']);
             Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
             Route::get('/user/status-by-date', [ListingController::class, 'dashboardStatusByDate']);
             Route::get('/user/agent-demographics', [ListingController::class, 'dashboardAgentDemographics']);
@@ -285,6 +287,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/listings/insights/by-province', [ListingController::class, 'insightsByProvince']);
             Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
+            Route::get('/listings/insights/clusters', [ListingController::class, 'insightsClusters']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
                 ->where('status', '[a-z_-]+');
             Route::get('/listings/insights/by-city/{city}/ats', [ListingController::class, 'insightsCityAtsListings'])

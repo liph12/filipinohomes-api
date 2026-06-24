@@ -21,18 +21,30 @@ class ListingByStatusService extends ListingInsightsService
         ?string $dateEnd = null,
         ?int $provinceId = null,
         ?int $cityId = null,
-        string $groupBy = 'province'
+        string $groupBy = 'province',
+        ?string $island = null,
+        ?string $region = null,
+        ?int $barangayId = null
     ): array {
-        $this->agentIds  = $agentIds;
+        $this->agentIds = $agentIds;
         $this->dateStart = $dateStart;
-        $this->dateEnd   = $dateEnd;
+        $this->dateEnd = $dateEnd;
+        // province/city are applied below via $applyLoc (not the base props), so
+        // resolve region/island into a province whitelist only when neither is
+        // set; barangay (Phase 2) applies through baseListingQuery().
+        $this->island = $island;
+        $this->region = $region;
+        $this->barangayId = $barangayId;
+        if ($provinceId === null && $cityId === null) {
+            $this->resolveScopeProvinceIds();
+        }
 
         $groupBy = $groupBy === 'city' ? 'city' : 'province';
 
         // Location resolution expressions shared by the filter + grouping.
-        $provIdExpr  = 'COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)';
-        $cityIdExpr  = 'COALESCE(projects.city_id, property_cities.id)';
-        $locIdExpr   = $groupBy === 'city' ? $cityIdExpr : $provIdExpr;
+        $provIdExpr = 'COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)';
+        $cityIdExpr = 'COALESCE(projects.city_id, property_cities.id)';
+        $locIdExpr = $groupBy === 'city' ? $cityIdExpr : $provIdExpr;
         $locNameExpr = $groupBy === 'city'
             ? 'COALESCE(project_cities.name, property_cities.name)'
             : 'COALESCE(project_provinces.name, property_provinces.name)';
@@ -45,6 +57,7 @@ class ListingByStatusService extends ListingInsightsService
             if ($cityId !== null) {
                 $q->where(DB::raw($cityIdExpr), $cityId);
             }
+
             return $q;
         };
 
@@ -90,7 +103,7 @@ class ListingByStatusService extends ListingInsightsService
         $statuses = [];
         foreach ($statusCategoryRows as $row) {
             $status = (string) ($row->status ?? 'unspecified');
-            if (!isset($statuses[$status])) {
+            if (! isset($statuses[$status])) {
                 $statuses[$status] = [
                     'status' => $status,
                     'listing_count' => 0,
@@ -109,7 +122,7 @@ class ListingByStatusService extends ListingInsightsService
 
         foreach ($statusVisibilityRows as $row) {
             $status = (string) ($row->status ?? 'unspecified');
-            if (!isset($statuses[$status])) {
+            if (! isset($statuses[$status])) {
                 continue;
             }
             $visibility = strtolower((string) ($row->visibility ?? 'public'));
@@ -123,8 +136,8 @@ class ListingByStatusService extends ListingInsightsService
         foreach ($statusLocationCategoryRows as $row) {
             $status = (string) ($row->status ?? 'unspecified');
             $locId = (int) $row->location_id;
-            $key = $status . '|' . $locId;
-            if (!isset($locationAgg[$key])) {
+            $key = $status.'|'.$locId;
+            if (! isset($locationAgg[$key])) {
                 $locationAgg[$key] = [
                     'status' => $status,
                     'location_id' => $locId,
@@ -143,18 +156,18 @@ class ListingByStatusService extends ListingInsightsService
 
         foreach ($locationAgg as $loc) {
             $status = $loc['status'];
-            if (!isset($statuses[$status])) {
+            if (! isset($statuses[$status])) {
                 continue;
             }
             $count = $loc['listing_count'];
             $statuses[$status]['locations'][] = [
-                'location_id'   => $loc['location_id'],
+                'location_id' => $loc['location_id'],
                 'location_name' => $loc['location_name'],
                 'listing_count' => $count,
                 'listing_breakdown' => $loc['listing_breakdown'],
                 // Status is fixed per card — the location's transaction mix is just this status.
                 'transaction_breakdown' => [
-                    'sold'   => $status === 'sold' ? $count : 0,
+                    'sold' => $status === 'sold' ? $count : 0,
                     'rented' => $status === 'rented' ? $count : 0,
                     'leased' => $status === 'leased' ? $count : 0,
                 ],
@@ -173,9 +186,9 @@ class ListingByStatusService extends ListingInsightsService
         $priority = ['sold' => 0, 'rented' => 1, 'leased' => 2];
         usort($statusData, function (array $a, array $b) use ($sortBy, $priority) {
             return match ($sortBy) {
-                'name'          => [$a['status'], $b['listing_count']] <=> [$b['status'], $a['listing_count']],
+                'name' => [$a['status'], $b['listing_count']] <=> [$b['status'], $a['listing_count']],
                 'listing_count' => [$b['listing_count'], $a['status']] <=> [$a['listing_count'], $b['status']],
-                default         => [
+                default => [
                     $priority[$a['status']] ?? 99,
                     -$a['listing_count'],
                     $a['status'],
@@ -194,12 +207,12 @@ class ListingByStatusService extends ListingInsightsService
             'meta' => [
                 'total_statuses' => count($statusData),
                 'total_listings' => $totalListings,
-                'sort_by'        => $sortBy,
-                'group_by'       => $groupBy,
-                'province_id'    => $provinceId,
-                'city_id'        => $cityId,
-                'date_start'     => $this->dateStart,
-                'date_end'       => $this->dateEnd,
+                'sort_by' => $sortBy,
+                'group_by' => $groupBy,
+                'province_id' => $provinceId,
+                'city_id' => $cityId,
+                'date_start' => $this->dateStart,
+                'date_end' => $this->dateEnd,
             ],
         ];
     }
@@ -217,24 +230,29 @@ class ListingByStatusService extends ListingInsightsService
     public function listingsForStatus(string $status, array $params, ?array $agentIds = null): array
     {
         $this->agentIds = $agentIds;
-        $page     = max(1, (int) ($params['page'] ?? 1));
-        $perPage  = max(1, min(100, (int) ($params['per_page'] ?? 20)));
+        $page = max(1, (int) ($params['page'] ?? 1));
+        $perPage = max(1, min(100, (int) ($params['per_page'] ?? 20)));
         $category = (string) ($params['category'] ?? '');
         $visibility = strtolower((string) ($params['visibility'] ?? ''));
         $provinceId = isset($params['province_id']) ? (int) $params['province_id'] : null;
-        $cityId     = isset($params['city_id']) ? (int) $params['city_id'] : null;
+        $cityId = isset($params['city_id']) ? (int) $params['city_id'] : null;
 
-        // Province / city / date scope are applied centrally in baseListingQuery().
+        // Province / city / date / hierarchical scope are applied centrally in
+        // baseListingQuery().
         $this->provinceId = $provinceId;
-        $this->cityId     = $cityId;
-        $this->dateStart  = isset($params['date_start']) && $params['date_start'] !== '' ? (string) $params['date_start'] : null;
-        $this->dateEnd    = isset($params['date_end']) && $params['date_end'] !== '' ? (string) $params['date_end'] : null;
+        $this->cityId = $cityId;
+        $this->dateStart = isset($params['date_start']) && $params['date_start'] !== '' ? (string) $params['date_start'] : null;
+        $this->dateEnd = isset($params['date_end']) && $params['date_end'] !== '' ? (string) $params['date_end'] : null;
+        $this->island = isset($params['island']) && $params['island'] !== '' ? (string) $params['island'] : null;
+        $this->region = isset($params['region']) && $params['region'] !== '' ? (string) $params['region'] : null;
+        $this->barangayId = isset($params['barangay_id']) ? (int) $params['barangay_id'] : null;
+        $this->resolveScopeProvinceIds();
 
         $categoryFilter = match (strtolower($category)) {
-            'for-sale'    => 'For Sale',
-            'for-rent'    => 'For Rent',
+            'for-sale' => 'For Sale',
+            'for-rent' => 'For Rent',
             'foreclosure' => 'Foreclosure',
-            default       => null,
+            default => null,
         };
         $visibilityFilter = in_array($visibility, ['public', 'private'], true) ? $visibility : null;
 
@@ -302,32 +320,32 @@ class ListingByStatusService extends ListingInsightsService
                 if ($trimmed !== '' && ($trimmed[0] === '[' || $trimmed[0] === '"')) {
                     $decoded = json_decode($trimmed, true);
                     if (is_array($decoded)) {
-                        $featured = !empty($decoded[0]) ? $decoded[0] : null;
+                        $featured = ! empty($decoded[0]) ? $decoded[0] : null;
                     } elseif (is_string($decoded)) {
                         $featured = $decoded;
                     }
                 }
             } elseif (is_array($featured)) {
-                $featured = !empty($featured[0]) ? $featured[0] : null;
+                $featured = ! empty($featured[0]) ? $featured[0] : null;
             }
 
             return [
-                'id'              => (int) $row->id,
-                'code'            => (string) $row->code,
-                'name'            => (string) $row->listing_name,
-                'slug'            => $row->slug,
-                'price'           => $row->price,
-                'category_name'   => $row->category_name,
+                'id' => (int) $row->id,
+                'code' => (string) $row->code,
+                'name' => (string) $row->listing_name,
+                'slug' => $row->slug,
+                'price' => $row->price,
+                'category_name' => $row->category_name,
                 'property_status' => $row->property_status,
-                'visibility'      => $row->visibility,
-                'is_featured'     => (bool) $row->is_featured,
-                'is_project'      => (bool) $row->is_project,
-                'image'           => $featured,
-                'property_name'   => $row->property_name,
-                'city_name'       => $row->city_name,
-                'province_name'   => $row->province_name,
-                'created_at'      => $row->created_at,
-                'updated_at'      => $row->updated_at,
+                'visibility' => $row->visibility,
+                'is_featured' => (bool) $row->is_featured,
+                'is_project' => (bool) $row->is_project,
+                'image' => $featured,
+                'property_name' => $row->property_name,
+                'city_name' => $row->city_name,
+                'province_name' => $row->province_name,
+                'created_at' => $row->created_at,
+                'updated_at' => $row->updated_at,
             ];
         });
 
@@ -335,13 +353,13 @@ class ListingByStatusService extends ListingInsightsService
             'data' => $listings,
             'meta' => [
                 'current_page' => $page,
-                'last_page'    => max(1, (int) ceil($totalCount / $perPage)),
-                'per_page'     => $perPage,
-                'total'        => $totalCount,
-                'status'       => $status,
-                'category'     => $categoryFilter,
-                'province_id'  => $provinceId,
-                'city_id'      => $cityId,
+                'last_page' => max(1, (int) ceil($totalCount / $perPage)),
+                'per_page' => $perPage,
+                'total' => $totalCount,
+                'status' => $status,
+                'category' => $categoryFilter,
+                'province_id' => $provinceId,
+                'city_id' => $cityId,
             ],
         ];
     }

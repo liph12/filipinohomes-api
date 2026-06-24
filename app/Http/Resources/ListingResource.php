@@ -34,6 +34,7 @@ class ListingResource extends JsonResource
             'seo_tags'       => $this->seo_tags,
             'created_at'          => $this->updated_at->diffForHumans(),
             'date_added'          => $this->created_at->toDateString(),
+            'is_new'              => $this->created_at?->gte(now()->subDays(14)) ?? false,
             'verification_status'  => $this->verification_status,
             'audit_notes'          => $this->when($canSeeAudit, $this->audit_notes),
             'audit_checklist'      => $this->when($canSeeAudit, $this->audit_checklist),

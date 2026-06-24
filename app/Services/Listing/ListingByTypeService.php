@@ -18,9 +18,18 @@ class ListingByTypeService extends ListingInsightsService
      * $dateStart / $dateEnd optionally constrain counts to listings created
      * within the inclusive window (YYYY-MM-DD).
      */
-    public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null, ?int $cityId = null, ?int $provinceId = null): array
+    public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null, ?int $cityId = null, ?int $provinceId = null, ?string $island = null, ?string $region = null, ?int $barangayId = null): array
     {
         $this->agentIds = $agentIds;
+        // Resolve a region/island scope into a province whitelist (no-op when a
+        // province/city is already set). This method builds its own slim query,
+        // so the scope is applied inline below rather than via baseListingQuery().
+        $this->provinceId = $provinceId;
+        $this->cityId = $cityId;
+        $this->island = $island;
+        $this->region = $region;
+        $this->barangayId = $barangayId;
+        $this->resolveScopeProvinceIds();
 
         // Slimmer query than baseListingQuery() — this breakdown doesn't need
         // any location joins (projects / cities / provinces / barangays),
@@ -37,10 +46,11 @@ class ListingByTypeService extends ListingInsightsService
             ->where('properties.status', '!=', 'deleted')
             ->whereIn('categories.name', self::STANDARD_CATEGORIES);
 
-        // City / province filter — only then pay for the location joins needed to
-        // resolve a listing's location (project's city/prov, else the property's
-        // barangay → city → province).
-        if ($cityId !== null || $provinceId !== null) {
+        // Location scope — only then pay for the joins needed to resolve a
+        // listing's location (project's city/prov, else the property's barangay
+        // → city → province). Fires for an explicit city/province, a region/island
+        // (resolved to a province whitelist), or a barangay.
+        if ($cityId !== null || $provinceId !== null || $this->scopeProvinceIds !== null || $barangayId !== null) {
             $query->leftJoin('projects', function ($join) {
                 $join->on('projects.id', '=', 'properties.project_id')->whereNull('projects.deleted_at');
             })
@@ -53,16 +63,22 @@ class ListingByTypeService extends ListingInsightsService
             if ($provinceId !== null) {
                 $query->where(DB::raw('COALESCE(projects.prov_id, property_cities.province_id)'), $provinceId);
             }
+            if ($this->scopeProvinceIds !== null) {
+                $query->whereIn(DB::raw('COALESCE(projects.prov_id, property_cities.province_id)'), $this->scopeProvinceIds ?: [0]);
+            }
+            if ($barangayId !== null) {
+                $query->where('properties.address_id', $barangayId);
+            }
         }
 
         if ($this->agentIds !== null) {
             $query->whereIn('listings.agent_id', $this->agentIds);
         }
         if ($dateStart !== null && $dateStart !== '') {
-            $query->where('listings.created_at', '>=', $dateStart . ' 00:00:00');
+            $query->where('listings.created_at', '>=', $dateStart.' 00:00:00');
         }
         if ($dateEnd !== null && $dateEnd !== '') {
-            $query->where('listings.created_at', '<=', $dateEnd . ' 23:59:59');
+            $query->where('listings.created_at', '<=', $dateEnd.' 23:59:59');
         }
 
         $rows = $query
@@ -89,22 +105,22 @@ class ListingByTypeService extends ListingInsightsService
 
         $types = [];
         foreach ($rows as $row) {
-            $typeId    = (int) $row->type_id;
+            $typeId = (int) $row->type_id;
             $subtypeId = (int) $row->subtype_id;
-            $count     = (int) $row->listing_count;
+            $count = (int) $row->listing_count;
 
-            if (!isset($types[$typeId])) {
+            if (! isset($types[$typeId])) {
                 $types[$typeId] = [
-                    'type_id'   => $typeId,
-                    'type'      => (string) $row->type_name,
+                    'type_id' => $typeId,
+                    'type' => (string) $row->type_name,
                     'aggregate' => $emptyStats,
-                    'subtypes'  => [],
+                    'subtypes' => [],
                 ];
             }
-            if (!isset($types[$typeId]['subtypes'][$subtypeId])) {
+            if (! isset($types[$typeId]['subtypes'][$subtypeId])) {
                 $types[$typeId]['subtypes'][$subtypeId] = [
                     'subtype_id' => $subtypeId,
-                    'subType'    => (string) $row->subtype_name,
+                    'subType' => (string) $row->subtype_name,
                     'statistics' => $emptyStats,
                 ];
             }
@@ -128,6 +144,7 @@ class ListingByTypeService extends ListingInsightsService
         $typeData = array_values(array_map(function (array $t) {
             $t['subtypes'] = array_values($t['subtypes']);
             usort($t['subtypes'], fn ($a, $b) => $b['statistics']['total'] <=> $a['statistics']['total']);
+
             return $t;
         }, $types));
 
@@ -143,9 +160,9 @@ class ListingByTypeService extends ListingInsightsService
         return [
             'data' => $typeData,
             'meta' => [
-                'total_types'    => count($typeData),
+                'total_types' => count($typeData),
                 'total_listings' => $totals['total'],
-                'totals'         => $totals,
+                'totals' => $totals,
             ],
         ];
     }

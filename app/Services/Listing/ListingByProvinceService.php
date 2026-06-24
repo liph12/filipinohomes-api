@@ -15,13 +15,17 @@ class ListingByProvinceService extends ListingInsightsService
      * Province-level breakdown. Returns one row per (province, city) with
      * listing-count metrics, then groups into provinces with cities[].
      */
-    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null, ?string $dateStart = null, ?string $dateEnd = null, ?int $provinceId = null, ?int $cityId = null): array
+    public function provinceBreakdown(string $sortBy = 'listing_count', ?array $agentIds = null, ?string $dateStart = null, ?string $dateEnd = null, ?int $provinceId = null, ?int $cityId = null, ?string $island = null, ?string $region = null, ?int $barangayId = null): array
     {
-        $this->agentIds   = $agentIds;
-        $this->dateStart  = $dateStart;
-        $this->dateEnd    = $dateEnd;
+        $this->agentIds = $agentIds;
+        $this->dateStart = $dateStart;
+        $this->dateEnd = $dateEnd;
         $this->provinceId = $provinceId;
-        $this->cityId     = $cityId;
+        $this->cityId = $cityId;
+        $this->island = $island;
+        $this->region = $region;
+        $this->barangayId = $barangayId;
+        $this->resolveScopeProvinceIds();
 
         // One grouped pass per (province, city): listing_count plus the
         // category / transaction / ATS breakdowns as conditional sums. A single
@@ -67,17 +71,17 @@ class ListingByProvinceService extends ListingInsightsService
             $count = (int) $row->listing_count;
 
             $cityCategory = [
-                'for_sale'    => (int) $row->for_sale,
-                'for_rent'    => (int) $row->for_rent,
+                'for_sale' => (int) $row->for_sale,
+                'for_rent' => (int) $row->for_rent,
                 'foreclosure' => (int) $row->foreclosure,
             ];
             $cityTransaction = [
-                'sold'   => (int) $row->sold,
+                'sold' => (int) $row->sold,
                 'rented' => (int) $row->rented,
                 'leased' => (int) $row->leased,
             ];
 
-            if (!isset($provinces[$provinceId])) {
+            if (! isset($provinces[$provinceId])) {
                 $provinces[$provinceId] = [
                     'province_id' => $provinceId,
                     'province_name' => (string) $row->province_name,
@@ -104,9 +108,9 @@ class ListingByProvinceService extends ListingInsightsService
                 'listing_breakdown' => $cityCategory,
                 'transaction_breakdown' => $cityTransaction,
                 'ats_breakdown' => [
-                    'approve'  => (int) $row->ats_approve,
-                    'pending'  => (int) $row->ats_pending,
-                    'expired'  => (int) $row->ats_expired,
+                    'approve' => (int) $row->ats_approve,
+                    'pending' => (int) $row->ats_pending,
+                    'expired' => (int) $row->ats_expired,
                     'rejected' => (int) $row->ats_rejected,
                 ],
             ];
@@ -124,14 +128,14 @@ class ListingByProvinceService extends ListingInsightsService
         usort($provinceData, function (array $a, array $b) use ($sortBy) {
             return match ($sortBy) {
                 'listing_count' => [$b['listing_count'], $b['city_count'], $a['province_name']] <=> [$a['listing_count'], $a['city_count'], $b['province_name']],
-                'for_sale'      => [$b['listing_breakdown']['for_sale'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_sale'], $a['city_count'], $b['province_name']],
-                'for_rent'      => [$b['listing_breakdown']['for_rent'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_rent'], $a['city_count'], $b['province_name']],
-                'foreclosure'   => [$b['listing_breakdown']['foreclosure'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['foreclosure'], $a['city_count'], $b['province_name']],
-                'sold'          => [$b['transaction_breakdown']['sold'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['sold'], $a['city_count'], $b['province_name']],
-                'rented'        => [$b['transaction_breakdown']['rented'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['rented'], $a['city_count'], $b['province_name']],
-                'leased'        => [$b['transaction_breakdown']['leased'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['leased'], $a['city_count'], $b['province_name']],
+                'for_sale' => [$b['listing_breakdown']['for_sale'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_sale'], $a['city_count'], $b['province_name']],
+                'for_rent' => [$b['listing_breakdown']['for_rent'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['for_rent'], $a['city_count'], $b['province_name']],
+                'foreclosure' => [$b['listing_breakdown']['foreclosure'], $b['city_count'], $a['province_name']] <=> [$a['listing_breakdown']['foreclosure'], $a['city_count'], $b['province_name']],
+                'sold' => [$b['transaction_breakdown']['sold'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['sold'], $a['city_count'], $b['province_name']],
+                'rented' => [$b['transaction_breakdown']['rented'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['rented'], $a['city_count'], $b['province_name']],
+                'leased' => [$b['transaction_breakdown']['leased'], $b['city_count'], $a['province_name']] <=> [$a['transaction_breakdown']['leased'], $a['city_count'], $b['province_name']],
                 'province_name' => [$a['province_name'], $b['listing_count']] <=> [$b['province_name'], $a['listing_count']],
-                default         => [$b['city_count'], $b['listing_count'], $a['province_name']] <=> [$a['city_count'], $a['listing_count'], $b['province_name']],
+                default => [$b['city_count'], $b['listing_count'], $a['province_name']] <=> [$a['city_count'], $a['listing_count'], $b['province_name']],
             };
         });
 
@@ -140,31 +144,31 @@ class ListingByProvinceService extends ListingInsightsService
             'sold' => 0, 'rented' => 0, 'leased' => 0,
         ];
         foreach ($provinceData as $province) {
-            $totals['for_sale']    += $province['listing_breakdown']['for_sale']     ?? 0;
-            $totals['for_rent']    += $province['listing_breakdown']['for_rent']     ?? 0;
-            $totals['foreclosure'] += $province['listing_breakdown']['foreclosure']  ?? 0;
-            $totals['sold']        += $province['transaction_breakdown']['sold']     ?? 0;
-            $totals['rented']      += $province['transaction_breakdown']['rented']   ?? 0;
-            $totals['leased']      += $province['transaction_breakdown']['leased']   ?? 0;
+            $totals['for_sale'] += $province['listing_breakdown']['for_sale'] ?? 0;
+            $totals['for_rent'] += $province['listing_breakdown']['for_rent'] ?? 0;
+            $totals['foreclosure'] += $province['listing_breakdown']['foreclosure'] ?? 0;
+            $totals['sold'] += $province['transaction_breakdown']['sold'] ?? 0;
+            $totals['rented'] += $province['transaction_breakdown']['rented'] ?? 0;
+            $totals['leased'] += $province['transaction_breakdown']['leased'] ?? 0;
         }
 
         return [
             'data' => $provinceData,
             'meta' => [
-                'total_provinces'   => count($provinceData),
+                'total_provinces' => count($provinceData),
                 // Each city belongs to exactly one province, so summing the
                 // per-province city_count gives the unique city total.
-                'total_cities'      => array_sum(array_column($provinceData, 'city_count')),
-                'total_listings'    => array_sum(array_column($provinceData, 'listing_count')),
-                'total_for_sale'    => $totals['for_sale'],
-                'total_for_rent'    => $totals['for_rent'],
+                'total_cities' => array_sum(array_column($provinceData, 'city_count')),
+                'total_listings' => array_sum(array_column($provinceData, 'listing_count')),
+                'total_for_sale' => $totals['for_sale'],
+                'total_for_rent' => $totals['for_rent'],
                 'total_foreclosure' => $totals['foreclosure'],
-                'total_sold'        => $totals['sold'],
-                'total_rented'      => $totals['rented'],
-                'total_leased'      => $totals['leased'],
-                'sort_by'           => $sortBy,
-                'date_start'        => $this->dateStart,
-                'date_end'          => $this->dateEnd,
+                'total_sold' => $totals['sold'],
+                'total_rented' => $totals['rented'],
+                'total_leased' => $totals['leased'],
+                'sort_by' => $sortBy,
+                'date_start' => $this->dateStart,
+                'date_end' => $this->dateEnd,
             ],
         ];
     }
