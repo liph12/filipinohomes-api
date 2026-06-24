@@ -176,14 +176,8 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 }
             ])
-            ->withCount([
-                'property as subtype_count' => function ($q) {
-                    $q->whereHas('propertyAttribute.subtype');
-                }
-            ])
             ->filter($request)
             ->orderByDesc('updated_at')
-            ->orderByDesc('subtype_count')
             ->paginate(12);
 
         return new ListingResourceCollection($listings);
@@ -213,11 +207,6 @@ class ListingController extends Controller
                         'category',
                         'agent' => function ($q) {
                             $q->withCount('listings');
-                        }
-                    ])
-                    ->withCount([
-                        'property as subtype_count' => function ($q) {
-                            $q->whereHas('propertyAttribute.subtype');
                         }
                     ])->first();
             }
