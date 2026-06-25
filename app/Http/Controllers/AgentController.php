@@ -549,11 +549,51 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             });
         }
 
+        // Optional listing filters — mirrors the params the chat "Share a
+        // listing" picker sends from /my-listings, so the client/inquirer can
+        // filter the agent's public listings the same way the agent can.
+        if (($category = trim((string) $request->query('category', ''))) !== '' && strtolower($category) !== 'all') {
+            $listingsQuery->whereHas('category', fn ($q) => $q->where('name', $category));
+        }
+
+        if ($subtypes = $request->query('subtypes')) {
+            $ids = array_filter(array_map('intval', explode(',', (string) $subtypes)));
+            if (!empty($ids)) {
+                $listingsQuery->whereHas(
+                    'property.propertyAttribute.subtype',
+                    fn ($q) => $q->whereIn('id', $ids),
+                );
+            }
+        }
+
+        if (is_numeric($request->query('price_min'))) {
+            $listingsQuery->where('listings.price', '>=', (float) $request->query('price_min'));
+        }
+        if (is_numeric($request->query('price_max'))) {
+            $listingsQuery->where('listings.price', '<=', (float) $request->query('price_max'));
+        }
+
+        if (($beds = (int) $request->query('beds', 0)) > 0) {
+            $listingsQuery->whereHas(
+                'property.propertyAttribute',
+                fn ($q) => $q->where('bedroom_count', '>=', $beds),
+            );
+        }
+        if (($baths = (int) $request->query('baths', 0)) > 0) {
+            $listingsQuery->whereHas(
+                'property.propertyAttribute',
+                fn ($q) => $q->where('bathroom_count', '>=', $baths),
+            );
+        }
+
         $agent->setRelation(
             'listings',
             $listingsQuery
                 ->paginate(12)
-                ->appends($request->only(['search']))
+                ->appends($request->only([
+                    'search', 'category', 'subtypes',
+                    'price_min', 'price_max', 'beds', 'baths',
+                ]))
         );
 
         return new AgentResource($agent);
