@@ -669,6 +669,14 @@ class ListingController extends Controller
         $query = $applyVerification($query);
         $query = $c['date']($query);
         $query = $applyAtsStatus($query);
+        // Price / beds / baths / area / furnishings (no-op when absent). Not
+        // added to the stat-card count bases above — like date/geo, the counts
+        // stay independent of these filters; only the list + map narrow.
+        $query = $c['price']($query);
+        $query = $c['beds']($query);
+        $query = $c['baths']($query);
+        $query = $c['area']($query);
+        $query = $c['furnishings']($query);
         // Map view: filter to the current viewport bounds or a drawn polygon
         // boundary (no-op when those params are absent — list view unchanged).
         $this->applyGeoFilters($query, $request, $trashed);
@@ -690,6 +698,10 @@ class ListingController extends Controller
                 ->orderByDesc('listings.created_at');
         } elseif ($sort === 'created') {
             $query->orderByDesc('listings.created_at');
+        } elseif ($sort === 'price_asc') {
+            $query->orderBy('listings.price', 'asc')->orderByDesc('listings.created_at');
+        } elseif ($sort === 'price_desc') {
+            $query->orderByDesc('listings.price')->orderByDesc('listings.created_at');
         } else {
             $query
                 ->orderByDesc('inquiries_count')
@@ -755,7 +767,7 @@ class ListingController extends Controller
         [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds);
 
         $c = $this->listingFilterClosures($request, $propHas);
-        foreach (['status', 'visibility', 'category', 'featured', 'subtypes', 'verification', 'ats', 'date'] as $k) {
+        foreach (['status', 'visibility', 'category', 'featured', 'subtypes', 'verification', 'ats', 'date', 'price', 'beds', 'baths', 'area', 'furnishings'] as $k) {
             $query = $c[$k]($query);
         }
         $this->applyGeoFilters($query, $request, $trashed);
@@ -1020,6 +1032,77 @@ class ListingController extends Controller
                 }
 
                 return $q;
+            },
+            // Price range — listings.price is on the listings table (no join).
+            // Mirrors the public Listing::filter() price branch.
+            'price' => function ($q) use ($request) {
+                $min = $request->input('price_min');
+                $max = $request->input('price_max');
+                if (is_numeric($min)) {
+                    $q->where('listings.price', '>=', $min);
+                }
+                if (is_numeric($max)) {
+                    $q->where('listings.price', '<=', $max);
+                }
+
+                return $q;
+            },
+            // Beds / Baths — property_attributes columns. Plain whereHas (same
+            // pattern as the subtypes closure). condition: plus → >=, minus → <=.
+            'beds' => function ($q) use ($request) {
+                if (! $request->filled('beds')) {
+                    return $q;
+                }
+                $op = match ($request->input('beds_condition', 'equal')) {
+                    'plus' => '>=',
+                    'minus' => '<=',
+                    default => '=',
+                };
+
+                return $q->whereHas('property.propertyAttribute', fn ($sub) => $sub->where('bedroom_count', $op, (int) $request->input('beds')));
+            },
+            'baths' => function ($q) use ($request) {
+                if (! $request->filled('baths')) {
+                    return $q;
+                }
+                $op = match ($request->input('baths_condition', 'equal')) {
+                    'plus' => '>=',
+                    'minus' => '<=',
+                    default => '=',
+                };
+
+                return $q->whereHas('property.propertyAttribute', fn ($sub) => $sub->where('bathroom_count', $op, (int) $request->input('baths')));
+            },
+            // Area (sqm) — larger of lot/floor area, matching the public scope.
+            'area' => function ($q) use ($request) {
+                $hasMin = $request->filled('sqm_min');
+                $hasMax = $request->filled('sqm_max');
+                if (! $hasMin && ! $hasMax) {
+                    return $q;
+                }
+
+                return $q->whereHas('property.propertyAttribute', function ($sub) use ($request, $hasMin, $hasMax) {
+                    if ($hasMin) {
+                        $sub->whereRaw('GREATEST(COALESCE(lot_area, 0), COALESCE(floor_area, 0)) >= ?', [$request->input('sqm_min')]);
+                    }
+                    if ($hasMax) {
+                        $sub->whereRaw('GREATEST(COALESCE(lot_area, 0), COALESCE(floor_area, 0)) <= ?', [$request->input('sqm_max')]);
+                    }
+                });
+            },
+            // Furnishings — properties.furnishing_id (CSV or array of ids).
+            'furnishings' => function ($q) use ($request) {
+                $furnishings = $request->input('furnishings');
+                if (! $furnishings) {
+                    return $q;
+                }
+                $ids = is_array($furnishings) ? $furnishings : explode(',', (string) $furnishings);
+                $ids = array_filter(array_map('intval', $ids));
+                if (empty($ids)) {
+                    return $q;
+                }
+
+                return $q->whereHas('property', fn ($sub) => $sub->whereIn('furnishing_id', $ids));
             },
         ];
     }
