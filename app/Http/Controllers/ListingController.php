@@ -178,9 +178,20 @@ class ListingController extends Controller
 
     public function index(Request $request): ListingResourceCollection
     {
+        // Public page size is a fixed 12 — the browse grid, homepage search,
+        // and programmatic typed pages all depend on that fixed layout, so the
+        // default path is left untouched. The listing-detail recommendation
+        // rails (Similar / More-by-Type / Related) opt into a wider candidate
+        // pool via `pool`, because they filter the result client-side (by type,
+        // image presence, active status) and a 12-row pool can starve a rail.
+        // Clamped to 60 so a crafted value can't blow up the query.
+        $perPage = $request->filled('pool')
+            ? max(1, min((int) $request->input('pool'), 60))
+            : 12;
+
         $listings = Listing::publiclyListed()
             ->with([
-                // Eager-load every relation the Resource touches so a 12-item page
+                // Eager-load every relation the Resource touches so a page
                 // hydrates in a fixed number of queries instead of N+1 per listing:
                 // PropertyResource reads barangay→city→province + furnishing;
                 // PropertySubtypeResource reads ->type; AgentResource reads ->user.
@@ -196,7 +207,7 @@ class ListingController extends Controller
             ])
             ->filter($request)
             ->orderByDesc('updated_at')
-            ->paginate(12);
+            ->paginate($perPage);
 
         return new ListingResourceCollection($listings);
     }
