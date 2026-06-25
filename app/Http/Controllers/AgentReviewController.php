@@ -223,11 +223,15 @@ class AgentReviewController extends Controller
             ]
         );
 
-        // Seal the pivot so the inline chat card doesn't re-render.
+        // Seal the pivot so the inline chat card doesn't re-render, and clear
+        // any pending agent "update" request now that the client has (re)rated.
         DB::table('conversation_users')
             ->where('conversation_id', $conv->id)
             ->where('user_id', $clientId)
-            ->update(['rate_prompt_shown_at' => now()]);
+            ->update([
+                'rate_prompt_shown_at' => now(),
+                'rate_prompt_requested_at' => null,
+            ]);
 
         $review->load(['client:id,name,avatar', 'response']);
 
@@ -476,6 +480,82 @@ class AgentReviewController extends Controller
             ->update(['rate_prompt_shown_at' => now()]);
 
         return response()->json(['message' => 'Rate prompt dismissed.']);
+    }
+
+    /**
+     * The assigned agent (or a moderator) asks the inquiring client to
+     * leave a review. Stamps the client's conversation_users row so the
+     * eligibility probe returns agent_requested=true, surfacing the inline
+     * rate prompt in the client's thread. Authorized via the conversation
+     * 'moderate' policy — assigned agent, their team leader, or admin.
+     */
+    public function requestReview(Conversation $conversation)
+    {
+        $this->authorize('moderate', $conversation);
+        $conversation->loadMissing('chat');
+
+        $clientUserId = $conversation->chat?->user_id;
+        if (!$clientUserId) {
+            return response()->json(
+                ['message' => 'This conversation has no client to ask.'],
+                422,
+            );
+        }
+        if ((int) $clientUserId === (int) $conversation->agent_user_id) {
+            return response()->json(
+                ['message' => 'You cannot request a review from yourself.'],
+                422,
+            );
+        }
+
+        // Agents may only nudge an UPDATE to an existing review — never
+        // solicit a fresh rating (that would be review-gating). Require a
+        // review to exist; the client's thread prompt then opens in edit mode.
+        $hasReview = AgentReview::where('client_user_id', $clientUserId)
+            ->where('agent_user_id', $conversation->agent_user_id)
+            ->exists();
+        if (!$hasReview) {
+            return response()->json(
+                ['message' => 'This client has not left a review yet — there is nothing to update.'],
+                422,
+            );
+        }
+
+        DB::table('conversation_users')
+            ->where('conversation_id', $conversation->id)
+            ->where('user_id', $clientUserId)
+            ->update(['rate_prompt_requested_at' => now()]);
+
+        return response()->json(['message' => 'Update requested.']);
+    }
+
+    /**
+     * The chat owner's review of the assigned agent for this conversation,
+     * if any — as a full AgentReviewResource (or null). Authorized via the
+     * conversation 'view' policy so EVERY viewer can read it: the client
+     * (to prefill their edit form with the real previous data) and the
+     * assigned agent / moderators (to see the persisted review in-thread).
+     * is_own_review / is_editable_for_me are computed per the viewer, so
+     * only the client gets edit affordances.
+     */
+    public function clientReview(Conversation $conversation)
+    {
+        $this->authorize('view', $conversation);
+        $conversation->loadMissing('chat');
+
+        $clientUserId = $conversation->chat?->user_id;
+        if (!$clientUserId || !$conversation->agent_user_id) {
+            return response()->json(['review' => null]);
+        }
+
+        $review = AgentReview::where('client_user_id', $clientUserId)
+            ->where('agent_user_id', $conversation->agent_user_id)
+            ->with(['client:id,name,avatar', 'response'])
+            ->first();
+
+        return response()->json([
+            'review' => $review ? new AgentReviewResource($review) : null,
+        ]);
     }
 
     /**

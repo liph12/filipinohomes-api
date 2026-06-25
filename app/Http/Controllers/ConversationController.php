@@ -370,14 +370,18 @@ class ConversationController extends Controller
         $clientId = (int) Auth::id();
         $eligibility = $service->check($clientId, $conversation);
         $submission = $service->canSubmit($clientId, $conversation);
+        $thread = $service->threadVisibility($clientId, $conversation);
 
         // Additive — keeps every existing field intact so older
-        // frontend callers keep working unchanged. New can_submit /
-        // submit_reason power the manual rate entries (chat-header
-        // kebab, agent profile hero button).
+        // frontend callers keep working unchanged. can_submit / submit_reason
+        // power the always-available rate surfaces (details-panel card,
+        // chat-header kebab, agent profile hero button); show_in_thread /
+        // agent_requested drive the narrow in-thread nudge.
         return response()->json(array_merge($eligibility, [
             'can_submit' => $submission['can_submit'],
             'submit_reason' => $submission['reason'],
+            'show_in_thread' => $thread['show_in_thread'],
+            'agent_requested' => $thread['agent_requested'],
         ]));
     }
 

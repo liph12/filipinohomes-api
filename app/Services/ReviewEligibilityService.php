@@ -51,10 +51,15 @@ class ReviewEligibilityService
     private const OPEN_RELATIONSHIP_CLIENT_MIN = 5;
     private const OPEN_RELATIONSHIP_AGENT_MIN = 3;
     // canSubmit() — looser gate used by the manual rate entries
-    // (chat-header kebab, agent profile button). The auto-prompt gates
-    // above stay strict so we don't spam clients with surfaces.
+    // (chat-header kebab, agent profile button, details-panel card). A
+    // client who's sent at least one message can rate, even if the agent
+    // never replied — an unresponsive agent is itself feedback worth
+    // capturing, so we deliberately do NOT require an agent reply here.
     private const SUBMIT_CLIENT_MIN = 1;
-    private const SUBMIT_AGENT_MIN = 1;
+    // threadVisibility() — the inline thread nudge fires once the agent
+    // has gone this many hours without replying to the client's most
+    // recent message (and the client hasn't rated yet).
+    private const THREAD_NUDGE_HOURS = 24;
 
     /**
      * @return array{eligible:bool, reason:?string, reason_code:?string, existing_review_id:?int, already_shown:bool}
@@ -233,19 +238,14 @@ class ReviewEligibilityService
             ->where('conversation_id', $conv->id)
             ->whereNotIn('status', ['deleted', 'unsent'])
             ->selectRaw('
-                SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as client_msgs,
-                SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as agent_msgs
-            ', [$clientUserId, $conv->agent_user_id])
+                SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as client_msgs
+            ', [$clientUserId])
             ->first();
 
         $clientMsgs = (int) ($counts->client_msgs ?? 0);
-        $agentMsgs = (int) ($counts->agent_msgs ?? 0);
 
         if ($clientMsgs < self::SUBMIT_CLIENT_MIN) {
             return $this->submitFail('Send a message first before rating.', $existingReviewId);
-        }
-        if ($agentMsgs < self::SUBMIT_AGENT_MIN) {
-            return $this->submitFail('Wait for the agent to reply at least once.', $existingReviewId);
         }
 
         return [
@@ -253,6 +253,90 @@ class ReviewEligibilityService
             'reason' => null,
             'existing_review_id' => $existingReviewId ? (int) $existingReviewId : null,
         ];
+    }
+
+    /**
+     * Should the inline rate prompt surface inside the message thread?
+     *
+     * Distinct from check()/canSubmit(): the details-panel card is always
+     * available (canSubmit), but the in-thread nudge is intentionally
+     * narrow so it doesn't interrupt active conversations. It fires when
+     * the client hasn't rated yet AND either:
+     *   - the assigned agent (or a moderator) explicitly asked for a
+     *     review via requestReview() — agent_requested, OR
+     *   - the agent has left the client's most recent message unanswered
+     *     for >= THREAD_NUDGE_HOURS (the "I got ghosted" signal).
+     *
+     * Once a review exists it never fires again.
+     *
+     * @return array{show_in_thread:bool, agent_requested:bool}
+     */
+    public function threadVisibility(int $clientUserId, Conversation $conv): array
+    {
+        $conv->loadMissing('chat');
+        $none = ['show_in_thread' => false, 'agent_requested' => false];
+
+        if (!$conv->agent_user_id) {
+            return $none;
+        }
+        if ((int) $conv->chat?->user_id !== $clientUserId) {
+            return $none;
+        }
+        if ($clientUserId === (int) $conv->agent_user_id) {
+            return $none;
+        }
+
+        $hasReview = AgentReview::where('client_user_id', $clientUserId)
+            ->where('agent_user_id', $conv->agent_user_id)
+            ->exists();
+
+        // Agent (or moderator) asked the client to UPDATE their review.
+        // Only valid when a review actually exists — requestReview() enforces
+        // this, so an agent can never solicit a brand-new rating, only nudge
+        // a revisit of one already given. The card opens in edit mode.
+        $agentRequested = DB::table('conversation_users')
+            ->where('conversation_id', $conv->id)
+            ->where('user_id', $clientUserId)
+            ->whereNotNull('rate_prompt_requested_at')
+            ->exists();
+        if ($agentRequested && $hasReview) {
+            return ['show_in_thread' => true, 'agent_requested' => true];
+        }
+
+        // Auto nudge is for clients who got ghosted and HAVEN'T rated yet.
+        // Once a review exists, the only in-thread surface is the
+        // agent-requested update path above.
+        if ($hasReview) {
+            return $none;
+        }
+
+        // Agent unresponsive: the client has spoken, the agent hasn't
+        // replied since the client's latest message, and the nudge window
+        // has elapsed.
+        $counts = Message::query()
+            ->where('conversation_id', $conv->id)
+            ->whereNotIn('status', ['deleted', 'unsent'])
+            ->selectRaw('
+                SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as client_msgs,
+                MAX(CASE WHEN user_id = ? THEN created_at END) as last_client_at,
+                MAX(CASE WHEN user_id = ? THEN created_at END) as last_agent_at
+            ', [$clientUserId, $clientUserId, $conv->agent_user_id])
+            ->first();
+
+        $clientMsgs = (int) ($counts->client_msgs ?? 0);
+        $lastClientAt = $counts->last_client_at
+            ? \Carbon\Carbon::parse($counts->last_client_at)
+            : null;
+        $lastAgentAt = $counts->last_agent_at
+            ? \Carbon\Carbon::parse($counts->last_agent_at)
+            : null;
+
+        $agentUnresponsive = $clientMsgs >= 1
+            && $lastClientAt
+            && (!$lastAgentAt || $lastClientAt->greaterThan($lastAgentAt))
+            && $lastClientAt->diffInHours(now()) >= self::THREAD_NUDGE_HOURS;
+
+        return ['show_in_thread' => $agentUnresponsive, 'agent_requested' => false];
     }
 
     /**

@@ -442,6 +442,14 @@ Route::middleware('strip.tags')->group(function(){
                 [ConversationController::class, 'ratePromptEligibility']);
             Route::post('conversations/{conversation}/rate-prompt-dismiss',
                 [AgentReviewController::class, 'dismissPrompt']);
+            // The chat owner's review of the assigned agent (full object) —
+            // readable by any conversation viewer (client prefill + agent /
+            // observers seeing the persisted review in-thread).
+            Route::get('conversations/{conversation}/client-review',
+                [AgentReviewController::class, 'clientReview']);
+            // Assigned agent / moderator nudges the client to UPDATE it.
+            Route::post('conversations/{conversation}/request-review',
+                [AgentReviewController::class, 'requestReview']);
 
             // Client-side CRUD. Upserts via unique (client_user_id, agent_user_id).
             Route::post('agent-reviews', [AgentReviewController::class, 'store']);
