@@ -368,6 +368,14 @@ class Listing extends Model implements Auditable
             $query->whereIn('verification_status', ['verified', 'fully_verified']);
         }
 
+        // Opt-in active-only filter. Used by the listing-detail recommendation
+        // rails (Similar / More-by-Type / Related Searches) so a sold/rented/
+        // leased page only suggests live, buyable alternatives. Deliberately
+        // opt-in: the general public browse/search index is left untouched.
+        if ($request->boolean('active_only')) {
+            $query->active();
+        }
+
         // Programmatic-SEO "near {facility}" pages: restrict to listings whose
         // property coordinates fall within near_radius_km of (near_lat, near_lng).
         if ($request->filled('near_lat') && $request->filled('near_lng')) {
