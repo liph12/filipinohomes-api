@@ -8,9 +8,12 @@ use Illuminate\Support\Str;
 
 /**
  * No-compression media uploader. Stores the ORIGINAL file as-is — no resize, no
- * WebP conversion — so animated GIFs keep their animation and photos keep full
- * quality. Accepts GIF plus the standard image formats. Used by the /admin/ads
- * uploader, where ad creatives are often animated GIFs.
+ * WebP conversion — so animated GIFs keep their animation, photos keep full
+ * quality, and VIDEO creatives are stored verbatim. Accepts images plus short
+ * video formats. Used by the /admin/ads uploader.
+ *
+ * NOTE: the `image` rule is intentionally omitted — it restricts the upload to
+ * image MIME types and would reject videos. Validation is by explicit `mimes`.
  */
 class GifUploadController extends Controller
 {
@@ -18,7 +21,7 @@ class GifUploadController extends Controller
     {
         if ($request->hasFile('file')) {
             $request->validate([
-                'file' => 'required|image|mimes:jpeg,jpg,png,webp,gif|max:51200',
+                'file' => 'required|file|mimes:jpeg,jpg,png,webp,gif,mp4,webm,mov,m4v|max:51200',
             ]);
 
             try {
