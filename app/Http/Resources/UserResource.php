@@ -1,6 +1,7 @@
 <?php
 namespace App\Http\Resources;
 use App\Services\TeamLeadershipService;
+use App\Support\Impersonation;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Carbon\Carbon;
@@ -56,6 +57,14 @@ class UserResource extends JsonResource
         if ($this->pivot) {
             $data['last_read_at'] = $this->pivot->last_read_at;
         }
+
+        // True only when THIS resource is the current request's authenticated
+        // user AND that session is an admin-impersonation token — lets the
+        // frontend show the "Return to admin" banner and hide presence UI.
+        $currentUser = $request->user();
+        $data['is_impersonated'] = $currentUser
+            && (int) $currentUser->id === (int) $this->id
+            && Impersonation::isImpersonated($currentUser);
 
         return $data;
     }

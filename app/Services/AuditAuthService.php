@@ -72,6 +72,74 @@ class AuditAuthService
     }
 
     /**
+     * Record an admin "logging in as" an agent (impersonation start). The
+     * ACTOR is the admin (so the activity feed traces which admin did it); the
+     * subject is the impersonated agent. Reuses the `auth` category so it also
+     * surfaces in the Security Events tab.
+     */
+    public function recordImpersonation(User $admin, User $agentUser, ?Request $request = null): void
+    {
+        $this->recordImpersonationEvent(
+            $admin,
+            $agentUser,
+            'admin_impersonated',
+            $admin->name . ' logged in as ' . $agentUser->name . ' (admin impersonation)',
+            $request,
+        );
+    }
+
+    /**
+     * Record the admin returning from an impersonation session (the round-trip
+     * counterpart of recordImpersonation). Actor is still the admin.
+     */
+    public function recordReturnFromImpersonation(User $admin, User $agentUser, ?Request $request = null): void
+    {
+        $this->recordImpersonationEvent(
+            $admin,
+            $agentUser,
+            'returned_from_impersonation',
+            $admin->name . ' returned from impersonating ' . $agentUser->name,
+            $request,
+        );
+    }
+
+    private function recordImpersonationEvent(
+        User $admin,
+        User $agentUser,
+        string $event,
+        string $description,
+        ?Request $request,
+    ): void {
+        try {
+            Audit::create([
+                'user_id'         => $admin->id,
+                'user_type'       => User::class,
+                'user_role'       => $admin->role?->name,
+                'user_name'       => $admin->name,
+                'event'           => $event,
+                'category'        => 'auth',
+                'source'          => 'impersonation',
+                'auditable_type'  => User::class,
+                'auditable_id'    => $agentUser->id,
+                'subject_label'   => $agentUser->name,
+                'description'     => $description,
+                'ip_address'      => $request?->ip(),
+                'user_agent'      => $request?->userAgent(),
+                'url'             => $request?->fullUrl(),
+                'old_values'      => null,
+                'new_values'      => null,
+            ]);
+        } catch (Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Impersonation audit write failed', [
+                'admin_id' => $admin->id,
+                'agent_id' => $agentUser->id,
+                'event'    => $event,
+                'error'    => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * Best-effort origin detection for a login. Returns
      * [client, device_platform] where client ∈ {'mobile','web',null} and
      * device_platform ∈ {'android','ios','web',null}.

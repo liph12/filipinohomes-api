@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\DeviceToken;
 use App\Support\DeviceLabel;
 use App\Support\TokenIssuer;
+use App\Support\Impersonation;
 use App\Http\Resources\UserResourceCollection;
 use App\Http\Resources\UserResource;
 use App\Services\User\LoginUserService;
@@ -757,13 +758,21 @@ class UserController extends Controller
         ], 200);
     }
 
-    public function authenticate()
+    public function authenticate(Request $request)
     {
-        $user = Auth::user();
-        $_user = User::find($user->id);
-        $_user->active_at = now();
-        $_user->last_online_at = now();
-        $_user->save();
+        $user = $request->user() ?? Auth::user();
+
+        // Admin-impersonation sessions must NOT bump presence — otherwise the
+        // agent would look "Online" to the public just because an admin is
+        // using their account. /authenticate fires on every app load, so this
+        // is the primary place the timestamp would leak; the heartbeat is gated
+        // the same way below.
+        if (!Impersonation::isImpersonated($user)) {
+            $_user = User::find($user->id);
+            $_user->active_at = now();
+            $_user->last_online_at = now();
+            $_user->save();
+        }
 
         return response()->json(new UserResource($user));
     }
@@ -774,8 +783,13 @@ class UserController extends Controller
         // 60s while the tab is visible, so any side effect here
         // multiplies by every logged-in user. LoginLog rows belong
         // to actual `authenticate()` calls — not heartbeats.
-        User::where('id', $request->user()->id)
-            ->update(['last_online_at' => now()]);
+        //
+        // Skip the bump for admin-impersonation sessions so the agent stays
+        // offline to the public while the admin operates the account.
+        if (!Impersonation::isImpersonated($request->user())) {
+            User::where('id', $request->user()->id)
+                ->update(['last_online_at' => now()]);
+        }
 
         return response()->json(['ok' => true]);
     }

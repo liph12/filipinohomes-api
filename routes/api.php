@@ -47,6 +47,7 @@ use App\Http\Controllers\{
     TeamController,
     TeamAgentController,
     FeatureTokenController,
+    ImpersonationController,
     GuestTokenController,
     InquiryController,
     InquiryAnalyticsController,
@@ -255,6 +256,12 @@ Route::middleware('strip.tags')->group(function(){
             Route::delete('/feature-tokens/{id}', [FeatureTokenController::class, 'revoke']);
             Route::get('/feature-tokens/my', [FeatureTokenController::class, 'myTokens']);
             Route::post('/feature-tokens/{id}/apply', [FeatureTokenController::class, 'apply']);
+
+            // Admin "login as agent" (impersonation). `start` is admin-only
+            // (enforced in the controller); `stop` is called by the impersonated
+            // session itself, so it only requires auth:sanctum.
+            Route::post('/admin/agents/{agent}/impersonate', [ImpersonationController::class, 'start']);
+            Route::post('/admin/impersonate/stop', [ImpersonationController::class, 'stop']);
             Route::get('/my-listings', [ListingController::class, 'myListings']);
             Route::get('/all-listings', [ListingController::class, 'allListings']);
             Route::get('/all-listings/map-markers', [ListingController::class, 'mapMarkers']);
