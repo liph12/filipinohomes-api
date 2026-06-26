@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use App\Models\Facility;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Str;
 
 /**
  * Curated Cebu malls for the "near {facility}" SEO pilot. Coordinates are left
@@ -18,47 +17,58 @@ class FacilitySeeder extends Seeder
 {
     public function run(): void
     {
-        // [name, city] — province is Cebu, category is mall for the v1 pilot.
+        // Each entry carries an EXPLICIT, STABLE slug. updateOrCreate keys on the
+        // slug (not Str::slug($name)), so a rebrand = change `name`, keep `slug`,
+        // append the old name to `aliases` (and the old slug to `former_slugs`)
+        // — the row updates in place and the URL never forks. province is Cebu,
+        // category is mall for the v1 pilot. Optional: aliases, former_slugs.
         $malls = [
             // Cebu City
-            ['SM City Cebu', 'Cebu City'],
-            ['SM Seaside City Cebu', 'Cebu City'],
-            ['Ayala Center Cebu', 'Cebu City'],
-            ['Robinsons Galleria Cebu', 'Cebu City'],
-            ['Robinsons Cybergate Cebu', 'Cebu City'],
-            ['Central Bloc Cebu IT Park', 'Cebu City'],
-            ['Gaisano Country Mall', 'Cebu City'],
-            ['Gaisano Capital SRP', 'Cebu City'],
-            ['Il Corso Lifemall', 'Cebu City'],
-            ['Banilad Town Centre', 'Cebu City'],
-            ['Elizabeth Mall', 'Cebu City'],
-            ['Gaisano Metro Colon', 'Cebu City'],
-            ['JY Square Mall', 'Cebu City'],
-            ['Crossroads Banilad', 'Cebu City'],
-            ['NUSTAR Resort and Casino', 'Cebu City'],
+            ['name' => 'SM City Cebu', 'slug' => 'sm-city-cebu', 'city' => 'Cebu City'],
+            ['name' => 'SM Seaside City Cebu', 'slug' => 'sm-seaside-city-cebu', 'city' => 'Cebu City'],
+            ['name' => 'Ayala Center Cebu', 'slug' => 'ayala-center-cebu', 'city' => 'Cebu City'],
+            ['name' => 'Robinsons Galleria Cebu', 'slug' => 'robinsons-galleria-cebu', 'city' => 'Cebu City'],
+            ['name' => 'Robinsons Cybergate Cebu', 'slug' => 'robinsons-cybergate-cebu', 'city' => 'Cebu City'],
+            ['name' => 'Central Bloc Cebu IT Park', 'slug' => 'central-bloc-cebu-it-park', 'city' => 'Cebu City'],
+            ['name' => 'Gaisano Country Mall', 'slug' => 'gaisano-country-mall', 'city' => 'Cebu City'],
+            ['name' => 'Gaisano Capital SRP', 'slug' => 'gaisano-capital-srp', 'city' => 'Cebu City'],
+            ['name' => 'Il Corso Lifemall', 'slug' => 'il-corso-lifemall', 'city' => 'Cebu City'],
+            ['name' => 'Banilad Town Centre', 'slug' => 'banilad-town-centre', 'city' => 'Cebu City'],
+            ['name' => 'Elizabeth Mall', 'slug' => 'elizabeth-mall', 'city' => 'Cebu City'],
+            ['name' => 'Gaisano Metro Colon', 'slug' => 'gaisano-metro-colon', 'city' => 'Cebu City'],
+            ['name' => 'JY Square Mall', 'slug' => 'jy-square-mall', 'city' => 'Cebu City'],
+            ['name' => 'Crossroads Banilad', 'slug' => 'crossroads-banilad', 'city' => 'Cebu City'],
+            ['name' => 'NUSTAR Resort and Casino', 'slug' => 'nustar-resort-and-casino', 'city' => 'Cebu City'],
             // Mandaue
-            ['Parkmall', 'Mandaue City'],
-            ['J Centre Mall', 'Mandaue City'],
-            ['Pacific Mall Mandaue', 'Mandaue City'],
-            ['City Time Square', 'Mandaue City'],
-            ['One Pavilion Mall', 'Mandaue City'],
+            ['name' => 'Parkmall', 'slug' => 'parkmall', 'city' => 'Mandaue City'],
+            // Rebranded 2024: J Centre Mall → SM J Mall (officially SM City J Mall).
+            ['name' => 'SM J Mall', 'slug' => 'sm-j-mall', 'city' => 'Mandaue City',
+                'aliases' => ['J Centre Mall', 'SM City J Mall'], 'former_slugs' => ['j-centre-mall']],
+            ['name' => 'Pacific Mall Mandaue', 'slug' => 'pacific-mall-mandaue', 'city' => 'Mandaue City'],
+            ['name' => 'City Time Square', 'slug' => 'city-time-square', 'city' => 'Mandaue City'],
+            ['name' => 'One Pavilion Mall', 'slug' => 'one-pavilion-mall', 'city' => 'Mandaue City'],
             // Lapu-Lapu / Mactan
-            ['Gaisano Grand Mall Mactan', 'Lapu-Lapu City'],
-            ['Island Central Mactan', 'Lapu-Lapu City'],
-            ['Marina Mall', 'Lapu-Lapu City'],
+            ['name' => 'Gaisano Grand Mall Mactan', 'slug' => 'gaisano-grand-mall-mactan', 'city' => 'Lapu-Lapu City'],
+            ['name' => 'Island Central Mactan', 'slug' => 'island-central-mactan', 'city' => 'Lapu-Lapu City'],
+            ['name' => 'Marina Mall', 'slug' => 'marina-mall', 'city' => 'Lapu-Lapu City'],
             // Talisay
-            ['Gaisano Fiesta Mall Talisay', 'Talisay City'],
+            ['name' => 'Gaisano Fiesta Mall Talisay', 'slug' => 'gaisano-fiesta-mall-talisay', 'city' => 'Talisay City'],
         ];
 
-        foreach ($malls as [$name, $city]) {
+        foreach ($malls as $m) {
+            // NOTE: lat/lng are intentionally NOT written here — they are filled by
+            // `facilities:geocode-missing` and must be PRESERVED across re-seeds
+            // (a rebrand keeps the same physical coordinates).
             Facility::updateOrCreate(
-                ['slug' => Str::slug($name)],
+                ['slug' => $m['slug']],
                 [
-                    'name'      => $name,
-                    'category'  => 'mall',
-                    'city'      => $city,
-                    'province'  => 'Cebu',
-                    'is_active' => true,
+                    'name'         => $m['name'],
+                    'category'     => 'mall',
+                    'city'         => $m['city'],
+                    'province'     => 'Cebu',
+                    'is_active'    => true,
+                    'aliases'      => $m['aliases'] ?? null,
+                    'former_slugs' => $m['former_slugs'] ?? null,
                 ],
             );
         }

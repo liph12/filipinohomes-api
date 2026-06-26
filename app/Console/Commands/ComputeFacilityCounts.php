@@ -36,6 +36,10 @@ class ComputeFacilityCounts extends Command
                     'facility_id'       => $f->id,
                     'facility_slug'     => $f->slug,
                     'facility_name'     => $f->name,
+                    // Denormalized so the frontend search index (which reads only
+                    // /sitemap/facility-counts) can match former names. Raw insert
+                    // bypasses the model cast, so encode explicitly.
+                    'aliases'           => $f->aliases ? json_encode($f->aliases) : null,
                     'facility_category' => $f->category,
                     'city'              => $f->city,
                     'province'          => $f->province,

@@ -19,12 +19,16 @@ class Facility extends Model
         'city',
         'province',
         'is_active',
+        'aliases',
+        'former_slugs',
     ];
 
     protected $casts = [
-        'lat'       => 'float',
-        'lng'       => 'float',
-        'is_active' => 'boolean',
+        'lat'          => 'float',
+        'lng'          => 'float',
+        'is_active'    => 'boolean',
+        'aliases'      => 'array',
+        'former_slugs' => 'array',
     ];
 
     public function scopeActive($query)

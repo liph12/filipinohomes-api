@@ -313,6 +313,7 @@ class SitemapController extends Controller
             ->select(
                 'facility_slug',
                 'facility_name',
+                'aliases',
                 'facility_category',
                 'city',
                 'province',
@@ -323,7 +324,14 @@ class SitemapController extends Controller
             ->orderBy('facility_name')
             ->orderBy('category')
             ->orderBy('type')
-            ->get();
+            ->get()
+            ->map(function ($r) {
+                // Decode server-side so the frontend gets a clean string[] (the
+                // search index unions these former-name tokens into the facility).
+                $r->aliases = $r->aliases ? json_decode($r->aliases, true) : [];
+
+                return $r;
+            });
 
         return response()->json($rows);
     }
@@ -338,9 +346,17 @@ class SitemapController extends Controller
             ->where('is_active', true)
             ->whereNotNull('lat')
             ->whereNotNull('lng')
-            ->select('slug', 'name', 'category', 'lat', 'lng', 'city', 'province')
+            ->select('slug', 'former_slugs', 'name', 'aliases', 'category', 'lat', 'lng', 'city', 'province')
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->map(function ($r) {
+                // former_slugs powers the frontend's old-slug → 301 resolver;
+                // aliases feeds the optional "formerly known as" page copy.
+                $r->former_slugs = $r->former_slugs ? json_decode($r->former_slugs, true) : [];
+                $r->aliases = $r->aliases ? json_decode($r->aliases, true) : [];
+
+                return $r;
+            });
 
         return response()->json($rows);
     }
