@@ -142,12 +142,19 @@ class SitemapController extends Controller
             ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
             ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+            // Mirror the live public listings query (Listing::publiclyListed()
+            // ->filter()) so counts match on-page results: exclude soft-deleted
+            // rows (raw DB::table bypasses the SoftDeletes trait) and do NOT
+            // filter property.status (the public browse shows all statuses;
+            // active_only is opt-in and not passed there).
+            ->whereNull('listings.deleted_at')
+            ->whereNull('properties.deleted_at')
+            ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
             ->where(function ($q) {
                 $q->whereNull('listings.verification_status')
                   ->orWhere('listings.verification_status', '!=', 'flagged');
             })
-            ->where('properties.status', 'active')
             ->select(
                 'cities.name as city',
                 'provinces.name as province',
@@ -211,7 +218,7 @@ class SitemapController extends Controller
         $results = [];
 
         // --- affordable: join the precomputed thresholds, count at/below ceiling
-        $affordable = $this->publicActiveListingsJoin()
+        $affordable = $this->publiclyListedListingsJoin()
             ->join('modifier_price_thresholds as mpt', function ($j) {
                 $j->on('mpt.category_id', '=', 'listings.category_id')
                   ->on('mpt.property_type_id', '=', 'property_types.id')
@@ -242,7 +249,7 @@ class SitemapController extends Controller
         ];
 
         foreach ($predicates as $modifier => $apply) {
-            $query = $this->publicActiveListingsJoin()
+            $query = $this->publiclyListedListingsJoin()
                 ->select(
                     'categories.name as category',
                     'property_types.name as type',
@@ -278,11 +285,13 @@ class SitemapController extends Controller
     }
 
     /**
-     * Join chain + public/active predicate shared by the modifier query counts,
-     * mirroring locationCounts() and Listing::scopePubliclyListed (visibility
-     * public, not flagged) + active property.
+     * Join chain + publicly-listed predicate shared by the modifier query counts,
+     * mirroring locationCounts() and the live Listing::publiclyListed()->filter()
+     * query: visibility public, not flagged, not soft-deleted (listings /
+     * properties / property_attributes), all statuses (the public browse does NOT
+     * filter property.status — active_only is opt-in and not passed there).
      */
-    private function publicActiveListingsJoin()
+    private function publiclyListedListingsJoin()
     {
         return DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
@@ -293,12 +302,14 @@ class SitemapController extends Controller
             ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
             ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+            ->whereNull('listings.deleted_at')
+            ->whereNull('properties.deleted_at')
+            ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
             ->where(function ($q) {
                 $q->whereNull('listings.verification_status')
                   ->orWhere('listings.verification_status', '!=', 'flagged');
-            })
-            ->where('properties.status', 'active');
+            });
     }
 
     /**
