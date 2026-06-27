@@ -1744,12 +1744,24 @@ class ListingController extends Controller
             $listing->name,
             $data['is_featured'] ? 'featured' : 'unfeatured',
         );
-        $listing->update(['is_featured' => $data['is_featured']]);
+        $update = ['is_featured' => $data['is_featured']];
+        if (! $data['is_featured']) {
+            // Unfeature → clear any lingering token expiry for a clean slate.
+            $update['featured_until'] = null;
+        } elseif ($listing->featured_until !== null && $listing->featured_until->isPast()) {
+            // Re-featuring a listing whose token already expired → make it an
+            // indefinite manual feature, otherwise the auto-expire hook would
+            // flip is_featured straight back to false. A valid future token
+            // expiry is left untouched.
+            $update['featured_until'] = null;
+        }
+        $listing->update($update);
 
         $listing = $listing->fresh();
 
         return response()->json([
             'is_featured' => (bool) $listing->is_featured,
+            'featured_until' => $listing->featured_until,
         ]);
     }
 

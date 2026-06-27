@@ -93,6 +93,34 @@ class Listing extends Model implements Auditable
 
     protected static function booted()
     {
+        // Auto-expire the featured flag, mirroring Property's ATS expiry: a
+        // listing stops being featured the moment featured_until passes. The
+        // `saving` guard catches writes; `retrieved` self-heals on read so it
+        // never depends on the scheduled expire-featured job actually running.
+        static::saving(function ($model) {
+            if ($model->is_featured
+                && ! empty($model->featured_until)
+                && \Illuminate\Support\Carbon::parse($model->featured_until)->isPast()) {
+                $model->is_featured = false;
+            }
+        });
+
+        static::retrieved(function ($model) {
+            try {
+                if ($model->is_featured
+                    && ! empty($model->featured_until)
+                    && \Illuminate\Support\Carbon::parse($model->featured_until)->isPast()) {
+                    // Don't bump updated_at for a background self-correction.
+                    $originalTimestamps = $model->timestamps;
+                    $model->timestamps = false;
+                    $model->forceFill(['is_featured' => false])->saveQuietly();
+                    $model->timestamps = $originalTimestamps;
+                }
+            } catch (\Throwable $e) {
+                // Best-effort safeguard; never block the request on failure.
+            }
+        });
+
         static::creating(function ($listing) {
             $token = Str::lower(Str::random(10));
             $listing->slug = 'tmp-'.$token;

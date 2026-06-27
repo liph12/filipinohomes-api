@@ -645,6 +645,16 @@ class ListingService
             $listingData          = array_intersect_key($data, array_flip($listingFields));
             $listingData['slug']  = $slug;
 
+            // Keep manual featuring consistent with the auto-expire hook: if this
+            // edit turns the listing featured while its old token expiry is
+            // already past, clear the stale date (indefinite manual feature) so
+            // the hook doesn't immediately un-feature it. A future expiry stays.
+            if (! empty($listingData['is_featured'])
+                && $listing->featured_until !== null
+                && $listing->featured_until->isPast()) {
+                $listingData['featured_until'] = null;
+            }
+
             if (isset($data['featured_photo'])) {
                 $listingData['featured_photo'] = is_array($data['featured_photo'])
                     ? $data['featured_photo']
