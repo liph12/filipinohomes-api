@@ -49,9 +49,11 @@ class AudienceInsightsController extends Controller
         GeoTopChartsService $geoCharts
     ): JsonResponse {
         [$start, $end] = $this->range($request, $geography);
+        // Optional drill-down: scope states & cities to one country.
+        $country = $request->validate(['country' => 'nullable|string|max:32'])['country'] ?? null;
 
         return response()->json([
-            'geography' => $geography->range($start, $end)->breakdown(),
+            'geography' => $geography->range($start, $end)->breakdown($country),
             'trend'     => $geoCharts->range($start, $end)->build(),
             'meta'      => ['from' => $start, 'to' => $end],
         ]);
