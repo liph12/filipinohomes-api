@@ -70,9 +70,14 @@ class ComputeFacilityCounts extends Command
 
     /**
      * Within-radius listing counts grouped by category × type for one facility.
-     * Bounding-box prefilter + haversine refine; public/active predicate mirrors
-     * SitemapController::locationCounts. For Sale / For Rent only (Foreclosure
-     * has no URL slug in the frontend).
+     * Bounding-box prefilter + haversine refine. The predicate MIRRORS the live
+     * public listings query (Listing::publiclyListed()->filter()->nearPoint(),
+     * ListingController@index) EXACTLY so the precomputed badge matches the
+     * on-page "X Results": visibility public + not flagged, all soft-delete
+     * tables excluded (listings/properties/property_attributes), and NO
+     * property.status filter (the public browse leaves active_only opt-in, so it
+     * shows all statuses). For Sale / For Rent only (Foreclosure has no URL slug
+     * in the frontend).
      */
     private function cohortCounts(float $lat, float $lng)
     {
@@ -90,12 +95,23 @@ class ComputeFacilityCounts extends Command
             ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
             ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+            // Exclude soft-deleted rows on every SoftDeletes table the live
+            // Eloquent query filters via the trait + whereHas chain. The raw
+            // DB::table query bypasses the trait, so without these it counted
+            // deleted listings — the main source of the badge over-count
+            // (e.g. 84 vs the page's 65 near SM J Mall).
+            ->whereNull('listings.deleted_at')
+            ->whereNull('properties.deleted_at')
+            ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
             ->where(function ($q) {
                 $q->whereNull('listings.verification_status')
                   ->orWhere('listings.verification_status', '!=', 'flagged');
             })
-            ->where('properties.status', 'active')
+            // No property.status filter: the public browse/search index counts
+            // all statuses (active_only is opt-in and not passed there), so the
+            // badge must too. Filtering status=active here under-represented the
+            // live page in the other direction.
             ->whereIn('categories.name', ['For Sale', 'For Rent'])
             ->whereRaw("$latExpr BETWEEN ? AND ?", [$lat - $latDelta, $lat + $latDelta])
             ->whereRaw("$lngExpr BETWEEN ? AND ?", [$lng - $lngDelta, $lng + $lngDelta])
