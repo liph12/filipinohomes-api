@@ -7,6 +7,7 @@ use App\Models\Chat;
 use App\Models\Conversation;
 use App\Services\ReviewEligibilityService;
 use App\Services\TeamLeadershipService;
+use App\Support\Impersonation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Mail\MessageNotificationMailer;
@@ -390,6 +391,20 @@ class ConversationController extends Controller
         $this->authorize('view', $conversation);
 
         $user = Auth::user();
+
+        // Admin-impersonation sessions are read-only for "seen" purposes: an
+        // admin reading along as the agent must NOT clear the real agent's
+        // unread badge (last_read_at) or flip messages.read_at — that would
+        // send the client a false "Seen" and make the agent think they'd
+        // already read it. Only the real agent (or client) marks a thread read.
+        // The admin can still view the messages; this just skips the write.
+        if (Impersonation::isImpersonated($user)) {
+            return response()->json([
+                'message' => 'Impersonation session — not marked as read.',
+                'read_at' => null,
+            ]);
+        }
+
         $now = now();
 
         $conversation->loadMissing('chat');
