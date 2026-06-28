@@ -48,7 +48,7 @@ class ListingController extends Controller
 
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'subtypeCounts', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug', 'listingsByLocationAll', 'listingByCityAll', 'sitemapSearchLocations']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug', 'listingsByLocationAll', 'listingByCityAll', 'sitemapSearchLocations']);
         $this->middleware(RoleMiddleware::class.':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class.':admin')->only(['updateIsFeatured']);
     }
@@ -266,23 +266,6 @@ class ListingController extends Controller
                 'last_page' => $indexMeta['last_page'] ?? 1,
             ],
         ];
-    }
-
-    public function subtypeCounts(Request $request): JsonResponse
-    {
-        $counts = Listing::publiclyListed()
-            ->filter($request)
-            ->join('properties', 'listings.property_id', '=', 'properties.id')
-            ->join('property_attributes', 'properties.property_attribute_id', '=', 'property_attributes.id')
-            ->join('property_subtypes', 'property_attributes.property_subtype_id', '=', 'property_subtypes.id')
-            ->selectRaw('property_subtypes.name, COUNT(DISTINCT listings.id) as count')
-            ->groupBy('property_subtypes.id', 'property_subtypes.name')
-            ->pluck('count', 'property_subtypes.name');
-
-        return response()->json([
-            'counts' => $counts,
-            'total' => $counts->sum(),
-        ]);
     }
 
     public function myListings(Request $request)

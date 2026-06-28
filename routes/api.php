@@ -108,7 +108,6 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
             Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
             Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
-            Route::get('/listings/subtype-counts', [ListingController::class, 'subtypeCounts']);
             Route::get('/listings/featured', [ListingController::class, 'featured']);
             // Listings needing audit, role-scoped in the controller (admin = all,
             // team leader = their team's listings). Authed via auth:sanctum, but
