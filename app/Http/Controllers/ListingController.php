@@ -203,7 +203,9 @@ class ListingController extends Controller
                 'agent' => function ($q) {
                     $q->withCount('listings');
                 },
-                'agent.user',
+                // withCount/withMax feed AgentResource's last_login_at + login_count
+                // without an N+1 per listing's agent.
+                'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
             ])
             ->filter($request)
             ->orderByDesc('updated_at')
@@ -229,7 +231,7 @@ class ListingController extends Controller
                     'agent' => function ($q) {
                         $q->withCount('listings');
                     },
-                    'agent.user',
+                    'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
                 ])
                 ->first();
 

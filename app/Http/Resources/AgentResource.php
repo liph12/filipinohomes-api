@@ -11,6 +11,20 @@ class AgentResource extends JsonResource
     {
         $user = $this->user;
 
+        // last_login_at / login_count: prefer eager-loaded aggregates
+        // (withCount + withMax on the user relation) to avoid an N+1 — list
+        // endpoints add them so they pay zero extra queries. Single-agent
+        // endpoints that don't load them fall back to a direct query.
+        $userAttrs = $user ? $user->getAttributes() : [];
+        $lastLoginAt = array_key_exists('login_logs_max_logged_in_at', $userAttrs)
+            ? ($userAttrs['login_logs_max_logged_in_at']
+                ? \Illuminate\Support\Carbon::parse($userAttrs['login_logs_max_logged_in_at'])->toISOString()
+                : null)
+            : optional($user?->loginLogs()->latest('logged_in_at')->first())->logged_in_at?->toISOString();
+        $loginCount = array_key_exists('login_logs_count', $userAttrs)
+            ? (int) $userAttrs['login_logs_count']
+            : ($user?->loginLogs()->count() ?? 0);
+
         return [
             'id'           => $this->id,
             'status'       => $this->status ?? 'active',
@@ -68,12 +82,12 @@ class AgentResource extends JsonResource
             'avg_rating'    => $this->avg_rating !== null ? (float) $this->avg_rating : null,
             'total_reviews' => (int) ($this->total_reviews ?? 0),
             'page_slug'    => $this->pageBuilder?->slug,
-            'last_login_at'  => optional($user?->loginLogs()->latest('logged_in_at')->first())->logged_in_at?->toISOString(),
+            'last_login_at'  => $lastLoginAt,
             // Public presence signal. Bumped every 60s by the
             // frontend session-ping heartbeat; surfaces decide
             // "online" by comparing against a 5-minute threshold.
             'last_online_at' => $user?->last_online_at?->toISOString(),
-            'login_count'    => $user?->loginLogs()->count() ?? 0,
+            'login_count'    => $loginCount,
             'user'         => new UserResource($user),
             'listings' => AgentListingResource::collection($this->whenLoaded('listings')),
             'listings_pagination' => $this->when(

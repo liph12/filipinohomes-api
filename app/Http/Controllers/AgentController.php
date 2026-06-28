@@ -68,7 +68,9 @@ class AgentController extends Controller
             ])
             ->addBinding($rangeBindings, 'select')
             ->with([
-                'user',
+                // withCount/withMax feed AgentResource's last_login_at + login_count
+                // without an N+1 query per agent.
+                'user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
                 'pageBuilder:id,agent_id,slug',
                 'teamMembers.team',
             ])
@@ -759,7 +761,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 'agents.*',
                 DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count"),
             ])
-            ->with(['user'])
+            ->with(['user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at')])
             ->whereHas('user.role', function ($q) {
                 $q->where('name', 'agent');
             });
