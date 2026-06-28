@@ -230,6 +230,9 @@ class ListingController extends Controller
                     'property.nearbyFacility',
                     'property.barangay.city.province',
                     'property.furnishing',
+                    // Parent project (when the property belongs to one) for the
+                    // project card shown below the agent on the detail page.
+                    'property.project' => fn ($q) => $q->withCount(['properties' => fn ($p) => $p->where('is_project', true)]),
                     'category',
                     'agent' => function ($q) {
                         $q->withCount('listings');

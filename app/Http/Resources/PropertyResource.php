@@ -5,6 +5,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\PropertyAttributesResource;
 use App\Http\Resources\FurnishingResource;
 use App\Http\Resources\NearbyFacilityResource;
+use App\Http\Resources\ProjectResource;
 class PropertyResource extends JsonResource
 {
     /**
@@ -51,6 +52,9 @@ class PropertyResource extends JsonResource
             'geo_coordinates'       => $this->geo_coordinates,
             'is_project'            => $this->is_project,
             'project_id'            => $this->project_id,
+            // Parent project — only when eager-loaded (detail page). Feeds the
+            // project card under the listing agent.
+            'project'               => $this->whenLoaded('project', fn () => new ProjectResource($this->project)),
             'property'              => $attributes,
             'furnishing'            => new FurnishingResource($this->furnishing),
             'nearby_facilities'     => NearbyFacilityResource::make($this->whenLoaded('nearbyFacility')),
