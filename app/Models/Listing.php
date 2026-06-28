@@ -326,7 +326,11 @@ class Listing extends Model implements Auditable
             $query->whereHas('category', fn ($q) => $q->whereIn('name', $cats));
         }
 
-        if ($type_str = $request->input('type_str')) {
+        // Prefer the indexed type_id FK; fall back to the legacy type_str name
+        // LIKE (SEO slug pages, old links).
+        if ($typeId = $request->input('type_id')) {
+            $query->whereHas('property.propertyAttribute.subtype', fn ($q) => $q->where('property_type_id', $typeId));
+        } elseif ($type_str = $request->input('type_str')) {
             $query->whereHas('property.propertyAttribute.subtype.type', fn ($q) => $q->where('name', 'LIKE', "%{$type_str}%"));
         }
 
