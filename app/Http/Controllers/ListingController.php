@@ -196,7 +196,10 @@ class ListingController extends Controller
                 // PropertyResource reads barangay→city→province + furnishing;
                 // PropertySubtypeResource reads ->type; AgentResource reads ->user.
                 'property.propertyAttribute.subtype.type',
-                'property.nearbyFacility',
+                // nearbyFacility is whenLoaded() in PropertyResource and the browse
+                // grid card never renders it — so it's loaded only on the detail
+                // page (resolveByKeywordsAndSlug), not here. Saves one query + the
+                // hasMany facility rows on every browse page.
                 'property.barangay.city.province',
                 'property.furnishing',
                 'category',
@@ -534,7 +537,6 @@ class ListingController extends Controller
                             }
                             $qa->with('subtype');
                         },
-                        'nearbyFacility',
                     ]);
                 },
                 'category',
@@ -707,7 +709,6 @@ class ListingController extends Controller
                             }
                             $qa->with('subtype');
                         },
-                        'nearbyFacility',
                     ]);
                 },
                 'category',
@@ -2024,7 +2025,8 @@ class ListingController extends Controller
             })
             ->with([
                 'property.propertyAttribute.subtype',
-                'property.nearbyFacility',
+                // nearbyFacility omitted — whenLoaded() in PropertyResource and the
+                // featured card doesn't render facilities (detail page loads it).
                 'category',
                 'agent' => function ($q) {
                     $q->withCount('listings');
