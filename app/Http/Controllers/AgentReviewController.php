@@ -406,6 +406,8 @@ class AgentReviewController extends Controller
                 'agent.agent.teamMembers.team:id,name',
                 'response',
                 'hiddenByUser:id,name',
+                // chat_id powers each row's "view conversation" deep-link.
+                'conversation:id,chat_id',
             ])
             ->latest();
 

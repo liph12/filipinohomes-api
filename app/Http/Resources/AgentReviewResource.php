@@ -49,7 +49,12 @@ class AgentReviewResource extends JsonResource
             // otherwise resolve a spurious Listing whose id happens to
             // match that user id).
             'listing' => $this->whenLoaded('conversation', function () {
-                $chat = $this->conversation?->chat ?? null;
+                // Only read the chat when it's actually eager-loaded. Admin
+                // endpoints load `conversation` (for chat_id) WITHOUT the chat
+                // relation, and touching ->chat there would lazy-load per row.
+                $chat = $this->conversation && $this->conversation->relationLoaded('chat')
+                    ? $this->conversation->chat
+                    : null;
                 if (!$chat || $chat->type !== 'listing') return null;
                 $listing = $chat->listing ?? null;
                 if (!$listing) return null;
@@ -85,6 +90,12 @@ class AgentReviewResource extends JsonResource
                 ];
             }),
             'conversation_id' => $this->conversation_id ? (int) $this->conversation_id : null,
+            // Chat thread the rating came from — powers the admin "view
+            // conversation" deep-link (/admin/listing-inquiries?chat=<chat_id>).
+            // Null when the conversation was hard-deleted or isn't eager-loaded.
+            'chat_id' => $this->relationLoaded('conversation') && $this->conversation
+                ? (int) $this->conversation->chat_id
+                : null,
             'overall_rating' => (int) $this->overall_rating,
             'tags' => $this->tags ?? [],
             'comment' => $this->comment,
