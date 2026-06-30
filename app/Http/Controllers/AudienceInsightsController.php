@@ -54,7 +54,7 @@ class AudienceInsightsController extends Controller
 
         return response()->json([
             'geography' => $geography->range($start, $end)->breakdown($country),
-            'trend'     => $geoCharts->range($start, $end)->build(),
+            'trend'     => $geoCharts->range($start, $end)->build($country),
             'meta'      => ['from' => $start, 'to' => $end],
         ]);
     }

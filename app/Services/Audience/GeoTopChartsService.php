@@ -13,10 +13,16 @@ use Illuminate\Support\Facades\DB;
  */
 class GeoTopChartsService extends AudienceInsightsService
 {
-    public function build(): array
+    /**
+     * @param string|null $country When set (ISO code), the region & city series are
+     *   scoped to that country's top 10 (drill-down). The country series stays global.
+     */
+    public function build(?string $country = null): array
     {
         // Build each dimension's pivot (byName[date] + totals) without an axis yet.
-        $dim = function (string $userCol, string $visitCol) {
+        // $scopeCountry, when set, narrows both sources to that country (region/city
+        // drill-down) — mirrors AudienceGeographyService::breakdown().
+        $dim = function (string $userCol, string $visitCol, ?string $scopeCountry = null) {
             $byName = [];
             $totals = [];
             $add = function ($rows) use (&$byName, &$totals) {
@@ -30,22 +36,30 @@ class GeoTopChartsService extends AudienceInsightsService
                 }
             };
 
-            $add(DB::table('user_info')
+            $clientQ = DB::table('user_info')
                 ->join('users', 'users.id', '=', 'user_info.user_id')
                 ->join('roles', 'roles.id', '=', 'users.role_id')
                 ->where('roles.name', 'client')
                 ->whereBetween('users.created_at', [$this->startDt, $this->endDt])
                 ->whereNotNull('user_info.' . $userCol)
-                ->where('user_info.' . $userCol, '!=', '')
+                ->where('user_info.' . $userCol, '!=', '');
+            if ($scopeCountry !== null && $scopeCountry !== '') {
+                $clientQ->where('user_info.country', $scopeCountry);
+            }
+            $add($clientQ
                 ->groupBy(DB::raw('DATE(users.created_at)'), 'user_info.' . $userCol)
                 ->select(DB::raw('DATE(users.created_at) as d'), 'user_info.' . $userCol . ' as name', DB::raw('COUNT(DISTINCT user_info.user_id) as c'))
                 ->get());
 
-            $add(DB::table('visits')
+            $visitQ = DB::table('visits')
                 ->whereBetween('created_at', [$this->startDt, $this->endDt])
                 ->whereNull('user_id')
                 ->whereNotNull($visitCol)
-                ->where($visitCol, '!=', '')
+                ->where($visitCol, '!=', '');
+            if ($scopeCountry !== null && $scopeCountry !== '') {
+                $visitQ->where('country', $scopeCountry);
+            }
+            $add($visitQ
                 ->groupBy(DB::raw('DATE(created_at)'), $visitCol)
                 ->select(DB::raw('DATE(created_at) as d'), $visitCol . ' as name', DB::raw('COUNT(DISTINCT visitor_id) as c'))
                 ->get());
@@ -53,13 +67,14 @@ class GeoTopChartsService extends AudienceInsightsService
             return ['byName' => $byName, 'totals' => $totals];
         };
 
-        $country = $dim('country', 'country');
-        $region  = $dim('state', 'region');
-        $city    = $dim('city', 'city');
+        // Countries stay global; regions & cities drill into the selected country.
+        $countryDim = $dim('country', 'country');
+        $regionDim  = $dim('state', 'region', $country);
+        $cityDim    = $dim('city', 'city', $country);
 
         // Shared axis starting at the first day with data across all dimensions.
         $allKeys = [];
-        foreach ([$country, $region, $city] as $d) {
+        foreach ([$countryDim, $regionDim, $cityDim] as $d) {
             foreach ($d['byName'] as $m) {
                 $allKeys = array_merge($allKeys, array_keys($m));
             }
@@ -77,9 +92,9 @@ class GeoTopChartsService extends AudienceInsightsService
 
         return [
             'dates'   => $dates,
-            'country' => $top($country),
-            'region'  => $top($region),
-            'city'    => $top($city),
+            'country' => $top($countryDim),
+            'region'  => $top($regionDim),
+            'city'    => $top($cityDim),
         ];
     }
 }
