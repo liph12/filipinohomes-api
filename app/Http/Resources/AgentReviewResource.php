@@ -83,6 +83,12 @@ class AgentReviewResource extends JsonResource
                     : null;
                 return [
                     'id' => $this->agent->id,
+                    // Canonical agents-table id (NOT the user id) — the
+                    // /agents/{slug} profile route resolves by agents.id, so
+                    // the agent-name link must build its slug from this.
+                    'profile_id' => $this->agent->relationLoaded('agent')
+                        ? ($this->agent->agent?->id ?? null)
+                        : null,
                     'name' => $this->agent->name,
                     'avatar' => $this->agent->avatar,
                     'team_id' => $teamMember?->team_id ?? null,
