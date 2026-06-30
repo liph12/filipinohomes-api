@@ -95,13 +95,13 @@
                                 <tr>
                                     <td align="left" valign="top"
                                         style="background-color:#ffffff;padding:8px 40px 16px;">
-                                        <div style="padding:20px 24px;background:#fffbeb;border:1px solid #fde68a;border-radius:16px;box-sizing:border-box;">
+                                        <div style="padding:20px 24px;background:#fffbeb;border:1px solid #fd998a;border-radius:16px;box-sizing:border-box;">
                                             <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#92400e;display:block;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Still Needed for Fully Verified</span>
                                             <span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#78350f;display:block;margin-bottom:12px;">Complete the items below to upgrade your listing to <strong>Fully Verified.</strong> </br>Higher trust = better visibility.</span>
                                             @foreach($pendingItems as $item)
                                             <div style="display:flex;align-items:flex-start;margin-bottom:8px;">
-                                                <span style="color:#d97706;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✗</span>
-                                                <span style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#78350f;font-weight:600;">{{ $item }}</span>
+                                                <span style="color:#dc2626;font-size:14px;margin-right:8px;line-height:20px;flex-shrink:0;">✗</span>
+                                                <span style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#dc2626;font-weight:600;">{{ $item }}</span>
                                             </div>
                                             @endforeach
                                         </div>
