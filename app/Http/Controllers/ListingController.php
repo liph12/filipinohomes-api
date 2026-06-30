@@ -220,6 +220,7 @@ class ListingController extends Controller
     public function resolveByKeywordsAndSlug(Request $request)
     {
         $listing = null;
+        $found = null;
         if ($slug = $request->input('slug')) {
             // One hydrated lookup (was two: a bare lookup for click-tracking + a
             // public lookup for display). Eager-load the full Resource graph to
@@ -257,6 +258,35 @@ class ListingController extends Controller
             }
         }
 
+        // When the slug matched no public listing, work out WHY so the frontend
+        // can show a clear "no longer available" page (HTTP 200 + noindex) instead
+        // of a bare 404 — a private row ($found, not public) vs a soft-deleted row.
+        // A truly unknown slug stays reason=null (genuine 404 on the frontend).
+        $reason = null;            // null | 'private' | 'deleted'
+        $goneListing = null;       // { name, location } for the page heading
+        if ($listing === null && ! empty($slug)) {
+            $row = null;
+            if ($found && $found->visibility !== 'public') {
+                $reason = 'private';
+                $row = $found;
+            } else {
+                $row = Listing::onlyTrashed()
+                    ->whereRaw('LOWER(slug) = ?', [strtolower($slug)])
+                    ->with(['property.barangay.city'])
+                    ->first();
+                if ($row) {
+                    $reason = 'deleted';
+                }
+            }
+            if ($reason && $row) {
+                // name was already public when indexed; location is coarse (city).
+                $goneListing = [
+                    'name' => $row->name,
+                    'location' => optional($row->property?->barangay?->city)->name,
+                ];
+            }
+        }
+
         // Serialize the paginated index() result through ->response() so we
         // get both data + Laravel's default paginator meta (current_page,
         // last_page, per_page, total). Embedding the ResourceCollection
@@ -266,6 +296,8 @@ class ListingController extends Controller
 
         return [
             'property' => $listing === null ? null : new ListingResource($listing),
+            'reason' => $reason,
+            'gone_listing' => $goneListing,
             'resource' => $indexResponse['data'] ?? [],
             'meta' => [
                 'page' => $indexMeta['current_page'] ?? 1,
