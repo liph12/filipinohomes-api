@@ -60,6 +60,11 @@ class FullListingController extends Controller
         // Transform response so property.address_id contains barangay + city + province info
         $payload = $listing->toArray();
 
+        // Mirror ListingResource's `date_added` (the listing's creation date) so
+        // the audit header can show "Added <date>" on deep-linked listings too,
+        // not just ones opened from the grid.
+        $payload['date_added'] = $listing->created_at?->toDateString();
+
         try {
             $barangay = optional($listing->property)->barangay;
             if ($barangay) {
