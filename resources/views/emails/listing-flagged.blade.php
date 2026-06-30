@@ -61,9 +61,8 @@
                                 @php
                                     // Map checklist keys to human-readable labels (mirrors frontend CHECKLIST_ITEMS)
                                     $checklistLabels = [
-                                        'details_correct'    => 'Details are good',
+                                        'details_correct'    => 'Details & Attributes are good',
                                         'ats_correct'        => 'ATS is correct',
-                                        'attributes_correct' => 'Attributes are good',
                                         'price_realistic'    => 'Price is realistic',
                                         'amenities'          => 'Amenities are good',
                                         'location_accurate'  => 'Location / address is correct',
