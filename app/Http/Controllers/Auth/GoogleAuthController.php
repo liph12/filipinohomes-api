@@ -107,6 +107,9 @@ class GoogleAuthController extends Controller
                     'middle_name' => $nameParts['middle_name'],
                     'last_name' => $nameParts['last_name'],
                     'mobile_no' => $lrData['mobile_no'] ?? null,
+                    // LR `state` → FH office region (drives Secretary scoping).
+                    'lr_state' => $lrData['state'] ?? null,
+                    'region' => \App\Support\OfficeRegionMap::regionOf($lrData['state'] ?? null),
                 ]);
 
                 return $user;

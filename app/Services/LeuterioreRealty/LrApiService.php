@@ -12,14 +12,16 @@ class LrApiService
 
     // LR roleId → Filipino Homes role_id
     // LR 1 = admin → FH 1 (admin)
+    // LR 3 = secretary → FH 5 (secretary) - bypass FIRE check (secretary is not a licensed agent, staff role)
     // LR 4 = agent → FH 2 (agent) — requires FIRE check
     // LR 6 = team leader → FH 2 (agent) — bypasses FIRE check
     // LR 7 = unit manager → FH 2 (agent) — bypasses FIRE check
-    private const ALLOWED_LR_ROLES = [1, 4, 6, 7];
+    private const ALLOWED_LR_ROLES = [1, 3, 4, 6, 7];
     private const FIRE_CHECK_REQUIRED_ROLES = [4];
 
     private const LR_ROLE_TO_FH_ROLE = [
         1 => 1, // admin
+        3 => 5, // secretary
         4 => 2, // agent
         6 => 2, // agent (team leader)
         7 => 2, // agent (unit manager)

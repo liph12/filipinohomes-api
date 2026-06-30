@@ -114,6 +114,26 @@ class User extends Authenticatable implements Auditable
         return $this->hasOne(Agent::class, 'user_id');
     }
 
+    public function isAdmin(): bool
+    {
+        return $this->role?->name === 'admin';
+    }
+
+    /** A secretary (FH role 5) — admin-like, but scoped to one office region. */
+    public function isSecretary(): bool
+    {
+        return $this->role?->name === 'secretary';
+    }
+
+    /**
+     * The single office region a secretary oversees (reuses their agent profile's
+     * region), or null when the user isn't a secretary / has no region assigned.
+     */
+    public function secretaryRegion(): ?string
+    {
+        return $this->isSecretary() ? ($this->agent?->region) : null;
+    }
+
     public function chats()
     {
         return $this->hasMany(Chat::class);

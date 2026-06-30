@@ -319,6 +319,12 @@ class ChatController extends Controller
             'source' => 'nullable|in:agent_profile,agent_page',
         ]);
 
+        // Secretaries are staff oversight, not buyers: they may direct-message
+        // agents (type=agent) but must NOT open a listing inquiry (type=listing).
+        if ($validated['type'] === 'listing' && $user->isSecretary()) {
+            abort(403, 'Secretaries cannot inquire on listings.');
+        }
+
         // Block-check the sender BEFORE we touch chats/conversations. This
         // closes the loophole where a blocked client could open a brand-new
         // inquiry on a different listing owned by the same agent (or any

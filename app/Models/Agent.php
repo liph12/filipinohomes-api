@@ -30,6 +30,8 @@ class Agent extends Model implements Auditable
         'lr_email',
         'birthdate',
         'gender',
+        'region',
+        'lr_state',
     ];
 
     protected $casts = [

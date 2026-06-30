@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentListingResource;
+use App\Support\OfficeRegionMap;
 
 class AgentResource extends JsonResource
 {
@@ -42,6 +43,11 @@ class AgentResource extends JsonResource
             'lr_email'     => $this->lr_email,
             'birthdate'    => $this->birthdate,
             'gender'       => $this->gender,
+            // FH office region (drives Secretary scoping). region_label is the
+            // human form; lr_state is the raw LR state it was derived from.
+            'region'       => $this->region,
+            'region_label' => $this->region ? OfficeRegionMap::label($this->region) : null,
+            'lr_state'     => $this->lr_state,
             'mobile_no'    => $this->mobile_no ?? $user?->mobile_no,
             'whats_app_no' => $this->whats_app_no,
             'address'      => $this->address,

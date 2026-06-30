@@ -33,6 +33,14 @@ class ListingPolicy
              return true;
         }
 
+        // Secretary (read + verify) can view listings whose agent is in their
+        // office region. Edit/delete stay admin-only — update()/delete() below
+        // deliberately have no secretary branch.
+        if ($user->isSecretary()) {
+            $region = $user->secretaryRegion();
+            return $region !== null && optional($listing->agent)->region === $region;
+        }
+
         // Default deny
         return false;
     }

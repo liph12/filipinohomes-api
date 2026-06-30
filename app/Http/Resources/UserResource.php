@@ -2,6 +2,7 @@
 namespace App\Http\Resources;
 use App\Services\TeamLeadershipService;
 use App\Support\Impersonation;
+use App\Support\OfficeRegionMap;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Carbon\Carbon;
@@ -42,6 +43,11 @@ class UserResource extends JsonResource
             'gender'    => $this->gender,
             'avatar'    => $this->avatar,
             'role'      => $this->role?->name,
+            // Office region (from the agent profile) — lets the frontend show a
+            // secretary's region and gate region-scoped UI. Null for users with
+            // no agent profile / no region.
+            'region'       => $this->agent?->region,
+            'region_label' => $this->agent?->region ? OfficeRegionMap::label($this->agent->region) : null,
             'is_team_leader' => $isTeamLeader,
             'led_member_user_ids' => $isTeamLeader ? $teamService->getLedTeamMemberUserIds($this->id) : [],
             // Team IDs the user leads — used client-side to filter /agents

@@ -589,6 +589,9 @@ class UserController extends Controller
                         'last_name' => $nameParts['last_name'],
                         'mobile_no' => $lrData['mobile_no'] ?? null,
                         'lr_email' => $lrEmailAvailable ? $email : null,
+                        // LR `state` → FH office region (drives Secretary scoping).
+                        'lr_state' => $lrData['state'] ?? null,
+                        'region' => \App\Support\OfficeRegionMap::regionOf($lrData['state'] ?? null),
                     ]);
 
                     return $user;
@@ -679,16 +682,78 @@ class UserController extends Controller
         ]);
 
         $email = $validated['email'];
+
+        // Mirror the real login: pull the agent's LR profile so dev sessions get
+        // the correct FH role + office region (skipping only OTP/FIRE gates). For
+        // an email with no LR record, fall back to a plain agent (dev convenience).
+        $lrService = new LrApiService();
+        $lrData = $lrService->fetchAgentByEmail($email);
+        $region = \App\Support\OfficeRegionMap::regionOf($lrData['state'] ?? null);
+
         $user = User::where('email', $email)->first();
 
         if (!$user) {
-            $user = User::create([
-                'name' => Str::before($email, '@'),
-                'email' => $email,
-                'password' => Str::random(32),
-                'role_id' => 2,
-                'verification' => 'verified',
-            ]);
+            if ($lrData) {
+                $fhRoleId = $lrService->mapToFhRoleId($lrData);
+                $nameParts = $lrService->parseName($lrData['name'] ?? $email);
+                $user = DB::transaction(function () use ($email, $lrData, $nameParts, $fhRoleId, $region) {
+                    $user = User::create([
+                        'name' => $lrData['name'] ?? Str::before($email, '@'),
+                        'email' => $email,
+                        'password' => Str::random(32),
+                        'role_id' => $fhRoleId,
+                        'verification' => 'verified',
+                    ]);
+                    $lrEmailAvailable = !Agent::where('lr_email', $email)->exists();
+                    Agent::create([
+                        'user_id' => $user->id,
+                        'first_name' => $nameParts['first_name'],
+                        'middle_name' => $nameParts['middle_name'],
+                        'last_name' => $nameParts['last_name'],
+                        'mobile_no' => $lrData['mobile_no'] ?? null,
+                        'lr_email' => $lrEmailAvailable ? $email : null,
+                        'lr_state' => $lrData['state'] ?? null,
+                        'region' => $region,
+                    ]);
+                    return $user;
+                });
+            } else {
+                $user = User::create([
+                    'name' => Str::before($email, '@'),
+                    'email' => $email,
+                    'password' => Str::random(32),
+                    'role_id' => 2,
+                    'verification' => 'verified',
+                ]);
+            }
+        } elseif ($lrData) {
+            // Existing dev user: keep role + region in sync with LR so testing
+            // reflects the live profile (e.g. a pre-existing agent now mapped to
+            // secretary).
+            $fhRoleId = $lrService->mapToFhRoleId($lrData);
+            if ((int) $user->role_id !== $fhRoleId) {
+                $user->role_id = $fhRoleId;
+                $user->save();
+            }
+            if ($agent = $user->agent) {
+                $agent->fill([
+                    'lr_state' => $lrData['state'] ?? $agent->lr_state,
+                    'region' => $region ?? $agent->region,
+                ])->saveQuietly();
+            } else {
+                $nameParts = $lrService->parseName($lrData['name'] ?? $email);
+                $lrEmailAvailable = !Agent::where('lr_email', $email)->exists();
+                Agent::create([
+                    'user_id' => $user->id,
+                    'first_name' => $nameParts['first_name'],
+                    'middle_name' => $nameParts['middle_name'],
+                    'last_name' => $nameParts['last_name'],
+                    'mobile_no' => $lrData['mobile_no'] ?? null,
+                    'lr_email' => $lrEmailAvailable ? $email : null,
+                    'lr_state' => $lrData['state'] ?? null,
+                    'region' => $region,
+                ]);
+            }
         }
 
         $userInfo['user_id'] = $user->id;
@@ -719,8 +784,10 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'Dev login successful.',
+            // Load the role relation so the frontend's goToRoleDashboard reads
+            // user.role.name and routes a secretary to /secretary/*.
+            'user' => $user->load('role'),
             'token' => $token,
-            'user' => $user,
         ]);
     }
 

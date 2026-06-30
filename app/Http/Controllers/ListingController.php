@@ -608,8 +608,8 @@ class ListingController extends Controller
     {
         $user = $request->user();
 
-        [$isAdmin, $ledAgentIds] = $this->resolveListingScope($request);
-        [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds);
+        [$isAdmin, $ledAgentIds, $secretaryRegion] = $this->resolveListingScope($request);
+        [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds, $secretaryRegion);
         $removed = filter_var($request->input('removed'), FILTER_VALIDATE_BOOLEAN);
         // Map view drives the synced card list off the SAME endpoint, but its
         // stat cards come from a separate request — so the ~15 count clones +
@@ -784,8 +784,8 @@ class ListingController extends Controller
      */
     public function mapMarkers(Request $request)
     {
-        [$isAdmin, $ledAgentIds] = $this->resolveListingScope($request);
-        [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds);
+        [$isAdmin, $ledAgentIds, $secretaryRegion] = $this->resolveListingScope($request);
+        [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds, $secretaryRegion);
 
         $c = $this->listingFilterClosures($request, $propHas);
         foreach (['status', 'visibility', 'category', 'featured', 'subtypes', 'verification', 'ats', 'date', 'price', 'beds', 'baths', 'area', 'furnishings'] as $k) {
@@ -872,22 +872,60 @@ class ListingController extends Controller
     }
 
     /**
-     * Resolve who can see what: admin sees all; a team leader sees only their
-     * team's listings; anyone else is rejected. Returns [bool $isAdmin, int[] $ledAgentIds].
+     * Resolve who can see what: admin sees all; a secretary sees listings whose
+     * agent is in their office region; a team leader sees only their team's
+     * listings; anyone else is rejected. Returns
+     * [bool $isAdmin, int[] $ledAgentIds, ?string $secretaryRegion].
      */
     private function resolveListingScope(Request $request): array
     {
         $user = $request->user();
-        $isAdmin = $user->role->name === 'admin';
-        $ledAgentIds = [];
-        if (! $isAdmin) {
-            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
-            if (empty($ledAgentIds)) {
-                abort(403);
-            }
+
+        if ($user->role->name === 'admin') {
+            return [true, [], null];
         }
 
-        return [$isAdmin, $ledAgentIds];
+        // Secretary (FH role 5): region-scoped, read + verify only. A secretary
+        // with no region assigned sees nothing (fail-closed).
+        if ($user->isSecretary()) {
+            $region = $user->secretaryRegion();
+            if ($region === null) {
+                abort(403);
+            }
+            return [false, [], $region];
+        }
+
+        $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+        if (empty($ledAgentIds)) {
+            abort(403);
+        }
+
+        return [false, $ledAgentIds, null];
+    }
+
+    /**
+     * Per-listing access for the audit/verify surfaces (updateVerification +
+     * activity): admin → any; secretary → listings whose agent is in their region;
+     * team leader → listings owned by their led agents; everyone else → 403.
+     */
+    private function authorizeListingAudit($user, Listing $listing): void
+    {
+        if ($user->role->name === 'admin') {
+            return;
+        }
+
+        if ($user->isSecretary()) {
+            $region = $user->secretaryRegion();
+            if ($region === null || optional($listing->loadMissing('agent')->agent)->region !== $region) {
+                abort(403);
+            }
+            return;
+        }
+
+        $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
+        if (empty($ledAgentIds) || ! in_array((int) $listing->agent_id, $ledAgentIds, true)) {
+            abort(403);
+        }
     }
 
     /**
@@ -896,17 +934,25 @@ class ListingController extends Controller
      * $propHas helper (opts trashed property rows back in). Returns
      * [Builder $query, bool $trashed, callable $propHas].
      */
-    private function scopedListingQuery(Request $request, bool $isAdmin, array $ledAgentIds): array
+    private function scopedListingQuery(Request $request, bool $isAdmin, array $ledAgentIds, ?string $secretaryRegion = null): array
     {
         $query = Listing::query();
-        if (! $isAdmin) {
+        if ($secretaryRegion !== null) {
+            // Region scope keyed on the indexed agents.region — an EXISTS on the
+            // agent PK + region index, NOT a giant whereIn of agent ids.
+            $query->whereHas('agent', fn ($q) => $q->where('region', $secretaryRegion));
+        } elseif (! $isAdmin) {
             $query->whereIn('agent_id', $ledAgentIds);
         }
 
         // Optional single-agent filter (Agents directory "View Listings").
         if ($request->filled('agent_id')) {
             $aid = (int) $request->input('agent_id');
-            if (! $isAdmin && ! in_array($aid, $ledAgentIds, true)) {
+            if ($secretaryRegion !== null) {
+                if (! Agent::whereKey($aid)->where('region', $secretaryRegion)->exists()) {
+                    abort(403);
+                }
+            } elseif (! $isAdmin && ! in_array($aid, $ledAgentIds, true)) {
                 abort(403);
             }
             $query->where('agent_id', $aid);
@@ -1789,16 +1835,10 @@ class ListingController extends Controller
     public function updateVerification(Request $request, Listing $listing)
     {
         $user = $request->user();
-        // Admins audit anything. Team leaders audit listings owned by anyone
-        // on their team (their own listings included). Everyone else is
-        // rejected. Pattern mirrors ConversationPolicy::moderate().
-        $isAdmin = $user->role->name === 'admin';
-        if (! $isAdmin) {
-            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
-            if (empty($ledAgentIds) || ! in_array((int) $listing->agent_id, $ledAgentIds, true)) {
-                abort(403);
-            }
-        }
+        // Admins audit anything. Secretaries audit listings whose agent is in
+        // their region (read + verify is their one write action). Team leaders
+        // audit listings owned by anyone on their team. Everyone else is rejected.
+        $this->authorizeListingAudit($user, $listing);
 
         $validated = $request->validate([
             'verification_status' => 'nullable|in:verified,fully_verified,flagged,pending_review',
@@ -1993,14 +2033,7 @@ class ListingController extends Controller
     {
         $user = $request->user();
 
-        $isAdmin = $user->role->name === 'admin';
-        $ledAgentIds = [];
-        if (! $isAdmin) {
-            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
-            if (empty($ledAgentIds)) {
-                abort(403);
-            }
-        }
+        [$isAdmin, $ledAgentIds, $secretaryRegion] = $this->resolveListingScope($request);
 
         $perPage = (int) $request->input('per_page', 20);
         $perPage = max(1, min(100, $perPage));
@@ -2020,7 +2053,9 @@ class ListingController extends Controller
                 'category',
             ]);
 
-        if (! $isAdmin) {
+        if ($secretaryRegion !== null) {
+            $query->whereHas('agent', fn ($q) => $q->where('region', $secretaryRegion));
+        } elseif (! $isAdmin) {
             $query->whereIn('agent_id', $ledAgentIds);
         }
 
@@ -2043,7 +2078,15 @@ class ListingController extends Controller
         $user = auth('sanctum')->user();
 
         if ($listing->visibility !== 'public') {
-            if (! $user || ($user->role->name !== 'admin' && $listing->agent_id !== ($user->agent->id ?? null))) {
+            $canView = $user && (
+                $user->role->name === 'admin'
+                || $listing->agent_id === ($user->agent->id ?? null)
+                // Secretary may view a private listing whose agent is in their region.
+                || ($user->isSecretary()
+                    && $user->secretaryRegion() !== null
+                    && optional($listing->agent)->region === $user->secretaryRegion())
+            );
+            if (! $canView) {
                 abort(403, 'This listing is private. Only the owner or admin can view it.');
             }
         }
@@ -2456,19 +2499,14 @@ class ListingController extends Controller
      *
      * Visibility rules mirror updateVerification():
      *   - Admin → anything.
+     *   - Secretary → listings whose agent is in their office region.
      *   - Team leader → only listings owned by anyone on their team.
      *   - Everyone else → 403.
      */
     public function activity(Request $request, Listing $listing)
     {
         $user = $request->user();
-        $isAdmin = $user->role->name === 'admin';
-        if (! $isAdmin) {
-            $ledAgentIds = app(TeamLeadershipService::class)->getLedAgentIds($user->id);
-            if (empty($ledAgentIds) || ! in_array((int) $listing->agent_id, $ledAgentIds, true)) {
-                abort(403);
-            }
-        }
+        $this->authorizeListingAudit($user, $listing);
 
         $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
 

@@ -78,6 +78,27 @@ class AgentController extends Controller
                 $q->where('name', 'agent');
             });
 
+        // Secretary (FH role 5): in the management DASHBOARD the agents list is
+        // region-scoped to their office region. This same endpoint also powers
+        // the PUBLIC agents directory, which must show everyone — even when a
+        // secretary is logged in (their Bearer token rides every request). So
+        // the dashboard opts in with `managed=1`; without it we never scope.
+        //
+        // The route is public (verify.guest.token, no auth:sanctum), so
+        // $request->user() uses the session (web) guard and is null for a
+        // token-authenticated secretary — resolve the Bearer user via the
+        // sanctum guard. Guests stay null, and admins are never scoped.
+        if ($request->boolean('managed')) {
+            $requester = $request->user() ?? Auth::guard('sanctum')->user();
+            if ($requester && $requester->isSecretary()) {
+                $region = $requester->secretaryRegion();
+                if ($region === null) {
+                    abort(403);
+                }
+                $query->where('agents.region', $region);
+            }
+        }
+
         if ($teamId) {
             $query->whereHas('teamMembers', function ($q) use ($teamId) {
                 $q->where('team_id', $teamId);
@@ -204,9 +225,26 @@ class AgentController extends Controller
         return response()->json(['ids' => $ids]);
     }
 
+    /**
+     * For an authenticated secretary, block access to an agent outside their
+     * office region (403). No-op for guests / clients / agents / admin so the
+     * public directory and admin behavior are unchanged.
+     */
+    private function guardSecretaryRegion(Request $request, Agent $agent): void
+    {
+        $requester = $request->user();
+        if ($requester && $requester->isSecretary()) {
+            $region = $requester->secretaryRegion();
+            if ($region === null || $agent->region !== $region) {
+                abort(403);
+            }
+        }
+    }
+
     public function statistics(Request $request, $id)
     {
         $agent = Agent::with('user')->withCount('listings')->findOrFail($id);
+        $this->guardSecretaryRegion($request, $agent);
         $user = $agent->user;
 
         $activeListings = $agent->listings()
@@ -386,6 +424,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function activity(Request $request, $id)
     {
         $agent = Agent::with('user')->findOrFail($id);
+        $this->guardSecretaryRegion($request, $agent);
         $userId = $agent->user_id;
 
         $type = $request->query('type');
@@ -527,6 +566,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         $agent = Agent::with('user')
             ->withCount(['listings' => fn ($q) => $q->where('visibility', 'public')])
             ->findOrFail($id);
+        $this->guardSecretaryRegion($request, $agent);
 
         $listingsQuery = $agent->listings()
             ->where('visibility', 'public')
@@ -694,8 +734,12 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                     abort(403, 'Target user must be an agent or admin.');
                 }
             }
-        } elseif ($role === 'agent') {
-            // Agent can only update their own profile
+        } elseif ($role === 'agent' || $role === 'secretary') {
+            // Agents — and secretaries (who are agents scoped to one region) —
+            // can only update their OWN profile. Editing one's own account is a
+            // self-service action, separate from the secretary's read-only rule
+            // on other agents' region data; the admin user_id passthrough above
+            // is never reached for them.
             $targetId = $user->id;
         } else {
             abort(403, 'Only agents or admins can create or update an agent profile.');
