@@ -32,8 +32,13 @@ test('regionOf maps representative LR states to their office region', function (
         // gensan office.
         'General Santos' => 'gensan',
         'Sarangani' => 'gensan',
-        // grouped: standalone regions match their own name.
+        // davao office covers the whole Davao region — LR returns province-level
+        // states (real casing "Davao Del Norte"/"Davao Del Sur"), not just "Davao".
         'Davao' => 'davao',
+        'Davao Del Norte' => 'davao',
+        'Davao Del Sur' => 'davao',
+        'Davao Oriental' => 'davao',
+        // standalone regions match their own name.
         'Bohol' => 'bohol',
         'Iligan' => 'iligan',
         'Palawan' => 'palawan',

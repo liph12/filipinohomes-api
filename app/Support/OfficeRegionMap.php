@@ -51,7 +51,6 @@ class OfficeRegionMap
      * appears inside metro-manila's data, but a standalone "pampanga" region wins).
      */
     private const STANDALONE = [
-        'davao' => 'Davao',
         'bohol' => 'Bohol',
         'iligan' => 'Iligan',
         'palawan' => 'Palawan',
@@ -64,6 +63,10 @@ class OfficeRegionMap
      */
     private const GROUPS = [
         'cebu' => ['Lapu-lapu', 'Cordova', 'Mactan', 'Lapu-lapu City', 'Lapu- lapu City', 'Lapu - lapu City', 'Cebu'],
+        // LOCATIONS_LATEST listed davao as a single name, but LR returns
+        // province-level states (Davao del Norte/Sur/…), so enumerate the whole
+        // Davao region under the davao office.
+        'davao' => ['Davao', 'Davao City', 'Davao del Norte', 'Davao del Sur', 'Davao Oriental', 'Davao Occidental', 'Davao de Oro', 'Davao del Oro', 'Compostela Valley'],
         'gensan' => ['General Santos', 'Sultan Kudarat', 'South Cotabato', 'Sarangani', 'Cotabato', 'Cotabato City'],
         'dumaguete' => ['Dumaguete', 'Negros Oriental', 'Siquijor'],
         'iloilo' => ['Iloilo', 'Aklan', 'Capiz', 'Antique', 'Roxas', 'Kalibo', 'Guimaras'],
