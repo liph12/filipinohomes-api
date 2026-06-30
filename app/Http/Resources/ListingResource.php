@@ -5,6 +5,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentResource;
 use App\Http\Resources\CategoryResource;
 use App\Http\Resources\PropertyResource;
+use App\Support\VariantUrl;
 class ListingResource extends JsonResource
 {
     /**
@@ -27,6 +28,14 @@ class ListingResource extends JsonResource
             'slug'           => $this->slug,
             'price'          => $this->price,
             'featured_photo' => $this->featured_photo,
+            // Responsive srcset per photo (index-aligned with featured_photo),
+            // computed by convention — emitted ONLY when this record's variants
+            // exist on S3. null → frontend falls back to the single original.
+            'featured_photo_srcset' => $this->photos_variants_generated_at
+                ? collect($this->featured_photo ?? [])
+                    ->map(fn ($u) => is_string($u) ? VariantUrl::srcset($u) : null)
+                    ->all()
+                : null,
             'is_featured'    => $this->is_featured,
             'featured_until' => $this->featured_until,
             'clicks'         => $this->clicks,

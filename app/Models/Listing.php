@@ -75,6 +75,7 @@ class Listing extends Model implements Auditable
         'property_id', 'category_id', 'agent_id', 'seo_tags', 'created_at', 'updated_at',
         'verification_status', 'audit_notes', 'audit_checklist', 'audited_by', 'audited_at',
         'agent_edited_fields', 'audit_edited_fields', 're_submitted_at',
+        'photos_variants_generated_at',
     ];
 
     protected $casts = [
@@ -89,10 +90,20 @@ class Listing extends Model implements Auditable
         'agent_edited_fields' => 'array',
         'audit_edited_fields' => 'array',
         're_submitted_at' => 'datetime',
+        'photos_variants_generated_at' => 'datetime',
     ];
 
     protected static function booted()
     {
+        // When a listing's photos change, its variant flag is stale — clear it
+        // so the API stops emitting a srcset that may point at variants for the
+        // old photo set. GenerateImageVariantsJob (the sweep) re-sets it.
+        static::updating(function ($model) {
+            if ($model->isDirty('featured_photo')) {
+                $model->photos_variants_generated_at = null;
+            }
+        });
+
         // Auto-expire the featured flag, mirroring Property's ATS expiry: a
         // listing stops being featured the moment featured_until passes. The
         // `saving` guard catches writes; `retrieved` self-heals on read so it

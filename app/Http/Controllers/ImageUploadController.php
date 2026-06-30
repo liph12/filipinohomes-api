@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Intervention\Image\ImageManager;
 use Intervention\Image\Drivers\Gd\Driver;
+use App\Services\ImageVariantService;
+use Illuminate\Support\Facades\Log;
 
 class ImageUploadController extends Controller
 {
@@ -61,6 +63,20 @@ class ImageUploadController extends Controller
         );
 
         Storage::disk('s3')->put($fileName, $encoded, 'public');
+
+        // Responsive width-variants from the ORIGINAL source bytes (highest
+        // quality). Best-effort: a variant failure must never break the upload.
+        try {
+            app(ImageVariantService::class)->generateVariants(
+                (string) file_get_contents($file->getRealPath()),
+                $fileName,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('upload variant generation failed', [
+                'key' => $fileName,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         return config('filesystems.disks.s3.url') . $fileName;
     }

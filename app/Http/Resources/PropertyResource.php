@@ -6,6 +6,7 @@ use App\Http\Resources\PropertyAttributesResource;
 use App\Http\Resources\FurnishingResource;
 use App\Http\Resources\NearbyFacilityResource;
 use App\Http\Resources\ProjectResource;
+use App\Support\VariantUrl;
 class PropertyResource extends JsonResource
 {
     /**
@@ -49,6 +50,14 @@ class PropertyResource extends JsonResource
                 ],
             ],
             'description'           => $this->description,
+            // Responsive srcset per gallery photo (index-aligned with `photos`),
+            // emitted only when this property's variants exist on S3. null →
+            // frontend falls back to the single original.
+            'photos_srcset'         => $this->photos_variants_generated_at
+                ? collect($this->photos ?? [])
+                    ->map(fn ($u) => is_string($u) ? VariantUrl::srcset($u) : null)
+                    ->all()
+                : null,
             'geo_coordinates'       => $this->geo_coordinates,
             'is_project'            => $this->is_project,
             'project_id'            => $this->project_id,

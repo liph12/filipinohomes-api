@@ -162,6 +162,16 @@ class RemovedPhotoUploadController extends Controller
 
         Storage::disk('s3')->put($fileName, $encoded, 'public');
 
+        // Responsive width-variants from the source bytes (best-effort).
+        try {
+            app(\App\Services\ImageVariantService::class)->generateVariants($bytes, $fileName);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('recovery upload variant generation failed', [
+                'key' => $fileName,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         return config('filesystems.disks.s3.url') . $fileName;
     }
 

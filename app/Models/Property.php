@@ -46,7 +46,8 @@ class Property extends Model implements Auditable
         'property_attribute_id',
         'furnishing_id',
         'updated_at',
-        'created_at'
+        'created_at',
+        'photos_variants_generated_at',
     ];
 
     protected $casts = [
@@ -61,6 +62,7 @@ class Property extends Model implements Auditable
         'status_change_date' => 'date',
         'ats_expiration_date' => 'date',
         'reviewed_by' => 'integer',
+        'photos_variants_generated_at' => 'datetime',
     ];
 
     public function propertyAttribute()
@@ -80,6 +82,13 @@ class Property extends Model implements Auditable
 
     protected static function booted()
     {
+        // Clear the stale variant flag when photos change (see Listing).
+        static::updating(function ($model) {
+            if ($model->isDirty('photos')) {
+                $model->photos_variants_generated_at = null;
+            }
+        });
+
         static::saving(function ($model) {
             if (!empty($model->ats_expiration_date) && \Illuminate\Support\Carbon::parse($model->ats_expiration_date)->isPast()) {
                 $model->ats_status = 'expired';
