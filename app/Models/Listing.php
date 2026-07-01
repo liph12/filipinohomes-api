@@ -419,6 +419,17 @@ class Listing extends Model implements Auditable
             $query->active();
         }
 
+        // Opt-in ATS-verified filter: only listings whose property has an
+        // approved Authority-To-Sell (properties.ats_status = 'approve').
+        // Excludes pending/expired/rejected AND rows with no ATS on file (NULL).
+        // Deliberately opt-in via query param so the general browse index and
+        // the shared publiclyListed() scope (sitemap, projects, AI layer,
+        // near-facility counts) are left untouched. Combine with active_only=1
+        // for "public + active + not-rented + ATS-verified" inventory.
+        if ($request->boolean('ats_verified')) {
+            $query->whereHas('property', fn ($q) => $q->where('ats_status', 'approve'));
+        }
+
         // Programmatic-SEO "near {facility}" pages: restrict to listings whose
         // property coordinates fall within near_radius_km of (near_lat, near_lng).
         if ($request->filled('near_lat') && $request->filled('near_lng')) {
