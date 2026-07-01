@@ -796,7 +796,14 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function deletedAgents(Request $request)
     {
         $user = $request->user();
-        if ($user->role?->name !== 'admin') abort(403);
+        // Admin sees every deleted agent; a secretary (FH role 5) sees only the
+        // deleted agents in their office region — a read-only view mirroring the
+        // active Agents list. This route is auth:sanctum + dashboard-only (no
+        // public counterpart), so no `managed` opt-in is needed here.
+        $isSecretary = $user->isSecretary();
+        if ($user->role?->name !== 'admin' && !$isSecretary) {
+            abort(403);
+        }
 
         $perPage = max(1, min((int) $request->query('per_page', 12), 24));
 
@@ -809,6 +816,15 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             ->whereHas('user.role', function ($q) {
                 $q->where('name', 'agent');
             });
+
+        // Secretary: scope to their office region (fail-closed if unassigned).
+        if ($isSecretary) {
+            $region = $user->secretaryRegion();
+            if ($region === null) {
+                abort(403);
+            }
+            $query->where('agents.region', $region);
+        }
 
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
