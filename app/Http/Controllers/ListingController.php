@@ -611,6 +611,17 @@ class ListingController extends Controller
         [$isAdmin, $ledAgentIds, $secretaryRegion] = $this->resolveListingScope($request);
         [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds, $secretaryRegion);
         $removed = filter_var($request->input('removed'), FILTER_VALIDATE_BOOLEAN);
+
+        // Optional created-at date range (used by the audit queue). Applied to
+        // the shared base query so BOTH the count summary and the paginated
+        // results respect it. Callers that omit the range (e.g. All Listings)
+        // are unaffected.
+        if ($dateFrom = $request->input('date_from')) {
+            $query->where('listings.created_at', '>=', $dateFrom.' 00:00:00');
+        }
+        if ($dateTo = $request->input('date_to')) {
+            $query->where('listings.created_at', '<=', $dateTo.' 23:59:59');
+        }
         // Map view drives the synced card list off the SAME endpoint, but its
         // stat cards come from a separate request — so the ~15 count clones +
         // SUM(clicks) below are pure waste on every map pan. skip_counts=1 lets

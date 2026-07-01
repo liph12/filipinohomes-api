@@ -659,6 +659,11 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
 
         $listingsQuery = $agent->listings()
             ->where('visibility', 'public')
+            // Only active listings whose ATS is approved (filters on the related
+            // properties table — dot notation in where() does NOT do this).
+            ->whereHas('property', fn ($q) => $q
+                ->where('status', 'active')
+                ->where('ats_status', 'approve'))
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
