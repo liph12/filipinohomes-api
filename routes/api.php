@@ -113,7 +113,7 @@ Route::middleware('strip.tags')->group(function(){
             // team leader = their team's listings). Authed via auth:sanctum, but
             // registered here — before `/listings/{slug}` — so the literal
             // "audit-queue" segment is never bound as a {slug} and 404'd by show().
-            Route::get('/listings/audit-queue', [ListingController::class, 'auditFeed'])->middleware('auth:sanctum');
+            Route::get('/listings/audit-queue', [ListingController::class, 'auditFeed'])->middleware(['auth:sanctum', 'agent.active']);
             Route::get('/listings/{slug}', [ListingController::class, 'show']);
             Route::get('/listings', [ListingController::class, 'index']);
             Route::get('/categories', [CategoryController::class, 'index']);
@@ -125,7 +125,7 @@ Route::middleware('strip.tags')->group(function(){
             // Must come BEFORE `agents/{id}` so it doesn't bind
             // "online-ids" as the {id} param.
             Route::get('agents/online-ids', [AgentController::class, 'onlineAgentIds']);
-            Route::get('agents/deleted', [AgentController::class, 'deletedAgents'])->middleware('auth:sanctum');
+            Route::get('agents/deleted', [AgentController::class, 'deletedAgents'])->middleware(['auth:sanctum', 'agent.active']);
             Route::get('agents/{id}/statistics', [AgentController::class, 'statistics']);
             Route::get('agents/{id}/activity', [AgentController::class, 'activity']);
             Route::get('agents/{id}', [AgentController::class, 'show']);
@@ -152,7 +152,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
         Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
         Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted'])
-            ->middleware(['auth:sanctum']);
+            ->middleware(['auth:sanctum', 'agent.active']);
         Route::get('/page/agents/{slug}', [PageBuilderController::class, 'show']);
         Route::get('/page/agents', [PageBuilderController::class, 'index']);
         // PageBuilder public tracking
@@ -192,7 +192,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::post('/ads/{id}/impression', [PublicAdController::class, 'trackImpression']);
         Route::post('/ads/{id}/click', [PublicAdController::class, 'trackClick']);
     
-        Route::middleware('auth:sanctum')->group(function(){
+        Route::middleware(['auth:sanctum', 'agent.active'])->group(function(){
             Route::get('/client-logins', [UserController::class, 'getClients']);
             Route::get('/authenticate', [UserController::class, 'authenticate']);
 
@@ -404,7 +404,7 @@ Route::middleware('strip.tags')->group(function(){
     });
     
     Route::middleware('throttle:chat')->group(function(){
-        Route::middleware('auth:sanctum')->group(function(){
+        Route::middleware(['auth:sanctum', 'agent.active'])->group(function(){
             // Aggregate counts for /admin/chat-statistics. Must precede the
             // chats apiResource — otherwise `/chats/stats` matches `show`
             // and tries to bind `stats` as a Chat model id.
