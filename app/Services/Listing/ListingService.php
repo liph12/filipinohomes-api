@@ -483,7 +483,7 @@ class ListingService
         return Listing::create([
             'visibility'    => $data['visibility'] ?? 'private',
             'name'          => $data['name'],
-            'slug'          => $data['slug'] ?? Str::slug($data['name']),
+            'slug'          => $this->uniqueListingSlug($data['slug'] ?? $data['name']),
             'price'         => $data['price'],
             'featured_photo' => isset($data['featured_photo'])
                 ? (is_array($data['featured_photo'])
@@ -630,12 +630,7 @@ class ListingService
 
             $slug = $listing->slug;
             if (isset($data['name']) && $data['name'] !== $listing->name) {
-                $baseSlug  = Str::slug($data['name']);
-                $slugTaken = Listing::where('slug', $baseSlug)
-                    ->where('id', '!=', $listing->id)
-                    ->exists();
-
-                $slug = $slugTaken ? "{$baseSlug}-{$listing->id}" : $baseSlug;
+                $slug = $this->uniqueListingSlug($data['name'], $listing->id);
             }
 
             $listingFields = [
@@ -690,6 +685,35 @@ class ListingService
         Cache::forget('projects_db');
 
         return $updatedListing;
+    }
+
+    /**
+     * Build a unique listing slug from a name/base. If the slugified value is
+     * already taken it appends -2, -3, … until it's free (matching the projects
+     * table's scheme). Soft-deleted listings are included in the check because
+     * the unique slug index still reserves their slug. Pass $ignoreId to exclude
+     * the row currently being updated.
+     */
+    protected function uniqueListingSlug(string $base, ?int $ignoreId = null): string
+    {
+        $slug = Str::slug($base);
+        if ($slug === '') {
+            $slug = 'listing';
+        }
+
+        $candidate = $slug;
+        $i = 1;
+        while (
+            Listing::withTrashed()
+                ->where('slug', $candidate)
+                ->when($ignoreId, fn ($q) => $q->where('id', '!=', $ignoreId))
+                ->exists()
+        ) {
+            $i++;
+            $candidate = "{$slug}-{$i}";
+        }
+
+        return $candidate;
     }
 
     /**
