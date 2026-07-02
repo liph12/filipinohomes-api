@@ -144,6 +144,25 @@ class User extends Authenticatable implements Auditable
         return $this->hasMany(LoginLog::class);
     }
 
+    /**
+     * Users with no sign of life since $threshold: no authentication
+     * (login_logs), no API request on any device token (Sanctum bumps
+     * last_used_at on every request, which also covers the mobile app),
+     * and no dashboard heartbeat (last_online_at, bumped by session-ping).
+     * Login alone isn't enough — tokens never expire here, so an agent can
+     * be active for months without re-authenticating. Shared by the
+     * agents:deactivate-dormant sweep and the manual "deactivated" guard
+     * so the two definitions can't drift.
+     */
+    public function scopeDormantSince($query, $threshold)
+    {
+        return $query
+            ->whereDoesntHave('loginLogs', fn ($q) => $q->where('logged_in_at', '>=', $threshold))
+            ->whereDoesntHave('tokens', fn ($q) => $q->where('last_used_at', '>=', $threshold))
+            ->where(fn ($q) => $q->whereNull('last_online_at')
+                ->orWhere('last_online_at', '<', $threshold));
+    }
+
     public function blockedClients()
     {
         return $this->hasMany(BlockedUser::class, 'agent_user_id');

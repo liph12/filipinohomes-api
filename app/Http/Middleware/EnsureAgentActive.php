@@ -17,7 +17,7 @@ use Illuminate\Http\Request;
  */
 class EnsureAgentActive
 {
-    private const BLOCKED_STATUSES = ['inactive', 'resigned'];
+    private const BLOCKED_STATUSES = ['inactive', 'resigned', 'deactivated'];
 
     /** [method, path] pairs a blocked agent may still call. */
     private const ALLOWED = [

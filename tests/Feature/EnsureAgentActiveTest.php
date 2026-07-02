@@ -60,6 +60,15 @@ class EnsureAgentActiveTest extends TestCase
         $this->assertSame(403, $this->run_($this->requestAs($user, 'POST', '/api/upload')));
     }
 
+    public function test_deactivated_agent_is_blocked_but_can_see_profile_and_logout(): void
+    {
+        $user = $this->agentUser('deactivated');
+
+        $this->assertSame(403, $this->run_($this->requestAs($user, 'POST', '/api/listings')));
+        $this->assertSame(200, $this->run_($this->requestAs($user, 'GET', '/api/agent/profile')));
+        $this->assertSame(200, $this->run_($this->requestAs($user, 'POST', '/api/logout')));
+    }
+
     public function test_blocked_agent_can_still_see_profile_and_logout(): void
     {
         $user = $this->agentUser('resigned');
