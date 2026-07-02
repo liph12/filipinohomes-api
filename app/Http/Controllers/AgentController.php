@@ -758,6 +758,11 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             $validated
         );
 
+       if (array_key_exists('avatar', $validated) && $agent->user) {
+            $avatarUrl = is_array($agent->avatar) ? ($agent->avatar[0] ?? null) : $agent->avatar;
+            $agent->user->update(['avatar' => $avatarUrl]);
+        }
+
         return new AgentResource($agent);
     }
 
