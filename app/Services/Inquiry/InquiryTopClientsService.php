@@ -24,7 +24,9 @@ class InquiryTopClientsService extends InquiryInsightsService
         $dir = strtolower($sortDir) === 'asc' ? 'asc' : 'desc';
 
         $query = $this->baseInquiryQuery()
-            ->groupBy('chats.user_id', 'inq.name', 'inq.birthdate', 'inq.gender', 'inq.avatar', 'inq.mobile_no', 'inq.email')
+            // user_info is 1:1 per client (joined in the base), so its geo
+            // columns are safe GROUP BY members — they feed the "From" column.
+            ->groupBy('chats.user_id', 'inq.name', 'inq.birthdate', 'inq.gender', 'inq.avatar', 'inq.mobile_no', 'inq.email', 'user_info.country', 'user_info.state', 'user_info.city')
             ->orderBy($orderCol, $dir);
         // Stable tiebreaker so pagination is deterministic.
         if ($orderCol !== 'inquiry_count') {
@@ -42,6 +44,11 @@ class InquiryTopClientsService extends InquiryInsightsService
                 DB::raw('inq.email as email'),
                 DB::raw('inq.birthdate as birthdate'),
                 DB::raw('inq.gender as gender'),
+                // Client origin ("From" column) — their user_info geo, captured
+                // at login. Blank/'Unknown' folds to null for the frontend.
+                DB::raw("NULLIF(NULLIF(user_info.country, ''), 'Unknown') as origin_country"),
+                DB::raw("NULLIF(NULLIF(user_info.state, ''), 'Unknown') as origin_region"),
+                DB::raw("NULLIF(NULLIF(user_info.city, ''), 'Unknown') as origin_city"),
                 DB::raw('COUNT(*) as inquiry_count'),
             ]);
 
@@ -66,6 +73,12 @@ class InquiryTopClientsService extends InquiryInsightsService
                 'email'         => $r->email ?: null,
                 'birthdate'     => $r->birthdate ? substr((string) $r->birthdate, 0, 10) : null,
                 'gender'        => $r->gender ?: null,
+                // "From" — where the client is located (login-captured geo).
+                'origin'        => [
+                    'country' => $r->origin_country ?: null, // ISO2
+                    'region'  => $r->origin_region ?: null,
+                    'city'    => $r->origin_city ?: null,
+                ],
                 'inquiry_count' => (int) $r->inquiry_count,
                 'inquired'      => [
                     'top_categories' => $topCategories[$uid] ?? [],
