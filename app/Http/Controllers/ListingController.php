@@ -545,7 +545,10 @@ class ListingController extends Controller
         // (inquiries_count is provided by the withCount below.)
         $sort = (string) $request->query('sort', 'inquiries');
         if ($removed) {
-            $query->orderByDesc('listings.audited_at');
+            // Removed view: listings that still have photos first, then newest-audited.
+            $query
+                ->orderByRaw('COALESCE(JSON_LENGTH(listings.featured_photo), 0) > 0 DESC')
+                ->orderByDesc('listings.audited_at');
         } elseif ($sort === 'views') {
             $query
                 ->orderByDesc('listings.clicks')
@@ -724,7 +727,10 @@ class ListingController extends Controller
         // the withCount below.
         $sort = (string) $request->query('sort', 'inquiries');
         if ($removed) {
-            $query->orderByDesc('listings.audited_at');
+            // Removed view: listings that still have photos first, then newest-audited.
+            $query
+                ->orderByRaw('COALESCE(JSON_LENGTH(listings.featured_photo), 0) > 0 DESC')
+                ->orderByDesc('listings.audited_at');
         } elseif ($sort === 'views') {
             $query
                 ->orderByDesc('listings.clicks')
