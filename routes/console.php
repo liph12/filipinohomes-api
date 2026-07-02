@@ -9,6 +9,7 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('listings:expire-featured')->daily();
+Schedule::command('ats:expiry-reminders')->dailyAt('08:00')->withoutOverlapping();
 Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlapping();
 Schedule::command('seo:compute-modifier-thresholds')->dailyAt('03:30')->withoutOverlapping();
 Schedule::command('seo:compute-facility-counts')->dailyAt('04:00')->withoutOverlapping();
