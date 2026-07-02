@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Mail\AtsStatusUpdatedMailer;
 use App\Mail\ContactUsMailer;
 use App\Mail\InquiryMailer;
 use App\Mail\ListingFlaggedMailer;
@@ -49,6 +50,19 @@ if (config('app.debug')) {
             'listingUrl'     => 'https://filipinohomes.com/agent/create-listing?edit=123',
         ];
 
+        // ATS status email — one closure rendered per status so each
+        // color-coded variant (approved/pending/expired/rejected) can be previewed.
+        $atsMailer = fn (string $status) => new AtsStatusUpdatedMailer(
+            agentName:     $shared['agentName'],
+            listingTitle:  $shared['listingTitle'],
+            listingCode:   $shared['listingCode'],
+            atsStatus:     $status,
+            atsRemarks:    'Please re-upload a clearer, unexpired copy of the signed Authority to Sell.',
+            atsExpiration: 'December 25, 2026',
+            listingUrl:    $shared['listingUrl'],
+            featuredPhoto: 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400',
+        );
+
         // Dummy "user" objects for MessageNotificationMailer (which reads
         // ->email / ->name / ->mobile_no / ->agent->whats_app_no off the
         // sender + receiver). stdClass is enough for a preview render.
@@ -90,6 +104,10 @@ if (config('app.debug')) {
                 ],
             ),
             'verified' => new ListingVerifiedMailer(...$shared),
+            'ats-approved' => $atsMailer('Approved'),
+            'ats-pending'  => $atsMailer('Pending'),
+            'ats-expired'  => $atsMailer('Expired'),
+            'ats-rejected' => $atsMailer('Rejected'),
             'inquiry'  => new InquiryMailer(
                 clientName:    'Maria Santos',
                 clientEmail:   'maria.santos@example.com',
@@ -174,7 +192,7 @@ if (config('app.debug')) {
                 '482913',
                 'Juan Dela Cruz',
             ),
-            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp'),
+            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp'),
         };
     });
 }

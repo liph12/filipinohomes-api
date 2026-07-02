@@ -4,10 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreListingRequest;
 use App\Http\Requests\UpdateListingRequest;
+use App\Mail\AtsStatusUpdatedMailer;
 use App\Models\Listing;
 use App\Services\Listing\ListingService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use OwenIt\Auditing\Events\AuditCustom;
 use App\Http\Middleware\RoleMiddleware;
 class FullListingController extends Controller
@@ -112,6 +116,11 @@ class FullListingController extends Controller
                     'message' => 'Only admins can update ATS status.'
                 ], 403);
             }
+
+            // Snapshot the ATS status + remarks before the update so we can email
+            // the listing's agent if either changes (see the send below).
+            $oldAtsStatus  = optional($listing->property)->ats_status;
+            $oldAtsRemarks = optional($listing->property)->ats_remarks;
 
             // Capture snapshot before update if the LISTING OWNER edits a
             // flagged listing. Owner is whoever's agent.id matches the
@@ -250,6 +259,19 @@ class FullListingController extends Controller
                 Event::dispatch(new AuditCustom($updated));
             }
 
+            // Email the listing's agent when the ATS status OR the ATS remarks
+            // changed, so they know the outcome and can act on it. Each side is
+            // only considered when that field was actually submitted.
+            $newAtsStatus   = optional($updated->property)->ats_status;
+            $newAtsRemarks  = optional($updated->property)->ats_remarks;
+            $statusChanged  = array_key_exists('ats_status', $payload)
+                && $newAtsStatus !== null && $newAtsStatus !== $oldAtsStatus;
+            $remarksChanged = array_key_exists('ats_remarks', $payload)
+                && $newAtsRemarks !== $oldAtsRemarks;
+            if ($statusChanged || $remarksChanged) {
+                $this->notifyAtsStatusChanged($updated, (string) $newAtsStatus);
+            }
+
             return response()->json([
                 'message' => 'Listing updated successfully',
                 'data'    => $updated->toArray(),
@@ -261,6 +283,55 @@ class FullListingController extends Controller
                 'message' => 'Failed to update listing',
                 'error'   => config('app.debug') ? $e->getMessage() : 'An error occurred',
             ], 500);
+        }
+    }
+
+    /**
+     * Email the listing's agent that its ATS status changed. Best-effort: any
+     * failure is logged, never thrown, so the update response still succeeds.
+     */
+    private function notifyAtsStatusChanged(Listing $listing, string $rawStatus): void
+    {
+        try {
+            $listing->loadMissing('agent.user.role', 'property');
+            $agentUser = optional($listing->agent)->user;
+            if (! $agentUser || ! $agentUser->email) {
+                return;
+            }
+
+            // Backend enum → display label ("approve" → "Approved").
+            $display = ucfirst($rawStatus === 'approve' ? 'approved' : $rawStatus);
+
+            $expRaw     = optional($listing->property)->ats_expiration_date;
+            $expiration = $expRaw ? Carbon::parse($expRaw)->format('F j, Y') : null;
+
+            $photos        = $listing->featured_photo; // cast to array on the model
+            $featuredPhoto = is_array($photos) && count($photos) > 0 ? $photos[0] : null;
+
+            $roleSegment = optional($agentUser->role)->name === 'admin' ? 'admin' : 'agent';
+            $listingUrl  = 'https://filipinohomes.com/'.$roleSegment.'/create-listing?edit='.$listing->id;
+
+            Mail::to($agentUser->email)->send(new AtsStatusUpdatedMailer(
+                agentName: $agentUser->name ?? 'Agent',
+                listingTitle: $listing->name,
+                listingCode: $listing->code,
+                atsStatus: $display,
+                atsRemarks: optional($listing->property)->ats_remarks,
+                atsExpiration: $expiration,
+                listingUrl: $listingUrl,
+                featuredPhoto: $featuredPhoto,
+            ));
+
+            Log::info('ATS status email sent', [
+                'listing_id' => $listing->id,
+                'status'     => $rawStatus,
+                'to'         => $agentUser->email,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('ATS status email failed', [
+                'listing_id' => $listing->id,
+                'error'      => $e->getMessage(),
+            ]);
         }
     }
 }

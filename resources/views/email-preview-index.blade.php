@@ -20,6 +20,10 @@
     <ul>
         <li><a href="/preview/email/flagged">⚑ Listing Flagged</a> &nbsp; <code>ListingFlaggedMailer</code></li>
         <li><a href="/preview/email/verified">✓ Listing Verified</a> &nbsp; <code>ListingVerifiedMailer</code></li>
+        <li><a href="/preview/email/ats-approved">✓ ATS Updated — Approved</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
+        <li><a href="/preview/email/ats-pending">⏳ ATS Updated — Pending</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
+        <li><a href="/preview/email/ats-expired">⚠ ATS Updated — Expired</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
+        <li><a href="/preview/email/ats-rejected">✕ ATS Updated — Rejected</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
         <li><a href="/preview/email/inquiry">✉ New Inquiry</a> &nbsp; <code>InquiryMailer</code> &nbsp; <small>(home / maintenance)</small></li>
         <li><a href="/preview/email/contact-us">📨 Contact Us Submission</a> &nbsp; <code>ContactUsMailer</code> &nbsp; <small>(contact page — rich form)</small></li>
         <li><a href="/preview/email/notification">💬 Message Notification</a> &nbsp; <code>MessageNotificationMailer</code> &nbsp; <small>(legacy / reply-path)</small></li>
