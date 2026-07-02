@@ -46,6 +46,15 @@ abstract class InquiryInsightsService
     protected ?string $island = null;
 
     /**
+     * Inquiring-client ORIGIN scope (from user_info geo, joined on the client).
+     * Independent of the listing's location — answers "where the inquiry came
+     * from". $originCountry is an ISO2 code; region = user_info.state.
+     */
+    protected ?string $originCountry = null;
+    protected ?string $originRegion = null;
+    protected ?string $originCity = null;
+
+    /**
      * Viewport-driven mode (the map heatmap). When $levelOverride is set, the
      * cluster query groups at that admin level directly, and the bounding box
      * (set below) restricts to properties currently on screen — so panning /
@@ -77,6 +86,9 @@ abstract class InquiryInsightsService
         $this->barangayId   = isset($filters['barangay_id']) ? (int) $filters['barangay_id'] : null;
         $this->clientId     = isset($filters['client_id']) ? (int) $filters['client_id'] : null;
         $this->island       = $filters['island'] ?? null;
+        $this->originCountry = $filters['origin_country'] ?? null;
+        $this->originRegion  = $filters['origin_region'] ?? null;
+        $this->originCity    = $filters['origin_city'] ?? null;
 
         $this->levelOverride = $filters['level'] ?? null;
         $this->minLat = isset($filters['min_lat']) ? (float) $filters['min_lat'] : null;
@@ -162,6 +174,27 @@ abstract class InquiryInsightsService
         return 'COALESCE(geo_barangays.name, CASE WHEN properties.geo_city_id IS NULL OR barangays.city_id = properties.geo_city_id THEN barangays.name ELSE NULL END)';
     }
 
+    // Inquiring-client ORIGIN expressions. STAMP-FIRST: chats.origin_* is the
+    // sender's geo frozen at send time (exact); rows from before the stamp
+    // existed fall back to user_info (the client's last-login geo, joined in
+    // baseInquiryQuery). Blank / 'Unknown' fold to NULL at each layer so they
+    // group into a single "Unknown" bucket — the same way null listing
+    // locations become unclassified.
+    protected function originCountryExpr(): string
+    {
+        return "COALESCE(NULLIF(NULLIF(chats.origin_country, ''), 'Unknown'), NULLIF(NULLIF(user_info.country, ''), 'Unknown'))";
+    }
+
+    protected function originRegionExpr(): string
+    {
+        return "COALESCE(NULLIF(NULLIF(chats.origin_region, ''), 'Unknown'), NULLIF(NULLIF(user_info.state, ''), 'Unknown'))";
+    }
+
+    protected function originCityExpr(): string
+    {
+        return "COALESCE(NULLIF(NULLIF(chats.origin_city, ''), 'Unknown'), NULLIF(NULLIF(user_info.city, ''), 'Unknown'))";
+    }
+
     /**
      * Base join chain: chats(type=listing) → listing → category, property →
      * type/subtype, property/project → location, inquiring user (role=client).
@@ -201,7 +234,10 @@ abstract class InquiryInsightsService
             // Real client inquirers only (exclude admin/agent inquirers).
             ->join('users as inq', 'inq.id', '=', 'chats.user_id')
             ->join('roles as inq_role', 'inq_role.id', '=', 'inq.role_id')
-            ->where('inq_role.name', 'client');
+            ->where('inq_role.name', 'client')
+            // Inquiring client's ORIGIN (ipinfo geo captured at login). LEFT so
+            // inquiries whose client has no user_info row still count (Unknown).
+            ->leftJoin('user_info', 'user_info.user_id', '=', 'inq.id');
 
         // Date range on the inquiry timestamp.
         if ($this->dateFrom) {
@@ -258,6 +294,25 @@ abstract class InquiryInsightsService
         if ($this->islandProvinceIds !== null) {
             // Empty list (island with no provinces) → no rows, intentionally.
             $q->whereIn(DB::raw($this->provinceIdExpr()), $this->islandProvinceIds ?: [0]);
+        }
+
+        // Origin scope — the inquiring client's country / region / city. Uses
+        // the SAME stamp-first expressions as the grouping, so a drilled value
+        // always matches the bucket it came from (values are bound params).
+        // By design these NEVER carry the "Unknown" bucket: that bucket is a
+        // non-drillable leaf in the UI, so a real origin filter intentionally
+        // excludes inquiries with no resolvable origin (stamp and user_info
+        // both NULL/blank/'Unknown'). Within a country drill the per-region
+        // "Unknown" bucket still forms — it's grouped, not filtered here.
+        // Applies to every endpoint that shares this base.
+        if ($this->originCountry) {
+            $q->whereRaw($this->originCountryExpr() . ' = ?', [$this->originCountry]);
+        }
+        if ($this->originRegion) {
+            $q->whereRaw($this->originRegionExpr() . ' = ?', [$this->originRegion]);
+        }
+        if ($this->originCity) {
+            $q->whereRaw($this->originCityExpr() . ' = ?', [$this->originCity]);
         }
 
         // Viewport bounding box (map heatmap) — restrict to properties whose

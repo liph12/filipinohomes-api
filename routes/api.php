@@ -352,6 +352,7 @@ Route::middleware('strip.tags')->group(function(){
                 // location drill-down, and top inquiring clients.
                 Route::get('/admin/inquiry-analytics/overview', [InquiryAnalyticsController::class, 'overview']);
                 Route::get('/admin/inquiry-analytics/locations', [InquiryAnalyticsController::class, 'locations']);
+                Route::get('/admin/inquiry-analytics/origins', [InquiryAnalyticsController::class, 'origins']);
                 Route::get('/admin/inquiry-analytics/clients', [InquiryAnalyticsController::class, 'clients']);
                 Route::get('/admin/inquiry-analytics/heatmap', [InquiryAnalyticsController::class, 'heatmap']);
                 Route::get('/admin/inquiry-analytics/clusters', [InquiryAnalyticsController::class, 'clusters']);

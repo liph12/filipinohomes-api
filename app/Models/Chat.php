@@ -9,7 +9,9 @@ class Chat extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['type', 'user_id', 'type_id'];
+    // origin_* = the inquirer's geo frozen at send time (browser ipinfo, with a
+    // user_info fallback) — read by the Inquiry Analytics origin views.
+    protected $fillable = ['type', 'user_id', 'type_id', 'origin_country', 'origin_region', 'origin_city'];
 
     public function user()
     {

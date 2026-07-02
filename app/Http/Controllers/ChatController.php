@@ -11,6 +11,7 @@ use App\Models\Conversation;
 use App\Models\Listing;
 use App\Models\Message;
 use App\Models\User;
+use App\Models\UserInfo;
 use App\Services\AuditSecurityService;
 use App\Services\ChatRateLimitService;
 use App\Services\TeamLeadershipService;
@@ -317,6 +318,12 @@ class ChatController extends Controller
             // profile" vs "from your agent page" wording in the notification
             // email. Only meaningful for type=agent; ignored otherwise.
             'source' => 'nullable|in:agent_profile,agent_page',
+            // Sender's geo at send time (browser ipinfo blob) — stamped onto
+            // the chat row for Inquiry Analytics origin tracing. Optional:
+            // when absent we fall back to the sender's stored user_info.
+            'origin_country' => 'nullable|string|max:8',
+            'origin_region'  => 'nullable|string|max:96',
+            'origin_city'    => 'nullable|string|max:96',
         ]);
 
         // Secretaries are staff oversight, not buyers: they may direct-message
@@ -530,11 +537,31 @@ class ChatController extends Controller
         $autoAccept = $validated['type'] === 'listing'
             && $this->shouldAutoAcceptListingInquiry($user, (int) $validated['target_user_id']);
 
-        $chat = DB::transaction(function () use ($validated, $user, $autoAccept) {
+        // Freeze the sender's geo at send time. Prefer the browser-supplied
+        // origin (fresh ipinfo); fall back to their stored user_info (last
+        // login's geo) when the payload has none — e.g. ad-blocked ipinfo.
+        $originGeo = [
+            'origin_country' => $validated['origin_country'] ?? null,
+            'origin_region'  => $validated['origin_region'] ?? null,
+            'origin_city'    => $validated['origin_city'] ?? null,
+        ];
+        if (!array_filter($originGeo)) {
+            $ui = UserInfo::where('user_id', $user->id)->first();
+            if ($ui) {
+                $originGeo = [
+                    'origin_country' => $ui->country ?: null,
+                    'origin_region'  => $ui->state ?: null,
+                    'origin_city'    => $ui->city ?: null,
+                ];
+            }
+        }
+
+        $chat = DB::transaction(function () use ($validated, $user, $autoAccept, $originGeo) {
             $chat = Chat::create([
                 'type' => $validated['type'],
                 'type_id' => $validated['type_id'],
                 'user_id' => $user->id,
+                ...$originGeo,
             ]);
 
             $isListing = $validated['type'] === 'listing';

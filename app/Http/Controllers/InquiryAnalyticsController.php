@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\Inquiry\InquiryHeatmapService;
 use App\Services\Inquiry\InquiryListingsService;
 use App\Services\Inquiry\InquiryLocationService;
+use App\Services\Inquiry\InquiryOriginService;
 use App\Services\Inquiry\InquiryOverviewService;
 use App\Services\Inquiry\InquiryTopClientsService;
 use Illuminate\Http\JsonResponse;
@@ -33,6 +34,11 @@ class InquiryAnalyticsController extends Controller
             'province_id'   => 'nullable|integer|exists:provinces,id',
             'city_id'       => 'nullable|integer|exists:cities,id',
             'barangay_id'   => 'nullable|integer|exists:barangays,id',
+            // Inquiring-client origin scope (user_info geo). Applies to every
+            // endpoint via the shared base; also drives the Inquiry Origin tab.
+            'origin_country' => 'nullable|string|max:8',
+            'origin_region'  => 'nullable|string|max:120',
+            'origin_city'    => 'nullable|string|max:120',
         ], $extra));
     }
 
@@ -51,6 +57,16 @@ class InquiryAnalyticsController extends Controller
 
         return response()->json(
             (new InquiryLocationService())->configure($filters)->locations()
+        );
+    }
+
+    /** "Where the inquiry came from" — group by the inquiring client's origin. */
+    public function origins(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request);
+
+        return response()->json(
+            (new InquiryOriginService())->configure($filters)->origins()
         );
     }
 
