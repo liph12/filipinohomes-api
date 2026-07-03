@@ -232,11 +232,12 @@ class ListingCommandService
         // than no intent at all.
         // Recognized intents include the category-scoped substitutes the
         // agent may deliberately use (sale: Rush Sale / For Assume /
-        // Sacrifice Sale; rent: For Lease / Rent to Own) and the universal
-        // one (Ready for Occupancy) — valid intent that must not be
-        // penalized when it matches the listing's category.
+        // Sacrifice Sale / Resale / Pre-Owned; rent: For Lease / Rent to
+        // Own / Short-Term Rent) and the universal one (Ready for
+        // Occupancy) — valid intent that must not be penalized when it
+        // matches the listing's category.
         $matchedIntentPhrase = null;
-        if (preg_match('/\b(for sale|for rent|foreclosure|rush sale|for assume|sacrifice sale|for lease|rent[\s-]?to[\s-]?own|ready for occupancy)\b/i', $title, $m)) {
+        if (preg_match('/\b(for sale|for rent|foreclosure|rush sale|for assume|sacrifice sale|resale|pre[\s-]?owned|for lease|rent[\s-]?to[\s-]?own|short[\s-]?term[\s-]?rent|ready for occupancy)\b/i', $title, $m)) {
             // Normalize spacing/hyphens so "rent-to-own" and "rent to own"
             // compare equal downstream.
             $matchedIntentPhrase = preg_replace('/[\s-]+/', ' ', mb_strtolower($m[1]));
@@ -519,8 +520,9 @@ class ListingCommandService
         // substitute belongs to the listing's category (a "For Lease" title
         // on a For Sale listing is a mismatch, same as "For Rent" would be).
         // "Ready for Occupancy" is sale-side: valid everywhere except rentals.
-        $saleSubstitutes = ['rush sale', 'for assume', 'sacrifice sale'];
-        $rentSubstitutes = ['for lease', 'rent to own'];
+        // Normalized forms (hyphens collapsed to spaces by the extractor).
+        $saleSubstitutes = ['rush sale', 'for assume', 'sacrifice sale', 'resale', 'pre owned'];
+        $rentSubstitutes = ['for lease', 'rent to own', 'short term rent'];
         if ($titleIntent === null) {
             $breakdown['intent_clarity'] = 8;
         } elseif ($titleIntent === 'ready for occupancy') {
@@ -604,7 +606,7 @@ class ListingCommandService
         You are an SEO writer for Philippine real estate listings. Do two things: (a) give 2–3 sentences of specific, actionable feedback on the INPUT title (missing intent/keywords/location, fluff, or spam signals), and (b) write exactly 3 stronger alternatives. PHP scores titles deterministically (0–100) — aim for 85+ on every suggestion. Do NOT output any scores or ratings, only text.
 
         MANDATORY — every suggestion needs ALL FOUR or it scores low:
-        1. Transaction intent — the EXACT phrase from "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). The intent phrase MUST be the FIRST words of every suggestion (e.g. "For Sale: …") — never buried mid-title. Never omit; never substitute the property type ("Condominium:") for intent. PREFERRED INTENT OVERRIDE: if the context includes a "Preferred intent phrase" (an agent-chosen substitute — For Sale listings may use "Rush Sale"/"For Assume"/"Sacrifice Sale"; For Rent listings may use "For Lease"/"Rent to Own"; For Sale and Foreclosure listings may also use "Ready for Occupancy" — never on For Rent), then use THAT exact phrase as the leading intent of ALL 3 suggestions instead of the category phrase — RESPECT it, never flag it as wrong/missing, never replace it with the system category.
+        1. Transaction intent — the EXACT phrase from "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). The intent phrase MUST be the FIRST words of every suggestion (e.g. "For Sale: …") — never buried mid-title. Never omit; never substitute the property type ("Condominium:") for intent. PREFERRED INTENT OVERRIDE: if the context includes a "Preferred intent phrase" (an agent-chosen substitute — For Sale listings may use "Rush Sale"/"For Assume"/"Sacrifice Sale"/"Resale"/"Pre-Owned"; For Rent listings may use "For Lease"/"Rent to Own"/"Short-Term Rent"; For Sale and Foreclosure listings may also use "Ready for Occupancy" — never on For Rent), then use THAT exact phrase as the leading intent of ALL 3 suggestions instead of the category phrase — RESPECT it, never flag it as wrong/missing, never replace it with the system category.
         2. Property keyword — use the MOST-SEARCHED term for the type: Condominium → "Condo" + the bedroom count (subtype "2 Bedrooms" → "2BR Condo"; subtype Studio/Penthouse/Loft → that word); House → the SUBTYPE (Townhouse, House and Lot, Apartment, Beach House), NOT the bare word "House"; Commercial → the SUBTYPE (Warehouse, Office, Building, Hotel); Land → SUBTYPE only, never "Land" (see LAND LISTINGS). Abbreviations ok.
         3. Most specific location — barangay AND city when both are available, else city alone.
         4. Bedroom count ("NBR"/"N-Bedroom") when context provides bedrooms — DWELLINGS ONLY (see LAND LISTINGS).
@@ -737,7 +739,7 @@ class ListingCommandService
         You are an SEO writer for Philippine real estate. Write 3 listing titles with the best chance of ranking on Google for what PH buyers/renters actually type. PHP scores titles deterministically (0–100) — aim for 85+ on every suggestion. Do NOT output any scores or ratings, only title strings.
 
         MANDATORY — every title needs ALL FOUR or it scores low:
-        1. Transaction intent — the EXACT phrase from the "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). The intent phrase MUST be the FIRST words of every title (e.g. "For Sale: …") — never buried mid-title. Never omit; never substitute the property type ("Condominium:", "Townhouse:") for intent. PREFERRED INTENT OVERRIDE: if the context includes a "Preferred intent phrase" (an agent-chosen substitute — For Sale listings may use "Rush Sale"/"For Assume"/"Sacrifice Sale"; For Rent listings may use "For Lease"/"Rent to Own"; For Sale and Foreclosure listings may also use "Ready for Occupancy" — never on For Rent), then use THAT exact phrase as the leading intent of ALL 3 titles instead of the category phrase.
+        1. Transaction intent — the EXACT phrase from the "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). The intent phrase MUST be the FIRST words of every title (e.g. "For Sale: …") — never buried mid-title. Never omit; never substitute the property type ("Condominium:", "Townhouse:") for intent. PREFERRED INTENT OVERRIDE: if the context includes a "Preferred intent phrase" (an agent-chosen substitute — For Sale listings may use "Rush Sale"/"For Assume"/"Sacrifice Sale"/"Resale"/"Pre-Owned"; For Rent listings may use "For Lease"/"Rent to Own"/"Short-Term Rent"; For Sale and Foreclosure listings may also use "Ready for Occupancy" — never on For Rent), then use THAT exact phrase as the leading intent of ALL 3 titles instead of the category phrase.
         2. Property keyword — use the MOST-SEARCHED term for the type: Condominium → "Condo" + the bedroom count (subtype "2 Bedrooms" → "2BR Condo"; subtype Studio/Penthouse/Loft → that word); House → the SUBTYPE (Townhouse, House and Lot, Apartment, Beach House), NOT the bare word "House"; Commercial → the SUBTYPE (Warehouse, Office, Building, Hotel); Land → SUBTYPE only, never "Land" (see LAND LISTINGS). Abbreviations ok.
         3. Most specific location — barangay AND city when both are in context, else city alone.
         4. Bedroom count ("NBR"/"N-Bedroom") when context provides bedrooms — DWELLINGS ONLY (see LAND LISTINGS).
