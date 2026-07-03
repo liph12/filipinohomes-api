@@ -235,6 +235,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('/listings/{id}/removed-photos', [ListingController::class, 'updateRemovedPhotos']);
             Route::apiResource('full-listing', FullListingController::class)->only(['store', 'show', 'update', 'destroy'])->parameters(['full-listing' => 'listing']);
             Route::patch('/listings/{listing}/visibility', [ListingController::class, 'updateVisibility']);
+            // Agent-promoted flyer capture as the listing's og:image (null = default card).
+            Route::patch('/listings/{listing}/share-thumbnail', [ListingController::class, 'updateShareThumbnail']);
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
             Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);

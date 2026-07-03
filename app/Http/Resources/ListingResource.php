@@ -28,6 +28,9 @@ class ListingResource extends JsonResource
             'slug'           => $this->slug,
             'price'          => $this->price,
             'featured_photo' => $this->featured_photo,
+            // Agent-promoted flyer capture used as the primary og:image
+            // (null → the frontend's generated /og/listing card).
+            'share_thumbnail_url' => $this->share_thumbnail_url,
             // Responsive srcset per photo (index-aligned with featured_photo),
             // computed by convention — emitted ONLY when this record's variants
             // exist on S3. null → frontend falls back to the single original.

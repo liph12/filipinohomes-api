@@ -1758,6 +1758,42 @@ class ListingController extends Controller
         return response()->json(['visibility' => $listing->visibility]);
     }
 
+    /**
+     * Set / reset the agent-chosen share thumbnail (a flyer capture promoted
+     * from the Flyer modal). When set, the listing page emits it as the
+     * primary og:image; null restores the default generated card. Host-locked
+     * to our S3 bucket so only our own objects can be promoted. Direct
+     * update() on one column — never routes through ListingService (which
+     * would regenerate the slug from the name).
+     */
+    public function updateShareThumbnail(Request $request, Listing $listing)
+    {
+        $this->authorize('update', $listing);
+
+        $validated = $request->validate([
+            'share_thumbnail_url' => [
+                'nullable',
+                'url',
+                'max:512',
+                'starts_with:https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/',
+            ],
+        ]);
+
+        $url = $validated['share_thumbnail_url'] ?? null;
+
+        $actor = $request->user()?->name ?? 'Someone';
+        $listing->auditSource = 'share_thumbnail_update';
+        $listing->auditDescription = sprintf(
+            '%s %s the share thumbnail for %s',
+            $actor,
+            $url ? 'set a custom flyer as' : 'reset',
+            $listing->name,
+        );
+        $listing->update(['share_thumbnail_url' => $url]);
+
+        return response()->json(['share_thumbnail_url' => $listing->share_thumbnail_url]);
+    }
+
     public function updateStatus(Request $request, Listing $listing)
     {
         $this->authorize('update', $listing);
