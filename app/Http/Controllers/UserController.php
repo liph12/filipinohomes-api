@@ -560,8 +560,15 @@ class UserController extends Controller
                 }
 
                 if ($lrService->requiresFireCheck($lrData) && !$lrService->hasRequiredFireCertificates($lrData)) {
+                    // `code` lets the frontend render a rich, explained alert
+                    // (LR detection + training link + homebuyer hint) instead of
+                    // a raw string; older frontends just show `message`.
                     return response()->json([
-                        'message' => 'You need to complete at least 3 FIRE training certificates before you can sign in. Please complete your FIRE training first.',
+                        'code'    => 'fire_training_required',
+                        'message' => "We've detected that this email is registered as a Leuterio Realty agent account. "
+                            . 'Agent accounts must complete at least 3 FIRE training certificates before they can sign in. '
+                            . 'Please finish your FIRE training at realestatetraining.ph, then try again. '
+                            . 'If you are a homebuyer, sign in with a different personal email instead.',
                     ], 403);
                 }
 
