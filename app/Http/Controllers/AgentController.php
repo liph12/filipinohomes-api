@@ -776,12 +776,8 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             'status' => 'required|in:active,inactive,resigned,deactivated',
         ]);
 
-        // "Deactivated" specifically means dormant (no login, token use, or
-        // online heartbeat in 45 days — the same User::dormantSince definition
-        // the agents:deactivate-dormant sweep uses), so refuse it for agents
-        // with recent activity. Use Inactive for those.
         if ($validated['status'] === 'deactivated') {
-            $dormantDays = \App\Console\Commands\DeactivateDormantAgents::DORMANT_DAYS;
+            $dormantDays = User::DORMANT_DAYS;
             $threshold   = Carbon::now()->subDays($dormantDays);
 
             $hasUser   = User::where('id', $agent->user_id)->exists();

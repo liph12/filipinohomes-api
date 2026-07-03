@@ -662,6 +662,11 @@ class UserController extends Controller
         defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
             ->backfill($verified->loadMissing('agent')));
 
+        // Dormancy check runs at login (before this session bumps any
+        // activity timestamp): 45+ days without a heartbeat flips the
+        // agent to "deactivated".
+        $verified->deactivateAgentIfDormant();
+
         LoginLog::create([
             'user_id'      => $verified->id,
             'ip_address'   => $request->ip(),

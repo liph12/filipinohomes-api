@@ -30,6 +30,11 @@ class LoginUserService
             throw new \Exception('Incorrect password', 401);
         }
 
+        // Dormancy check runs at login (before this session bumps any
+        // activity timestamp): 45+ days without a heartbeat flips the
+        // agent to "deactivated".
+        $user->deactivateAgentIfDormant();
+
         // One token per login so each device/session can be revoked
         // independently (per-device logout). Do NOT reuse a cached token.
         // The token name labels the session in the user's "active devices" list.
