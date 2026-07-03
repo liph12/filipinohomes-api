@@ -147,54 +147,28 @@ class User extends Authenticatable implements Auditable
     /** Days without a presence heartbeat before an agent counts as dormant. */
     public const DORMANT_DAYS = 45;
 
-    /**
-     * The date the dormancy policy started counting. Every agent is credited
-     * with activity on this date, so nobody can be deactivated before
-     * POLICY_START + 45 days (2026-08-16) — a full grace window to log in
-     * again, however old their last real heartbeat is.
-     */
     public const DORMANCY_POLICY_START = '2026-07-02';
 
-    /**
-     * Dormant = no presence heartbeat since $threshold. `last_online_at` is
-     * the single activity signal: it's bumped on every app load
-     * (/authenticate) and every 60s by the frontend session ping, so it
-     * covers both logins and long-lived token sessions — unlike login_logs
-     * (misses never-expiring tokens) or Sanctum's last_used_at (bumped by
-     * admin impersonation). Shared by the login-time dormancy check and the
-     * manual "deactivated" guard so the two definitions can't drift.
-     */
     public function scopeDormantSince($query, $threshold)
     {
         return $query->where(fn ($q) => $q->whereNull('last_online_at')
             ->orWhere('last_online_at', '<', $threshold));
     }
 
-    /**
-     * Login-time dormancy check — replaces the old agents:deactivate-dormant
-     * daily sweep. Called from the login endpoints BEFORE the session bumps
-     * any activity timestamp: if this user's agent is still "active" but the
-     * last_online_at heartbeat is DORMANT_DAYS+ old, the agent comes back to
-     * a deactivated profile (an admin has to reactivate them).
-     *
-     * last_online_at is the ONLY signal. A null heartbeat (never tracked) is
-     * skipped — no evidence of dormancy, and the very login that triggers
-     * this check sets it moments later via /authenticate. A heartbeat older
-     * than the policy start is floored to it, so the 45-day clock never
-     * starts before 2026-07-02.
-     */
     public function deactivateAgentIfDormant(): void
     {
         $agent = $this->agent;
-        if (!$agent || $agent->status !== 'active' || !$this->last_online_at) {
+        if (!$agent || $agent->status !== 'active') {
             return;
         }
 
-        $lastSeen = \Illuminate\Support\Carbon::parse($this->last_online_at)
-            ->max(\Illuminate\Support\Carbon::parse(self::DORMANCY_POLICY_START));
+        $floor = \Illuminate\Support\Carbon::parse(self::DORMANCY_POLICY_START);
+        $lastSeen = $this->last_online_at
+            ? \Illuminate\Support\Carbon::parse($this->last_online_at)->max($floor)
+            : $floor;
 
         // Date-level threshold (today, not now) keeps the grace window exact:
-        // 2026-08-16 is still inside it at any hour of the day.
+        // its last day still counts as inside at any hour of the day.
         if ($lastSeen->lt(\Illuminate\Support\Carbon::today()->subDays(self::DORMANT_DAYS))) {
             $agent->update(['status' => 'deactivated']);
             \Illuminate\Support\Facades\Log::info('Agent auto-deactivated at login — no activity in 45 days', [

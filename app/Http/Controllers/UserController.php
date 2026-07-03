@@ -785,6 +785,8 @@ class UserController extends Controller
         defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
             ->backfill($user->loadMissing('agent')));
 
+        $user->deactivateAgentIfDormant();
+
         LoginLog::create([
             'user_id'      => $user->id,
             'ip_address'   => $request->ip(),
