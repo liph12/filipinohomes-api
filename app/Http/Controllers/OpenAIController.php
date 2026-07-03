@@ -263,6 +263,8 @@ class OpenAIController extends Controller
                 'nearby_facilities',
                 'photo_keywords',
                 'description',
+                'preferred_intent',
+                'preferred_keywords',
             ]);
 
             // Resolve structured location from address_id (the barangay FK)

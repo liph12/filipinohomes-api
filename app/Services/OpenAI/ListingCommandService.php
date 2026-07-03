@@ -37,9 +37,9 @@ class ListingCommandService
         ['condominium', 'condo', 'condos'],
         ['townhouse', 'town house'],
         ['apartment', 'apt'],
-        ['house and lot', 'house & lot', 'h&l'],
-        ['residential lot', 'res lot'],
-        ['commercial lot', 'com lot'],
+        ['house and lot', 'house & lot'],
+        ['residential lot'],
+        ['commercial lot'],
         ['1 bedroom', '1br', '1-br', 'one bedroom'],
         ['2 bedrooms', '2br', '2-br', 'two bedroom'],
         ['3 bedrooms', '3br', '3-br', 'three bedroom'],
@@ -230,12 +230,13 @@ class ListingCommandService
         // can verify it against the listing's actual category. Wrong intent
         // (e.g. "For Rent" on a sale listing) should be penalized harder
         // than no intent at all.
-        // Recognized intents include PH transaction variants the agent may
-        // deliberately use ("For Assume"/"Assume Balance"/"Rent to Own"/
-        // "Pre-selling") — these are valid intent even when the system
-        // category is For Sale/For Rent, so they must not be penalized.
+        // Recognized intents include the category-scoped substitutes the
+        // agent may deliberately use (sale: Rush Sale / For Assume /
+        // Sacrifice Sale; rent: For Lease / Rent to Own) and the universal
+        // one (Ready for Occupancy) — valid intent that must not be
+        // penalized when it matches the listing's category.
         $matchedIntentPhrase = null;
-        if (preg_match('/\b(for sale|for rent|foreclosure|for assume|assume balance|assumption|rent[\s-]?to[\s-]?own|pre[\s-]?selling)\b/i', $title, $m)) {
+        if (preg_match('/\b(for sale|for rent|foreclosure|rush sale|for assume|sacrifice sale|for lease|rent[\s-]?to[\s-]?own|ready for occupancy)\b/i', $title, $m)) {
             // Normalize spacing/hyphens so "rent-to-own" and "rent to own"
             // compare equal downstream.
             $matchedIntentPhrase = preg_replace('/[\s-]+/', ' ', mb_strtolower($m[1]));
@@ -514,15 +515,20 @@ class ListingCommandService
             str_contains($ctxCategory, 'foreclosure') => 'foreclosure',
             default                                   => '',
         };
-        // Agent-chosen PH transaction variants (assume balance / rent-to-own /
-        // pre-selling / foreclosure) are valid intent in their own right — give
-        // full credit and never treat them as a category mismatch, even when
-        // the system category is For Sale/For Rent.
-        $altIntents = ['for assume', 'assume balance', 'assumption', 'rent to own', 'pre selling'];
+        // Category-scoped substitute intents: full credit only when the
+        // substitute belongs to the listing's category (a "For Lease" title
+        // on a For Sale listing is a mismatch, same as "For Rent" would be).
+        // "Ready for Occupancy" is sale-side: valid everywhere except rentals.
+        $saleSubstitutes = ['rush sale', 'for assume', 'sacrifice sale'];
+        $rentSubstitutes = ['for lease', 'rent to own'];
         if ($titleIntent === null) {
             $breakdown['intent_clarity'] = 8;
-        } elseif (in_array($titleIntent, $altIntents, true)) {
-            $breakdown['intent_clarity'] = 20;
+        } elseif ($titleIntent === 'ready for occupancy') {
+            $breakdown['intent_clarity'] = $contextIntent === 'for rent' ? 5 : 20;
+        } elseif (in_array($titleIntent, $saleSubstitutes, true)) {
+            $breakdown['intent_clarity'] = ($contextIntent === '' || $contextIntent === 'for sale') ? 20 : 5;
+        } elseif (in_array($titleIntent, $rentSubstitutes, true)) {
+            $breakdown['intent_clarity'] = ($contextIntent === '' || $contextIntent === 'for rent') ? 20 : 5;
         } elseif ($contextIntent === '') {
             $breakdown['intent_clarity'] = 15;
         } elseif ($titleIntent === $contextIntent) {
@@ -598,7 +604,7 @@ class ListingCommandService
         You are an SEO writer for Philippine real estate listings. Do two things: (a) give 2–3 sentences of specific, actionable feedback on the INPUT title (missing intent/keywords/location, fluff, or spam signals), and (b) write exactly 3 stronger alternatives. PHP scores titles deterministically (0–100) — aim for 85+ on every suggestion. Do NOT output any scores or ratings, only text.
 
         MANDATORY — every suggestion needs ALL FOUR or it scores low:
-        1. Transaction intent — the EXACT phrase from "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). Never omit; never substitute the property type ("Condominium:") for intent. EXCEPTION: PH transaction variants the agent typed — "For Assume"/"Assume Balance"/"Rent to Own"/"Pre-selling" — are ALSO valid intent. If the INPUT title already uses one, RESPECT and PRESERVE it in your feedback and in all 3 suggestions; do NOT flag it as wrong/missing and do NOT replace it with the system category.
+        1. Transaction intent — the EXACT phrase from "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). The intent phrase MUST be the FIRST words of every suggestion (e.g. "For Sale: …") — never buried mid-title. Never omit; never substitute the property type ("Condominium:") for intent. PREFERRED INTENT OVERRIDE: if the context includes a "Preferred intent phrase" (an agent-chosen substitute — For Sale listings may use "Rush Sale"/"For Assume"/"Sacrifice Sale"; For Rent listings may use "For Lease"/"Rent to Own"; For Sale and Foreclosure listings may also use "Ready for Occupancy" — never on For Rent), then use THAT exact phrase as the leading intent of ALL 3 suggestions instead of the category phrase — RESPECT it, never flag it as wrong/missing, never replace it with the system category.
         2. Property keyword — use the MOST-SEARCHED term for the type: Condominium → "Condo" + the bedroom count (subtype "2 Bedrooms" → "2BR Condo"; subtype Studio/Penthouse/Loft → that word); House → the SUBTYPE (Townhouse, House and Lot, Apartment, Beach House), NOT the bare word "House"; Commercial → the SUBTYPE (Warehouse, Office, Building, Hotel); Land → SUBTYPE only, never "Land" (see LAND LISTINGS). Abbreviations ok.
         3. Most specific location — barangay AND city when both are available, else city alone.
         4. Bedroom count ("NBR"/"N-Bedroom") when context provides bedrooms — DWELLINGS ONLY (see LAND LISTINGS).
@@ -613,8 +619,8 @@ class ListingCommandService
 
         THREE VARIATIONS — each hits all four mandatory points, targets a DIFFERENT angle, and includes at least one fact the other two omit (not word-shuffles; if two share >70% of words, rewrite):
         1. Keyword/feature-led: "For [Sale/Rent/Foreclosure]: NBR [Subtype] in [Barangay], [City] — [Size or Quantified Feature]" — pack quantified specs (size, parking, RFO year); most likely to rank for direct "[NBR] [type] for sale in [city]" queries.
-        2. Landmark/lifestyle-led: "NBR [Subtype] for [Sale/Rent] Near [Landmark], [City] — [Photo Keyword or Amenity]" — must include a photo keyword/amenity the others omit; if no landmark, anchor on a unique amenity.
-        3. Project/buyer-benefit-led: "[Project] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Buyer Persona Hook]" — target a persona (investor, family, professional, retiree) the others don't; if no project, use a size-led form.
+        2. Landmark/lifestyle-led: "For [Sale/Rent]: NBR [Subtype] Near [Landmark], [City] — [Photo Keyword or Amenity]" — must include a photo keyword/amenity the others omit; if no landmark, anchor on a unique amenity.
+        3. Project/buyer-benefit-led: "For [Sale/Rent]: [Project] [Subtype] in [Barangay], [City] — [Buyer Persona Hook]" — target a persona (investor, family, professional, retiree) the others don't; if no project, use a size-led form.
 
         {$contextBlock}
 
@@ -731,7 +737,7 @@ class ListingCommandService
         You are an SEO writer for Philippine real estate. Write 3 listing titles with the best chance of ranking on Google for what PH buyers/renters actually type. PHP scores titles deterministically (0–100) — aim for 85+ on every suggestion. Do NOT output any scores or ratings, only title strings.
 
         MANDATORY — every title needs ALL FOUR or it scores low:
-        1. Transaction intent — the EXACT phrase from the "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). Never omit; never substitute the property type ("Condominium:", "Townhouse:") for intent.
+        1. Transaction intent — the EXACT phrase from the "Listing category" ("For Sale", "For Rent", or "Foreclosure"; ~25 pts). The intent phrase MUST be the FIRST words of every title (e.g. "For Sale: …") — never buried mid-title. Never omit; never substitute the property type ("Condominium:", "Townhouse:") for intent. PREFERRED INTENT OVERRIDE: if the context includes a "Preferred intent phrase" (an agent-chosen substitute — For Sale listings may use "Rush Sale"/"For Assume"/"Sacrifice Sale"; For Rent listings may use "For Lease"/"Rent to Own"; For Sale and Foreclosure listings may also use "Ready for Occupancy" — never on For Rent), then use THAT exact phrase as the leading intent of ALL 3 titles instead of the category phrase.
         2. Property keyword — use the MOST-SEARCHED term for the type: Condominium → "Condo" + the bedroom count (subtype "2 Bedrooms" → "2BR Condo"; subtype Studio/Penthouse/Loft → that word); House → the SUBTYPE (Townhouse, House and Lot, Apartment, Beach House), NOT the bare word "House"; Commercial → the SUBTYPE (Warehouse, Office, Building, Hotel); Land → SUBTYPE only, never "Land" (see LAND LISTINGS). Abbreviations ok.
         3. Most specific location — barangay AND city when both are in context, else city alone.
         4. Bedroom count ("NBR"/"N-Bedroom") when context provides bedrooms — DWELLINGS ONLY (see LAND LISTINGS).
@@ -746,8 +752,8 @@ class ListingCommandService
 
         THREE VARIATIONS — each hits all four mandatory points, targets a DIFFERENT angle, and includes at least one fact the other two omit (not word-shuffles; if two share >70% of words, rewrite). If project_name overlaps with a landmark, use it in only one variation and anchor the others differently (a photo keyword, amenity, different landmark, or size/floor detail):
         1. Keyword/feature-led: "For [Sale/Rent/Foreclosure]: NBR [Subtype] in [Barangay], [City] — [Size or Distinct Feature]" (e.g. "For Sale: 3BR Condo in Centro, Mandaue City — 65 sqm with Balcony") — pack quantified specs; most likely to rank for "[NBR] [type] for sale in [city]" queries.
-        2. Landmark/lifestyle-led: "NBR [Subtype] for [Sale/Rent] Near [Landmark], [City] — [Photo Keyword or Amenity]" (e.g. "1BR Condo for Sale Near Mandani Bay Boardwalk, Mandaue City — Sea View") — must include a photo keyword/amenity the others omit; if no landmark, anchor on a unique amenity.
-        3. Project/buyer-benefit-led: "[Project] [Subtype] for [Sale/Rent] in [Barangay], [City] — [Buyer Hook]" (e.g. "Mandani Bay Studio for Sale in Centro, Mandaue City — Move-in Ready Investment") — target a persona (investor, family, professional, retiree) the others don't; if no project, use a size-led form.
+        2. Landmark/lifestyle-led: "For [Sale/Rent]: NBR [Subtype] Near [Landmark], [City] — [Photo Keyword or Amenity]" (e.g. "For Sale: 1BR Condo Near Mandani Bay Boardwalk, Mandaue City — Sea View") — must include a photo keyword/amenity the others omit; if no landmark, anchor on a unique amenity.
+        3. Project/buyer-benefit-led: "For [Sale/Rent]: [Project] [Subtype] in [Barangay], [City] — [Buyer Hook]" (e.g. "For Sale: Mandani Bay Studio in Centro, Mandaue City — Move-in Ready Investment") — target a persona (investor, family, professional, retiree) the others don't; if no project, use a size-led form.
 
         {$contextBlock}
 
@@ -956,6 +962,7 @@ class ListingCommandService
         SEO REQUIREMENTS:
         - LENGTH IS ADAPTIVE — match it to how much real data exists. Rich listing (many specs/amenities/landmarks): 180–250 words. Sparse listing (e.g. bare land with only area + price): 80–140 words. NEVER pad to hit a word count — a tight 90-word description beats a 220-word one that repeats itself.
         - Use the exact transaction-intent phrase at least once (lowercase ok in body).
+        - PREFERRED INTENT: if the context includes a "Preferred intent phrase" (e.g. "Rush Sale", "For Lease", "Ready for Occupancy"), weave that phrase in naturally — AND STILL state the real category intent phrase ("for sale"/"for rent"/"foreclosure") at least once, so the true transaction type is never lost. Both must appear.
         - State the FULL location ("Barangay, City, Province") at most ONCE. After that, refer to it briefly — just the barangay, just the city, or "the area" / "nearby". NEVER repeat the full "Barangay, City, Province" string more than once; that is keyword stuffing and hurts SEO.
         - Property keyword (mention 1–2 times) — use the most-searched term: Condominium → "condo" + bedroom count ("1-bedroom condo"); House → the subtype ("townhouse", "house and lot", "apartment"), not bare "house"; Commercial → the subtype ("warehouse", "office", "building"); Land → subtype only, never "land" (see LAND LISTINGS).
         - When nearby_facilities is provided, weave 1–2 landmarks in by their REAL names (no "near a mall" — use "near SM Seaside" if it's in context).
@@ -1012,6 +1019,22 @@ class ListingCommandService
         foreach ($simple as $key => $label) {
             if (!empty($context[$key])) {
                 $lines[] = "{$label}: {$context[$key]}";
+            }
+        }
+
+        // Agent-chosen substitute intent (e.g. "Rush Sale" instead of "For
+        // Sale") — the title prompts lead with it and the description prompt
+        // must still state the real category phrase alongside it.
+        if (!empty($context['preferred_intent']) && is_string($context['preferred_intent'])) {
+            $lines[] = "Preferred intent phrase: {$context['preferred_intent']}";
+        }
+
+        // Extra agent-chosen keywords (e.g. "Ready for Occupancy") that ride
+        // along with the intent — include each naturally in every output.
+        if (!empty($context['preferred_keywords']) && is_array($context['preferred_keywords'])) {
+            $keywords = implode(", ", array_filter($context['preferred_keywords'], 'is_string'));
+            if ($keywords !== '') {
+                $lines[] = "Preferred keywords (include each naturally in every title/description): {$keywords}";
             }
         }
 

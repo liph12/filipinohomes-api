@@ -41,6 +41,8 @@ class GenerateDescriptionController extends Controller
             'address', 'barangay', 'city', 'province',
             'nearby_facilities',
             'photo_keywords',
+            'preferred_intent',
+            'preferred_keywords',
         ]);
 
         try {
