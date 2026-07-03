@@ -568,7 +568,7 @@ class UserController extends Controller
                         'message' => "We've detected that this email is registered as a Leuterio Realty agent account. "
                             . 'Agent accounts must complete at least 3 FIRE training certificates before they can sign in. '
                             . 'Please finish your FIRE training at realestatetraining.ph, then try again. '
-                            . 'If you are a homebuyer, sign in with a different personal email instead.',
+                            . 'If you are a homebuyer, use another personal email instead — you can inquire with any regular account.',
                     ], 403);
                 }
 
