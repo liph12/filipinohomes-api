@@ -17,6 +17,8 @@ use App\Models\PageBuilder;
 use App\Policies\PageBuilderPolicy;
 use App\Models\Project;
 use App\Policies\ProjectPolicy;
+use App\Models\BuyerForm;
+use App\Policies\BuyerFormPolicy;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -31,6 +33,7 @@ class AuthServiceProvider extends ServiceProvider
         Message::class => MessagePolicy::class,
         PageBuilder::class => PageBuilderPolicy::class,
         Project::class => ProjectPolicy::class,
+        BuyerForm::class => BuyerFormPolicy::class,
     ];
 
     /**

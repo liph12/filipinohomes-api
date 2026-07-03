@@ -34,6 +34,7 @@ use App\Http\Controllers\{
     MaintenanceController,
     FileUploadController,
     PageBuilderController,
+    BuyerFormController,
     ReactionController,
     SitemapController,
     BackgroundJobController,
@@ -158,6 +159,8 @@ Route::middleware('strip.tags')->group(function(){
         // PageBuilder public tracking
         Route::post('/page/agents/{slug}/impression', [PageBuilderController::class, 'trackImpression']);
         Route::post('/page/agents/{slug}/click', [PageBuilderController::class, 'trackClick']);
+        // Buyer Form (Open House): public fetch by share slug for the client registration page
+        Route::get('/buyer-forms/{slug}', [BuyerFormController::class, 'show']);
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
 
@@ -332,6 +335,15 @@ Route::middleware('strip.tags')->group(function(){
             Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);
             
             Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
+
+            // Buyer Form (Open House) — agent-created registration forms + client submissions.
+            // The client "register" POST sits behind auth:sanctum so only logged-in users can
+            // submit (anti-spam); identity (name/email) is taken from the token, not the body.
+            Route::get('/buyer-forms', [BuyerFormController::class, 'index']);
+            Route::post('/buyer-forms', [BuyerFormController::class, 'store']);
+            Route::get('/buyer-forms/{id}/registrations', [BuyerFormController::class, 'registrations']);
+            Route::delete('/buyer-forms/{id}', [BuyerFormController::class, 'destroy']);
+            Route::post('/buyer-forms/{slug}/register', [BuyerFormController::class, 'register']);
 
     
             // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.
