@@ -21,22 +21,45 @@ class AgentReviewResource extends JsonResource
             ? now()->lessThanOrEqualTo($this->edit_window_ends_at)
             : false;
 
+        // Anonymous reviews (Shopee-style): identity stays in the row, but the
+        // JSON is scrubbed HERE — never client-side, or the real name would be
+        // one network tab away — for everyone except the reviewer themselves
+        // and admins (moderation needs the real identity). Scrubbing covers
+        // every correlation vector, not just the name: client ids, the chat /
+        // conversation ids (the rated agent could open that thread in their
+        // inbox), the listing chip, and the reviewer-role badge (agents
+        // usually have exactly ONE client per listing chat).
+        $viewer = Auth::user() ?: auth('sanctum')->user();
+        $isAdmin = $viewer?->role?->name === 'admin';
+        $masked = (bool) $this->is_anonymous && !$isOwn && !$isAdmin;
+
         return [
             'id' => $this->id,
             'agent_user_id' => (int) $this->agent_user_id,
-            'client_user_id' => (int) $this->client_user_id,
-            'client' => $this->whenLoaded('client', function () {
+            'client_user_id' => $masked ? null : (int) $this->client_user_id,
+            'client' => $this->whenLoaded('client', function () use ($masked) {
+                if ($masked) {
+                    return [
+                        'id' => null,
+                        'name' => self::maskName($this->client->name),
+                        'avatar' => null,
+                    ];
+                }
                 return [
                     'id' => $this->client->id,
                     'name' => $this->client->name,
                     'avatar' => $this->client->avatar,
                 ];
             }),
+            'is_anonymous' => (bool) $this->is_anonymous,
             // Reviewer's account role. Lets the frontend render an
             // "Inquired as agent" badge on the public profile so
             // visitors can read agent-to-agent reviews in context.
             // Falls through to null when 'client.role' isn't loaded.
-            'inquirer_role' => $this->whenLoaded('client', function () {
+            'inquirer_role' => $this->whenLoaded('client', function () use ($masked) {
+                if ($masked) {
+                    return null;
+                }
                 return $this->client->relationLoaded('role')
                     ? $this->client->role?->name
                     : null;
@@ -48,7 +71,10 @@ class AgentReviewResource extends JsonResource
             // DMs reuse type_id for the messaged user, so Eloquent could
             // otherwise resolve a spurious Listing whose id happens to
             // match that user id).
-            'listing' => $this->whenLoaded('conversation', function () {
+            'listing' => $this->whenLoaded('conversation', function () use ($masked) {
+                if ($masked) {
+                    return null;
+                }
                 // Only read the chat when it's actually eager-loaded. Admin
                 // endpoints load `conversation` (for chat_id) WITHOUT the chat
                 // relation, and touching ->chat there would lazy-load per row.
@@ -95,11 +121,11 @@ class AgentReviewResource extends JsonResource
                     'team_name' => $teamMember?->team?->name ?? null,
                 ];
             }),
-            'conversation_id' => $this->conversation_id ? (int) $this->conversation_id : null,
+            'conversation_id' => !$masked && $this->conversation_id ? (int) $this->conversation_id : null,
             // Chat thread the rating came from — powers the admin "view
             // conversation" deep-link (/admin/listing-inquiries?chat=<chat_id>).
             // Null when the conversation was hard-deleted or isn't eager-loaded.
-            'chat_id' => $this->relationLoaded('conversation') && $this->conversation
+            'chat_id' => !$masked && $this->relationLoaded('conversation') && $this->conversation
                 ? (int) $this->conversation->chat_id
                 : null,
             'overall_rating' => (int) $this->overall_rating,
@@ -125,5 +151,21 @@ class AgentReviewResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    /**
+     * Shopee-style handle: first + last letter kept (lowercase), stars
+     * between — "John Robert M." → "j*****o". Multibyte-safe.
+     */
+    private static function maskName(?string $name): string
+    {
+        $name = trim((string) $name);
+        $len = mb_strlen($name);
+        if ($len < 2) {
+            return 'a*****';
+        }
+        return mb_strtolower(mb_substr($name, 0, 1))
+            . '*****'
+            . mb_strtolower(mb_substr($name, $len - 1, 1));
     }
 }

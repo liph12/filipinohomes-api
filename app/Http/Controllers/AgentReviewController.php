@@ -178,6 +178,7 @@ class AgentReviewController extends Controller
             'tags' => 'sometimes|array|max:8',
             'tags.*' => 'string|max:32',
             'comment' => 'nullable|string|max:1000',
+            'is_anonymous' => 'sometimes|boolean',
         ]);
 
         $user = Auth::user();
@@ -211,6 +212,9 @@ class AgentReviewController extends Controller
                 'overall_rating' => (int) $validated['overall_rating'],
                 'tags' => $validated['tags'] ?? [],
                 'comment' => $validated['comment'] ?? null,
+                // Shopee-style: identity stays in the row; the resource masks
+                // it for everyone but the reviewer and admins.
+                'is_anonymous' => (bool) ($validated['is_anonymous'] ?? false),
                 'status' => $status,
                 // Re-edit resets the window. Locked thereafter on update().
                 'edit_window_ends_at' => now()->addDays(7),
@@ -258,6 +262,7 @@ class AgentReviewController extends Controller
             'tags' => 'sometimes|array|max:8',
             'tags.*' => 'string|max:32',
             'comment' => 'nullable|string|max:1000',
+            'is_anonymous' => 'sometimes|boolean',
         ]);
 
         $status = app(ReviewAntiAbuseService::class)

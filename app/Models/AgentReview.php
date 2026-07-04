@@ -21,6 +21,7 @@ class AgentReview extends Model implements Auditable
         'overall_rating',
         'tags',
         'comment',
+        'is_anonymous',
         'status',
         'hidden_by',
         'hidden_at',
@@ -32,6 +33,7 @@ class AgentReview extends Model implements Auditable
     protected $casts = [
         'tags' => 'array',
         'overall_rating' => 'integer',
+        'is_anonymous' => 'boolean',
         'hidden_at' => 'datetime',
         'edit_window_ends_at' => 'datetime',
     ];
