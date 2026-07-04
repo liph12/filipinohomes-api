@@ -71,7 +71,7 @@ class Listing extends Model implements Auditable
 
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
-        'featured_photo', 'share_thumbnail_url', 'is_featured', 'featured_until', 'clicks', 'impressions',
+        'featured_photo', 'share_thumbnail_url', 'og_card_options', 'is_featured', 'featured_until', 'clicks', 'impressions',
         'property_id', 'category_id', 'agent_id', 'seo_tags', 'created_at', 'updated_at',
         'verification_status', 'audit_notes', 'audit_checklist', 'audited_by', 'audited_at',
         'agent_edited_fields', 'audit_edited_fields', 're_submitted_at',
@@ -84,6 +84,7 @@ class Listing extends Model implements Auditable
         'featured_until' => 'datetime',
         'clicks' => 'integer',
         'featured_photo' => 'array',
+        'og_card_options' => 'array',
         'seo_tags' => 'array',
         'audit_checklist' => 'array',
         'audited_at' => 'datetime',

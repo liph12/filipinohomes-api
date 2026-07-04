@@ -1759,12 +1759,13 @@ class ListingController extends Controller
     }
 
     /**
-     * Set / reset the agent-chosen share thumbnail (a flyer capture promoted
-     * from the Flyer modal). When set, the listing page emits it as the
-     * primary og:image; null restores the default generated card. Host-locked
-     * to our S3 bucket so only our own objects can be promoted. Direct
-     * update() on one column — never routes through ListingService (which
-     * would regenerate the slug from the name).
+     * "Share appearance" mutation: set/reset the flyer-capture thumbnail
+     * (share_thumbnail_url) and/or the default-card customization
+     * (og_card_options: photo/theme/flip/hide[]/agent). Only the keys present
+     * in the request are updated; null resets that key to default behavior.
+     * Photo URLs are host-locked to our S3 bucket. Direct update() on the
+     * columns — never routes through ListingService (which would regenerate
+     * the slug from the name).
      */
     public function updateShareThumbnail(Request $request, Listing $listing)
     {
@@ -1772,26 +1773,55 @@ class ListingController extends Controller
 
         $validated = $request->validate([
             'share_thumbnail_url' => [
+                'sometimes',
                 'nullable',
                 'url',
                 'max:512',
                 'starts_with:https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/',
             ],
+            'og_card_options'         => ['sometimes', 'nullable', 'array'],
+            'og_card_options.photo'   => [
+                'nullable',
+                'url',
+                'max:512',
+                'starts_with:https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/',
+            ],
+            'og_card_options.theme'   => ['nullable', 'in:navy,red,emerald,charcoal'],
+            'og_card_options.flip'    => ['nullable', 'boolean'],
+            'og_card_options.hide'    => ['nullable', 'array'],
+            'og_card_options.hide.*'  => ['in:price,specs,location'],
+            'og_card_options.agent'   => ['nullable', 'boolean'],
         ]);
 
-        $url = $validated['share_thumbnail_url'] ?? null;
+        $updates = [];
+        if ($request->exists('share_thumbnail_url')) {
+            $updates['share_thumbnail_url'] = $validated['share_thumbnail_url'] ?? null;
+        }
+        if ($request->exists('og_card_options')) {
+            $opts = $validated['og_card_options'] ?? null;
+            // Keep only the whitelisted keys (validation ignores unknown ones).
+            $updates['og_card_options'] = $opts
+                ? array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent']))
+                : null;
+        }
+        if (!$updates) {
+            return response()->json(['message' => 'Nothing to update.'], 422);
+        }
 
         $actor = $request->user()?->name ?? 'Someone';
         $listing->auditSource = 'share_thumbnail_update';
         $listing->auditDescription = sprintf(
-            '%s %s the share thumbnail for %s',
+            '%s updated the share appearance (%s) for %s',
             $actor,
-            $url ? 'set a custom flyer as' : 'reset',
+            implode(', ', array_keys($updates)),
             $listing->name,
         );
-        $listing->update(['share_thumbnail_url' => $url]);
+        $listing->update($updates);
 
-        return response()->json(['share_thumbnail_url' => $listing->share_thumbnail_url]);
+        return response()->json([
+            'share_thumbnail_url' => $listing->share_thumbnail_url,
+            'og_card_options'     => $listing->og_card_options,
+        ]);
     }
 
     public function updateStatus(Request $request, Listing $listing)
