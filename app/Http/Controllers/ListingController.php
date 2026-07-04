@@ -1803,9 +1803,15 @@ class ListingController extends Controller
         if ($request->exists('og_card_options')) {
             $opts = $validated['og_card_options'] ?? null;
             // Keep only the whitelisted keys (validation ignores unknown ones).
-            $updates['og_card_options'] = $opts
-                ? array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period']))
-                : null;
+            if ($opts) {
+                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period']));
+                // Price periods are a rental concept — a sale/foreclosure price
+                // is absolute, so a period never gets stored on those.
+                if (strcasecmp($listing->category?->name ?? '', 'For Rent') !== 0) {
+                    unset($opts['period']);
+                }
+            }
+            $updates['og_card_options'] = $opts ?: null;
         }
         if (!$updates) {
             return response()->json(['message' => 'Nothing to update.'], 422);
