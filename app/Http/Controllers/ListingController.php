@@ -1761,7 +1761,7 @@ class ListingController extends Controller
     /**
      * "Share appearance" mutation: set/reset the flyer-capture thumbnail
      * (share_thumbnail_url) and/or the default-card customization
-     * (og_card_options: photo/theme/flip/hide[]/agent). Only the keys present
+     * (og_card_options: photo/theme/flip/hide[]/agent/period). Only the keys present
      * in the request are updated; null resets that key to default behavior.
      * Photo URLs are host-locked to our S3 bucket. Direct update() on the
      * columns — never routes through ListingService (which would regenerate
@@ -1791,6 +1791,9 @@ class ListingController extends Controller
             'og_card_options.hide'    => ['nullable', 'array'],
             'og_card_options.hide.*'  => ['in:price,specs,location'],
             'og_card_options.agent'   => ['nullable', 'boolean'],
+            // Price-line suffix ("per month" etc.) — listings have no rent-
+            // period field, so this is the agent's explicit choice.
+            'og_card_options.period'  => ['nullable', 'in:month,day,year'],
         ]);
 
         $updates = [];
@@ -1801,7 +1804,7 @@ class ListingController extends Controller
             $opts = $validated['og_card_options'] ?? null;
             // Keep only the whitelisted keys (validation ignores unknown ones).
             $updates['og_card_options'] = $opts
-                ? array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent']))
+                ? array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period']))
                 : null;
         }
         if (!$updates) {
