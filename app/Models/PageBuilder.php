@@ -27,8 +27,12 @@ class PageBuilder extends Model implements Auditable
         'slug',
         'seo_tags',
         'description',
+        'tagline',
         'banner',
         'gallery',
+        'flyers',
+        'certificates',
+        'awards',
         'video_url',
         'clicks',
         'impressions',
@@ -40,10 +44,14 @@ class PageBuilder extends Model implements Auditable
         'seo_tags' => 'array',
         'banner' => 'array',
         'gallery' => 'array',
+        'flyers' => 'array',
+        'certificates' => 'array',
+        'awards' => 'array',
         'video_url' => 'array',
         'clicks' => 'integer',
         'impressions' => 'integer',
     ];
+
 
     protected static function boot()
     {

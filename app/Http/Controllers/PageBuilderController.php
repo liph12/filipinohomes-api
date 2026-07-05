@@ -151,9 +151,13 @@ public function store(Request $request)
         'slug'        => 'nullable|string|unique:page_builder,slug',
         'seo_tags'    => 'nullable|array',
         'description' => 'nullable|string',
+        'tagline'     => 'nullable|string|max:255',
         'banner'      => 'nullable|array',
-        'gallery'     => 'nullable|array',
-        'video_url'   => 'nullable|array',
+        'gallery'      => 'nullable|array',
+        'flyers'       => 'nullable|array',
+        'certificates' => 'nullable|array',
+        'awards'       => 'nullable|array',
+        'video_url'    => 'nullable|array',
     ]);
 
     $data['agent_id'] = $agent->id;
@@ -173,9 +177,13 @@ public function store(Request $request)
             'slug'        => 'sometimes|nullable|string|unique:page_builder,slug,' . $pageBuilder->id,
             'seo_tags'    => 'nullable|array',
             'description' => 'nullable|string',
+            'tagline'     => 'nullable|string|max:255',
             'banner'      => 'nullable|array',
-            'gallery'     => 'nullable|array',
-            'video_url'   => 'nullable|array',
+            'gallery'      => 'nullable|array',
+            'flyers'       => 'nullable|array',
+            'certificates' => 'nullable|array',
+            'awards'       => 'nullable|array',
+            'video_url'    => 'nullable|array',
         ]);
 
         $pageBuilder->update($data);
