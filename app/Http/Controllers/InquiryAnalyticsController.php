@@ -77,6 +77,10 @@ class InquiryAnalyticsController extends Controller
             'per_page' => 'nullable|integer|min:1|max:100',
             'sort_by'  => 'nullable|in:count,name',
             'sort_dir' => 'nullable|in:asc,desc',
+            // Filters the table by the client's user_info.country — the exact
+            // value the "From" column displays (distinct from origin_country,
+            // which prefers the per-inquiry chats.origin_* stamp).
+            'client_country' => 'nullable|string|max:8',
         ]);
 
         return response()->json(
@@ -85,6 +89,7 @@ class InquiryAnalyticsController extends Controller
                 (int) ($filters['per_page'] ?? 25),
                 $filters['sort_by'] ?? 'count',
                 $filters['sort_dir'] ?? 'desc',
+                $filters['client_country'] ?? null,
             )
         );
     }

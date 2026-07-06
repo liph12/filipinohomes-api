@@ -13,6 +13,11 @@ class VerifyGuestToken
         $token = $request->header('X-Guest-Token');
 
         if (!$token || !$this->isValid($token)) {
+            // Body shape is load-bearing: the frontend axios interceptor uses
+            // the "error" KEY here to tell a guest-token 401 apart from an
+            // auth 401 (which is keyed "message") — only the latter may log
+            // the user out. Don't change this key without updating
+            // src/lib/axios.ts in the frontend repo.
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 

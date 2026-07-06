@@ -12,18 +12,38 @@ use Illuminate\Support\Facades\DB;
  */
 class InquiryTopClientsService extends InquiryInsightsService
 {
-    public function clients(int $page = 1, int $perPage = 25, string $sortBy = 'count', string $sortDir = 'desc'): array
+    public function clients(int $page = 1, int $perPage = 25, string $sortBy = 'count', string $sortDir = 'desc', ?string $clientCountry = null): array
     {
         $perPage = max(1, min($perPage, 100));
         $page = max(1, $page);
 
-        $totalClients = (int) $this->baseInquiryQuery()->distinct()->count('chats.user_id');
-        $totalInquiries = (int) $this->baseInquiryQuery()->count();
+        // Dropdown options: every country that has at least one inquiring
+        // client in the current scope, with its client count — computed BEFORE
+        // the country filter so the list stays complete while one is selected.
+        // Filters/aggregates on user_info.country (the value the "From" column
+        // shows), not the chats.origin_* stamp.
+        $countries = $this->baseInquiryQuery()
+            ->whereRaw("NULLIF(NULLIF(user_info.country, ''), 'Unknown') IS NOT NULL")
+            ->groupBy('user_info.country')
+            ->orderByDesc(DB::raw('COUNT(DISTINCT chats.user_id)'))
+            ->get([
+                DB::raw('user_info.country as code'),
+                DB::raw('COUNT(DISTINCT chats.user_id) as clients'),
+            ])
+            ->map(fn ($r) => ['code' => (string) $r->code, 'clients' => (int) $r->clients])
+            ->all();
+
+        $scoped = fn () => $clientCountry
+            ? $this->baseInquiryQuery()->where('user_info.country', $clientCountry)
+            : $this->baseInquiryQuery();
+
+        $totalClients = (int) $scoped()->distinct()->count('chats.user_id');
+        $totalInquiries = (int) $scoped()->count();
 
         $orderCol = $sortBy === 'name' ? 'name' : 'inquiry_count';
         $dir = strtolower($sortDir) === 'asc' ? 'asc' : 'desc';
 
-        $query = $this->baseInquiryQuery()
+        $query = $scoped()
             // user_info is 1:1 per client (joined in the base), so its geo
             // columns are safe GROUP BY members — they feed the "From" column.
             ->groupBy('chats.user_id', 'inq.name', 'inq.birthdate', 'inq.gender', 'inq.avatar', 'inq.mobile_no', 'inq.email', 'user_info.country', 'user_info.state', 'user_info.city')
@@ -89,17 +109,20 @@ class InquiryTopClientsService extends InquiryInsightsService
         })->all();
 
         return [
-            'data'   => $data,
+            'data'      => $data,
+            // Country dropdown options (ISO2 + client count), full scope.
+            'countries' => $countries,
             'totals' => [
                 'total_clients'            => $totalClients,
                 'total_inquiries_in_scope' => $totalInquiries,
             ],
             'meta' => [
-                'page'          => $page,
-                'per_page'      => $perPage,
-                'last_page'     => max(1, (int) ceil($totalClients / $perPage)),
-                'sort_by'       => $sortBy,
-                'sort_dir'      => $dir,
+                'page'           => $page,
+                'per_page'       => $perPage,
+                'last_page'      => max(1, (int) ceil($totalClients / $perPage)),
+                'sort_by'        => $sortBy,
+                'sort_dir'       => $dir,
+                'client_country' => $clientCountry,
                 'date_from'     => $this->dateFrom,
                 'date_to'       => $this->dateTo,
                 'category_id'   => $this->categoryId,
