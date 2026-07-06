@@ -1794,6 +1794,9 @@ class ListingController extends Controller
             // Price-line suffix ("per month" etc.) — listings have no rent-
             // period field, so this is the agent's explicit choice.
             'og_card_options.period'  => ['nullable', 'in:month,day,year'],
+            // Keep the "For Sale:"-style intent prefix on the card title
+            // (stripped by default — redundant with the card's category line).
+            'og_card_options.prefix'  => ['nullable', 'boolean'],
         ]);
 
         $updates = [];
@@ -1804,7 +1807,7 @@ class ListingController extends Controller
             $opts = $validated['og_card_options'] ?? null;
             // Keep only the whitelisted keys (validation ignores unknown ones).
             if ($opts) {
-                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period']));
+                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix']));
                 // Price periods are a rental concept — a sale/foreclosure price
                 // is absolute, so a period never gets stored on those.
                 if (strcasecmp($listing->category?->name ?? '', 'For Rent') !== 0) {
