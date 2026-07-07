@@ -356,6 +356,36 @@ class SitemapController extends Controller
     }
 
     /**
+     * Precomputed public listing counts per effective barangay × category ×
+     * property type (refreshed daily by `seo:compute-barangay-counts`).
+     * Feeds the frontend barangay registry (src/lib/barangays.ts), the
+     * barangay sitemap shard, and the page indexability floors — a table
+     * read only, no live GROUP BY per request.
+     */
+    public function barangayCounts(): JsonResponse
+    {
+        $rows = DB::table('barangay_listing_counts')
+            ->select(
+                'barangay_id',
+                'barangay',
+                'city_id',
+                'city',
+                'province_id',
+                'province',
+                'category',
+                'type',
+                'total'
+            )
+            ->orderBy('city')
+            ->orderBy('barangay')
+            ->orderBy('category')
+            ->orderBy('type')
+            ->get();
+
+        return response()->json($rows);
+    }
+
+    /**
      * Active, geocoded facility registry for the frontend — slug -> coords used
      * to resolve a `near-{facility}` URL into the radius filter and on-page copy.
      */

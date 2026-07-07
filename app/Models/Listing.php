@@ -264,7 +264,35 @@ class Listing extends Model implements Auditable
         // the name-LIKE block and the `address` branch below are skipped so a
         // stale client can't double-filter the page back into starvation.
         $cityId = (int) $request->input('city_id');
-        if ($cityId > 0) {
+
+        // ── Registry filter: barangay tier ───────────────────────────────────
+        // barangay_id (CSV — the frontend merges same-slug duplicates within a
+        // city into one page) supersedes the city-level filter below (a
+        // barangay ⊂ its city). Effective-barangay semantics mirror the
+        // seo:compute-barangay-counts CASE exactly so on-page totals equal the
+        // precomputed counts: the reverse-geocoded pin wins; the agent-picked
+        // address_id counts only when it doesn't contradict the pin's city.
+        $barangayIds = array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) $request->input('barangay_id')),
+        )));
+        if (count($barangayIds) > 0) {
+            $query->whereHas('property', function ($q) use ($barangayIds, $cityId) {
+                $q->where(function ($w) use ($barangayIds, $cityId) {
+                    $w->whereIn('geo_barangay_id', $barangayIds)
+                        ->orWhere(function ($o) use ($barangayIds, $cityId) {
+                            $o->whereNull('geo_barangay_id')
+                                ->whereIn('address_id', $barangayIds)
+                                ->when($cityId > 0, function ($g) use ($cityId) {
+                                    $g->where(function ($c) use ($cityId) {
+                                        $c->whereNull('geo_city_id')
+                                            ->orWhere('geo_city_id', $cityId);
+                                    });
+                                });
+                        });
+                });
+            });
+        } elseif ($cityId > 0) {
             $query->whereHas('property', function ($q) use ($cityId) {
                 $q->where(function ($w) use ($cityId) {
                     $w->where('geo_city_id', $cityId)
