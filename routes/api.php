@@ -360,6 +360,11 @@ Route::middleware('strip.tags')->group(function(){
                 // Client Demographics — gender + age brackets of registered
                 // clients (admin-only; agents have their own non-gated stat).
                 Route::get('/user/client-demographics', [ListingController::class, 'dashboardClientDemographics']);
+                // Registered-agent counterpart for the unified Demographics
+                // page (ALL non-deleted agents by registration date — distinct
+                // from /user/agent-demographics, which covers transacting
+                // agents only).
+                Route::get('/user/agent-demographics-registered', [ListingController::class, 'dashboardAgentDemographicsRegistered']);
 
                 // Inquiry Analytics — deep drill-down over listing inquiries
                 // (chats type='listing'): overview breakdowns, hierarchical

@@ -27,6 +27,7 @@ use App\Support\IslandMap;
 use App\Support\RegionMap;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -1579,26 +1580,118 @@ class ListingController extends Controller
             ->whereBetween('created_at', [$start.' 00:00:00', $end.' 23:59:59'])
             ->get(['id', 'gender', 'birthdate']);
 
+        $agg = $this->aggregateDemographics($clients);
+
+        return response()->json([
+            'gender' => $agg['gender'],
+            'age' => $agg['age'],
+            'age_by_gender' => $agg['age_by_gender'],
+            'totals' => [
+                'clients' => $clients->count(),
+                // `total` mirrors the agent endpoint so the frontend can read
+                // one key for both audiences.
+                'total' => $clients->count(),
+                'with_gender' => $agg['with_gender'],
+                'with_age' => $agg['with_age'],
+                'avg_age' => $agg['avg_age'],
+            ],
+            'meta' => ['from' => $start, 'to' => $end],
+        ]);
+    }
+
+    /**
+     * Demographics of ALL registered (non-deleted) agents — the counterpart
+     * of dashboardClientDemographics for the unified Demographics page.
+     * Distinct from dashboardAgentDemographics, which only covers agents
+     * with a transaction in the window. Reads the LR-synced birthdate/gender
+     * straight off `agents`, filters by agents.created_at (registration
+     * cohort), and adds a `region` series (office region) for the
+     * agents-only "By Office Region" chart.
+     */
+    public function dashboardAgentDemographicsRegistered(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'date_start' => 'nullable|date',
+            'date_end' => 'nullable|date|after_or_equal:date_start',
+        ]);
+
+        $start = $validated['date_start'] ?? '2000-01-01';
+        $end = $validated['date_end'] ?? now()->toDateString();
+
+        $agents = Agent::query()
+            ->whereBetween('created_at', [$start.' 00:00:00', $end.' 23:59:59'])
+            ->get(['id', 'gender', 'birthdate', 'region']);
+
+        $agg = $this->aggregateDemographics($agents);
+
+        // Office-region distribution: real regions ordered by headcount,
+        // not_provided last (dominates while the region backfill is partial).
+        $regionCounts = [];
+        $regionMissing = 0;
+        foreach ($agents as $a) {
+            $r = trim((string) ($a->region ?? ''));
+            if ($r === '') {
+                $regionMissing++;
+            } else {
+                $regionCounts[$r] = ($regionCounts[$r] ?? 0) + 1;
+            }
+        }
+        arsort($regionCounts);
+        $region = collect($regionCounts)
+            ->map(fn ($v, $k) => ['label' => $k, 'value' => $v])
+            ->values()
+            ->all();
+        $region[] = ['label' => 'not_provided', 'value' => $regionMissing];
+
+        return response()->json([
+            'gender' => $agg['gender'],
+            'age' => $agg['age'],
+            'age_by_gender' => $agg['age_by_gender'],
+            'region' => $region,
+            'totals' => [
+                'total' => $agents->count(),
+                'with_gender' => $agg['with_gender'],
+                'with_age' => $agg['with_age'],
+                'avg_age' => $agg['avg_age'],
+            ],
+            'meta' => ['from' => $start, 'to' => $end],
+        ]);
+    }
+
+    /**
+     * Shared gender/age-bracket aggregation for the demographics endpoints.
+     * Rows need `gender` + `birthdate`. Gender matching is case-insensitive
+     * (LR-synced agent rows arrive capitalized); birthdate tolerates string
+     * or Carbon. Brackets include a real `under_18` bin — previously minors
+     * were silently folded into 18-24.
+     */
+    private function aggregateDemographics($rows): array
+    {
         $gender = ['male' => 0, 'female' => 0, 'not_provided' => 0];
-        $age = ['18-24' => 0, '25-34' => 0, '35-44' => 0, '45-54' => 0, '55+' => 0, 'not_provided' => 0];
+        $age = ['under_18' => 0, '18-24' => 0, '25-34' => 0, '35-44' => 0, '45-54' => 0, '55+' => 0, 'not_provided' => 0];
         $withGender = 0;
         $withAge = 0;
         $ageSum = 0;
         $ageByGender = []; // exactAge => ['male' => n, 'female' => n]
 
-        foreach ($clients as $c) {
-            $g = in_array($c->gender, ['male', 'female'], true) ? $c->gender : 'not_provided';
+        foreach ($rows as $r) {
+            $g = strtolower(trim((string) ($r->gender ?? '')));
+            if (! in_array($g, ['male', 'female'], true)) {
+                $g = 'not_provided';
+            }
             $gender[$g]++;
             if ($g !== 'not_provided') {
                 $withGender++;
             }
 
-            if ($c->birthdate) {
-                $yrs = $c->birthdate->age;
-                $bracket = $yrs < 25 ? '18-24'
+            $birth = $r->birthdate ? Carbon::parse($r->birthdate) : null;
+            if ($birth) {
+                $yrs = $birth->age;
+                $bracket = $yrs < 18 ? 'under_18'
+                    : ($yrs < 25 ? '18-24'
                     : ($yrs < 35 ? '25-34'
                     : ($yrs < 45 ? '35-44'
-                    : ($yrs < 55 ? '45-54' : '55+')));
+                    : ($yrs < 55 ? '45-54' : '55+'))));
                 $age[$bracket]++;
                 $withAge++;
                 $ageSum += $yrs;
@@ -1614,8 +1707,6 @@ class ListingController extends Controller
             }
         }
 
-        $avgAge = $withAge > 0 ? (int) round($ageSum / $withAge) : null;
-
         ksort($ageByGender);
         $ageRows = [];
         foreach ($ageByGender as $yrs => $c) {
@@ -1627,18 +1718,14 @@ class ListingController extends Controller
             ->values()
             ->all();
 
-        return response()->json([
+        return [
             'gender' => $toSeries($gender),
             'age' => $toSeries($age),
             'age_by_gender' => $ageRows,
-            'totals' => [
-                'clients' => $clients->count(),
-                'with_gender' => $withGender,
-                'with_age' => $withAge,
-                'avg_age' => $avgAge,
-            ],
-            'meta' => ['from' => $start, 'to' => $end],
-        ]);
+            'with_gender' => $withGender,
+            'with_age' => $withAge,
+            'avg_age' => $withAge > 0 ? (int) round($ageSum / $withAge) : null,
+        ];
     }
 
     public function dashboardStatusByDate(Request $request): JsonResponse
