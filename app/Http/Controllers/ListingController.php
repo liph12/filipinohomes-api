@@ -1659,6 +1659,99 @@ class ListingController extends Controller
     }
 
     /**
+     * The individuals behind the demographics aggregates — powers the
+     * "View list" modal on the Client & Agent Demographics page. Paginated,
+     * name/email-searchable list of clients (users, role client) or agents
+     * (agents + their user row) registered inside the date window, newest
+     * first. Admin-only via the surrounding route group.
+     */
+    public function dashboardDemographicsPeople(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'role' => 'required|in:client,agent',
+            'date_start' => 'nullable|date',
+            'date_end' => 'nullable|date|after_or_equal:date_start',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'search' => 'nullable|string|max:120',
+        ]);
+
+        $start = ($validated['date_start'] ?? '2000-01-01').' 00:00:00';
+        $end = ($validated['date_end'] ?? now()->toDateString()).' 23:59:59';
+        $perPage = (int) ($validated['per_page'] ?? 25);
+        $search = trim($validated['search'] ?? '');
+
+        if ($validated['role'] === 'client') {
+            $q = User::query()
+                ->client()
+                ->whereBetween('created_at', [$start, $end]);
+            if ($search !== '') {
+                $q->where(function ($w) use ($search) {
+                    $w->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%");
+                });
+            }
+            $p = $q->orderByDesc('created_at')
+                ->paginate($perPage, ['id', 'name', 'email', 'avatar', 'gender', 'birthdate', 'created_at']);
+
+            $data = collect($p->items())->map(fn ($u) => [
+                'id' => $u->id,
+                'name' => $u->name,
+                'email' => $u->email,
+                'avatar' => $u->avatar,
+                'gender' => $u->gender ? strtolower($u->gender) : null,
+                'age' => $u->birthdate ? Carbon::parse($u->birthdate)->age : null,
+                'region' => null,
+                'registered_at' => $u->created_at?->toDateString(),
+            ])->all();
+        } else {
+            // Agents: identity (name/email/avatar) lives on the user row;
+            // demographics (LR-synced) + office region live on agents.
+            $q = Agent::query()
+                ->leftJoin('users', 'users.id', '=', 'agents.user_id')
+                ->whereBetween('agents.created_at', [$start, $end]);
+            if ($search !== '') {
+                $q->where(function ($w) use ($search) {
+                    $w->where('users.name', 'like', "%{$search}%")
+                        ->orWhere('users.email', 'like', "%{$search}%");
+                });
+            }
+            $p = $q->orderByDesc('agents.created_at')
+                ->paginate($perPage, [
+                    'agents.id',
+                    'users.name',
+                    'users.email',
+                    'users.avatar',
+                    'agents.gender',
+                    'agents.birthdate',
+                    'agents.region',
+                    'agents.created_at',
+                ]);
+
+            $data = collect($p->items())->map(fn ($a) => [
+                'id' => $a->id,
+                'name' => $a->name,
+                'email' => $a->email,
+                'avatar' => $a->avatar,
+                'gender' => $a->gender ? strtolower($a->gender) : null,
+                'age' => $a->birthdate ? Carbon::parse($a->birthdate)->age : null,
+                'region' => $a->region ?: null,
+                'registered_at' => $a->created_at ? Carbon::parse($a->created_at)->toDateString() : null,
+            ])->all();
+        }
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'page' => $p->currentPage(),
+                'per_page' => $p->perPage(),
+                'last_page' => $p->lastPage(),
+                'total' => $p->total(),
+            ],
+        ]);
+    }
+
+    /**
      * Shared gender/age-bracket aggregation for the demographics endpoints.
      * Rows need `gender` + `birthdate`. Gender matching is case-insensitive
      * (LR-synced agent rows arrive capitalized); birthdate tolerates string

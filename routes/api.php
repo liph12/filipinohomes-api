@@ -365,6 +365,8 @@ Route::middleware('strip.tags')->group(function(){
                 // from /user/agent-demographics, which covers transacting
                 // agents only).
                 Route::get('/user/agent-demographics-registered', [ListingController::class, 'dashboardAgentDemographicsRegistered']);
+                // The individuals behind the aggregates — "View list" modal.
+                Route::get('/user/demographics-people', [ListingController::class, 'dashboardDemographicsPeople']);
 
                 // Inquiry Analytics — deep drill-down over listing inquiries
                 // (chats type='listing'): overview breakdowns, hierarchical
