@@ -105,6 +105,38 @@ class Listing extends Model implements Auditable
             }
         });
 
+        // Slug permanence safety net: whenever a slug ACTUALLY changes (rare
+        // and deliberate — ListingService no longer regenerates slugs on
+        // title edits), record the outgoing slug so the old URL keeps
+        // resolving and the frontend can 301 it to the current one. Indexed
+        // URLs must never 404 because someone cleaned up a title. Upsert:
+        // an old slug points at wherever it most recently belonged.
+        // (Note: saveQuietly() bypasses this observer — slug edits must go
+        // through a normal save/update.)
+        static::updating(function ($model) {
+            if ($model->isDirty('slug')) {
+                $oldSlug = $model->getOriginal('slug');
+                if (! empty($oldSlug) && $oldSlug !== $model->slug) {
+                    \Illuminate\Support\Facades\DB::table('listing_slug_histories')->upsert(
+                        [[
+                            'slug'       => $oldSlug,
+                            'listing_id' => $model->id,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]],
+                        ['slug'],
+                        ['listing_id', 'updated_at'],
+                    );
+                    // If the listing reclaims a slug that lives in history
+                    // (e.g. renamed back), remove the shadowed row so the
+                    // direct lookup is the single source of truth again.
+                    \Illuminate\Support\Facades\DB::table('listing_slug_histories')
+                        ->where('slug', $model->slug)
+                        ->delete();
+                }
+            }
+        });
+
         // Auto-expire the featured flag, mirroring Property's ATS expiry: a
         // listing stops being featured the moment featured_until passes. The
         // `saving` guard catches writes; `retrieved` self-heals on read so it

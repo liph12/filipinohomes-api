@@ -628,17 +628,21 @@ class ListingService
                 defer(fn () => app(PropertyGeoResolver::class)->resolveById($pid, true));
             }
 
-            $slug = $listing->slug;
-            if (isset($data['name']) && $data['name'] !== $listing->name) {
-                $slug = $this->uniqueListingSlug($data['name'], $listing->id);
-            }
-
+            // SLUG PERMANENCE: the slug is generated ONCE at creation and never
+            // regenerated on update. The URL is the listing's identity — its
+            // Google index entry, ranking signals, backlinks, and shares all
+            // attach to it. The old behavior (re-slugging whenever the name
+            // changed) 404'd the indexed URL every time an agent/admin cleaned
+            // up a title, feeding GSC's "Not found (404)" pile and killing the
+            // page's rankings. Titles are presentation; edit them freely.
+            // (Deliberate slug changes are still possible via direct model
+            // update — the Listing `updating` observer records the old slug in
+            // listing_slug_histories so the frontend 301s it.)
             $listingFields = [
                 'name', 'price', 'visibility', 'status',
                 'category_id', 'is_featured', 'seo_tags'
             ];
-            $listingData          = array_intersect_key($data, array_flip($listingFields));
-            $listingData['slug']  = $slug;
+            $listingData = array_intersect_key($data, array_flip($listingFields));
 
             // Keep manual featuring consistent with the auto-expire hook: if this
             // edit turns the listing featured while its old token expiry is
@@ -707,6 +711,13 @@ class ListingService
             Listing::withTrashed()
                 ->where('slug', $candidate)
                 ->when($ignoreId, fn ($q) => $q->where('id', '!=', $ignoreId))
+                ->exists()
+            // Historical slugs are reserved too: they 301 old indexed URLs to
+            // their listing, and a new listing claiming one would shadow that
+            // redirect (the direct lookup wins over the history fallback).
+            || DB::table('listing_slug_histories')
+                ->where('slug', $candidate)
+                ->when($ignoreId, fn ($q) => $q->where('listing_id', '!=', $ignoreId))
                 ->exists()
         ) {
             $i++;

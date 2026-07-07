@@ -238,22 +238,40 @@ class ListingController extends Controller
             // One hydrated lookup (was two: a bare lookup for click-tracking + a
             // public lookup for display). Eager-load the full Resource graph to
             // avoid the barangay/city/province + agent.user N+1 on the detail page.
+            $resourceGraph = [
+                'property.propertyAttribute.subtype.type',
+                'property.nearbyFacility',
+                'property.barangay.city.province',
+                'property.furnishing',
+                // Parent project (when the property belongs to one) for the
+                // project card shown below the agent on the detail page.
+                'property.project' => fn ($q) => $q->withCount(['properties' => fn ($p) => $p->where('is_project', true)]),
+                'category',
+                'agent' => function ($q) {
+                    $q->withCount('listings');
+                },
+                'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
+            ];
+
             $found = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])
-                ->with([
-                    'property.propertyAttribute.subtype.type',
-                    'property.nearbyFacility',
-                    'property.barangay.city.province',
-                    'property.furnishing',
-                    // Parent project (when the property belongs to one) for the
-                    // project card shown below the agent on the detail page.
-                    'property.project' => fn ($q) => $q->withCount(['properties' => fn ($p) => $p->where('is_project', true)]),
-                    'category',
-                    'agent' => function ($q) {
-                        $q->withCount('listings');
-                    },
-                    'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
-                ])
+                ->with($resourceGraph)
                 ->first();
+
+            // Slug-history fallback: the requested slug was this listing's URL
+            // before a deliberate rename (listing_slug_histories, written by
+            // the Listing `updating` observer). Return the listing under its
+            // CURRENT slug — the frontend compares slugs and 301s, so an old
+            // indexed/shared URL transfers its value instead of 404ing.
+            if ($found === null) {
+                $historyListingId = DB::table('listing_slug_histories')
+                    ->whereRaw('LOWER(slug) = ?', [strtolower($slug)])
+                    ->value('listing_id');
+                if ($historyListingId) {
+                    $found = Listing::where('id', $historyListingId)
+                        ->with($resourceGraph)
+                        ->first();
+                }
+            }
 
             if ($found) {
                 $deviceId = $request->input('device_id');
