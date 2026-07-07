@@ -1721,23 +1721,45 @@ class ListingController extends Controller
                     'agents.id',
                     'users.name',
                     'users.email',
-                    'users.avatar',
+                    // Profile photo lives on agents.avatar (LR-synced; raw URL
+                    // or JSON array depending on era) — users.avatar is empty
+                    // for LR-imported agents, so it's only the fallback.
+                    'agents.avatar as agent_avatar',
+                    'users.avatar as user_avatar',
                     'agents.gender',
                     'agents.birthdate',
                     'agents.region',
                     'agents.created_at',
                 ]);
 
-            $data = collect($p->items())->map(fn ($a) => [
-                'id' => $a->id,
-                'name' => $a->name,
-                'email' => $a->email,
-                'avatar' => $a->avatar,
-                'gender' => $a->gender ? strtolower($a->gender) : null,
-                'age' => $a->birthdate ? Carbon::parse($a->birthdate)->age : null,
-                'region' => $a->region ?: null,
-                'registered_at' => $a->created_at ? Carbon::parse($a->created_at)->toDateString() : null,
-            ])->all();
+            $data = collect($p->items())->map(function ($a) {
+                $avatar = $a->agent_avatar ?: $a->user_avatar;
+                // agents.avatar spans eras: plain URL, JSON array ("[…]"),
+                // or JSON-encoded string ('"https:\/\/…"') — normalize all
+                // three to a bare URL.
+                if (is_string($avatar)) {
+                    $trim = ltrim($avatar);
+                    if (str_starts_with($trim, '[') || str_starts_with($trim, '"')) {
+                        $decoded = json_decode($trim, true);
+                        if (is_array($decoded)) {
+                            $avatar = $decoded[0] ?? null;
+                        } elseif (is_string($decoded)) {
+                            $avatar = $decoded;
+                        }
+                    }
+                }
+
+                return [
+                    'id' => $a->id,
+                    'name' => $a->name,
+                    'email' => $a->email,
+                    'avatar' => $avatar ?: null,
+                    'gender' => $a->gender ? strtolower($a->gender) : null,
+                    'age' => $a->birthdate ? Carbon::parse($a->birthdate)->age : null,
+                    'region' => $a->region ?: null,
+                    'registered_at' => $a->created_at ? Carbon::parse($a->created_at)->toDateString() : null,
+                ];
+            })->all();
         }
 
         return response()->json([
