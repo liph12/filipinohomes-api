@@ -298,6 +298,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/listings/insights/by-province', [ListingController::class, 'insightsByProvince']);
             Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
+            Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);
             Route::get('/listings/insights/clusters', [ListingController::class, 'insightsClusters']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
                 ->where('status', '[a-z_-]+');
