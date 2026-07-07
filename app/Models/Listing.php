@@ -251,12 +251,41 @@ class Listing extends Model implements Auditable
         $city = trim($request->input('city') ?? '');
         $prov = trim($request->input('province') ?? '');
 
+        // ── Registry filter: relational city_id (SEO city money pages) ──────
+        // The programmatic city pages previously filtered via the tokenized
+        // `address` LIKE below, which starves cities whose common address form
+        // omits a token — "Talisay City" pages matched 2 of ~82 rentals because
+        // agents write "Talisay, Cebu" without the word "City". city_id filters
+        // through the real location registry instead: the reverse-geocoded map
+        // pin (properties.geo_city_id) wins when present; the agent-picked
+        // barangay dropdown (address_id → barangays.city_id, 100% filled as of
+        // 2026-07) covers the rest. COALESCE semantics, same precedent as
+        // InquiryInsightsService. When city_id is present it is authoritative:
+        // the name-LIKE block and the `address` branch below are skipped so a
+        // stale client can't double-filter the page back into starvation.
+        $cityId = (int) $request->input('city_id');
+        if ($cityId > 0) {
+            $query->whereHas('property', function ($q) use ($cityId) {
+                $q->where(function ($w) use ($cityId) {
+                    $w->where('geo_city_id', $cityId)
+                        ->orWhere(function ($o) use ($cityId) {
+                            $o->whereNull('geo_city_id')
+                                ->whereIn('address_id', function ($sub) use ($cityId) {
+                                    $sub->select('id')
+                                        ->from('barangays')
+                                        ->where('city_id', $cityId);
+                                });
+                        });
+                });
+            });
+        }
+
         // Only filter by location when at least one level is actually provided,
         // and only apply the LIKE at the level(s) given. The previous code ran a
         // triple-nested barangay→city→province `name LIKE "%%"` EXISTS on EVERY
         // search (the dominant cost behind the slow filter / RDS hot query); with
         // no location params that chain is a no-op match, so we skip it entirely.
-        if ($brgy !== '' || $city !== '' || $prov !== '') {
+        if ($cityId <= 0 && ($brgy !== '' || $city !== '' || $prov !== '')) {
             $query->whereHas('property.barangay', function ($q) use ($brgy, $city, $prov) {
                 if ($brgy !== '') {
                     $q->where('name', 'LIKE', "%{$brgy}%");
@@ -293,7 +322,8 @@ class Listing extends Model implements Auditable
             $search = trim($request->input('search', ''));
             $address = $request->input('address');
 
-            if (! empty($address)) {
+            // city_id is authoritative — see the registry filter above.
+            if (! empty($address) && $cityId <= 0) {
                 // Tokenize the address string and AND-match each term as a
                 // LIKE substring — same approach the `search` branch below
                 // already uses. The single-LIKE form was breaking

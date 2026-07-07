@@ -135,8 +135,14 @@ class SitemapController extends Controller
     {
         $rows = DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
-            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
-            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            // Effective city = reverse-geocoded map pin when present, else the
+            // agent-picked barangay's city (address_id, 100% filled). Same
+            // COALESCE semantics as the public `city_id` filter in
+            // Listing::scopeFilter, so these counts equal on-page totals by
+            // construction. barangays is a LEFT join: a geo-resolved property
+            // without address_id must still count.
+            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', DB::raw('COALESCE(properties.geo_city_id, barangays.city_id)'))
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
@@ -156,6 +162,8 @@ class SitemapController extends Controller
                   ->orWhere('listings.verification_status', '!=', 'flagged');
             })
             ->select(
+                'cities.id as city_id',
+                'provinces.id as province_id',
                 'cities.name as city',
                 'provinces.name as province',
                 'categories.name as category',
@@ -163,7 +171,7 @@ class SitemapController extends Controller
                 'property_subtypes.name as subtype',
                 DB::raw('COUNT(*) as total')
             )
-            ->groupBy('cities.name', 'provinces.name', 'categories.name', 'property_types.name', 'property_subtypes.name')
+            ->groupBy('cities.id', 'provinces.id', 'cities.name', 'provinces.name', 'categories.name', 'property_types.name', 'property_subtypes.name')
             ->having    ('total', '>=', 1)
             ->get();
 

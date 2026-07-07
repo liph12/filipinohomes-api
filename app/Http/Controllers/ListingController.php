@@ -164,14 +164,24 @@ class ListingController extends Controller
 
     public function listingByCityAll()
     {
+        // Effective city = COALESCE(geo pin, agent-picked barangay's city) —
+        // identical semantics to SitemapController@locationCounts and the
+        // public `city_id` filter in Listing::scopeFilter, so the frontend's
+        // city registry, sitemap counts, and on-page results all agree.
+        // city_id/province_id are ADDITIVE response fields: the frontend uses
+        // them to filter relationally; their presence is also its deploy gate
+        // (an old backend without ids ⇒ the frontend keeps the address-text
+        // fallback, so deploy order can't break location filtering).
         $cities = Property::select(
+            'cities.id as city_id',
+            'provinces.id as province_id',
             'cities.name as city',
             'provinces.name as province',
         )->whereHas('publicListing')
-            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
-            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', DB::raw('COALESCE(properties.geo_city_id, barangays.city_id)'))
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
-            ->groupBy('cities.id')
+            ->groupBy('cities.id', 'provinces.id', 'cities.name', 'provinces.name')
             ->get();
 
         return response()->json($cities);
