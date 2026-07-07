@@ -23,6 +23,7 @@ use App\Services\Listing\ListingByStatusService;
 use App\Services\Listing\ListingByTypeService;
 use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
+use App\Services\Listing\ListingSummaryService;
 use App\Services\TeamLeadershipService;
 use App\Support\IslandMap;
 use App\Support\RegionMap;
@@ -2616,6 +2617,28 @@ class ListingController extends Controller
             $region,
             $barangayId
         ));
+    }
+
+    /**
+     * Listing Insights — compact overview numbers for the section tiles
+     * (totals, category/transaction splits, per-type, per-island, this-month).
+     */
+    public function insightsSummary(Request $request, ListingSummaryService $insights): JsonResponse
+    {
+        $agentIds = $this->resolveInsightsAgentScope($request);
+        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
+        $provinceId = $request->query('province_id');
+        $cityId = $request->query('city_id');
+
+        return response()->json($insights->summary([
+            'date_start' => is_string($request->query('date_start')) ? $request->query('date_start') : null,
+            'date_end' => is_string($request->query('date_end')) ? $request->query('date_end') : null,
+            'province_id' => is_numeric($provinceId) ? (int) $provinceId : null,
+            'city_id' => is_numeric($cityId) ? (int) $cityId : null,
+            'island' => $island,
+            'region' => $region,
+            'barangay_id' => $barangayId,
+        ], $agentIds));
     }
 
     /**
