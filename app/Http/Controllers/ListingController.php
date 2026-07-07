@@ -2759,6 +2759,8 @@ class ListingController extends Controller
             'barangay_id' => $request->query('barangay_id') !== null
                 ? (int) $request->query('barangay_id')
                 : null,
+            'sort' => (string) $request->query('sort', ''),
+            'dir' => (string) $request->query('dir', 'desc'),
         ], $agentIds));
     }
 

@@ -290,6 +290,21 @@ class ListingByStatusService extends ListingInsightsService
 
         $totalCount = (clone $base)->count('listings.id');
 
+        // Optional column sort (defaults to newest-updated first).
+        $sortMap = [
+            'name' => 'listings.name',
+            'agent' => 'agents.first_name',
+            'category' => 'categories.name',
+            'status' => 'properties.status',
+            'verification' => 'listings.verification_status',
+            'ats' => 'properties.ats_status',
+            'created' => 'listings.created_at',
+            'status_changed' => 'properties.status_change_date',
+            'price' => 'listings.price',
+        ];
+        $sortCol = $sortMap[strtolower(trim((string) ($params['sort'] ?? '')))] ?? null;
+        $sortDir = strtolower((string) ($params['dir'] ?? 'desc')) === 'asc' ? 'asc' : 'desc';
+
         $rows = (clone $base)
             ->leftJoin('agents', 'agents.id', '=', 'listings.agent_id')
             ->leftJoin('users', 'users.id', '=', 'agents.user_id')
@@ -317,6 +332,8 @@ class ListingByStatusService extends ListingInsightsService
                 'listings.created_at',
                 'listings.updated_at',
                 'properties.status as property_status',
+                'properties.status_change_date',
+                'properties.status_remark',
                 'properties.is_project',
                 'properties.ats_status',
                 'properties.ats_expiration_date',
@@ -342,7 +359,7 @@ class ListingByStatusService extends ListingInsightsService
                 DB::raw('COALESCE(project_provinces.name, property_provinces.name) as province_name'),
                 DB::raw('categories.name as category_name')
             )
-            ->orderByDesc('listings.updated_at')
+            ->when($sortCol, fn ($q) => $q->orderBy($sortCol, $sortDir), fn ($q) => $q->orderByDesc('listings.updated_at'))
             ->offset(($page - 1) * $perPage)
             ->limit($perPage)
             ->get();
@@ -409,6 +426,8 @@ class ListingByStatusService extends ListingInsightsService
                 'price' => $row->price,
                 'category_name' => $row->category_name,
                 'property_status' => $row->property_status,
+                'status_change_date' => $row->status_change_date,
+                'status_remark' => $row->status_remark,
                 'verification_status' => $row->verification_status,
                 'visibility' => $row->visibility,
                 'is_featured' => (bool) $row->is_featured,
