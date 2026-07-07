@@ -74,8 +74,9 @@ class AgentController extends Controller
                 'pageBuilder:id,agent_id,slug',
                 'teamMembers.team',
             ])
-            ->whereHas('user.role', function($q){
-                $q->where('name', 'agent');
+            ->whereHas('user.role', function($q) use ($request) {
+                // Opt-in: show ONLY admins that have an agent profile.
+                $q->where('name', $request->boolean('include_admins') ? 'admin' : 'agent');
             });
 
         // Secretary (FH role 5): in the management DASHBOARD the agents list is
@@ -838,8 +839,8 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count"),
             ])
             ->with(['user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at')])
-            ->whereHas('user.role', function ($q) {
-                $q->where('name', 'agent');
+            ->whereHas('user.role', function ($q) use ($request) {
+                $q->where('name', $request->boolean('include_admins') ? 'admin' : 'agent');
             });
 
         // Secretary: scope to their office region (fail-closed if unassigned).
