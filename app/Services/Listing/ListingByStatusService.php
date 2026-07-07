@@ -264,8 +264,11 @@ class ListingByStatusService extends ListingInsightsService
                         ->orWhereNull('properties.status');
                 });
             }, function ($q) use ($status) {
-                // 'all' = every transaction status (Sold / Rented / Leased).
-                if ($status === 'all') {
+                // 'any' = every listing regardless of status (the "By Listings"
+                // tab); 'all' = every transaction status (Sold / Rented / Leased).
+                if ($status === 'any') {
+                    // no status filter — include active, sold, rented, leased, …
+                } elseif ($status === 'all') {
                     $q->whereIn('properties.status', self::TRANSACTION_STATUSES);
                 } else {
                     $q->where('properties.status', $status);
@@ -288,6 +291,13 @@ class ListingByStatusService extends ListingInsightsService
         $totalCount = (clone $base)->count('listings.id');
 
         $rows = (clone $base)
+            ->leftJoin('agents', 'agents.id', '=', 'listings.agent_id')
+            ->leftJoin('users', 'users.id', '=', 'agents.user_id')
+            ->leftJoin('users as auditor', 'auditor.id', '=', 'listings.audited_by')
+            ->leftJoin('users as ats_reviewer', 'ats_reviewer.id', '=', 'properties.reviewed_by')
+            ->leftJoin('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+            ->leftJoin('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->leftJoin('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
             ->select(
                 'listings.id',
                 'listings.code',
@@ -296,11 +306,37 @@ class ListingByStatusService extends ListingInsightsService
                 'listings.price',
                 'listings.visibility',
                 'listings.is_featured',
+                'listings.verification_status',
+                'listings.audit_notes',
+                'listings.audit_checklist',
+                'listings.audited_at',
+                'listings.re_submitted_at',
+                'listings.clicks',
+                'listings.impressions',
                 'listings.featured_photo',
                 'listings.created_at',
                 'listings.updated_at',
                 'properties.status as property_status',
                 'properties.is_project',
+                'properties.ats_status',
+                'properties.ats_expiration_date',
+                'properties.ats_remarks',
+                'properties.agent_ats_remarks',
+                'properties.has_ats_files',
+                'properties.address',
+                'properties.description',
+                'properties.ats_attachments',
+                'property_types.name as type_name',
+                'property_subtypes.name as subtype_name',
+                'projects.name as project_name',
+                'auditor.name as audited_by_name',
+                'ats_reviewer.name as ats_reviewer_name',
+                'agents.first_name as agent_first',
+                'agents.last_name as agent_last',
+                'agents.mobile_no as agent_mobile',
+                'agents.lr_email as agent_email',
+                'agents.avatar as agent_avatar_raw',
+                'users.avatar as user_avatar',
                 DB::raw('COALESCE(projects.name, properties.name) as property_name'),
                 DB::raw('COALESCE(project_cities.name, property_cities.name) as city_name'),
                 DB::raw('COALESCE(project_provinces.name, property_provinces.name) as province_name'),
@@ -329,6 +365,42 @@ class ListingByStatusService extends ListingInsightsService
                 $featured = ! empty($featured[0]) ? $featured[0] : null;
             }
 
+            // properties.ats_attachments is a JSON blob { photos: [], documents: [] }
+            // — normalize to two URL arrays for the "With ATS" column + drill-down.
+            $attachments = $row->ats_attachments;
+            if (is_string($attachments)) {
+                $decoded = json_decode($attachments, true);
+                $attachments = is_array($decoded) ? $decoded : [];
+            }
+            if (! is_array($attachments)) {
+                $attachments = [];
+            }
+            $photos    = is_array($attachments['photos'] ?? null) ? array_values($attachments['photos']) : [];
+            $documents = is_array($attachments['documents'] ?? null) ? array_values($attachments['documents']) : [];
+
+            // audit_checklist is a JSON map { item_key: bool } — decode to an
+            // object, or null when empty/blank (so the frontend shows nothing).
+            $checklist = json_decode((string) $row->audit_checklist, true);
+            $checklist = (is_array($checklist) && count($checklist) > 0) ? $checklist : null;
+
+            // agents.avatar may be a JSON-encoded string ("\"https://…\"") — decode
+            // to a bare URL, then fall back to the linked user's avatar when blank.
+            $agentAvatar = $row->agent_avatar_raw;
+            if (is_string($agentAvatar)) {
+                $trimmed = trim($agentAvatar);
+                if ($trimmed !== '' && ($trimmed[0] === '"' || $trimmed[0] === '[')) {
+                    $decoded = json_decode($trimmed, true);
+                    if (is_string($decoded)) {
+                        $agentAvatar = $decoded;
+                    } elseif (is_array($decoded)) {
+                        $agentAvatar = ! empty($decoded[0]) ? $decoded[0] : null;
+                    }
+                }
+            }
+            if (empty($agentAvatar)) {
+                $agentAvatar = $row->user_avatar;
+            }
+
             return [
                 'id' => (int) $row->id,
                 'code' => (string) $row->code,
@@ -337,13 +409,38 @@ class ListingByStatusService extends ListingInsightsService
                 'price' => $row->price,
                 'category_name' => $row->category_name,
                 'property_status' => $row->property_status,
+                'verification_status' => $row->verification_status,
                 'visibility' => $row->visibility,
                 'is_featured' => (bool) $row->is_featured,
                 'is_project' => (bool) $row->is_project,
                 'image' => $featured,
                 'property_name' => $row->property_name,
+                'type_name' => $row->type_name,
+                'subtype_name' => $row->subtype_name,
+                'project_name' => $row->project_name,
+                'address' => $row->address,
+                'description' => $row->description,
                 'city_name' => $row->city_name,
                 'province_name' => $row->province_name,
+                'clicks' => (int) $row->clicks,
+                'impressions' => (int) $row->impressions,
+                'ats_status' => $row->ats_status,
+                'ats_expiration_date' => $row->ats_expiration_date,
+                'ats_remarks' => $row->ats_remarks,
+                'agent_ats_remarks' => $row->agent_ats_remarks,
+                'has_ats_files' => (bool) $row->has_ats_files,
+                'ats_reviewer_name' => $row->ats_reviewer_name,
+                'ats_photos' => $photos,
+                'ats_documents' => $documents,
+                'audit_notes' => $row->audit_notes,
+                'audit_checklist' => $checklist,
+                'audited_at' => $row->audited_at,
+                'audited_by_name' => $row->audited_by_name,
+                're_submitted_at' => $row->re_submitted_at,
+                'agent_name' => trim(((string) $row->agent_first) . ' ' . ((string) $row->agent_last)),
+                'agent_email' => $row->agent_email,
+                'agent_mobile' => $row->agent_mobile,
+                'agent_avatar' => $agentAvatar ?: null,
                 'created_at' => $row->created_at,
                 'updated_at' => $row->updated_at,
             ];
