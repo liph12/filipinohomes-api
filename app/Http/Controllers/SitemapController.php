@@ -274,6 +274,57 @@ class SitemapController extends Controller
             }
         }
 
+        // --- static price bands (under-1m/3m/5m): For Sale only. A band
+        // that covers ~the whole cohort is a near-duplicate of the base
+        // city page, so a row is only emitted when the band is a REAL
+        // subset (≤85% of the unfiltered cohort). The frontend mirrors
+        // this: band pages absent from this feed render noindex,follow
+        // and are excluded from the modifier cross-link mesh.
+        $bandCaps = [
+            'under-1m' => 1_000_000,
+            'under-3m' => 3_000_000,
+            'under-5m' => 5_000_000,
+        ];
+
+        $baseTotals = [];
+        $baseRows = $this->publiclyListedListingsJoin()
+            ->where('categories.name', 'For Sale')
+            ->select(
+                'categories.name as category',
+                'property_types.name as type',
+                'cities.name as city',
+                'provinces.name as province',
+                DB::raw('COUNT(*) as total')
+            )
+            ->groupBy('categories.name', 'property_types.name', 'cities.name', 'provinces.name')
+            ->get();
+        foreach ($baseRows as $r) {
+            $baseTotals["{$r->type}|{$r->city}|{$r->province}"] = (int) $r->total;
+        }
+
+        foreach ($bandCaps as $modifier => $cap) {
+            $query = $this->publiclyListedListingsJoin()
+                ->where('categories.name', 'For Sale')
+                ->where('listings.price', '<=', $cap)
+                ->select(
+                    'categories.name as category',
+                    'property_types.name as type',
+                    'cities.name as city',
+                    'provinces.name as province',
+                    DB::raw('COUNT(*) as total')
+                )
+                ->groupBy('categories.name', 'property_types.name', 'cities.name', 'provinces.name')
+                ->having('total', '>=', $minListings);
+
+            foreach ($query->get() as $r) {
+                $base = $baseTotals["{$r->type}|{$r->city}|{$r->province}"] ?? 0;
+                if ($base > 0 && (int) $r->total > 0.85 * $base) {
+                    continue; // band ≈ whole cohort → duplicate of the base page
+                }
+                $results[] = $this->queryCountRow($modifier, $r);
+            }
+        }
+
         return response()->json($results);
     }
 
@@ -303,8 +354,11 @@ class SitemapController extends Controller
     {
         return DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
-            ->join('barangays', 'barangays.id', '=', 'properties.address_id')
-            ->join('cities', 'cities.id', '=', 'barangays.city_id')
+            // Effective city = COALESCE(geo pin, agent-picked barangay's city)
+            // — same registry semantics as locationCounts and the public
+            // city_id filter, so modifier/band counts match on-page results.
+            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->join('cities', 'cities.id', '=', DB::raw('COALESCE(properties.geo_city_id, barangays.city_id)'))
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
