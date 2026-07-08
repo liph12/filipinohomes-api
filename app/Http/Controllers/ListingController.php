@@ -2031,6 +2031,8 @@ class ListingController extends Controller
             'og_card_options.prefix'  => ['nullable', 'boolean'],
             // Price accent color on the card (default gold).
             'og_card_options.priceColor' => ['nullable', 'in:gold,white,red,green,blue'],
+            // Category badge style: colored by category (default) or clear.
+            'og_card_options.badge' => ['nullable', 'in:color,clear'],
         ]);
 
         $updates = [];
@@ -2041,7 +2043,7 @@ class ListingController extends Controller
             $opts = $validated['og_card_options'] ?? null;
             // Keep only the whitelisted keys (validation ignores unknown ones).
             if ($opts) {
-                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix', 'priceColor']));
+                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix', 'priceColor', 'badge']));
                 // Price periods are a rental concept — a sale/foreclosure price
                 // is absolute, so a period never gets stored on those.
                 if (strcasecmp($listing->category?->name ?? '', 'For Rent') !== 0) {
