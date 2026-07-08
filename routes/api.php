@@ -305,6 +305,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);
             Route::get('/listings/insights/summary', [ListingController::class, 'insightsSummary']);
             Route::get('/listings/insights/clusters', [ListingController::class, 'insightsClusters']);
+            // Admin "Top Listing Creators" tile (admin-gated in the controller).
+            Route::get('/listings/insights/top-creators', [ListingController::class, 'insightsTopCreators']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
                 ->where('status', '[a-z_-]+');
             Route::get('/listings/insights/by-city/{city}/ats', [ListingController::class, 'insightsCityAtsListings'])
