@@ -125,6 +125,44 @@ class AgentController extends Controller
             });
         }
 
+        // Admin activity filters (Agents Management "Last online" dropdown):
+        // active_within=N keeps agents seen in the last N days;
+        // inactive_over=N keeps agents NOT seen for N+ days (or never online).
+        if (($within = (int) $request->query('active_within', 0)) > 0) {
+            $threshold = now()->subDays($within);
+            $query->whereHas('user', function ($uq) use ($threshold) {
+                $uq->where('last_online_at', '>=', $threshold);
+            });
+        }
+        if (($over = (int) $request->query('inactive_over', 0)) > 0) {
+            $threshold = now()->subDays($over);
+            $query->where(function ($q) use ($threshold) {
+                $q->whereDoesntHave('user')
+                  ->orWhereHas('user', function ($uq) use ($threshold) {
+                      $uq->where(function ($w) use ($threshold) {
+                          $w->whereNull('last_online_at')
+                            ->orWhere('last_online_at', '<', $threshold);
+                      });
+                  });
+            });
+        }
+
+        // Listings ceiling — max_listings=0 gives the "no listings yet" view.
+        if ($request->filled('max_listings')) {
+            $query->having('listings_count', '<=', (int) $request->query('max_listings'));
+        }
+
+        // Posted-in-period filter — pairs with date_from/date_to (which drive
+        // listings_in_range_count): min_in_range=1 keeps agents who POSTED in
+        // the window; max_in_range=0 keeps those who did NOT (the boss's
+        // "who isn't inputting listings" view).
+        if (($minRange = (int) $request->query('min_in_range', 0)) > 0) {
+            $query->having('listings_in_range_count', '>=', $minRange);
+        }
+        if ($request->filled('max_in_range')) {
+            $query->having('listings_in_range_count', '<=', (int) $request->query('max_in_range'));
+        }
+
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
 
@@ -185,6 +223,56 @@ class AgentController extends Controller
                     [now()->subMinutes(5)]
                 )
                 ->orderByDesc('listings_count');
+        }
+
+        // CSV export (Agents Management "Export Excel") — the SAME query and
+        // filters as the table, but the full result set streamed as UTF-8 CSV
+        // (BOM included so Excel renders names correctly). Auth-gated: the
+        // route itself is public for the directory, so exporting contact data
+        // requires a logged-in non-client user.
+        if ($request->query('export') === 'csv') {
+            $exporter = $request->user() ?? Auth::guard('sanctum')->user();
+            abort_unless($exporter && $exporter->role?->name !== 'client', 403);
+
+            $rows = $query
+                ->addSelect(DB::raw('(SELECT COUNT(*) FROM login_logs WHERE login_logs.user_id = agents.user_id) as export_login_count'))
+                ->with('user')
+                ->get();
+            $filename = 'agents-report-' . now()->format('Y-m-d') . '.csv';
+
+            return response()->streamDownload(function () use ($rows, $dateFrom, $dateTo) {
+                $out = fopen('php://output', 'w');
+                fwrite($out, "\xEF\xBB\xBF");
+                $rangeLabel = $dateFrom
+                    ? 'Posted ' . $dateFrom . ' to ' . ($dateTo ?: now()->toDateString())
+                    : 'Posted (all time)';
+                fputcsv($out, [
+                    'Agent', 'Email', 'Mobile', 'Status', 'Last Online', 'Total Logins',
+                    'Total Listings', 'Public', 'Private', $rangeLabel,
+                    'Sold', 'Rented', 'Leased', 'Ongoing Inquiries', 'Closed Inquiries', 'Member Since',
+                ]);
+                foreach ($rows as $a) {
+                    fputcsv($out, [
+                        trim(($a->first_name ?? '') . ' ' . ($a->last_name ?? '')),
+                        $a->user?->email,
+                        $a->mobile_no,
+                        $a->status,
+                        optional($a->user?->last_online_at)->toDateTimeString(),
+                        (int) ($a->export_login_count ?? 0),
+                        (int) ($a->listings_count ?? 0),
+                        (int) ($a->public_listings_count ?? 0),
+                        (int) ($a->private_listings_count ?? 0),
+                        (int) ($a->listings_in_range_count ?? 0),
+                        (int) ($a->sold_count ?? 0),
+                        (int) ($a->rented_count ?? 0),
+                        (int) ($a->leased_count ?? 0),
+                        (int) ($a->ongoing_inquiries_count ?? 0),
+                        (int) ($a->closed_inquiries_count ?? 0),
+                        $a->member_since,
+                    ]);
+                }
+                fclose($out);
+            }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
         }
 
         return new AgentResourceCollection(
