@@ -420,9 +420,23 @@ class UserController extends Controller
 
     public function index(Request $request)
     {
-        $query = User::query()
-            ->latest()
-            ->where('created_at', '>=', now()->subDays(10));
+        // Signup window for the dashboard's "Newly Signed Up Users" panel.
+        // days=N is a calendar-day window (1 = today, 2 = since yesterday, …;
+        // default 10 preserves the original behavior). An explicit
+        // date_from/date_to custom range wins over days when provided.
+        $query = User::query()->latest();
+
+        if ($request->filled('date_from') || $request->filled('date_to')) {
+            if ($from = $request->query('date_from')) {
+                $query->where('created_at', '>=', $from . ' 00:00:00');
+            }
+            if ($to = $request->query('date_to')) {
+                $query->where('created_at', '<=', $to . ' 23:59:59');
+            }
+        } else {
+            $days = max(1, min((int) $request->query('days', 10), 365));
+            $query->where('created_at', '>=', now()->subDays($days - 1)->startOfDay());
+        }
 
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
