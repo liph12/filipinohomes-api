@@ -2029,6 +2029,8 @@ class ListingController extends Controller
             // Keep the "For Sale:"-style intent prefix on the card title
             // (stripped by default — redundant with the card's category line).
             'og_card_options.prefix'  => ['nullable', 'boolean'],
+            // Price accent color on the card (default gold).
+            'og_card_options.priceColor' => ['nullable', 'in:gold,white,red,green,blue'],
         ]);
 
         $updates = [];
@@ -2039,7 +2041,7 @@ class ListingController extends Controller
             $opts = $validated['og_card_options'] ?? null;
             // Keep only the whitelisted keys (validation ignores unknown ones).
             if ($opts) {
-                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix']));
+                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix', 'priceColor']));
                 // Price periods are a rental concept — a sale/foreclosure price
                 // is absolute, so a period never gets stored on those.
                 if (strcasecmp($listing->category?->name ?? '', 'For Rent') !== 0) {
