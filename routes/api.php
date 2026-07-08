@@ -290,6 +290,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::patch('agents/{id}/status', [AgentController::class, 'updateStatus']);
             Route::delete('agents/{id}', [AgentController::class, 'destroy']);
             Route::post('agents/{id}/restore', [AgentController::class, 'restore']);
+            // Email a Top-10 leaderboard certificate (PNG uploaded by admin) to
+            // the agent. Admin-gated in the controller.
+            Route::post('agents/{id}/send-certificate', [AgentController::class, 'sendCertificate']);
             Route::get('/projects', [ProjectController::class, 'index']);
             Route::get('/project-list', [ProjectController::class, 'projects']);
             Route::get('/projects/by-province', [ProjectController::class, 'byProvince']);
