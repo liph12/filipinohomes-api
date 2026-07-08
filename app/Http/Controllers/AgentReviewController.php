@@ -27,6 +27,9 @@ class AgentReviewController extends Controller
             'tag' => 'sometimes|string|max:32',
             'sort' => 'sometimes|in:recent,highest,lowest,with_comment,with_response',
             'per_page' => 'sometimes|integer|min:1|max:50',
+            // Reviewer-role filter for the public "All / Clients / Agents" toggle.
+            // Filters by the review author's account role; omit for all reviews.
+            'author' => 'sometimes|in:client,agent',
         ]);
 
         $query = AgentReview::query()
@@ -58,6 +61,12 @@ class AgentReviewController extends Controller
         if (!empty($validated['tag'])) {
             // JSON_CONTAINS for MySQL; the column stores a JSON array.
             $query->whereJsonContains('tags', $validated['tag']);
+        }
+        if (!empty($validated['author'])) {
+            // Filter the list by the review author's role (client vs fellow
+            // agent). Nested-relation whereHas: client (belongsTo User) →
+            // role (belongsTo Role). Mirrors the summary's role join.
+            $query->whereHas('client.role', fn ($q) => $q->where('name', $validated['author']));
         }
 
         // Sort dispatch — default 'recent'. with_comment / with_response
