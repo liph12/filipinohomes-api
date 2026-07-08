@@ -36,8 +36,12 @@ class AgentReviewController extends Controller
             ->where('agent_user_id', $agentUserId)
             ->where('status', 'visible')
             ->with([
-                // Display name + avatar for the row header.
-                'client:id,name,avatar',
+                // Display name + avatar for the row header. role_id MUST be
+                // selected too — it's the FK the nested client.role relation
+                // keys on; without it Eloquent can't hydrate client.role and
+                // inquirer_role comes back null (so a fellow-agent review is
+                // mislabeled "Verified Inquirer" instead of "Inquired as agent").
+                'client:id,name,avatar,role_id',
                 // role drives the "Inquired as agent" badge — eager-load
                 // it via the client relation so the resource projection
                 // can read $this->client->role.
