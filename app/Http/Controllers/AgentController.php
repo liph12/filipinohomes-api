@@ -11,9 +11,15 @@ use App\Http\Resources\AgentResource;
 use App\Http\Resources\ExternalAgentResource;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Mail\AgentCertificateMailer;
+use App\Services\AuditMailService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Http\Request;
+use Intervention\Image\ImageManager;
+use Intervention\Image\Drivers\Gd\Driver;
 use Carbon\Carbon;
 
 class AgentController extends Controller
@@ -966,5 +972,122 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         return new AgentResourceCollection(
             $query->paginate($perPage)
         );
+    }
+
+    /**
+     * Email a Top-10 leaderboard certificate to an agent. The admin dashboard
+     * renders the certificate as a PNG client-side and uploads it here; we
+     * forward it to the agent's stored email address as an attachment.
+     *
+     * Mirrors the audit verification mail flow (ListingController@updateVerification):
+     * admin-gated, sends synchronously, records failures via AuditMailService,
+     * and echoes back { email_sent } so the UI only claims delivery on success.
+     */
+    public function sendCertificate(Request $request, $id)
+    {
+        $user = $request->user();
+        if ($user->role?->name !== 'admin') abort(403);
+
+        $validated = $request->validate([
+            'certificate' => 'required|file|mimes:png|max:8192', // ≤ 8 MB PNG
+            'month'       => 'required|string|max:20',
+            'year'        => 'required|integer|min:2000|max:2100',
+            'agent_name'  => 'nullable|string|max:255',
+        ]);
+
+        $agent = Agent::with('user')->findOrFail($id);
+        $agentUser = $agent->user;
+
+        // Prefer the name the dashboard displayed; fall back to the stored user.
+        $agentName = trim((string) ($validated['agent_name'] ?? ''))
+            ?: (trim((string) optional($agentUser)->name) ?: 'Agent');
+
+        $emailSent = false;
+
+        if (! $agentUser || ! $agentUser->email) {
+            Log::warning('Agent certificate email skipped — no agent user/email', [
+                'agent_id' => $agent->id,
+                'has_user' => (bool) $agentUser,
+            ]);
+            // 200 (not an error) — the request was valid, there was just no
+            // address to send to. The UI reads email_sent=false and says so.
+            return response()->json(['email_sent' => false]);
+        }
+
+        $file = $request->file('certificate');
+        // Read the bytes now — the temp upload is gone once the request ends,
+        // and we send synchronously so there's no queue serialization concern.
+        $rawData = file_get_contents($file->getRealPath());
+        $baseName = pathinfo(
+            $file->getClientOriginalName() ?: "certificate_{$validated['month']}_{$validated['year']}.png",
+            PATHINFO_FILENAME,
+        );
+
+        // Normalize the certificate so mail clients reliably render an inline
+        // preview thumbnail on the attachment. A large/heavy PNG straight off
+        // the canvas tends to show as a bare download link with no preview
+        // (which is what agents were seeing). Re-encoding to a moderate-width
+        // JPEG produces a clean, lightweight image Gmail can thumbnail — and
+        // also shrinks the SMTP payload. Non-fatal: fall back to the original
+        // PNG bytes if GD/Intervention can't process it.
+        $certificateData = $rawData;
+        $filename = $baseName.'.png';
+        $certificateMime = 'image/png';
+        try {
+            $manager = new ImageManager(new Driver());
+            $image = $manager->read($rawData)->scaleDown(width: 1600);
+            $certificateData = (string) $image->toJpeg(90);
+            $filename = $baseName.'.jpg';
+            $certificateMime = 'image/jpeg';
+        } catch (\Throwable $e) {
+            Log::warning('Agent certificate image normalize failed — attaching original PNG', [
+                'agent_id' => $agent->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        try {
+            // Send synchronously — production has no queue worker wired up (see
+            // MessageNotificationMailer's note), so a queued mailable would just
+            // sit in the `jobs` table and never send. Lift the execution ceiling
+            // for this one blocking send so pushing the attachment over SMTP
+            // can't trip PHP's default 30s max_execution_time; tiny HTML mails
+            // (audit) never hit this.
+            @set_time_limit(120);
+
+            Mail::to($agentUser->email)->send(new AgentCertificateMailer(
+                agentName: $agentName,
+                awardMonth: $validated['month'],
+                awardYear: (int) $validated['year'],
+                certificateData: $certificateData,
+                certificateFilename: $filename,
+                certificateMime: $certificateMime,
+            ));
+            $emailSent = true;
+
+            Log::info('Agent certificate email sent', [
+                'agent_id' => $agent->id,
+                'to' => $agentUser->email,
+                'month' => $validated['month'],
+                'year' => $validated['year'],
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Agent certificate email failed', [
+                'agent_id' => $agent->id,
+                'error' => $e->getMessage(),
+            ]);
+            app(AuditMailService::class)->recordFailure(
+                $e,
+                'AgentCertificateMailer',
+                [$agentUser->email],
+                "Top Agent certificate — {$validated['month']} {$validated['year']}",
+                [
+                    'auditable_type' => Agent::class,
+                    'auditable_id' => $agent->id,
+                ],
+            );
+        }
+
+        return response()->json(['email_sent' => $emailSent]);
     }
 }

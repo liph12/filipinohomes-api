@@ -825,7 +825,7 @@ class ListingController extends Controller
     }
 
     /**
-     * Lightweight listing markers for the admin map (Zillow-style). Reuses the
+     * Lightweight listing markers for the admin map view. Reuses the
      * exact same scope + filters + viewport/polygon as allListings, requires
      * geo coordinates, caps the result (~500), and returns minimal DTOs plus a
      * total + capped flag for the "showing X of Y — zoom in" hint.
@@ -1257,7 +1257,7 @@ class ListingController extends Controller
             return;
         }
 
-        // Drawn polygon boundary (Zillow "Draw"): bbox prefilter + ST_Contains.
+        // Drawn polygon boundary ("Draw" tool): bbox prefilter + ST_Contains.
         $polygonRaw = $request->input('polygon');
         if ($polygonRaw) {
             $vertices = is_array($polygonRaw) ? $polygonRaw : json_decode((string) $polygonRaw, true);
@@ -2029,6 +2029,10 @@ class ListingController extends Controller
             // Keep the "For Sale:"-style intent prefix on the card title
             // (stripped by default — redundant with the card's category line).
             'og_card_options.prefix'  => ['nullable', 'boolean'],
+            // Price accent color on the card (default gold).
+            'og_card_options.priceColor' => ['nullable', 'in:gold,white,red,green,blue'],
+            // Category badge style: colored by category (default) or clear.
+            'og_card_options.badge' => ['nullable', 'in:color,clear'],
         ]);
 
         $updates = [];
@@ -2039,7 +2043,7 @@ class ListingController extends Controller
             $opts = $validated['og_card_options'] ?? null;
             // Keep only the whitelisted keys (validation ignores unknown ones).
             if ($opts) {
-                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix']));
+                $opts = array_intersect_key($opts, array_flip(['photo', 'theme', 'flip', 'hide', 'agent', 'period', 'prefix', 'priceColor', 'badge']));
                 // Price periods are a rental concept — a sale/foreclosure price
                 // is absolute, so a period never gets stored on those.
                 if (strcasecmp($listing->category?->name ?? '', 'For Rent') !== 0) {
