@@ -21,7 +21,7 @@ class AgentReviewResource extends JsonResource
             ? now()->lessThanOrEqualTo($this->edit_window_ends_at)
             : false;
 
-        // Anonymous reviews (Shopee-style): identity stays in the row, but the
+        // Anonymous reviews: identity stays in the row, but the
         // JSON is scrubbed HERE — never client-side, or the real name would be
         // one network tab away — for everyone except the reviewer themselves
         // and admins (moderation needs the real identity). Scrubbing covers
@@ -154,7 +154,7 @@ class AgentReviewResource extends JsonResource
     }
 
     /**
-     * Shopee-style handle: first + last letter kept (lowercase), stars
+     * Masked handle: first + last letter kept (lowercase), stars
      * between — "John Robert M." → "j*****o". Multibyte-safe.
      */
     private static function maskName(?string $name): string

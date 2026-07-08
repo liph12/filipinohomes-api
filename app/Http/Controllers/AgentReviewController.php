@@ -212,7 +212,7 @@ class AgentReviewController extends Controller
                 'overall_rating' => (int) $validated['overall_rating'],
                 'tags' => $validated['tags'] ?? [],
                 'comment' => $validated['comment'] ?? null,
-                // Shopee-style: identity stays in the row; the resource masks
+                // Anonymity: identity stays in the row; the resource masks
                 // it for everyone but the reviewer and admins.
                 'is_anonymous' => (bool) ($validated['is_anonymous'] ?? false),
                 'status' => $status,
