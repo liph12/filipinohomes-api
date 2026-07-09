@@ -362,7 +362,10 @@ Route::middleware('strip.tags')->group(function(){
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class . ':admin')->group(function () {
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
+                Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);
+                Route::post('/admin/inquiries/mark-all-read', [InquiryController::class, 'markAllRead']);
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
+                Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
 
                 // Client Demographics — gender + age brackets of registered
