@@ -889,6 +889,39 @@ class UserController extends Controller
         return response()->json(['ok' => true]);
     }
     
+    /**
+     * Everyone currently online (last_online_at within the 5-min presence
+     * window), across ALL roles — powers the chat/messaging "Online Users"
+     * strip. `total` is the true unbounded count; `users` is a capped slice
+     * for the avatar row (the strip scrolls, and payload stays small). The
+     * viewer is excluded — you don't message yourself.
+     */
+    public function onlineUsers(Request $request)
+    {
+        $threshold = now()->subMinutes(5);
+        $viewerId = optional($request->user())->id;
+
+        $base = User::where('last_online_at', '>=', $threshold)
+            ->when($viewerId, fn ($q) => $q->where('id', '!=', $viewerId));
+
+        $total = (clone $base)->count();
+
+        $users = $base
+            ->with('role:id,name')
+            ->orderByDesc('last_online_at')
+            ->limit(100)
+            ->get()
+            ->map(fn ($u) => [
+                'id' => $u->id,
+                'name' => $u->name,
+                'avatar' => $u->avatar,
+                'role' => $u->role->name ?? null,
+                'last_online_at' => $u->last_online_at,
+            ]);
+
+        return response()->json(['total' => $total, 'users' => $users]);
+    }
+
     public function getClients()
     {
         $users = User::whereHas('userInfo')->with('userInfo')->client()->get();

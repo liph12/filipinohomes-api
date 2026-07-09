@@ -218,6 +218,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/announcements/{announcement}', [AnnouncementController::class, 'showForRecipient']);
 
             Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
+            // Everyone online across all roles (chat/messaging strip).
+            Route::get('/online-users', [UserController::class, 'onlineUsers']);
             Route::get('/users/search', [UserController::class, 'searchUsers']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
