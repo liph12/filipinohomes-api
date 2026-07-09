@@ -2858,6 +2858,9 @@ class ListingController extends Controller
             'city_id' => 'nullable|integer|min:1',
             'team_id' => 'nullable|integer|min:1',
             'agent_id' => 'nullable|integer|min:1',
+            // Quality gate: count only audit-passed (verified/fully_verified)
+            // AND ATS-approved listings.
+            'qualified' => 'nullable|boolean',
         ]);
 
         $dateStart = $request->query('date_start');
@@ -2874,7 +2877,8 @@ class ListingController extends Controller
             $limit,
             $cityId,
             $teamId,
-            $agentId
+            $agentId,
+            $request->boolean('qualified')
         ));
     }
 

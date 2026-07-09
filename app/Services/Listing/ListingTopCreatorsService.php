@@ -27,8 +27,12 @@ class ListingTopCreatorsService extends ListingInsightsService
      * into $this->agentIds — so every grouping AND total_listings share the
      * scope, keeping the drill-down's share bars summing to 100%.
      */
-    public function topCreators(string $groupBy, ?string $dateStart = null, ?string $dateEnd = null, int $limit = 20, ?int $cityId = null, ?int $teamId = null, ?int $agentId = null): array
+    /** When true, only audit-passed AND ATS-approved listings count. */
+    private bool $qualifiedOnly = false;
+
+    public function topCreators(string $groupBy, ?string $dateStart = null, ?string $dateEnd = null, int $limit = 20, ?int $cityId = null, ?int $teamId = null, ?int $agentId = null, bool $qualifiedOnly = false): array
     {
+        $this->qualifiedOnly = $qualifiedOnly;
         $this->agentIds = null;
         $this->dateStart = $dateStart;
         $this->dateEnd = $dateEnd;
@@ -52,7 +56,7 @@ class ListingTopCreatorsService extends ListingInsightsService
 
         // One COUNT over the base-filtered range — independent of grouping, so
         // the tile can show "top N of X listings" even when groups are capped.
-        $totalListings = (int) $this->baseListingQuery()->count();
+        $totalListings = (int) $this->scopedQuery()->count();
 
         [$data, $totalGroups] = match ($groupBy) {
             'team' => $this->byTeam($limit),
@@ -72,12 +76,58 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'city_id' => $this->cityId,
                 'team_id' => $teamId,
                 'agent_id' => $agentId,
+                'qualified' => $qualifiedOnly,
                 'total_listings' => $totalListings,
+                // Ungated grand total — lets the UI show "qualified / all".
+                'total_listings_all' => $qualifiedOnly ? (int) $this->baseListingQuery()->count() : null,
                 'total_groups' => $totalGroups,
             ],
         ];
     }
 
+
+    /**
+     * Ungated per-entity counts for the returned ids — only computed when the
+     * quality gate is on (null otherwise), keyed by the given column.
+     *
+     * @return array<int, int>|null
+     */
+    private function ungatedCounts(string $keyColumn, array $ids): ?array
+    {
+        if (! $this->qualifiedOnly || $ids === []) {
+            return null;
+        }
+        $alias = 'k';
+
+        return $this->baseListingQuery()
+            ->join('agents', function ($join) {
+                $join->on('agents.id', '=', 'listings.agent_id')
+                    ->whereNull('agents.deleted_at');
+            })
+            ->whereIn($keyColumn, $ids)
+            ->groupBy($keyColumn)
+            ->select(DB::raw("{$keyColumn} as {$alias}"), DB::raw('COUNT(listings.id) as c'))
+            ->pluck('c', $alias)
+            ->map(fn ($c) => (int) $c)
+            ->all();
+    }
+
+    /**
+     * baseListingQuery plus the optional quality gate: only listings that
+     * passed audit (verified / fully_verified) AND hold an approved
+     * authority-to-sell. Every ranking query routes through here so the
+     * gate can never be half-applied.
+     */
+    private function scopedQuery()
+    {
+        $query = $this->baseListingQuery();
+        if ($this->qualifiedOnly) {
+            $query->whereIn('listings.verification_status', ['verified', 'fully_verified'])
+                ->where('properties.ats_status', 'approve');
+        }
+
+        return $query;
+    }
 
     /**
      * Per-agent ranking. The first ACTIVE team of each returned agent is
@@ -88,7 +138,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      */
     private function byAgent(int $limit): array
     {
-        $rows = $this->baseListingQuery()
+        $rows = $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -106,7 +156,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->baseListingQuery()
+        $totalGroups = (int) $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -136,6 +186,10 @@ class ListingTopCreatorsService extends ListingInsightsService
             }
         }
 
+        // With the quality gate on, also surface each agent's UNGATED total
+        // so the tables can show "total vs qualified" side by side.
+        $allCounts = $this->ungatedCounts('listings.agent_id', $agentIds);
+
         $data = $rows->map(fn ($row) => [
             'agent_id' => (int) $row->agent_id,
             'full_name' => (string) $row->full_name,
@@ -143,6 +197,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             'region' => $row->region !== null ? (string) $row->region : null,
             'team' => $teams[(int) $row->agent_id] ?? null,
             'listing_count' => (int) $row->listing_count,
+            'all_listing_count' => $allCounts !== null ? ($allCounts[(int) $row->agent_id] ?? 0) : null,
         ])->all();
 
         return [$data, $totalGroups];
@@ -161,7 +216,7 @@ class ListingTopCreatorsService extends ListingInsightsService
         // The agents join (deleted_at IS NULL) keeps this grouping consistent
         // with byAgent/byOfficeRegion — a soft-deleted agent's listings should
         // not keep counting toward their team.
-        $rows = $this->baseListingQuery()
+        $rows = $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -184,7 +239,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->baseListingQuery()
+        $totalGroups = (int) $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -217,6 +272,25 @@ class ListingTopCreatorsService extends ListingInsightsService
             }
         }
 
+        $allCounts = null;
+        if ($this->qualifiedOnly && $teamIds !== []) {
+            $allCounts = $this->baseListingQuery()
+                ->join('agents', function ($join) {
+                    $join->on('agents.id', '=', 'listings.agent_id')
+                        ->whereNull('agents.deleted_at');
+                })
+                ->join('team_agents as ta_all', function ($join) {
+                    $join->on('ta_all.agent_id', '=', 'listings.agent_id')
+                        ->where('ta_all.status', 'active');
+                })
+                ->whereIn('ta_all.team_id', $teamIds)
+                ->groupBy('ta_all.team_id')
+                ->select('ta_all.team_id', DB::raw('COUNT(DISTINCT listings.id) as c'))
+                ->pluck('c', 'ta_all.team_id')
+                ->map(fn ($c) => (int) $c)
+                ->all();
+        }
+
         $data = $rows->map(fn ($row) => [
             'team_id' => (int) $row->team_id,
             'team_name' => (string) $row->team_name,
@@ -224,6 +298,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             'leader_name' => $leaders[(int) $row->team_id] ?? null,
             'agents_count' => (int) $row->agents_count,
             'listing_count' => (int) $row->listing_count,
+            'all_listing_count' => $allCounts !== null ? ($allCounts[(int) $row->team_id] ?? 0) : null,
         ])->all();
 
         return [$data, $totalGroups];
@@ -250,7 +325,7 @@ class ListingTopCreatorsService extends ListingInsightsService
     {
         $cityIdExpr = 'COALESCE(projects.city_id, property_cities.id)';
 
-        $rows = $this->baseListingQuery()
+        $rows = $this->scopedQuery()
             ->whereNotNull(DB::raw($cityIdExpr))
             ->select(
                 DB::raw("{$cityIdExpr} as city_id"),
@@ -263,7 +338,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->baseListingQuery()
+        $totalGroups = (int) $this->scopedQuery()
             ->whereNotNull(DB::raw($cityIdExpr))
             ->count(DB::raw("DISTINCT {$cityIdExpr}"));
 
@@ -287,7 +362,7 @@ class ListingTopCreatorsService extends ListingInsightsService
         // the first row seen per city wins (name tiebreak for determinism).
         $topAgents = [];
         if ($cityIds !== []) {
-            $agentRows = $this->baseListingQuery()
+            $agentRows = $this->scopedQuery()
                 ->join('agents', function ($join) {
                     $join->on('agents.id', '=', 'listings.agent_id')
                         ->whereNull('agents.deleted_at');
@@ -319,7 +394,7 @@ class ListingTopCreatorsService extends ListingInsightsService
         // listing count so multi-team agents never double count within a team.
         $topTeams = [];
         if ($cityIds !== []) {
-            $teamRows = $this->baseListingQuery()
+            $teamRows = $this->scopedQuery()
                 ->join('agents', function ($join) {
                     $join->on('agents.id', '=', 'listings.agent_id')
                         ->whereNull('agents.deleted_at');
@@ -352,7 +427,18 @@ class ListingTopCreatorsService extends ListingInsightsService
             }
         }
 
-        $data = $rows->map(function ($row) use ($cityMeta, $topAgents, $topTeams) {
+        $cityAllCounts = null;
+        if ($this->qualifiedOnly && $cityIds !== []) {
+            $cityAllCounts = $this->baseListingQuery()
+                ->whereIn(DB::raw($cityIdExpr), $cityIds)
+                ->groupByRaw($cityIdExpr)
+                ->select(DB::raw("{$cityIdExpr} as city_id"), DB::raw('COUNT(listings.id) as c'))
+                ->pluck('c', 'city_id')
+                ->map(fn ($c) => (int) $c)
+                ->all();
+        }
+
+        $data = $rows->map(function ($row) use ($cityMeta, $topAgents, $topTeams, $cityAllCounts) {
             $cityId = (int) $row->city_id;
             $meta = $cityMeta[$cityId] ?? null;
 
@@ -364,6 +450,7 @@ class ListingTopCreatorsService extends ListingInsightsService
                     : null,
                 'agents_count' => (int) $row->agents_count,
                 'listing_count' => (int) $row->listing_count,
+                'all_listing_count' => $cityAllCounts !== null ? ($cityAllCounts[$cityId] ?? 0) : null,
                 'top_agent' => $topAgents[$cityId] ?? null,
                 'top_team' => $topTeams[$cityId] ?? null,
             ];
@@ -385,7 +472,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      */
     private function byOfficeRegion(int $limit): array
     {
-        $rows = $this->baseListingQuery()
+        $rows = $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -401,7 +488,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->baseListingQuery()
+        $totalGroups = (int) $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -433,7 +520,7 @@ class ListingTopCreatorsService extends ListingInsightsService
     {
         // Left joins (unlike ListingByTypeService's inner joins) — a listing
         // with a missing attribute row must still show in the creation log.
-        $rows = $this->baseListingQuery()
+        $rows = $this->scopedQuery()
             ->leftJoin('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
             ->leftJoin('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
             ->leftJoin('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
@@ -443,6 +530,8 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'listings.code',
                 'listings.featured_photo',
                 'listings.created_at',
+                'listings.verification_status',
+                'properties.ats_status',
                 'property_types.name as type_name',
                 'property_subtypes.name as subtype_name',
                 DB::raw('COALESCE(project_cities.name, property_cities.name) as city_name'),
@@ -453,7 +542,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->baseListingQuery()->count(DB::raw('DISTINCT listings.id'));
+        $totalGroups = (int) $this->scopedQuery()->count(DB::raw('DISTINCT listings.id'));
 
         $data = $rows->map(function ($row) {
             $provinceName = $row->province_name !== null ? (string) $row->province_name : null;
@@ -479,6 +568,8 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'photo' => $photo,
                 'type' => $row->type_name !== null ? (string) $row->type_name : null,
                 'subtype' => $row->subtype_name !== null ? (string) $row->subtype_name : null,
+                'verification_status' => $row->verification_status !== null ? (string) $row->verification_status : null,
+                'ats_status' => $row->ats_status !== null ? (string) $row->ats_status : null,
                 'created_at' => (string) $row->created_at,
                 'city_name' => $row->city_name !== null ? (string) $row->city_name : null,
                 'province_name' => $provinceName,
