@@ -255,6 +255,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/activity-logs/overview-stats', [ActivityLogController::class, 'overviewStats']);
             Route::get('/activity-logs/storage', [ActivityLogController::class, 'storageOverview']);
             Route::get('/activity-logs/export', [ActivityLogController::class, 'exportLogs']);
+            // Single-row detail (incl. captured email body). Numeric-constrained
+            // so it never shadows the literal /activity-logs/* routes above.
+            Route::get('/activity-logs/{audit}', [ActivityLogController::class, 'show'])->whereNumber('audit');
             Route::post('/activity-logs/clear', [ActivityLogController::class, 'clearOldLogs']);
 
             // Feature tokens

@@ -56,6 +56,13 @@ class ActivityLogController extends Controller
     ];
 
     /**
+     * Rendered mail bodies captured on mailer_sent rows. Kept OUT of the
+     * paginated feed (they'd bloat every page) — the list only flags their
+     * presence via `has_email_body`; the full body is served by show().
+     */
+    public const BODY_KEYS = ['body_html', 'body_text'];
+
+    /**
      * Strip SCRUB_KEYS from old_values / new_values on each row. If both
      * diff sides become empty after stripping, the row carried no real
      * change and is dropped from the feed entirely.
@@ -68,6 +75,15 @@ class ActivityLogController extends Controller
             $new = is_array($row['new_values'] ?? null) ? $row['new_values'] : [];
             foreach (self::SCRUB_KEYS as $k) {
                 unset($old[$k], $new[$k]);
+            }
+            // Flag (but don't ship) captured email bodies — the detail modal
+            // fetches them on demand via show().
+            $row['has_email_body'] = false;
+            foreach (self::BODY_KEYS as $k) {
+                if (isset($new[$k]) && $new[$k] !== '') {
+                    $row['has_email_body'] = true;
+                }
+                unset($new[$k]);
             }
             $row['old_values'] = $old;
             $row['new_values'] = $new;
@@ -244,6 +260,36 @@ class ActivityLogController extends Controller
             'from'         => $paginated->firstItem(),
             'to'           => $paginated->lastItem(),
         ]);
+    }
+
+    /**
+     * Single audit row WITH its captured email body (mailer rows). Admin-only.
+     * The paginated feed strips bodies for weight; the detail modal fetches
+     * them here on demand so admins can see exactly what a mailer sent.
+     */
+    public function show(Request $request, Audit $audit): JsonResponse
+    {
+        if (($request->user()->role->name ?? null) !== 'admin') {
+            abort(403);
+        }
+
+        $row = $audit->toArray();
+        // Scrub only the noise keys — KEEP the body so the modal can show it.
+        $old = is_array($row['old_values'] ?? null) ? $row['old_values'] : [];
+        $new = is_array($row['new_values'] ?? null) ? $row['new_values'] : [];
+        foreach (self::SCRUB_KEYS as $k) {
+            unset($old[$k], $new[$k]);
+        }
+        $row['old_values'] = $old;
+        $row['new_values'] = $new;
+        $row['has_email_body'] = !empty($new['body_html']) || !empty($new['body_text']);
+
+        $uid = isset($row['user_id']) ? (int) $row['user_id'] : 0;
+        $row['user_is_team_leader'] = $uid
+            ? (app(TeamLeadershipService::class)->isTeamLeaderBulk([$uid])[$uid] ?? false)
+            : false;
+
+        return response()->json(['data' => $row]);
     }
 
     /**
