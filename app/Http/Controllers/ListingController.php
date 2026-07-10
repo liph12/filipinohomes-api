@@ -2719,7 +2719,12 @@ class ListingController extends Controller
      */
     public function insightsByType(Request $request, ListingByTypeService $insights): JsonResponse
     {
-        $agentIds = $this->resolveInsightsAgentScope($request);
+        // Agent dashboard "my listings by type": ?self=1 always scopes to the
+        // caller's OWN listings, regardless of admin/team-leader status (a
+        // team leader's personal dashboard shows their own, not the team's).
+        $agentIds = $request->boolean('self')
+            ? $this->ownAgentScope($request)
+            : $this->resolveInsightsAgentScope($request);
         $dateStart = $request->query('date_start');
         $dateEnd = $request->query('date_end');
         $cityId = $request->query('city_id');
@@ -2922,6 +2927,22 @@ class ListingController extends Controller
         }
 
         return $ledAgentIds;
+    }
+
+    /**
+     * Scope insights to the caller's OWN agent listings (agents-table id).
+     * Powers the agent dashboard's self-scoped "Properties by Type" — works
+     * for any authenticated agent, including team leaders and impersonated
+     * agents, who otherwise resolve to their whole team.
+     */
+    private function ownAgentScope(Request $request): array
+    {
+        $ownAgentId = Agent::where('user_id', $request->user()->id)->value('id');
+        if (!$ownAgentId) {
+            abort(403);
+        }
+
+        return [(int) $ownAgentId];
     }
 
     /**
