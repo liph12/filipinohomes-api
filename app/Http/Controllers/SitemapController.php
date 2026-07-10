@@ -440,6 +440,48 @@ class SitemapController extends Controller
     }
 
     /**
+     * Monthly market-stats snapshots (median/avg price, median ₱/sqm,
+     * counts) per category × type × city|province [× bedroom], refreshed
+     * daily by `seo:compute-market-stats`. Returns the two most recent
+     * months so the frontend can render month-over-month movement once a
+     * second snapshot exists. Feeds src/lib/marketStats.ts.
+     */
+    public function marketStats(): JsonResponse
+    {
+        $months = DB::table('market_stats')
+            ->select('month')
+            ->distinct()
+            ->orderByDesc('month')
+            ->limit(2)
+            ->pluck('month');
+
+        $rows = DB::table('market_stats')
+            ->whereIn('month', $months)
+            ->select(
+                'category',
+                'type',
+                'scope',
+                'city_id',
+                'city',
+                'province_id',
+                'province',
+                'bedroom_count',
+                'month',
+                'listing_count',
+                'median_price',
+                'avg_price',
+                'median_ppsqm',
+                'ppsqm_count'
+            )
+            ->orderBy('month')
+            ->orderBy('province')
+            ->orderBy('city')
+            ->get();
+
+        return response()->json($rows);
+    }
+
+    /**
      * Active, geocoded facility registry for the frontend — slug -> coords used
      * to resolve a `near-{facility}` URL into the radius filter and on-page copy.
      */

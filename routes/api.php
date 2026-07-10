@@ -177,6 +177,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('sitemap/query-counts', [SitemapController::class, 'queryCounts']);
         Route::get('sitemap/facility-counts', [SitemapController::class, 'facilityCounts']);
         Route::get('sitemap/barangay-counts', [SitemapController::class, 'barangayCounts']);
+        Route::get('sitemap/market-stats', [SitemapController::class, 'marketStats']);
         Route::get('facilities', [SitemapController::class, 'facilities']);
 
         // Public HomesPhNews proxy (server-side X-Site-Key, avoids CORS for browsers)
