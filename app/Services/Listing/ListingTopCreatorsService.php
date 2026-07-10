@@ -78,8 +78,12 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'agent_id' => $agentId,
                 'qualified' => $qualifiedOnly,
                 'total_listings' => $totalListings,
-                // Ungated grand total — lets the UI show "qualified / all".
-                'total_listings_all' => $qualifiedOnly ? (int) $this->baseListingQuery()->count() : null,
+                // Verified+ATS-approved total across the range — the Verified
+                // column/KPI is ALWAYS shown; the toggle only changes ranking.
+                'verified_listings' => (int) $this->baseListingQuery()
+                    ->whereIn('listings.verification_status', ['verified', 'fully_verified'])
+                    ->where('properties.ats_status', 'approve')
+                    ->count(),
                 'total_groups' => $totalGroups,
             ],
         ];
@@ -87,46 +91,32 @@ class ListingTopCreatorsService extends ListingInsightsService
 
 
     /**
-     * Ungated per-entity counts for the returned ids — only computed when the
-     * quality gate is on (null otherwise), keyed by the given column.
-     *
-     * @return array<int, int>|null
-     */
-    private function ungatedCounts(string $keyColumn, array $ids): ?array
-    {
-        if (! $this->qualifiedOnly || $ids === []) {
-            return null;
-        }
-        $alias = 'k';
-
-        return $this->baseListingQuery()
-            ->join('agents', function ($join) {
-                $join->on('agents.id', '=', 'listings.agent_id')
-                    ->whereNull('agents.deleted_at');
-            })
-            ->whereIn($keyColumn, $ids)
-            ->groupBy($keyColumn)
-            ->select(DB::raw("{$keyColumn} as {$alias}"), DB::raw('COUNT(listings.id) as c'))
-            ->pluck('c', $alias)
-            ->map(fn ($c) => (int) $c)
-            ->all();
-    }
-
-    /**
      * baseListingQuery plus the optional quality gate: only listings that
      * passed audit (verified / fully_verified) AND hold an approved
      * authority-to-sell. Every ranking query routes through here so the
      * gate can never be half-applied.
      */
+    // Ranking scope is NEVER filtered by verification now: every row carries
+    // both a total `listing_count` and a `verified_count`, and only the
+    // ORDER BY switches when the caller toggles "rank by verified". Kept as a
+    // thin alias so existing call sites read clearly.
     private function scopedQuery()
     {
-        $query = $this->baseListingQuery();
-        if ($this->qualifiedOnly) {
-            $query->whereIn('listings.verification_status', ['verified', 'fully_verified'])
-                ->where('properties.ats_status', 'approve');
-        }
+        return $this->baseListingQuery();
+    }
 
-        return $query;
+    // COUNT(DISTINCT ...) of listings that passed audit AND are ATS-approved,
+    // safe against join fan-out (team grouping). Emits alias `verified_count`.
+    private function verifiedCountSql(): string
+    {
+        return "COUNT(DISTINCT CASE WHEN listings.verification_status IN ('verified', 'fully_verified')"
+            . " AND properties.ats_status = 'approve' THEN listings.id END) as verified_count";
+    }
+
+    // Which metric the leaderboard orders by: verified when toggled, else total.
+    private function rankColumn(): string
+    {
+        return $this->qualifiedOnly ? 'verified_count' : 'listing_count';
     }
 
     /**
@@ -148,10 +138,11 @@ class ListingTopCreatorsService extends ListingInsightsService
                 DB::raw("CONCAT_WS(' ', agents.first_name, agents.last_name) as full_name"),
                 'agents.avatar',
                 'agents.region',
-                DB::raw('COUNT(listings.id) as listing_count')
+                DB::raw('COUNT(listings.id) as listing_count'),
+                DB::raw($this->verifiedCountSql())
             )
             ->groupBy('listings.agent_id', 'agents.first_name', 'agents.last_name', 'agents.avatar', 'agents.region')
-            ->orderByDesc('listing_count')
+            ->orderByDesc($this->rankColumn())
             ->orderBy('full_name')
             ->limit($limit)
             ->get();
@@ -186,10 +177,6 @@ class ListingTopCreatorsService extends ListingInsightsService
             }
         }
 
-        // With the quality gate on, also surface each agent's UNGATED total
-        // so the tables can show "total vs qualified" side by side.
-        $allCounts = $this->ungatedCounts('listings.agent_id', $agentIds);
-
         $data = $rows->map(fn ($row) => [
             'agent_id' => (int) $row->agent_id,
             'full_name' => (string) $row->full_name,
@@ -197,7 +184,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             'region' => $row->region !== null ? (string) $row->region : null,
             'team' => $teams[(int) $row->agent_id] ?? null,
             'listing_count' => (int) $row->listing_count,
-            'all_listing_count' => $allCounts !== null ? ($allCounts[(int) $row->agent_id] ?? 0) : null,
+            'verified_count' => (int) $row->verified_count,
         ])->all();
 
         return [$data, $totalGroups];
@@ -231,10 +218,11 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'teams.name as team_name',
                 'teams.logo',
                 DB::raw('COUNT(DISTINCT listings.id) as listing_count'),
+                DB::raw($this->verifiedCountSql()),
                 DB::raw('COUNT(DISTINCT listings.agent_id) as agents_count')
             )
             ->groupBy('teams.id', 'teams.name', 'teams.logo')
-            ->orderByDesc('listing_count')
+            ->orderByDesc($this->rankColumn())
             ->orderBy('team_name')
             ->limit($limit)
             ->get();
@@ -272,25 +260,6 @@ class ListingTopCreatorsService extends ListingInsightsService
             }
         }
 
-        $allCounts = null;
-        if ($this->qualifiedOnly && $teamIds !== []) {
-            $allCounts = $this->baseListingQuery()
-                ->join('agents', function ($join) {
-                    $join->on('agents.id', '=', 'listings.agent_id')
-                        ->whereNull('agents.deleted_at');
-                })
-                ->join('team_agents as ta_all', function ($join) {
-                    $join->on('ta_all.agent_id', '=', 'listings.agent_id')
-                        ->where('ta_all.status', 'active');
-                })
-                ->whereIn('ta_all.team_id', $teamIds)
-                ->groupBy('ta_all.team_id')
-                ->select('ta_all.team_id', DB::raw('COUNT(DISTINCT listings.id) as c'))
-                ->pluck('c', 'ta_all.team_id')
-                ->map(fn ($c) => (int) $c)
-                ->all();
-        }
-
         $data = $rows->map(fn ($row) => [
             'team_id' => (int) $row->team_id,
             'team_name' => (string) $row->team_name,
@@ -298,7 +267,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             'leader_name' => $leaders[(int) $row->team_id] ?? null,
             'agents_count' => (int) $row->agents_count,
             'listing_count' => (int) $row->listing_count,
-            'all_listing_count' => $allCounts !== null ? ($allCounts[(int) $row->team_id] ?? 0) : null,
+            'verified_count' => (int) $row->verified_count,
         ])->all();
 
         return [$data, $totalGroups];
@@ -330,10 +299,11 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->select(
                 DB::raw("{$cityIdExpr} as city_id"),
                 DB::raw('COUNT(listings.id) as listing_count'),
+                DB::raw($this->verifiedCountSql()),
                 DB::raw('COUNT(DISTINCT listings.agent_id) as agents_count')
             )
             ->groupByRaw($cityIdExpr)
-            ->orderByDesc('listing_count')
+            ->orderByDesc($this->rankColumn())
             ->orderBy('city_id')
             ->limit($limit)
             ->get();
@@ -427,18 +397,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             }
         }
 
-        $cityAllCounts = null;
-        if ($this->qualifiedOnly && $cityIds !== []) {
-            $cityAllCounts = $this->baseListingQuery()
-                ->whereIn(DB::raw($cityIdExpr), $cityIds)
-                ->groupByRaw($cityIdExpr)
-                ->select(DB::raw("{$cityIdExpr} as city_id"), DB::raw('COUNT(listings.id) as c'))
-                ->pluck('c', 'city_id')
-                ->map(fn ($c) => (int) $c)
-                ->all();
-        }
-
-        $data = $rows->map(function ($row) use ($cityMeta, $topAgents, $topTeams, $cityAllCounts) {
+        $data = $rows->map(function ($row) use ($cityMeta, $topAgents, $topTeams) {
             $cityId = (int) $row->city_id;
             $meta = $cityMeta[$cityId] ?? null;
 
@@ -450,15 +409,17 @@ class ListingTopCreatorsService extends ListingInsightsService
                     : null,
                 'agents_count' => (int) $row->agents_count,
                 'listing_count' => (int) $row->listing_count,
-                'all_listing_count' => $cityAllCounts !== null ? ($cityAllCounts[$cityId] ?? 0) : null,
+                'verified_count' => (int) $row->verified_count,
                 'top_agent' => $topAgents[$cityId] ?? null,
                 'top_team' => $topTeams[$cityId] ?? null,
             ];
         })->all();
 
-        // Re-apply the count-desc / name-asc ordering now that canonical names
-        // are known (the SQL tiebreak was city_id, before names were resolved).
-        usort($data, fn ($a, $b) => [$b['listing_count'], $a['city_name']] <=> [$a['listing_count'], $b['city_name']]);
+        // Re-apply the ranking now that canonical names are known (the SQL
+        // tiebreak was city_id, before names were resolved). Order by the
+        // active rank metric so the toggle reorders cities too.
+        $rankKey = $this->qualifiedOnly ? 'verified_count' : 'listing_count';
+        usort($data, fn ($a, $b) => [$b[$rankKey], $a['city_name']] <=> [$a[$rankKey], $b['city_name']]);
 
         return [$data, $totalGroups];
     }
