@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Agent;
 use App\Models\Audit;
+use App\Models\User;
 use App\Services\TeamLeadershipService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -283,6 +284,33 @@ class ActivityLogController extends Controller
         $row['old_values'] = $old;
         $row['new_values'] = $new;
         $row['has_email_body'] = !empty($new['body_html']) || !empty($new['body_text']);
+
+        // Resolve each mail recipient's platform role so the modal can label
+        // WHO received it (client / agent / admin / …) — admins couldn't tell
+        // a client email apart from an agent one at a glance. Addresses with
+        // no matching user (external contacts, the shared inbox) resolve to a
+        // null role, which the UI renders as "Not a registered user".
+        $recipients = is_array($new['recipients'] ?? null) ? $new['recipients'] : [];
+        $recipientInfo = [];
+        if (!empty($recipients)) {
+            $emails = array_values(array_filter(array_map(
+                fn ($e) => is_string($e) ? trim($e) : null,
+                $recipients
+            )));
+            $byEmail = User::with('role:id,name')
+                ->whereIn('email', $emails)
+                ->get(['id', 'name', 'email', 'role_id'])
+                ->keyBy(fn ($u) => strtolower((string) $u->email));
+            foreach ($emails as $email) {
+                $u = $byEmail->get(strtolower($email));
+                $recipientInfo[] = [
+                    'email' => $email,
+                    'role'  => $u?->role?->name,
+                    'name'  => $u?->name,
+                ];
+            }
+        }
+        $row['recipient_info'] = $recipientInfo;
 
         $uid = isset($row['user_id']) ? (int) $row['user_id'] : 0;
         $row['user_is_team_leader'] = $uid
