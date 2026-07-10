@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('mobile_no')->nullable();
             $table->string('whats_app_no')->nullable();
             $table->text('address')->nullable();
-            $table->json('socials')->nullable(); 
+            $table->string('socials')->nullable(); 
             $table->text('bio')->nullable();
             $table->string('avatar')->nullable(); 
             $table->string('geo_location')->nullable(); 
