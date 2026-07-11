@@ -41,6 +41,8 @@ abstract class InquiryInsightsService
     protected ?int $barangayId = null;
     /** Scope to a single inquiring client (drill from the clients table). */
     protected ?int $clientId = null;
+    /** Scope to a single listing-owning agent (drill from the agents table). */
+    protected ?int $agentId = null;
     /** Province IDs for an island filter (precomputed from IslandMap). */
     protected ?array $islandProvinceIds = null;
     protected ?string $island = null;
@@ -85,6 +87,7 @@ abstract class InquiryInsightsService
         $this->cityId       = isset($filters['city_id']) ? (int) $filters['city_id'] : null;
         $this->barangayId   = isset($filters['barangay_id']) ? (int) $filters['barangay_id'] : null;
         $this->clientId     = isset($filters['client_id']) ? (int) $filters['client_id'] : null;
+        $this->agentId      = isset($filters['agent_id']) ? (int) $filters['agent_id'] : null;
         $this->island       = $filters['island'] ?? null;
         $this->originCountry = $filters['origin_country'] ?? null;
         $this->originRegion  = $filters['origin_region'] ?? null;
@@ -278,6 +281,12 @@ abstract class InquiryInsightsService
         // inquired listings").
         if ($this->clientId) {
             $q->where('chats.user_id', $this->clientId);
+        }
+
+        // Single-agent scope (drill from the agents table / "the inquiries on
+        // this agent's listings"). agent_id is non-nullable on listings.
+        if ($this->agentId) {
+            $q->where('listings.agent_id', $this->agentId);
         }
 
         // Location scope. Use the geo-first barangay expression so a drill into

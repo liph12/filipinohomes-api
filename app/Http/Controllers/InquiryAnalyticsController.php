@@ -149,6 +149,7 @@ class InquiryAnalyticsController extends Controller
     {
         $filters = $this->validateFilters($request, [
             'client_id' => 'nullable|integer|exists:users,id',
+            'agent_id'  => 'nullable|integer|exists:agents,id',
             'page'      => 'nullable|integer|min:1',
             'per_page'  => 'nullable|integer|min:1|max:100',
             'sort_by'   => 'nullable|in:inquiries,price,newest',
@@ -193,6 +194,7 @@ class InquiryAnalyticsController extends Controller
         $filters = $this->validateFilters($request, [
             'listing_id' => 'required|integer|exists:listings,id',
             'client_id'  => 'nullable|integer|exists:users,id',
+            'agent_id'   => 'nullable|integer|exists:agents,id',
             'page'       => 'nullable|integer|min:1',
             'per_page'   => 'nullable|integer|min:1|max:100',
         ]);
