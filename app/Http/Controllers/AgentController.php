@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Agent;
+use App\Models\TeamAgent;
 use App\Models\Conversation;
 use App\Models\ListingInquiry;
 use App\Models\LoginLog;
@@ -169,6 +170,11 @@ class AgentController extends Controller
             $query->having('listings_in_range_count', '<=', (int) $request->query('max_in_range'));
         }
 
+        // Agents with no team membership at all — the "who has no team" view.
+        if ($request->boolean('no_team')) {
+            $query->whereDoesntHave('teamMembers');
+        }
+
         if ($search = $request->query('search')) {
             $term = '%' . $search . '%';
 
@@ -182,6 +188,37 @@ class AgentController extends Controller
                          ->orWhere('name', 'LIKE', $term);
                   });
             });
+        }
+
+        // Per-team breakdown of the CURRENT filtered set (Agents Management
+        // shows it while the no-listings / no-posts filters are active):
+        // which teams have the most matching agents, plus how many matching
+        // agents belong to no team at all. fromSub keeps the HAVING-based
+        // filters intact (they reference select aliases).
+        $teamBreakdown = null;
+        if ($request->boolean('with_team_breakdown') && $request->query('export') !== 'csv') {
+            $ids = DB::query()
+                ->fromSub((clone $query)->reorder(), 'filtered')
+                ->pluck('id');
+            $memberships = TeamAgent::query()
+                ->whereIn('agent_id', $ids)
+                ->with('team:id,name')
+                ->get();
+            $teams = $memberships
+                ->filter(fn ($m) => $m->team)
+                ->groupBy('team_id')
+                ->map(fn ($g) => [
+                    'id'    => $g->first()->team->id,
+                    'name'  => $g->first()->team->name,
+                    'count' => $g->pluck('agent_id')->unique()->count(),
+                ])
+                ->sortByDesc('count')
+                ->values();
+            $teamBreakdown = [
+                'teams'   => $teams,
+                'no_team' => $ids->count() - $memberships->pluck('agent_id')->unique()->count(),
+                'total'   => $ids->count(),
+            ];
         }
 
         $sortBy  = $request->query('sort_by');
@@ -253,16 +290,19 @@ class AgentController extends Controller
                     ? 'Posted ' . $dateFrom . ' to ' . ($dateTo ?: now()->toDateString())
                     : 'Posted (all time)';
                 fputcsv($out, [
-                    'Agent', 'Email', 'Mobile', 'Status', 'Last Online', 'Total Logins',
+                    'Agent', 'Email', 'Mobile', 'Status', 'Team', 'Team Role', 'Last Online', 'Total Logins',
                     'Total Listings', 'Public', 'Private', $rangeLabel,
                     'Sold', 'Rented', 'Leased', 'Ongoing Inquiries', 'Closed Inquiries', 'Member Since',
                 ]);
                 foreach ($rows as $a) {
+                    $tm = $a->teamMembers->first();
                     fputcsv($out, [
                         trim(($a->first_name ?? '') . ' ' . ($a->last_name ?? '')),
                         $a->user?->email,
                         $a->mobile_no,
                         $a->status,
+                        $tm?->team?->name ?? '',
+                        $tm ? ($tm->is_leader ? 'Team Leader' : 'Member') : '',
                         optional($a->user?->last_online_at)->toDateTimeString(),
                         (int) ($a->export_login_count ?? 0),
                         (int) ($a->listings_count ?? 0),
@@ -281,9 +321,14 @@ class AgentController extends Controller
             }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
         }
 
-        return new AgentResourceCollection(
+        $collection = new AgentResourceCollection(
             $query->paginate($perPage)
         );
+        if ($teamBreakdown !== null) {
+            $collection->additional(['team_breakdown' => $teamBreakdown]);
+        }
+
+        return $collection;
     }
 
     public function admins()

@@ -68,8 +68,11 @@ class AgentResource extends JsonResource
                 $tm = $this->teamMembers->first();
                 if (!$tm || !$tm->team) return null;
                 return [
-                    'id'   => $tm->team->id,
-                    'name' => $tm->team->name,
+                    'id'        => $tm->team->id,
+                    'name'      => $tm->team->name,
+                    // Surfaced in Agents Management so admins can spot team
+                    // leaders (and know who to contact about idle agents).
+                    'is_leader' => (bool) ($tm->is_leader ?? false),
                 ];
             }),
             'median_first_response_seconds' => $this->median_first_response_seconds,
