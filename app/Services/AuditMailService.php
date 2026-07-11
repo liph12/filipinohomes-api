@@ -42,6 +42,7 @@ class AuditMailService
             $subject    = method_exists($message, 'getSubject') ? (string) $message->getSubject() : '';
             $recipients = $this->extractRecipients($message);
             $mailable   = $this->detectMailableClass($event);
+            $body       = $this->extractBody($message);
             $user       = Auth::user();
 
             $description = $this->buildSuccessDescription($subject, $recipients);
@@ -59,11 +60,15 @@ class AuditMailService
                 'subject_label'  => implode(', ', array_slice($recipients, 0, 3)),
                 'description'    => $description,
                 'old_values'     => null,
-                'new_values'     => [
+                // Capture the rendered body (what the recipient actually
+                // received) so the audit-detail modal can show it. Stripped
+                // from the list feed by ActivityLogController; served in full
+                // only via the single-row detail endpoint.
+                'new_values'     => array_merge([
                     'recipients'     => $recipients,
                     'subject'        => $subject,
                     'mailable_class' => $mailable,
-                ],
+                ], $body),
             ]);
         } catch (Throwable $e) {
             Log::warning('Mail audit (sent) write failed', [
@@ -146,6 +151,32 @@ class AuditMailService
         $out = [];
         foreach (array_merge($message->getTo(), $message->getCc(), $message->getBcc()) as $addr) {
             $out[] = $addr->getAddress();
+        }
+        return $out;
+    }
+
+    /**
+     * Rendered message body as sent. Prefers the HTML part (what most
+     * recipients see); also keeps the text part when present. Each is
+     * capped so a pathological base64-image email can't bloat the row —
+     * the column is longtext, but 256KB per part is plenty for real
+     * transactional mail. Returns only the keys that have content.
+     */
+    private function extractBody(object $message): array
+    {
+        if (!$message instanceof Email) {
+            return [];
+        }
+        $cap = 262144; // 256KB per part
+        $out = [];
+
+        $html = $message->getHtmlBody();
+        if (is_string($html) && $html !== '') {
+            $out['body_html'] = mb_substr($html, 0, $cap);
+        }
+        $text = $message->getTextBody();
+        if (is_string($text) && $text !== '') {
+            $out['body_text'] = mb_substr($text, 0, $cap);
         }
         return $out;
     }

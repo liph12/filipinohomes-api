@@ -24,6 +24,7 @@ use App\Services\Listing\ListingByTypeService;
 use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
 use App\Services\Listing\ListingSummaryService;
+use App\Services\Listing\ListingTopCreatorsService;
 use App\Services\TeamLeadershipService;
 use App\Support\IslandMap;
 use App\Support\RegionMap;
@@ -2718,7 +2719,12 @@ class ListingController extends Controller
      */
     public function insightsByType(Request $request, ListingByTypeService $insights): JsonResponse
     {
-        $agentIds = $this->resolveInsightsAgentScope($request);
+        // Agent dashboard "my listings by type": ?self=1 always scopes to the
+        // caller's OWN listings, regardless of admin/team-leader status (a
+        // team leader's personal dashboard shows their own, not the team's).
+        $agentIds = $request->boolean('self')
+            ? $this->ownAgentScope($request)
+            : $this->resolveInsightsAgentScope($request);
         $dateStart = $request->query('date_start');
         $dateEnd = $request->query('date_end');
         $cityId = $request->query('city_id');
@@ -2828,6 +2834,60 @@ class ListingController extends Controller
     }
 
     /**
+     * Listing Insights — "Top Listing Creators" for the admin rewards
+     * dashboard. Ranks agents / teams / cities / office regions by listings
+     * created in the range. Admin-only — deliberately NOT
+     * resolveInsightsAgentScope (that admits team leaders; this tile is
+     * platform-wide).
+     */
+    public function insightsTopCreators(Request $request, ListingTopCreatorsService $insights): JsonResponse
+    {
+        $user = $request->user();
+        if (($user->role->name ?? null) !== 'admin') {
+            abort(403);
+        }
+
+        // date_format:Y-m-d (not just 'date') — the service concatenates the
+        // raw string into a datetime literal, so '06/30/2026'-style inputs
+        // would silently compare as NULL and return zero rows.
+        $validated = $request->validate([
+            // group_by=listing is the agent drill-down: individual listings
+            // (with address city/region) instead of a ranking.
+            'group_by' => 'required|in:agent,team,city,office_region,listing',
+            'date_start' => 'nullable|date_format:Y-m-d',
+            'date_end' => 'nullable|date_format:Y-m-d',
+            'limit' => 'nullable|integer',
+            // Drill-downs: scope the ranking (and total_listings) to one city,
+            // one team's active members, or one agent — the tile's "click a
+            // city/team/agent" views.
+            'city_id' => 'nullable|integer|min:1',
+            'team_id' => 'nullable|integer|min:1',
+            'agent_id' => 'nullable|integer|min:1',
+            // Quality gate: count only audit-passed (verified/fully_verified)
+            // AND ATS-approved listings.
+            'qualified' => 'nullable|boolean',
+        ]);
+
+        $dateStart = $request->query('date_start');
+        $dateEnd = $request->query('date_end');
+        $limit = max(1, min(100, (int) ($validated['limit'] ?? 20)));
+        $cityId = isset($validated['city_id']) ? (int) $validated['city_id'] : null;
+        $teamId = isset($validated['team_id']) ? (int) $validated['team_id'] : null;
+        $agentId = isset($validated['agent_id']) ? (int) $validated['agent_id'] : null;
+
+        return response()->json($insights->topCreators(
+            $validated['group_by'],
+            is_string($dateStart) ? $dateStart : null,
+            is_string($dateEnd) ? $dateEnd : null,
+            $limit,
+            $cityId,
+            $teamId,
+            $agentId,
+            $request->boolean('qualified')
+        ));
+    }
+
+    /**
      * Shared scope params for the insight tabs (island / region / barangay),
      * validated: island ∈ {luzon,visayas,mindanao}, region ∈ RegionMap::REGIONS.
      * Unknown values are dropped to null so they no-op instead of zeroing out.
@@ -2867,6 +2927,22 @@ class ListingController extends Controller
         }
 
         return $ledAgentIds;
+    }
+
+    /**
+     * Scope insights to the caller's OWN agent listings (agents-table id).
+     * Powers the agent dashboard's self-scoped "Properties by Type" — works
+     * for any authenticated agent, including team leaders and impersonated
+     * agents, who otherwise resolve to their whole team.
+     */
+    private function ownAgentScope(Request $request): array
+    {
+        $ownAgentId = Agent::where('user_id', $request->user()->id)->value('id');
+        if (!$ownAgentId) {
+            abort(403);
+        }
+
+        return [(int) $ownAgentId];
     }
 
     /**

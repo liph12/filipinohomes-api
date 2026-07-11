@@ -7,6 +7,7 @@ use App\Services\Inquiry\InquiryListingsService;
 use App\Services\Inquiry\InquiryLocationService;
 use App\Services\Inquiry\InquiryOriginService;
 use App\Services\Inquiry\InquiryOverviewService;
+use App\Services\Inquiry\InquiryTopAgentsService;
 use App\Services\Inquiry\InquiryTopClientsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -90,6 +91,30 @@ class InquiryAnalyticsController extends Controller
                 $filters['sort_by'] ?? 'count',
                 $filters['sort_dir'] ?? 'desc',
                 $filters['client_country'] ?? null,
+            )
+        );
+    }
+
+    /**
+     * Agents ranked by inquiries their listings drew, with reply rate, closed
+     * conversations, unread messages, last active, and team — same filter
+     * surface as the clients table.
+     */
+    public function agents(Request $request): JsonResponse
+    {
+        $filters = $this->validateFilters($request, [
+            'page'     => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'sort_by'  => 'nullable|in:count,name',
+            'sort_dir' => 'nullable|in:asc,desc',
+        ]);
+
+        return response()->json(
+            (new InquiryTopAgentsService())->configure($filters)->agents(
+                (int) ($filters['page'] ?? 1),
+                (int) ($filters['per_page'] ?? 25),
+                $filters['sort_by'] ?? 'count',
+                $filters['sort_dir'] ?? 'desc',
             )
         );
     }

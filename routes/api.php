@@ -177,6 +177,7 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('sitemap/query-counts', [SitemapController::class, 'queryCounts']);
         Route::get('sitemap/facility-counts', [SitemapController::class, 'facilityCounts']);
         Route::get('sitemap/barangay-counts', [SitemapController::class, 'barangayCounts']);
+        Route::get('sitemap/market-stats', [SitemapController::class, 'marketStats']);
         Route::get('facilities', [SitemapController::class, 'facilities']);
 
         // Public HomesPhNews proxy (server-side X-Site-Key, avoids CORS for browsers)
@@ -218,6 +219,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/announcements/{announcement}', [AnnouncementController::class, 'showForRecipient']);
 
             Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
+            // Everyone online across all roles (chat/messaging strip).
+            Route::get('/online-users', [UserController::class, 'onlineUsers']);
             Route::get('/users/search', [UserController::class, 'searchUsers']);
             Route::get('/openai/parse-listing-query', [OpenAIController::class, 'parseListingQuery']);
             Route::post('/openai/classify-photos', [OpenAIController::class, 'classifyListingPhotos']);
@@ -253,6 +256,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/activity-logs/overview-stats', [ActivityLogController::class, 'overviewStats']);
             Route::get('/activity-logs/storage', [ActivityLogController::class, 'storageOverview']);
             Route::get('/activity-logs/export', [ActivityLogController::class, 'exportLogs']);
+            // Single-row detail (incl. captured email body). Numeric-constrained
+            // so it never shadows the literal /activity-logs/* routes above.
+            Route::get('/activity-logs/{audit}', [ActivityLogController::class, 'show'])->whereNumber('audit');
             Route::post('/activity-logs/clear', [ActivityLogController::class, 'clearOldLogs']);
 
             // Feature tokens
@@ -305,6 +311,8 @@ Route::middleware('strip.tags')->group(function(){
             Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);
             Route::get('/listings/insights/summary', [ListingController::class, 'insightsSummary']);
             Route::get('/listings/insights/clusters', [ListingController::class, 'insightsClusters']);
+            // Admin "Top Listing Creators" tile (admin-gated in the controller).
+            Route::get('/listings/insights/top-creators', [ListingController::class, 'insightsTopCreators']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
                 ->where('status', '[a-z_-]+');
             Route::get('/listings/insights/by-city/{city}/ats', [ListingController::class, 'insightsCityAtsListings'])
@@ -360,7 +368,10 @@ Route::middleware('strip.tags')->group(function(){
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class . ':admin')->group(function () {
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
+                Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);
+                Route::post('/admin/inquiries/mark-all-read', [InquiryController::class, 'markAllRead']);
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
+                Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
 
                 // Client Demographics — gender + age brackets of registered
@@ -381,6 +392,7 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/inquiry-analytics/locations', [InquiryAnalyticsController::class, 'locations']);
                 Route::get('/admin/inquiry-analytics/origins', [InquiryAnalyticsController::class, 'origins']);
                 Route::get('/admin/inquiry-analytics/clients', [InquiryAnalyticsController::class, 'clients']);
+                Route::get('/admin/inquiry-analytics/agents', [InquiryAnalyticsController::class, 'agents']);
                 Route::get('/admin/inquiry-analytics/heatmap', [InquiryAnalyticsController::class, 'heatmap']);
                 Route::get('/admin/inquiry-analytics/clusters', [InquiryAnalyticsController::class, 'clusters']);
                 Route::get('/admin/inquiry-analytics/inquiries', [InquiryAnalyticsController::class, 'inquiries']);

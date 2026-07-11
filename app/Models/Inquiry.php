@@ -21,11 +21,13 @@ class Inquiry extends Model implements Auditable
         'device',
         'country',
         'state',
-        'city'
+        'city',
+        'read_at',
     ];
 
     protected $casts = [
-        'device' => 'json'
+        'device' => 'json',
+        'read_at' => 'datetime',
     ];
 
     public function replies()

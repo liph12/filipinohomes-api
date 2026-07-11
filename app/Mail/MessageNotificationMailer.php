@@ -202,6 +202,11 @@ class MessageNotificationMailer extends Mailable
     ): void {
         $receiverIsOwner = !empty($listing['owner_email'])
             && strcasecmp((string) $listing['owner_email'], (string) $receiver->email) === 0;
+        // The sender is the listing owner (agent messaging a client about
+        // their own listing) — the FROM block already shows exactly this
+        // contact, so the Listing Owner card would duplicate it.
+        $senderIsOwner = !empty($listing['owner_email'])
+            && strcasecmp((string) $listing['owner_email'], (string) $sender->email) === 0;
 
         Mail::to($receiver->email)->send(new self(
             $sender,
@@ -211,11 +216,12 @@ class MessageNotificationMailer extends Mailable
             $roleName,
             $listing,
             $agentUserId,
-            // Hide the "Listing Owner" card when the receiver IS the
-            // owner — they don't need their own info echoed back to
-            // them. When receiver is a client, show the card so the
-            // client has the agent's contact details handy.
-            !$receiverIsOwner,
+            // Hide the "Listing Owner" card when it would just repeat a
+            // contact already on the email: the receiver IS the owner (their
+            // own info echoed back), OR the sender IS the owner (the FROM
+            // block already shows them). Otherwise show it so a client has
+            // the agent's contact details handy.
+            !$receiverIsOwner && !$senderIsOwner,
         ));
     }
 

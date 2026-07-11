@@ -27,14 +27,21 @@ class AgentReviewController extends Controller
             'tag' => 'sometimes|string|max:32',
             'sort' => 'sometimes|in:recent,highest,lowest,with_comment,with_response',
             'per_page' => 'sometimes|integer|min:1|max:50',
+            // Reviewer-role filter for the public "All / Clients / Agents" toggle.
+            // Filters by the review author's account role; omit for all reviews.
+            'author' => 'sometimes|in:client,agent',
         ]);
 
         $query = AgentReview::query()
             ->where('agent_user_id', $agentUserId)
             ->where('status', 'visible')
             ->with([
-                // Display name + avatar for the row header.
-                'client:id,name,avatar',
+                // Display name + avatar for the row header. role_id MUST be
+                // selected too — it's the FK the nested client.role relation
+                // keys on; without it Eloquent can't hydrate client.role and
+                // inquirer_role comes back null (so a fellow-agent review is
+                // mislabeled "Verified Inquirer" instead of "Inquired as agent").
+                'client:id,name,avatar,role_id',
                 // role drives the "Inquired as agent" badge — eager-load
                 // it via the client relation so the resource projection
                 // can read $this->client->role.
@@ -58,6 +65,12 @@ class AgentReviewController extends Controller
         if (!empty($validated['tag'])) {
             // JSON_CONTAINS for MySQL; the column stores a JSON array.
             $query->whereJsonContains('tags', $validated['tag']);
+        }
+        if (!empty($validated['author'])) {
+            // Filter the list by the review author's role (client vs fellow
+            // agent). Nested-relation whereHas: client (belongsTo User) →
+            // role (belongsTo Role). Mirrors the summary's role join.
+            $query->whereHas('client.role', fn ($q) => $q->where('name', $validated['author']));
         }
 
         // Sort dispatch — default 'recent'. with_comment / with_response

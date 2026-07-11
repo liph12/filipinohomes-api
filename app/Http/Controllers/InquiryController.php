@@ -51,13 +51,56 @@ class InquiryController extends Controller
             $query->where('source', $validated['source']);
         }
 
-        return $query->paginate($validated['per_page'] ?? 20);
+        $paginator = $query->paginate($validated['per_page'] ?? 20);
+
+        // Total unread across ALL inquiries (not just this page/filter) so the
+        // header + sidebar badge reflect the real backlog.
+        return response()->json(
+            $paginator->toArray() + ['unread_count' => Inquiry::whereNull('read_at')->count()],
+        );
+    }
+
+    /**
+     * Lightweight unread tally for the sidebar Contact Inbox badge.
+     */
+    public function unreadCount()
+    {
+        return response()->json(['unread_count' => Inquiry::whereNull('read_at')->count()]);
     }
 
     public function show(Inquiry $inquiry)
     {
+        // Opening a submission marks it read (first open only).
+        if ($inquiry->read_at === null) {
+            $inquiry->forceFill(['read_at' => now()])->saveQuietly();
+        }
         $inquiry->load(['replies.admin:id,name,email,avatar']);
         return response()->json(['data' => $inquiry]);
+    }
+
+    /**
+     * Mark one inquiry read/unread without opening the thread (row toggle).
+     */
+    public function setRead(Request $request, Inquiry $inquiry)
+    {
+        $validated = $request->validate(['read' => 'required|boolean']);
+        $inquiry->forceFill([
+            'read_at' => $validated['read'] ? ($inquiry->read_at ?? now()) : null,
+        ])->saveQuietly();
+
+        return response()->json([
+            'data' => ['id' => $inquiry->id, 'read_at' => $inquiry->read_at],
+            'unread_count' => Inquiry::whereNull('read_at')->count(),
+        ]);
+    }
+
+    /**
+     * Mark every inquiry read (inbox "mark all read").
+     */
+    public function markAllRead()
+    {
+        Inquiry::whereNull('read_at')->update(['read_at' => now()]);
+        return response()->json(['unread_count' => 0]);
     }
 
     /**
