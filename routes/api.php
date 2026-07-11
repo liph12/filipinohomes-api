@@ -392,6 +392,7 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/inquiry-analytics/locations', [InquiryAnalyticsController::class, 'locations']);
                 Route::get('/admin/inquiry-analytics/origins', [InquiryAnalyticsController::class, 'origins']);
                 Route::get('/admin/inquiry-analytics/clients', [InquiryAnalyticsController::class, 'clients']);
+                Route::get('/admin/inquiry-analytics/agents', [InquiryAnalyticsController::class, 'agents']);
                 Route::get('/admin/inquiry-analytics/heatmap', [InquiryAnalyticsController::class, 'heatmap']);
                 Route::get('/admin/inquiry-analytics/clusters', [InquiryAnalyticsController::class, 'clusters']);
                 Route::get('/admin/inquiry-analytics/inquiries', [InquiryAnalyticsController::class, 'inquiries']);
