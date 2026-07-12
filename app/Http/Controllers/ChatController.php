@@ -5,21 +5,25 @@ namespace App\Http\Controllers;
 use App\Http\Resources\ChatResource;
 use App\Jobs\SendInquiryReviewNotification;
 use App\Mail\MessageNotificationMailer;
+use App\Models\Agent;
 use App\Models\BlockedUser;
 use App\Models\Chat;
 use App\Models\Conversation;
 use App\Models\Listing;
 use App\Models\Message;
+use App\Models\TeamAgent;
 use App\Models\User;
 use App\Models\UserInfo;
+use App\Services\AuditMailService;
 use App\Services\AuditSecurityService;
 use App\Services\ChatRateLimitService;
 use App\Services\TeamLeadershipService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 class ChatController extends Controller
@@ -44,6 +48,37 @@ class ChatController extends Controller
             'activeConversation.latestMessage.user.agent:id,user_id,mobile_no,whats_app_no',
         ]);
 
+        // Team-dashboard reply monitoring: attach two correlated aggregates per
+        // chat — whether the assigned agent has ever replied (any live message
+        // authored by conversation.agent_user_id), and the timestamp of the
+        // inquirer's (chats.user_id) most recent live message ("client last
+        // reply", used to spot clients who've gone quiet). Gated behind an opt-in
+        // flag so the hot shared inbox pays nothing for these subqueries.
+        if ($request->boolean('with_reply_stats')) {
+            $query->addSelect('chats.*')
+                ->selectSub(function ($q) {
+                    $q->from('messages as m')
+                        ->join('conversations as c', 'c.id', '=', 'm.conversation_id')
+                        ->whereColumn('c.chat_id', 'chats.id')
+                        ->whereColumn('m.user_id', 'c.agent_user_id')
+                        ->whereNotIn('m.status', ['deleted', 'unsent'])
+                        ->selectRaw('CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END');
+                }, 'agent_replied')
+                ->selectSub(function ($q) {
+                    $q->from('messages as m')
+                        ->join('conversations as c', 'c.id', '=', 'm.conversation_id')
+                        ->whereColumn('c.chat_id', 'chats.id')
+                        ->whereColumn('m.user_id', 'chats.user_id')
+                        ->whereNotIn('m.status', ['deleted', 'unsent'])
+                        ->selectRaw('MAX(m.created_at)');
+                }, 'client_last_reply_at');
+
+            // Keep soft-deleted listings visible so the team dashboard can flag
+            // inquiries whose listing has since been removed (the default
+            // relation scope would drop them, leaving the row with no listing).
+            $query->with(['listing' => fn ($q) => $q->withTrashed()]);
+        }
+
         if ($roleName === 'admin') {
             // admin sees all
         } elseif ($roleName === 'agent') {
@@ -56,7 +91,7 @@ class ChatController extends Controller
                             ->whereIn('status', ['accepted', 'closed']);
                     });
 
-                if (!empty($ledIds)) {
+                if (! empty($ledIds)) {
                     $q->orWhereHas('conversations', function ($sub) use ($ledIds) {
                         $sub->whereIn('agent_user_id', $ledIds);
                     });
@@ -104,22 +139,22 @@ class ChatController extends Controller
             if ($scope === 'mine') {
                 $query->where(function ($q) use ($user) {
                     $q->where('user_id', $user->id)
-                      ->orWhereHas('activeConversation', function ($c) use ($user) {
-                          $c->where('agent_user_id', $user->id);
-                      });
+                        ->orWhereHas('activeConversation', function ($c) use ($user) {
+                            $c->where('agent_user_id', $user->id);
+                        });
                 });
             } else {
                 $query->where('user_id', '!=', $user->id)
-                      ->whereDoesntHave('activeConversation', function ($c) use ($user) {
-                          $c->where('agent_user_id', $user->id);
-                      });
+                    ->whereDoesntHave('activeConversation', function ($c) use ($user) {
+                        $c->where('agent_user_id', $user->id);
+                    });
             }
         } elseif ($scope === 'team' && $roleName === 'admin') {
             // Admin-only "Team" filter: conversations assigned to an agent who
             // is an active member of any team.
-            $teamUserIds = \App\Models\Agent::whereIn(
+            $teamUserIds = Agent::whereIn(
                 'id',
-                \App\Models\TeamAgent::where('status', 'active')->pluck('agent_id')
+                TeamAgent::where('status', 'active')->pluck('agent_id')
             )->whereNotNull('user_id')->pluck('user_id')->all();
             $query->whereHas('activeConversation', function ($c) use ($teamUserIds) {
                 $c->whereIn('agent_user_id', $teamUserIds);
@@ -134,7 +169,10 @@ class ChatController extends Controller
 
         if ($status = $request->query('status')) {
             if ($status !== 'all') {
-                $query->whereHas('activeConversation', fn ($c) => $c->where('status', $status));
+                // Accept a single status or a comma-separated set (e.g.
+                // "pending,accepted" for the team dashboard's "active" feed).
+                $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $status))));
+                $query->whereHas('activeConversation', fn ($c) => $c->whereIn('status', $statuses));
             }
         }
 
@@ -146,7 +184,7 @@ class ChatController extends Controller
             }
         }
         if ($q = trim((string) $request->query('q'))) {
-            $like = '%' . $q . '%';
+            $like = '%'.$q.'%';
             $query->where(function ($outer) use ($like) {
                 $outer->whereHas('user', fn ($u) => $u->where('name', 'like', $like))
                     ->orWhereHas('listing', fn ($l) => $l->where('name', 'like', $like))
@@ -166,7 +204,7 @@ class ChatController extends Controller
         // The row stays in the DB so an admin tool can recover it later.
         $purgedExclusion = function ($q) use ($user) {
             $q->where('users.id', $user->id)
-              ->whereNotNull('conversation_users.purged_at');
+                ->whereNotNull('conversation_users.purged_at');
         };
 
         $view = $request->query('view', 'inbox');
@@ -195,8 +233,8 @@ class ChatController extends Controller
                 $q->where('users.id', $user->id)
                     ->where(function ($w) {
                         $w->whereNotNull('conversation_users.archived_at')
-                          ->orWhereNotNull('conversation_users.removed_at')
-                          ->orWhereNotNull('conversation_users.purged_at');
+                            ->orWhereNotNull('conversation_users.removed_at')
+                            ->orWhereNotNull('conversation_users.purged_at');
                     });
             });
         }
@@ -229,7 +267,7 @@ class ChatController extends Controller
 
             $result = ['total' => 0, 'inquiries' => 0, 'messages' => 0];
 
-            if (!empty($typeByConv)) {
+            if (! empty($typeByConv)) {
                 $unreadByConversation = DB::table('messages')
                     ->select('messages.conversation_id', DB::raw('COUNT(*) as unread'))
                     ->join('conversation_users', function ($join) use ($user) {
@@ -271,7 +309,7 @@ class ChatController extends Controller
             ->values()
             ->all();
 
-        if (!empty($conversationIds)) {
+        if (! empty($conversationIds)) {
             $unreadByConversation = DB::table('messages')
                 ->select('messages.conversation_id', DB::raw('COUNT(*) as unread'))
                 ->join('conversation_users', function ($join) use ($user) {
@@ -322,8 +360,8 @@ class ChatController extends Controller
             // the chat row for Inquiry Analytics origin tracing. Optional:
             // when absent we fall back to the sender's stored user_info.
             'origin_country' => 'nullable|string|max:8',
-            'origin_region'  => 'nullable|string|max:96',
-            'origin_city'    => 'nullable|string|max:96',
+            'origin_region' => 'nullable|string|max:96',
+            'origin_city' => 'nullable|string|max:96',
         ]);
 
         // Secretaries are staff oversight, not buyers: they may direct-message
@@ -374,7 +412,7 @@ class ChatController extends Controller
                         // submitted inquiry going through moderation is
                         // pointless and would block the agent from seeing
                         // the message until someone accepts.
-                        'status' => !$isListing || $autoAccept ? 'accepted' : 'pending',
+                        'status' => ! $isListing || $autoAccept ? 'accepted' : 'pending',
                         'agent_user_id' => $isListing ? $validated['target_user_id'] : null,
                         'reviewed_by' => $autoAccept ? $user->id : null,
                         'reviewed_at' => $autoAccept ? now() : null,
@@ -412,7 +450,7 @@ class ChatController extends Controller
 
                         $leaderUserId = app(TeamLeadershipService::class)
                             ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
-                        if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
+                        if ($leaderUserId && $leaderUserId !== $user->id && ! isset($attachments[$leaderUserId])) {
                             $attachments[$leaderUserId] = ['last_read_at' => null, 'last_notified_at' => null];
                         }
 
@@ -438,7 +476,7 @@ class ChatController extends Controller
                         ]);
                     }
 
-                    if (!empty($validated['message'])) {
+                    if (! empty($validated['message'])) {
                         Message::create([
                             'conversation_id' => $conversation->id,
                             'user_id' => $user->id,
@@ -460,28 +498,28 @@ class ChatController extends Controller
                 if ($isListing) {
                     if ($autoAccept) {
                         $this->dispatchAcceptanceEmail(
-                            chatId:       $existing->id,
-                            listingId:    (int) $validated['type_id'],
-                            agentUserId:  (int) $validated['target_user_id'],
-                            message:      $validated['message'] ?? '',
-                            sender:       $user,
+                            chatId: $existing->id,
+                            listingId: (int) $validated['type_id'],
+                            agentUserId: (int) $validated['target_user_id'],
+                            message: $validated['message'] ?? '',
+                            sender: $user,
                         );
                     } else {
                         $this->dispatchSubmissionEmail(
-                            chatId:       $existing->id,
-                            listingId:    (int) $validated['type_id'],
-                            agentUserId:  (int) $validated['target_user_id'],
-                            message:      $validated['message'] ?? '',
-                            sender:       $user,
+                            chatId: $existing->id,
+                            listingId: (int) $validated['type_id'],
+                            agentUserId: (int) $validated['target_user_id'],
+                            message: $validated['message'] ?? '',
+                            sender: $user,
                         );
                     }
                 } elseif ($validated['type'] === 'agent') {
                     $this->dispatchAgentProfileEmail(
-                        chatId:      $existing->id,
+                        chatId: $existing->id,
                         agentUserId: (int) $validated['target_user_id'],
-                        message:     $validated['message'] ?? '',
-                        sender:      $user,
-                        source:      $validated['source'] ?? null,
+                        message: $validated['message'] ?? '',
+                        sender: $user,
+                        source: $validated['source'] ?? null,
                     );
                 }
             }
@@ -500,7 +538,7 @@ class ChatController extends Controller
         // "Feat: Daily inquiry cap + block-scope dialog…" for the
         // shape and rationale.
         $isAdmin = $user->role?->name === 'admin';
-        if (!$isAdmin) {
+        if (! $isAdmin) {
             $rateLimit = app(ChatRateLimitService::class);
             if ($rateLimit->exhausted((int) $user->id)) {
                 app(AuditSecurityService::class)->recordRateLimitHit(
@@ -512,17 +550,18 @@ class ChatController extends Controller
                         ChatRateLimitService::DAILY_LIMIT,
                     ),
                     [
-                        'attempted_type'    => $validated['type'],
-                        'target_user_id'    => (int) $validated['target_user_id'],
+                        'attempted_type' => $validated['type'],
+                        'target_user_id' => (int) $validated['target_user_id'],
                         'attempted_type_id' => (int) $validated['type_id'],
                     ],
                 );
+
                 return response()->json([
                     'message' => sprintf(
                         'Daily limit reached. You can open up to %d new conversations per day. Try again tomorrow.',
                         ChatRateLimitService::DAILY_LIMIT,
                     ),
-                    'limit'     => ChatRateLimitService::DAILY_LIMIT,
+                    'limit' => ChatRateLimitService::DAILY_LIMIT,
                     'remaining' => 0,
                 ], 429);
             }
@@ -542,16 +581,16 @@ class ChatController extends Controller
         // login's geo) when the payload has none — e.g. ad-blocked ipinfo.
         $originGeo = [
             'origin_country' => $validated['origin_country'] ?? null,
-            'origin_region'  => $validated['origin_region'] ?? null,
-            'origin_city'    => $validated['origin_city'] ?? null,
+            'origin_region' => $validated['origin_region'] ?? null,
+            'origin_city' => $validated['origin_city'] ?? null,
         ];
-        if (!array_filter($originGeo)) {
+        if (! array_filter($originGeo)) {
             $ui = UserInfo::where('user_id', $user->id)->first();
             if ($ui) {
                 $originGeo = [
                     'origin_country' => $ui->country ?: null,
-                    'origin_region'  => $ui->state ?: null,
-                    'origin_city'    => $ui->city ?: null,
+                    'origin_region' => $ui->state ?: null,
+                    'origin_city' => $ui->city ?: null,
                 ];
             }
         }
@@ -572,7 +611,7 @@ class ChatController extends Controller
                 // their own team) skip Pending Review — they already have
                 // moderation rights, so blocking the agent from seeing the
                 // message until someone clicks Accept is pointless.
-                'status' => !$isListing || $autoAccept ? 'accepted' : 'pending',
+                'status' => ! $isListing || $autoAccept ? 'accepted' : 'pending',
                 'agent_user_id' => $isListing ? $validated['target_user_id'] : null,
                 'reviewed_by' => $autoAccept ? $user->id : null,
                 'reviewed_at' => $autoAccept ? now() : null,
@@ -582,7 +621,7 @@ class ChatController extends Controller
             // Set on the model instance BEFORE save so the
             // LogsActivity trait picks it up at audit-write time.
             $listingName = $isListing
-                ? \App\Models\Listing::where('id', $validated['type_id'])->value('name')
+                ? Listing::where('id', $validated['type_id'])->value('name')
                 : null;
             $conversation->auditSource = $autoAccept
                 ? 'inquiry_auto_accept'
@@ -614,7 +653,7 @@ class ChatController extends Controller
 
                 $leaderUserId = app(TeamLeadershipService::class)
                     ->findTeamLeaderUserIdFor((int) $validated['target_user_id']);
-                if ($leaderUserId && $leaderUserId !== $user->id && !isset($attachments[$leaderUserId])) {
+                if ($leaderUserId && $leaderUserId !== $user->id && ! isset($attachments[$leaderUserId])) {
                     $attachments[$leaderUserId] = ['last_read_at' => null, 'last_notified_at' => null];
                 }
 
@@ -645,7 +684,7 @@ class ChatController extends Controller
                 ]);
             }
 
-            if (!empty($validated['message'])) {
+            if (! empty($validated['message'])) {
                 Message::create([
                     'conversation_id' => $conversation->id,
                     'user_id' => $user->id,
@@ -663,7 +702,7 @@ class ChatController extends Controller
         // Doing it pre-commit would leak a slot if the transaction
         // rolled back; doing it post-commit matches what actually
         // got created. Admins still bypass.
-        if (!$isAdmin) {
+        if (! $isAdmin) {
             app(ChatRateLimitService::class)->recordNewChat((int) $user->id);
         }
 
@@ -682,19 +721,19 @@ class ChatController extends Controller
         if ($validated['type'] === 'listing') {
             if ($autoAccept) {
                 $this->dispatchAcceptanceEmail(
-                    chatId:       $chat->id,
-                    listingId:    (int) $validated['type_id'],
-                    agentUserId:  (int) $validated['target_user_id'],
-                    message:      $validated['message'] ?? '',
-                    sender:       $user,
+                    chatId: $chat->id,
+                    listingId: (int) $validated['type_id'],
+                    agentUserId: (int) $validated['target_user_id'],
+                    message: $validated['message'] ?? '',
+                    sender: $user,
                 );
             } else {
                 $this->dispatchSubmissionEmail(
-                    chatId:       $chat->id,
-                    listingId:    (int) $validated['type_id'],
-                    agentUserId:  (int) $validated['target_user_id'],
-                    message:      $validated['message'] ?? '',
-                    sender:       $user,
+                    chatId: $chat->id,
+                    listingId: (int) $validated['type_id'],
+                    agentUserId: (int) $validated['target_user_id'],
+                    message: $validated['message'] ?? '',
+                    sender: $user,
                 );
             }
 
@@ -719,11 +758,11 @@ class ChatController extends Controller
             // conversation is auto-accepted on create), so the agent gets
             // exactly one email straight to their inbox.
             $this->dispatchAgentProfileEmail(
-                chatId:      $chat->id,
+                chatId: $chat->id,
                 agentUserId: (int) $validated['target_user_id'],
-                message:     $validated['message'] ?? '',
-                sender:      $user,
-                source:      $validated['source'] ?? null,
+                message: $validated['message'] ?? '',
+                sender: $user,
+                source: $validated['source'] ?? null,
             );
         }
 
@@ -774,7 +813,7 @@ class ChatController extends Controller
         // their own listings' inquiries is confusing (the TL would
         // be "accepting their own pending inquiry from a client").
         $target = User::with('role')->find($targetAgentUserId);
-        if (!$target) {
+        if (! $target) {
             return false;
         }
         if ($target->role?->name === 'admin') {
@@ -806,7 +845,7 @@ class ChatController extends Controller
             'property.propertyAttribute.subtype.type',
         ])->find($listingId);
 
-        if (!$listing) {
+        if (! $listing) {
             // Listing was deleted between validation and dispatch (race).
             // The conversation row still exists for moderation; just skip
             // the email rather than crashing the queue worker.
@@ -821,7 +860,7 @@ class ChatController extends Controller
         // Slug shape matches ConversationController@accept so the frontend's
         // ListingInquiries component (which matches `{slug}-{chat.id}`) can
         // route from the email CTA back to the right inquiry.
-        $slug = Str::slug($listing->name) . '-' . $chatId;
+        $slug = Str::slug($listing->name).'-'.$chatId;
 
         // SMTP failures (disabled mailbox, rate limits, transient
         // network) must NEVER 500 the inquiry-submission flow — the
@@ -830,27 +869,27 @@ class ChatController extends Controller
         // move on rather than throwing past the controller.
         try {
             MessageNotificationMailer::dispatchForSubmission(
-                sender:      $sender,
-                message:     $message,
-                slug:        $slug,
-                listing:     MessageNotificationMailer::buildListingPayload($listing),
+                sender: $sender,
+                message: $message,
+                slug: $slug,
+                listing: MessageNotificationMailer::buildListingPayload($listing),
                 agentUserId: $agentUserId,
             );
         } catch (Throwable $e) {
             Log::warning('Submission email failed to dispatch', [
-                'chat_id'       => $chatId,
-                'listing_id'    => $listingId,
+                'chat_id' => $chatId,
+                'listing_id' => $listingId,
                 'agent_user_id' => $agentUserId,
-                'error'         => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
-            app(\App\Services\AuditMailService::class)->recordFailure(
+            app(AuditMailService::class)->recordFailure(
                 $e,
                 MessageNotificationMailer::class,
                 [],
                 'New listing inquiry — admin fan-out',
                 [
                     'auditable_type' => Chat::class,
-                    'auditable_id'   => $chatId,
+                    'auditable_id' => $chatId,
                 ],
             );
         }
@@ -878,18 +917,18 @@ class ChatController extends Controller
             'property.propertyAttribute.subtype.type',
         ])->find($listingId);
 
-        if (!$listing) {
+        if (! $listing) {
             return;
         }
 
         $agent = User::find($agentUserId);
-        if (!$agent) {
+        if (! $agent) {
             return;
         }
 
         $sender->loadMissing('agent');
 
-        $slug = Str::slug($listing->name) . '-' . $chatId;
+        $slug = Str::slug($listing->name).'-'.$chatId;
 
         // Same protection as dispatchSubmissionEmail above — SMTP
         // failures can't be allowed to 500 the inquiry-creation
@@ -897,28 +936,28 @@ class ChatController extends Controller
         // failing notification email is not worth losing the chat.
         try {
             MessageNotificationMailer::dispatchForAcceptance(
-                sender:      $sender,
-                agent:       $agent,
-                message:     $message,
-                slug:        $slug,
-                listing:     MessageNotificationMailer::buildListingPayload($listing),
+                sender: $sender,
+                agent: $agent,
+                message: $message,
+                slug: $slug,
+                listing: MessageNotificationMailer::buildListingPayload($listing),
                 agentUserId: $agentUserId,
             );
         } catch (Throwable $e) {
             Log::warning('Auto-acceptance email failed to dispatch', [
-                'chat_id'       => $chatId,
-                'listing_id'    => $listingId,
+                'chat_id' => $chatId,
+                'listing_id' => $listingId,
                 'agent_user_id' => $agentUserId,
-                'error'         => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
-            app(\App\Services\AuditMailService::class)->recordFailure(
+            app(AuditMailService::class)->recordFailure(
                 $e,
                 MessageNotificationMailer::class,
                 $agent->email ? [$agent->email] : [],
                 'Auto-accepted inquiry — agent notification',
                 [
                     'auditable_type' => Chat::class,
-                    'auditable_id'   => $chatId,
+                    'auditable_id' => $chatId,
                 ],
             );
         }
@@ -942,14 +981,14 @@ class ChatController extends Controller
         ?string $source = null,
     ): void {
         $agent = User::find($agentUserId);
-        if (!$agent) {
+        if (! $agent) {
             return;
         }
 
         $sender->loadMissing('agent');
 
         $agentName = trim((string) ($agent->name ?? '')) ?: 'agent';
-        $slug = Str::slug($agentName) . '-' . $chatId;
+        $slug = Str::slug($agentName).'-'.$chatId;
 
         // Same protection as the listing-inquiry mailers above —
         // a failing SMTP transport can't be allowed to block a
@@ -958,27 +997,27 @@ class ChatController extends Controller
         // the email is a fan-out, not the operation.
         try {
             MessageNotificationMailer::dispatchForAgentProfile(
-                sender:      $sender,
-                agent:       $agent,
-                message:     $message,
-                slug:        $slug,
+                sender: $sender,
+                agent: $agent,
+                message: $message,
+                slug: $slug,
                 agentUserId: $agentUserId,
-                source:      $source,
+                source: $source,
             );
         } catch (Throwable $e) {
             Log::warning('Agent-profile inquiry email failed to dispatch', [
-                'chat_id'       => $chatId,
+                'chat_id' => $chatId,
                 'agent_user_id' => $agentUserId,
-                'error'         => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
-            app(\App\Services\AuditMailService::class)->recordFailure(
+            app(AuditMailService::class)->recordFailure(
                 $e,
                 MessageNotificationMailer::class,
                 $agent->email ? [$agent->email] : [],
                 'Agent profile DM — first message notification',
                 [
                     'auditable_type' => Chat::class,
-                    'auditable_id'   => $chatId,
+                    'auditable_id' => $chatId,
                 ],
             );
         }
@@ -1073,7 +1112,7 @@ class ChatController extends Controller
     {
         return $this->mutateViewerPivot($chat, [
             'archived_at' => null,
-            'removed_at'  => null,
+            'removed_at' => null,
         ]);
     }
 
@@ -1166,9 +1205,9 @@ class ChatController extends Controller
         });
 
         Log::warning('Admin permanently deleted a user\'s conversations.', [
-            'actor_id'     => $actor->id,
-            'target_user'  => $user->id,
-            'target_name'  => $user->name,
+            'actor_id' => $actor->id,
+            'target_user' => $user->id,
+            'target_name' => $user->name,
             'chats_deleted' => $count,
         ]);
 
@@ -1192,7 +1231,7 @@ class ChatController extends Controller
         $this->authorize('view', $chat);
 
         $activeConv = $chat->activeConversation;
-        if (!$activeConv) {
+        if (! $activeConv) {
             return response()->json(
                 ['message' => 'This chat has no active conversation.'],
                 404,
@@ -1205,7 +1244,7 @@ class ChatController extends Controller
         // conversation was created. Attach them lazily so the update has
         // something to act on; matches the existing "admins see all"
         // semantic in index().
-        if (!$activeConv->users()->where('users.id', $userId)->exists()) {
+        if (! $activeConv->users()->where('users.id', $userId)->exists()) {
             $activeConv->users()->attach($userId, [
                 'last_read_at' => null,
             ]);
@@ -1250,13 +1289,13 @@ class ChatController extends Controller
         // missing dates mean "no lower / no upper bound". Accepts YYYY-MM-DD.
         $validated = $request->validate([
             'date_from' => 'sometimes|nullable|date',
-            'date_to'   => 'sometimes|nullable|date|after_or_equal:date_from',
+            'date_to' => 'sometimes|nullable|date|after_or_equal:date_from',
         ]);
-        $dateFrom = !empty($validated['date_from'])
-            ? \Carbon\Carbon::parse($validated['date_from'])->startOfDay()
+        $dateFrom = ! empty($validated['date_from'])
+            ? Carbon::parse($validated['date_from'])->startOfDay()
             : null;
-        $dateTo = !empty($validated['date_to'])
-            ? \Carbon\Carbon::parse($validated['date_to'])->endOfDay()
+        $dateTo = ! empty($validated['date_to'])
+            ? Carbon::parse($validated['date_to'])->endOfDay()
             : null;
 
         $applyDateFilter = function ($q) use ($dateFrom, $dateTo) {
@@ -1280,10 +1319,10 @@ class ChatController extends Controller
         if ($dateFrom || $dateTo) {
             $byTypeQuery->whereExists(function ($q) use ($dateFrom, $dateTo) {
                 $q->select(DB::raw(1))
-                  ->from('conversations as c')
-                  ->whereColumn('c.chat_id', 'chats.id')
-                  ->whereNull('c.deleted_at')
-                  ->whereRaw('c.id = (SELECT MAX(c2.id) FROM conversations c2 WHERE c2.chat_id = chats.id AND c2.deleted_at IS NULL)');
+                    ->from('conversations as c')
+                    ->whereColumn('c.chat_id', 'chats.id')
+                    ->whereNull('c.deleted_at')
+                    ->whereRaw('c.id = (SELECT MAX(c2.id) FROM conversations c2 WHERE c2.chat_id = chats.id AND c2.deleted_at IS NULL)');
                 if ($dateFrom) {
                     $q->where('c.created_at', '>=', $dateFrom);
                 }
@@ -1296,11 +1335,11 @@ class ChatController extends Controller
         $byType = $byTypeQuery->pluck('n', 'type')->toArray();
 
         $totals = [
-            'all'     => (int) array_sum($byType),
+            'all' => (int) array_sum($byType),
             'listing' => (int) ($byType['listing'] ?? 0),
-            'agent'   => (int) ($byType['agent']   ?? 0),
-            'blog'    => (int) ($byType['blog']    ?? 0),
-            'reel'    => (int) ($byType['reel']    ?? 0),
+            'agent' => (int) ($byType['agent'] ?? 0),
+            'blog' => (int) ($byType['blog'] ?? 0),
+            'reel' => (int) ($byType['reel'] ?? 0),
         ];
 
         // Subquery: "latest conversation per chat" — same scope the chat list
@@ -1347,19 +1386,19 @@ class ChatController extends Controller
 
         $listingTotal = (int) ($listingAgg->total ?? 0);
         $agentReplied = (int) ($listingAgg->agent_replied ?? 0);
-        $notReplied   = max(0, $listingTotal - $agentReplied);
+        $notReplied = max(0, $listingTotal - $agentReplied);
 
         $listingInquiries = [
-            'total'         => $listingTotal,
+            'total' => $listingTotal,
             'agent_replied' => $agentReplied,
-            'not_replied'   => $notReplied,
-            'by_status'     => [
-                'pending'  => (int) ($listingAgg->s_pending  ?? 0),
+            'not_replied' => $notReplied,
+            'by_status' => [
+                'pending' => (int) ($listingAgg->s_pending ?? 0),
                 'accepted' => (int) ($listingAgg->s_accepted ?? 0),
                 'rejected' => (int) ($listingAgg->s_rejected ?? 0),
-                'closed'   => (int) ($listingAgg->s_closed   ?? 0),
+                'closed' => (int) ($listingAgg->s_closed ?? 0),
             ],
-            'reply_rate'    => $listingTotal > 0
+            'reply_rate' => $listingTotal > 0
                 ? round(($agentReplied / $listingTotal) * 100, 1)
                 : 0.0,
         ];
@@ -1391,12 +1430,12 @@ class ChatController extends Controller
         // Enrich each agent_user_id with display info (name / avatar / team).
         $agentUserIds = $perAgentRows->pluck('agent_user_id')->all();
         $userInfo = collect();
-        if (!empty($agentUserIds)) {
+        if (! empty($agentUserIds)) {
             $userInfo = DB::table('users as u')
                 ->leftJoin('agents as a', 'a.user_id', '=', 'u.id')
                 ->leftJoin('team_agents as ta', function ($j) {
                     $j->on('ta.agent_id', '=', 'a.id')
-                      ->where('ta.status', '=', 'active');
+                        ->where('ta.status', '=', 'active');
                 })
                 ->leftJoin('teams as t', 't.id', '=', 'ta.team_id')
                 ->whereIn('u.id', $agentUserIds)
@@ -1415,22 +1454,23 @@ class ChatController extends Controller
             $info = $userInfo[$row->agent_user_id] ?? null;
             $total = (int) $row->total;
             $replied = (int) $row->agent_replied;
+
             return [
                 'agent_user_id' => (int) $row->agent_user_id,
-                'name'          => $info?->name ?? ('Agent #' . $row->agent_user_id),
-                'avatar'        => $info?->avatar,
-                'team_id'       => isset($info->team_id) ? (int) $info->team_id : null,
-                'team_name'     => $info?->team_name,
-                'total'         => $total,
+                'name' => $info?->name ?? ('Agent #'.$row->agent_user_id),
+                'avatar' => $info?->avatar,
+                'team_id' => isset($info->team_id) ? (int) $info->team_id : null,
+                'team_name' => $info?->team_name,
+                'total' => $total,
                 'agent_replied' => $replied,
-                'not_replied'   => max(0, $total - $replied),
-                'by_status'     => [
-                    'pending'  => (int) $row->s_pending,
+                'not_replied' => max(0, $total - $replied),
+                'by_status' => [
+                    'pending' => (int) $row->s_pending,
                     'accepted' => (int) $row->s_accepted,
                     'rejected' => (int) $row->s_rejected,
-                    'closed'   => (int) $row->s_closed,
+                    'closed' => (int) $row->s_closed,
                 ],
-                'reply_rate'    => $total > 0
+                'reply_rate' => $total > 0
                     ? round(($replied / $total) * 100, 1)
                     : 0.0,
             ];
@@ -1440,14 +1480,14 @@ class ChatController extends Controller
         $teamMeta = DB::table('teams as t')
             ->leftJoin('team_agents as la', function ($j) {
                 $j->on('la.team_id', '=', 't.id')
-                  ->where('la.status', '=', 'active')
-                  ->where('la.is_leader', '=', true);
+                    ->where('la.status', '=', 'active')
+                    ->where('la.is_leader', '=', true);
             })
             ->leftJoin('agents as la_a', 'la_a.id', '=', 'la.agent_id')
             ->leftJoin('users as la_u', 'la_u.id', '=', 'la_a.user_id')
             ->leftJoin('team_agents as ag', function ($j) {
                 $j->on('ag.team_id', '=', 't.id')
-                  ->where('ag.status', '=', 'active');
+                    ->where('ag.status', '=', 'active');
             })
             ->select(
                 't.id as team_id',
@@ -1462,22 +1502,22 @@ class ChatController extends Controller
         $teamRollup = [];
         foreach ($perAgent as $agent) {
             $tid = $agent['team_id'];
-            if (!$tid) {
+            if (! $tid) {
                 continue;
             }
-            if (!isset($teamRollup[$tid])) {
+            if (! isset($teamRollup[$tid])) {
                 $teamRollup[$tid] = [
-                    'total'         => 0,
+                    'total' => 0,
                     'agent_replied' => 0,
-                    'by_status'     => [
-                        'pending'  => 0,
+                    'by_status' => [
+                        'pending' => 0,
                         'accepted' => 0,
                         'rejected' => 0,
-                        'closed'   => 0,
+                        'closed' => 0,
                     ],
                 ];
             }
-            $teamRollup[$tid]['total']         += $agent['total'];
+            $teamRollup[$tid]['total'] += $agent['total'];
             $teamRollup[$tid]['agent_replied'] += $agent['agent_replied'];
             foreach ($agent['by_status'] as $s => $n) {
                 $teamRollup[$tid]['by_status'][$s] += $n;
@@ -1487,37 +1527,38 @@ class ChatController extends Controller
         $perTeam = $teamMeta->map(function ($t) use ($teamRollup) {
             $tid = (int) $t->team_id;
             $r = $teamRollup[$tid] ?? [
-                'total'         => 0,
+                'total' => 0,
                 'agent_replied' => 0,
-                'by_status'     => [
-                    'pending'  => 0,
+                'by_status' => [
+                    'pending' => 0,
                     'accepted' => 0,
                     'rejected' => 0,
-                    'closed'   => 0,
+                    'closed' => 0,
                 ],
             ];
             $total = (int) $r['total'];
             $replied = (int) $r['agent_replied'];
+
             return [
-                'team_id'       => $tid,
-                'team_name'     => (string) $t->team_name,
-                'leader_name'   => $t->leader_name,
-                'agent_count'   => (int) $t->agent_count,
-                'total'         => $total,
+                'team_id' => $tid,
+                'team_name' => (string) $t->team_name,
+                'leader_name' => $t->leader_name,
+                'agent_count' => (int) $t->agent_count,
+                'total' => $total,
                 'agent_replied' => $replied,
-                'not_replied'   => max(0, $total - $replied),
-                'by_status'     => $r['by_status'],
-                'reply_rate'    => $total > 0
+                'not_replied' => max(0, $total - $replied),
+                'by_status' => $r['by_status'],
+                'reply_rate' => $total > 0
                     ? round(($replied / $total) * 100, 1)
                     : 0.0,
             ];
         })->values()->toArray();
 
         return response()->json([
-            'totals'            => $totals,
+            'totals' => $totals,
             'listing_inquiries' => $listingInquiries,
-            'per_team'          => $perTeam,
-            'per_agent'         => $perAgent,
+            'per_team' => $perTeam,
+            'per_agent' => $perAgent,
         ]);
     }
 }

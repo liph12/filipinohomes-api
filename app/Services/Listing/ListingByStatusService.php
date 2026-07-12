@@ -395,7 +395,7 @@ class ListingByStatusService extends ListingInsightsService
             if (! is_array($attachments)) {
                 $attachments = [];
             }
-            $photos    = is_array($attachments['photos'] ?? null) ? array_values($attachments['photos']) : [];
+            $photos = is_array($attachments['photos'] ?? null) ? array_values($attachments['photos']) : [];
             $documents = is_array($attachments['documents'] ?? null) ? array_values($attachments['documents']) : [];
 
             // audit_checklist is a JSON map { item_key: bool } — decode to an
@@ -459,7 +459,7 @@ class ListingByStatusService extends ListingInsightsService
                 'audited_at' => $row->audited_at,
                 'audited_by_name' => $row->audited_by_name,
                 're_submitted_at' => $row->re_submitted_at,
-                'agent_name' => trim(((string) $row->agent_first) . ' ' . ((string) $row->agent_last)),
+                'agent_name' => trim(((string) $row->agent_first).' '.((string) $row->agent_last)),
                 'team_name' => $row->team_name,
                 'agent_email' => $row->agent_email,
                 'agent_mobile' => $row->agent_mobile,

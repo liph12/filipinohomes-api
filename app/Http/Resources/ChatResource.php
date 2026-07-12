@@ -34,6 +34,11 @@ class ChatResource extends JsonResource
                     'price' => $this->listing->price,
                     'featured_photo' => $this->listing->featured_photo,
                     'property_status' => $this->listing->property?->status ?? 'active',
+                    // True when the listing has been soft-deleted. Only ever
+                    // surfaces on callers that load the relation withTrashed
+                    // (e.g. the team dashboard's ?with_reply_stats=1); the
+                    // default scope drops trashed listings so this stays false.
+                    'is_deleted' => $this->listing->deleted_at !== null,
                 ];
             }),
             // The listing's owning agent, surfaced as a second participant
@@ -56,8 +61,19 @@ class ChatResource extends JsonResource
             // team-grouped inbox view. Null otherwise.
             'team' => $this->resolveAssignedAgentTeam(),
             'is_archived_for_me' => $isArchivedForMe,
-            'is_trashed_for_me'  => $isTrashedForMe,
-            'is_purged_for_me'   => $isPurgedForMe,
+            'is_trashed_for_me' => $isTrashedForMe,
+            'is_purged_for_me' => $isPurgedForMe,
+            // Reply-monitoring aggregates — only present when the caller opted in
+            // via ?with_reply_stats=1 (see ChatController@index). Drive the team
+            // dashboard's "Agent replied?" + "Client last reply" columns.
+            'agent_replied' => $this->when(
+                array_key_exists('agent_replied', $this->resource->getAttributes()),
+                fn () => (bool) $this->resource->getAttribute('agent_replied'),
+            ),
+            'client_last_reply_at' => $this->when(
+                array_key_exists('client_last_reply_at', $this->resource->getAttributes()),
+                fn () => $this->resource->getAttribute('client_last_reply_at'),
+            ),
             'created_at' => $this->created_at,
         ];
     }
@@ -70,26 +86,27 @@ class ChatResource extends JsonResource
      */
     private function resolveAssignedAgentTeam(): ?array
     {
-        if (!$this->relationLoaded('activeConversation') || !$this->activeConversation) {
+        if (! $this->relationLoaded('activeConversation') || ! $this->activeConversation) {
             return null;
         }
         $conv = $this->activeConversation;
-        if (!$conv->relationLoaded('agentUser') || !$conv->agentUser) {
+        if (! $conv->relationLoaded('agentUser') || ! $conv->agentUser) {
             return null;
         }
         $agentUser = $conv->agentUser;
-        if (!$agentUser->relationLoaded('agent') || !$agentUser->agent) {
+        if (! $agentUser->relationLoaded('agent') || ! $agentUser->agent) {
             return null;
         }
         $agent = $agentUser->agent;
-        if (!$agent->relationLoaded('teamMembers')) {
+        if (! $agent->relationLoaded('teamMembers')) {
             return null;
         }
         $membership = $agent->teamMembers->firstWhere('status', 'active');
         $team = $membership && $membership->relationLoaded('team') ? $membership->team : null;
-        if (!$team) {
+        if (! $team) {
             return null;
         }
+
         return [
             'id' => $team->id,
             'name' => $team->name,
@@ -103,16 +120,17 @@ class ChatResource extends JsonResource
     private function resolveViewerPivotFlags(): array
     {
         $viewerId = Auth::id();
-        if (!$viewerId || !$this->relationLoaded('activeConversation') || !$this->activeConversation) {
+        if (! $viewerId || ! $this->relationLoaded('activeConversation') || ! $this->activeConversation) {
             return [false, false, false];
         }
-        if (!$this->activeConversation->relationLoaded('users')) {
+        if (! $this->activeConversation->relationLoaded('users')) {
             return [false, false, false];
         }
         $me = $this->activeConversation->users->firstWhere('id', $viewerId);
-        if (!$me) {
+        if (! $me) {
             return [false, false, false];
         }
+
         return [
             $me->pivot?->archived_at !== null,
             $me->pivot?->removed_at !== null,
