@@ -36,8 +36,22 @@ class RecoverRemovedPhotosSeeder extends Seeder
         'filipinohomes123.s3.amazonaws.com',
     ];
 
+    /**
+     * Adaptive throttle: after each re-hosted photo, rest for (time-it-took ×
+     * factor) so the CPU-bound WebP encoding never pins a core continuously.
+     * A photo that burned 1s of encoding rests longer than a light one, so the
+     * CPU ceiling stays roughly constant regardless of how many/how heavy the
+     * photos in a row are. factor 3.0 ≈ ~25% max CPU, 2.0 ≈ ~33%, 1.0 ≈ ~50%,
+     * 0 disables. Tune via env RECOVER_PHOTOS_REST_FACTOR. Capped so a slow
+     * download can't cause a multi-minute sleep.
+     */
+    private const DEFAULT_REST_FACTOR = 3.0;
+
+    private const MAX_REST_MS = 4000;
+
     public function run(): void
     {
+        $restFactor = max(0.0, (float) env('RECOVER_PHOTOS_REST_FACTOR', self::DEFAULT_REST_FACTOR));
         $dataFile = database_path('data/listings.php');
         if (! is_file($dataFile)) {
             $this->command->error("Data file not found: {$dataFile}");
@@ -58,7 +72,7 @@ class RecoverRemovedPhotosSeeder extends Seeder
         $unmatched = [];
         $failed = 0;
 
-        $this->command->info("Recovering photos for {$total} row(s)…");
+        $this->command->info("Recovering photos for {$total} row(s)… (rest factor: {$restFactor}× per photo, capped at " . (self::MAX_REST_MS / 1000) . 's)');
         $bar = $this->command->getOutput()->createProgressBar($total);
         $bar->start();
 
@@ -102,6 +116,7 @@ class RecoverRemovedPhotosSeeder extends Seeder
                     $map[$url] = $url;
                     continue;
                 }
+                $startedAt = microtime(true);
                 try {
                     $map[$url] = $uploader->uploadFromUrl($url, '/filipinohomes-new');
                     $rehosted++;
@@ -112,6 +127,15 @@ class RecoverRemovedPhotosSeeder extends Seeder
                         'code' => $code, 'listing_id' => $listing->id,
                         'url' => $url, 'error' => $e->getMessage(),
                     ]);
+                }
+
+                // Adaptive throttle: rest in proportion to how long this photo
+                // took, so a live prod box isn't CPU-starved by the recovery
+                // run. Heavier photos → longer breath → steady CPU ceiling.
+                // Only after real work (already-new-bucket URLs `continue` above).
+                if ($restFactor > 0.0) {
+                    $restMs = min(self::MAX_REST_MS, (microtime(true) - $startedAt) * 1000 * $restFactor);
+                    usleep((int) ($restMs * 1000));
                 }
             }
 
