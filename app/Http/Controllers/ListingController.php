@@ -2762,6 +2762,11 @@ class ListingController extends Controller
             'city_id' => $request->query('city_id') !== null
                 ? (int) $request->query('city_id')
                 : null,
+            // Optional team drill-down (Audit Insights "Teams" toggle): restrict
+            // the feed to the team's ACTIVE members.
+            'team_id' => $request->query('team_id') !== null
+                ? (int) $request->query('team_id')
+                : null,
             'date_start' => $request->query('date_start'),
             'date_end' => $request->query('date_end'),
             'island' => is_string($request->query('island')) ? $request->query('island') : null,

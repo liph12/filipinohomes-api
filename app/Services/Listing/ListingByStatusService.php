@@ -224,7 +224,7 @@ class ListingByStatusService extends ListingInsightsService
      *
      * @param  array{
      *     page?:int, per_page?:int, category?:string,
-     *     visibility?:string, province_id?:int|null
+     *     visibility?:string, province_id?:int|null, team_id?:int|null
      * } $params
      */
     public function listingsForStatus(string $status, array $params, ?array $agentIds = null): array
@@ -236,6 +236,7 @@ class ListingByStatusService extends ListingInsightsService
         $visibility = strtolower((string) ($params['visibility'] ?? ''));
         $provinceId = isset($params['province_id']) ? (int) $params['province_id'] : null;
         $cityId = isset($params['city_id']) ? (int) $params['city_id'] : null;
+        $teamId = isset($params['team_id']) ? (int) $params['team_id'] : null;
 
         // Province / city / date / hierarchical scope are applied centrally in
         // baseListingQuery().
@@ -287,6 +288,20 @@ class ListingByStatusService extends ListingInsightsService
                     });
                 }
             });
+
+        // Team drill-down (Audit Insights "Teams" toggle) — narrow the feed to
+        // listings owned by the team's ACTIVE members. ANDs with any leader
+        // agent scope already applied in baseListingQuery(); an empty membership
+        // resolves to [0] so it correctly yields zero rows.
+        if ($teamId !== null) {
+            $teamAgentIds = DB::table('team_agents')
+                ->where('team_id', $teamId)
+                ->where('status', 'active')
+                ->pluck('agent_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $base->whereIn('listings.agent_id', $teamAgentIds ?: [0]);
+        }
 
         $totalCount = (clone $base)->count('listings.id');
 
@@ -480,6 +495,7 @@ class ListingByStatusService extends ListingInsightsService
                 'category' => $categoryFilter,
                 'province_id' => $provinceId,
                 'city_id' => $cityId,
+                'team_id' => $teamId,
             ],
         ];
     }
