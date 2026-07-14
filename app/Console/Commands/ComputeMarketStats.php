@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\MetroAreaRegistry;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -10,11 +11,21 @@ use Illuminate\Support\Facades\DB;
  * Recomputes the market-stats snapshot (median/average price, median
  * price-per-sqm, listing counts) per (category × property type ×
  * city|province [× bedroom count]) for the market-stats module on typed
- * location money pages.
+ * location money pages. Province cohorts additionally split into
+ * `province_urban` / `province_rural` segment scopes, classified per city
+ * via {@see MetroAreaRegistry::classify()}, so metro pricing isn't blended
+ * into one province-wide median.
  *
  * Monthly snapshot semantics: only the CURRENT month's rows are replaced;
  * prior months are kept so the frontend can show month-over-month movement
  * from the second month onward.
+ *
+ * Segment rows are pair-gated: an urban (or rural) cohort is stored only
+ * when both it AND its counterpart have ≥ MIN_SEGMENT_LISTING_COUNT priced
+ * listings, so a province without a real second side (an all-urban metro,
+ * an all-rural province) emits no segment rows. That count is a storage
+ * floor; display floors stay frontend-owned. Base city/province cohorts
+ * keep the ≥ 1 behavior.
  *
  * Effective city = COALESCE(properties.geo_city_id, address barangay's
  * city_id) — identical to the `city_id` filter in Listing::scopeFilter and
@@ -31,6 +42,9 @@ class ComputeMarketStats extends Command
     private const SALE_PRICE_FLOOR = 100_000;
     private const RENT_PRICE_FLOOR = 1_000;
     private const MIN_FLOOR_AREA_SQM = 10;
+
+    /** Storage floor per urban/rural segment side (see pairing guard below). */
+    private const MIN_SEGMENT_LISTING_COUNT = 3;
 
     public function handle(): int
     {
@@ -66,6 +80,7 @@ class ComputeMarketStats extends Command
                 'property_types.name as type',
                 'cities.id as city_id',
                 'cities.name as city',
+                'cities.type as city_type',
                 'provinces.id as province_id',
                 'provinces.name as province',
                 'listings.price',
@@ -116,7 +131,20 @@ class ComputeMarketStats extends Command
                 'province_id' => (int) $r->province_id, 'province' => $r->province,
             ];
 
-            foreach ([['c', $cityMeta], ['p', $provMeta]] as [$tag, $meta]) {
+            // Urban/rural segmentation of the province cohort. classify()
+            // returns null for junk POI rows (cities.type = 2), which stay
+            // out of segments but still count toward city/province.
+            $segment = MetroAreaRegistry::classify($r->province, $r->city, (int) $r->city_type);
+
+            $targets = [['c', $cityMeta], ['p', $provMeta]];
+            if ($segment !== null) {
+                $targets[] = [
+                    $segment === 'urban' ? 'pu' : 'pr',
+                    array_merge($provMeta, ['scope' => "province_{$segment}"]),
+                ];
+            }
+
+            foreach ($targets as [$tag, $meta]) {
                 $geo = $tag === 'c' ? $r->city_id : $r->province_id;
                 $base = "{$r->category}|{$r->type}|{$tag}|{$geo}";
                 $add($meta + ['bedroom_count' => null], "$base|all", $price, $ppsqm);
@@ -140,10 +168,27 @@ class ComputeMarketStats extends Command
         };
 
         $inserts = [];
-        foreach ($cohorts as $cohort) {
+        foreach ($cohorts as $key => $cohort) {
             $prices = $cohort['prices'];
             if (count($prices) === 0) {
                 continue;
+            }
+            // Pairing guard: an urban/rural segment only means anything as a
+            // pair, so a side is stored only when it AND its counterpart both
+            // clear the segment floor. Single-sided provinces self-suppress —
+            // no hardcoded exception list.
+            $scope = $cohort['meta']['scope'];
+            if (str_starts_with($scope, 'province_')) {
+                if (count($prices) < self::MIN_SEGMENT_LISTING_COUNT) {
+                    continue;
+                }
+                $counterpartKey = $scope === 'province_urban'
+                    ? str_replace('|pu|', '|pr|', $key)
+                    : str_replace('|pr|', '|pu|', $key);
+                $counterpart = $cohorts[$counterpartKey]['prices'] ?? [];
+                if (count($counterpart) < self::MIN_SEGMENT_LISTING_COUNT) {
+                    continue;
+                }
             }
             $ppsqm = $cohort['ppsqm'];
             $inserts[] = $cohort['meta'] + [

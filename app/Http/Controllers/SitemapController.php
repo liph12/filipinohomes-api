@@ -445,8 +445,12 @@ class SitemapController extends Controller
      * daily by `seo:compute-market-stats`. Returns the two most recent
      * months so the frontend can render month-over-month movement once a
      * second snapshot exists. Feeds src/lib/marketStats.ts.
+     *
+     * `?v=` gates the province_urban/province_rural segment scopes: callers
+     * below v2 only ever receive city/province rows, because older frontend
+     * builds fold any non-city scope into the province bucket.
      */
-    public function marketStats(): JsonResponse
+    public function marketStats(Request $request): JsonResponse
     {
         $months = DB::table('market_stats')
             ->select('month')
@@ -457,6 +461,9 @@ class SitemapController extends Controller
 
         $rows = DB::table('market_stats')
             ->whereIn('month', $months)
+            ->when((int) $request->input('v', 1) < 2, function ($q) {
+                $q->whereIn('scope', ['city', 'province']);
+            })
             ->select(
                 'category',
                 'type',
@@ -479,6 +486,88 @@ class SitemapController extends Controller
             ->get();
 
         return response()->json($rows);
+    }
+
+    /**
+     * Full monthly history for ONE market-stats cohort (all-bedrooms rows
+     * only), powering the trend chart on money pages. Province scope also
+     * carries the urban/rural segment series. Kept separate from
+     * marketStats() so that bulk two-month payload never grows as history
+     * accrues.
+     */
+    public function marketStatsHistory(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'category'    => 'required|in:For Sale,For Rent',
+            'type'        => 'required|string|max:64',
+            'scope'       => 'required|in:city,province',
+            'city_id'     => 'required_if:scope,city|integer',
+            'province_id' => 'required_if:scope,province|integer',
+            'months'      => 'nullable|integer',
+        ]);
+
+        $months = min(60, max(1, (int) ($validated['months'] ?? 36)));
+        $cutoff = now()->startOfMonth()->subMonths($months - 1)->toDateString();
+        $isCity = $validated['scope'] === 'city';
+
+        $query = DB::table('market_stats')
+            ->where('category', $validated['category'])
+            ->where('type', $validated['type'])
+            ->whereNull('bedroom_count')
+            ->where('month', '>=', $cutoff)
+            ->orderBy('month');
+
+        if ($isCity) {
+            $query->where('scope', 'city')->where('city_id', (int) $validated['city_id']);
+        } else {
+            $query->whereIn('scope', ['province', 'province_urban', 'province_rural'])
+                ->where('province_id', (int) $validated['province_id']);
+        }
+
+        $rows = $query->get();
+
+        // Cast numerics so JSON carries numbers, not the driver's decimal
+        // strings.
+        $point = fn ($r) => [
+            'month'         => $r->month,
+            'listing_count' => (int) $r->listing_count,
+            'median_price'  => (float) $r->median_price,
+            'avg_price'     => (float) $r->avg_price,
+            'median_ppsqm'  => $r->median_ppsqm !== null ? (float) $r->median_ppsqm : null,
+            'ppsqm_count'   => (int) $r->ppsqm_count,
+        ];
+
+        $overall = [];
+        $urban = [];
+        $rural = [];
+        foreach ($rows as $r) {
+            if ($r->scope === 'province_urban') {
+                $urban[] = $point($r);
+            } elseif ($r->scope === 'province_rural') {
+                $rural[] = $point($r);
+            } else {
+                $overall[] = $point($r);
+            }
+        }
+
+        $first = $rows->first();
+
+        return response()->json([
+            'cohort' => [
+                'category'    => $validated['category'],
+                'type'        => $validated['type'],
+                'scope'       => $validated['scope'],
+                'city_id'     => $isCity ? (int) $validated['city_id'] : null,
+                'city'        => $first?->city,
+                'province_id' => $isCity
+                    ? ($first !== null ? (int) $first->province_id : null)
+                    : (int) $validated['province_id'],
+                'province'    => $first?->province,
+            ],
+            'overall' => $overall,
+            'urban'   => $urban,
+            'rural'   => $rural,
+        ])->header('Cache-Control', 'public, max-age=21600');
     }
 
     /**
