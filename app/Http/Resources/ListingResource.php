@@ -34,6 +34,11 @@ class ListingResource extends JsonResource
             // Per-listing customization of the default card (photo/theme/flip/
             // hide[]/agent) — applied to live data by generateListingMetadata.
             'og_card_options' => $this->og_card_options,
+            // Auto-generated YouTube slideshow (youtube:process-uploads).
+            // The detail page embeds the player + emits VideoObject schema
+            // (uploadDate comes from youtube_video_uploaded_at).
+            'youtube_video_id' => $this->youtube_video_id,
+            'youtube_video_uploaded_at' => $this->youtube_video_uploaded_at,
             // Responsive srcset per photo (index-aligned with featured_photo),
             // computed by convention — emitted ONLY when this record's variants
             // exist on S3. null → frontend falls back to the single original.

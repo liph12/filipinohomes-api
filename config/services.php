@@ -69,6 +69,39 @@ return [
     | when a listing / agent / blog post / project is created,
     | updated, or deleted.
     */
+    /*
+    | Automated YouTube listing videos. The youtube:process-uploads scheduled
+    | command renders a slideshow MP4 per eligible listing (ffmpeg) and uploads
+    | it to the brand channel via the YouTube Data API v3 using a long-lived
+    | OAuth refresh token (single channel — env, not a token table).
+    |
+    | NOTE: until the Google Cloud project passes YouTube's API compliance
+    | audit, API-uploaded videos are LOCKED PRIVATE by YouTube (non-appealable
+    | per video). Build/test through that window; flip `enabled` once ready.
+    */
+    'youtube' => [
+        'enabled' => env('YOUTUBE_UPLOADS_ENABLED', false),
+        // Refresh token must be minted with BOTH scopes:
+        //   youtube.upload    (videos.insert + thumbnails.set)
+        //   youtube.force-ssl (captions.insert — the auto transcript)
+        'client_id' => env('YOUTUBE_CLIENT_ID'),
+        'client_secret' => env('YOUTUBE_CLIENT_SECRET'),
+        'refresh_token' => env('YOUTUBE_REFRESH_TOKEN'),
+        // Hard daily ceiling. Under the historical quota pricing one full
+        // upload costs ~2,050 units (insert 1600 + thumbnail 50 + caption
+        // 400), so 4/day fits the default 10k allowance; raise only after
+        // checking the real videos.insert allowance in the Cloud console.
+        'daily_upload_cap' => (int) env('YOUTUBE_DAILY_UPLOAD_CAP', 4),
+        // Where the intro-card / thumbnail / end-card PNGs are rendered
+        // (the Next.js /og/listing-video route).
+        'og_base' => env('YOUTUBE_OG_BASE', env('FRONTEND_URL', 'https://filipinohomes.com')),
+        'site_url' => env('FRONTEND_URL', 'https://filipinohomes.com'),
+        'ffmpeg' => env('YOUTUBE_FFMPEG_BIN', 'ffmpeg'),
+        // Videos upload as 'public' — pre-audit YouTube force-locks them to
+        // private anyway, so there's nothing to flip later per video.
+        'privacy_status' => env('YOUTUBE_PRIVACY_STATUS', 'public'),
+    ],
+
     'indexnow' => [
         'enabled' => env('INDEXNOW_ENABLED', false),
         'submit_endpoint' => env('INDEXNOW_SUBMIT_URL', 'https://filipinohomes.com/api/indexnow/submit'),

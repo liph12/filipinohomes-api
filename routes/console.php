@@ -15,3 +15,7 @@ Schedule::command('seo:compute-modifier-thresholds')->dailyAt('03:30')->withoutO
 Schedule::command('seo:compute-facility-counts')->dailyAt('04:00')->withoutOverlapping();
 Schedule::command('seo:compute-barangay-counts')->dailyAt('04:30')->withoutOverlapping();
 Schedule::command('seo:compute-market-stats')->dailyAt('05:00')->withoutOverlapping();
+// Automated YouTube listing videos — inert until YOUTUBE_UPLOADS_ENABLED=true
+// (the command exits immediately when disabled). Half-hourly pacing + the
+// daily_upload_cap config keep renders light on the box and inside quota.
+Schedule::command('youtube:process-uploads')->everyThirtyMinutes()->withoutOverlapping();

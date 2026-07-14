@@ -92,6 +92,7 @@ class Listing extends Model implements Auditable
         'audit_edited_fields' => 'array',
         're_submitted_at' => 'datetime',
         'photos_variants_generated_at' => 'datetime',
+        'youtube_video_uploaded_at' => 'datetime',
     ];
 
     protected static function booted()
