@@ -10,6 +10,7 @@ use App\Http\Controllers\{
     PropertyAttributesController,
     PropertyController,
     ListingController,
+    ReelController,
     AudienceInsightsController,
     VisitController,
     FullListingController,
@@ -276,6 +277,9 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/admin/impersonate/stop', [ImpersonationController::class, 'stop']);
             Route::get('/my-listings', [ListingController::class, 'myListings']);
             Route::get('/all-listings', [ListingController::class, 'allListings']);
+            // Reel Maker usage tracking (video is built client-side; this only
+            // records open/preview/generate/share into the audit trail).
+            Route::post('/reels/events', [ReelController::class, 'logEvent']);
             Route::get('/all-listings/map-markers', [ListingController::class, 'mapMarkers']);
             Route::get('/admin/map-boundaries', [\App\Http\Controllers\BoundaryController::class, 'index']);
             Route::get('/user/dashboard', [ListingController::class, 'dashboard']);

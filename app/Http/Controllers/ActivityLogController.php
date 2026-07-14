@@ -41,6 +41,10 @@ class ActivityLogController extends Controller
         // user_unblocked (block lifecycle). Written by
         // AuditSecurityService.
         'security',
+        // Reel Maker usage (open / preview / generate / share). The reel video
+        // is built client-side, so these are direct Audit::create writes from
+        // AuditReelService via the /reels/events endpoint.
+        'reels',
     ];
 
     /**
