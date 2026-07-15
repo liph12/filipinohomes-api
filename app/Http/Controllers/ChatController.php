@@ -254,18 +254,33 @@ class ChatController extends Controller
         if ($request->boolean('unread_only')) {
             $visible = (clone $query)
                 ->setEagerLoads([])
-                ->with(['activeConversation' => fn ($q) => $q->select('conversations.id', 'conversations.chat_id')])
-                ->get(['chats.id', 'chats.type']);
+                ->with(['activeConversation' => fn ($q) => $q->select('conversations.id', 'conversations.chat_id', 'conversations.agent_user_id')])
+                ->get(['chats.id', 'chats.type', 'chats.user_id']);
 
             $typeByConv = [];
+            // For listing inquiries, tag each conversation mine|team so the badge
+            // can split "My Inquiries" (the viewer personally drives it) from
+            // "Team Inquiries" (a team member's thread a leader moderates) — the
+            // same rule as the scope=mine filter above.
+            $scopeByConv = [];
             foreach ($visible as $chat) {
-                $cid = $chat->activeConversation?->id;
-                if ($cid) {
-                    $typeByConv[$cid] = $chat->type;
+                $conv = $chat->activeConversation;
+                if (! $conv) {
+                    continue;
                 }
+                $typeByConv[$conv->id] = $chat->type;
+                $mine = ((int) $conv->agent_user_id === (int) $user->id)
+                    || ((int) $chat->user_id === (int) $user->id);
+                $scopeByConv[$conv->id] = $mine ? 'mine' : 'team';
             }
 
-            $result = ['total' => 0, 'inquiries' => 0, 'messages' => 0];
+            $result = [
+                'total'          => 0,
+                'inquiries'      => 0,
+                'messages'       => 0,
+                'inquiries_mine' => 0,
+                'inquiries_team' => 0,
+            ];
 
             if (! empty($typeByConv)) {
                 $unreadByConversation = DB::table('messages')
@@ -290,6 +305,11 @@ class ChatController extends Controller
                     $type = $typeByConv[$cid] ?? null;
                     if ($type === 'listing') {
                         $result['inquiries'] += $n;
+                        if (($scopeByConv[$cid] ?? 'team') === 'mine') {
+                            $result['inquiries_mine'] += $n;
+                        } else {
+                            $result['inquiries_team'] += $n;
+                        }
                     } elseif ($type === 'agent') {
                         $result['messages'] += $n;
                     }
