@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Http\Controllers\RemovedPhotoUploadController;
 use App\Models\Listing;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -56,12 +57,14 @@ class RecoverRemovedPhotosSeeder extends Seeder
         if (! is_file($dataFile)) {
             $this->command->error("Data file not found: {$dataFile}");
             $this->command->line('Save your export there so it defines: $l = array( array(\'code\'=>..., \'featured_photo\'=>..., \'photos\'=>...), ... );');
+
             return;
         }
 
         require $dataFile; // defines $l in this scope
         if (! isset($l) || ! is_array($l)) {
             $this->command->error('Data file must define an array variable $l.');
+
             return;
         }
 
@@ -72,7 +75,16 @@ class RecoverRemovedPhotosSeeder extends Seeder
         $unmatched = [];
         $failed = 0;
 
-        $this->command->info("Recovering photos for {$total} row(s)… (rest factor: {$restFactor}× per photo, capped at " . (self::MAX_REST_MS / 1000) . 's)');
+        // Fast-resume: pre-load the set of codes already recovered (featured on
+        // the new bucket) in one chunked query instead of one lookup per row.
+        // On a re-run this lets the loop skip the already-done rows in memory
+        // rather than issuing an indexed point-lookup per row.
+        $doneCodes = $this->loadRecoveredCodes($l);
+        if ($doneCodes->isNotEmpty()) {
+            $this->command->info('Fast-resume: '.$doneCodes->count().' row(s) already recovered — will skip in memory.');
+        }
+
+        $this->command->info("Recovering photos for {$total} row(s)… (rest factor: {$restFactor}× per photo, capped at ".(self::MAX_REST_MS / 1000).'s)');
         $bar = $this->command->getOutput()->createProgressBar($total);
         $bar->start();
 
@@ -84,8 +96,17 @@ class RecoverRemovedPhotosSeeder extends Seeder
                 continue;
             }
 
+            // Fast-resume: already recovered on a prior run — skip in memory,
+            // no DB round-trip (matched on a prior run, so count it as matched).
+            if (isset($doneCodes[$code])) {
+                $matched++;
+                $skipped++;
+
+                continue;
+            }
+
             $featuredIn = $this->decode($row['featured_photo'] ?? null);
-            $photosIn   = $this->decode($row['photos'] ?? null);
+            $photosIn = $this->decode($row['photos'] ?? null);
 
             $listing = Listing::onlyTrashed()
                 ->whereNotNull('photos_migration_note')
@@ -94,13 +115,15 @@ class RecoverRemovedPhotosSeeder extends Seeder
 
             if (! $listing) {
                 $unmatched[] = $code;
+
                 continue;
             }
             $matched++;
 
-            // Idempotent re-runs: already recovered (featured on new bucket).
+            // Idempotent safety net: recovered between pre-load and now.
             if ($this->hasNewBucketUrl($listing->featured_photo)) {
                 $skipped++;
+
                 continue;
             }
 
@@ -114,6 +137,7 @@ class RecoverRemovedPhotosSeeder extends Seeder
             foreach (array_values(array_unique(array_merge($featuredIn, $photosIn))) as $url) {
                 if ($this->isNewBucketUrl($url)) {
                     $map[$url] = $url;
+
                     continue;
                 }
                 $startedAt = microtime(true);
@@ -145,7 +169,7 @@ class RecoverRemovedPhotosSeeder extends Seeder
                 array_map(fn ($u) => $map[$u] ?? null, $urls),
             )));
             $featuredOut = $apply($featuredIn);
-            $photosOut   = $apply($photosIn);
+            $photosOut = $apply($photosIn);
 
             try {
                 DB::transaction(function () use ($listing, $featuredOut, $photosOut) {
@@ -176,11 +200,40 @@ class RecoverRemovedPhotosSeeder extends Seeder
         $this->command->line("Skipped (existing): {$skipped}");
         $this->command->line("Photos re-hosted:   {$rehosted}");
         $this->command->line("Failed URLs/saves:  {$failed}");
-        $this->command->line('Unmatched codes:    ' . count($unmatched));
+        $this->command->line('Unmatched codes:    '.count($unmatched));
         if ($unmatched) {
-            $this->command->line('  ' . implode(', ', array_slice($unmatched, 0, 50))
-                . (count($unmatched) > 50 ? ' …' : ''));
+            $this->command->line('  '.implode(', ', array_slice($unmatched, 0, 50))
+                .(count($unmatched) > 50 ? ' …' : ''));
         }
+    }
+
+    /**
+     * Pre-load the set of codes whose removed listing is already recovered
+     * (featured_photo on the new bucket). Returns a code-keyed collection for
+     * O(1) `isset()` skips. Chunks the whereIn so a huge export can't blow the
+     * SQL placeholder / packet limits.
+     */
+    private function loadRecoveredCodes(array $rows): Collection
+    {
+        $codes = array_values(array_unique(array_filter(
+            array_map(fn ($r) => trim((string) ($r['code'] ?? '')), $rows),
+            fn ($c) => $c !== '',
+        )));
+
+        $done = collect();
+        foreach (array_chunk($codes, 1000) as $chunk) {
+            Listing::onlyTrashed()
+                ->whereNotNull('photos_migration_note')
+                ->whereIn('code', $chunk)
+                ->get(['code', 'featured_photo'])
+                ->each(function ($listing) use ($done) {
+                    if ($this->hasNewBucketUrl($listing->featured_photo)) {
+                        $done->put($listing->code, true);
+                    }
+                });
+        }
+
+        return $done;
     }
 
     /** A photo cell is a JSON-encoded array string (or already an array). */
@@ -208,6 +261,7 @@ class RecoverRemovedPhotosSeeder extends Seeder
                 return true;
             }
         }
+
         return false;
     }
 
@@ -218,6 +272,7 @@ class RecoverRemovedPhotosSeeder extends Seeder
                 return true;
             }
         }
+
         return false;
     }
 }
