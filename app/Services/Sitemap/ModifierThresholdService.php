@@ -16,6 +16,11 @@ use Illuminate\Support\Facades\DB;
  * "affordable" page for that cohort is then simply the cohort filtered with
  * price_max = percentile_price.
  *
+ * A second pass computes the same thresholds one level up, per
+ * (category × property type × province) cohort. Province rows use the
+ * city_id = 0 sentinel with an empty city label so consumers that match by
+ * city slug skip them transparently.
+ *
  * Guardrails:
  *  - MIN_SAMPLE: skip cohorts with too few valid-priced listings (a percentile
  *    below this is statistical noise → no affordable page is generated).
@@ -119,6 +124,63 @@ class ModifierThresholdService
             ];
         }
 
+        // 2) Province cohorts: the same pipeline one level up, grouped by
+        //    (category, type, province) with the same MIN_SAMPLE and
+        //    plausibility guards. Rows carry the city_id = 0 sentinel and an
+        //    empty city label — province modifier pages match by province
+        //    slug alone; city-slug consumers skip them.
+        $provinceCohorts = $this->baseQuery()
+            ->select(
+                'listings.category_id as category_id',
+                'categories.name as category',
+                'property_types.id as property_type_id',
+                'property_types.name as type',
+                'provinces.id as province_id',
+                'provinces.name as province',
+                DB::raw('COUNT(*) as total')
+            )
+            ->groupBy(
+                'listings.category_id', 'categories.name',
+                'property_types.id', 'property_types.name',
+                'provinces.id', 'provinces.name'
+            )
+            ->having('total', '>=', self::MIN_SAMPLE)
+            ->get();
+
+        foreach ($provinceCohorts as $c) {
+            $sampleSize = (int) $c->total;
+            $price = $this->percentilePriceForProvince(
+                (int) $c->category_id,
+                (int) $c->property_type_id,
+                (int) $c->province_id,
+                $sampleSize
+            );
+
+            if ($price === null) {
+                continue;
+            }
+
+            $band = self::PRICE_BANDS[$c->type] ?? null;
+            if ($band === null || $price < $band[0] || $price > $band[1]) {
+                continue;
+            }
+
+            $rows[] = [
+                'modifier'         => 'affordable',
+                'category_id'      => (int) $c->category_id,
+                'property_type_id' => (int) $c->property_type_id,
+                'city_id'          => 0,
+                'province_id'      => (int) $c->province_id,
+                'category'         => $c->category,
+                'type'             => $c->type,
+                'city'             => '',
+                'province'         => $c->province,
+                'percentile_price' => $price,
+                'sample_size'      => $sampleSize,
+                'computed_at'      => $now,
+            ];
+        }
+
         // Replace wholesale in a transaction so readers never see a half-rebuilt
         // table. The set is small (only dense cohorts qualify), so truncate+insert
         // is cheaper and simpler than a diff/upsert.
@@ -130,7 +192,7 @@ class ModifierThresholdService
         });
 
         return [
-            'cohorts_scanned'    => $cohorts->count(),
+            'cohorts_scanned'    => $cohorts->count() + $provinceCohorts->count(),
             'thresholds_written' => count($rows),
         ];
     }
@@ -150,6 +212,26 @@ class ModifierThresholdService
             ->where('listings.category_id', $categoryId)
             ->where('property_types.id', $typeId)
             ->where('cities.id', $cityId)
+            ->orderBy('listings.price', 'asc')
+            ->offset($offset)
+            ->limit(1)
+            ->value('listings.price');
+
+        return $row !== null ? (float) $row : null;
+    }
+
+    /**
+     * Province-scope twin of {@see percentilePriceForCohort}: the Nth-percentile
+     * price across ALL cities of one province.
+     */
+    private function percentilePriceForProvince(int $categoryId, int $typeId, int $provinceId, int $sampleSize): ?float
+    {
+        $offset = (int) floor(self::PERCENTILE * max($sampleSize - 1, 0));
+
+        $row = $this->baseQuery()
+            ->where('listings.category_id', $categoryId)
+            ->where('property_types.id', $typeId)
+            ->where('provinces.id', $provinceId)
             ->orderBy('listings.price', 'asc')
             ->offset($offset)
             ->limit(1)

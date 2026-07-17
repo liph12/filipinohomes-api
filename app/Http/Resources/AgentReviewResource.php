@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\AvatarUrl;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Auth;
@@ -48,7 +49,7 @@ class AgentReviewResource extends JsonResource
                 return [
                     'id' => $this->client->id,
                     'name' => $this->client->name,
-                    'avatar' => $this->client->avatar,
+                    'avatar' => AvatarUrl::clean($this->client->avatar),
                 ];
             }),
             'is_anonymous' => (bool) $this->is_anonymous,
@@ -116,7 +117,7 @@ class AgentReviewResource extends JsonResource
                         ? ($this->agent->agent?->id ?? null)
                         : null,
                     'name' => $this->agent->name,
-                    'avatar' => $this->agent->avatar,
+                    'avatar' => AvatarUrl::clean($this->agent->avatar),
                     'team_id' => $teamMember?->team_id ?? null,
                     'team_name' => $teamMember?->team?->name ?? null,
                 ];

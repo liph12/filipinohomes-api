@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\AvatarUrl;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -37,7 +38,7 @@ class ExternalAgentResource extends JsonResource
             'email'           => $user?->email,
             'mobile_no'       => $this->mobile_no ?? $user?->mobile_no,
             'whatsapp_no'     => $this->whats_app_no,
-            'avatar'          => $this->avatar ?? $user?->avatar,
+            'avatar'          => AvatarUrl::clean($this->avatar ?? $user?->avatar),
             'address'         => $this->address,
             'bio'             => $this->bio,
             'socials'         => $this->socials,

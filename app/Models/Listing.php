@@ -298,6 +298,15 @@ class Listing extends Model implements Auditable
         // stale client can't double-filter the page back into starvation.
         $cityId = (int) $request->input('city_id');
 
+        // ── Registry filter: province tier ──────────────────────────────────
+        // Applied only when neither barangay_id nor city_id narrows further
+        // (see the elseif chain below); precedence is barangay_id > city_id >
+        // province_id > text. Safe-rollout contract: the frontend sends BOTH
+        // province_id and the legacy `address` text — an old API ignores
+        // province_id and keeps the text fallback; this API prefers the id
+        // and suppresses the text blocks, same as city_id.
+        $provinceId = (int) $request->input('province_id');
+
         // ── Registry filter: barangay tier ───────────────────────────────────
         // barangay_id (CSV — the frontend merges same-slug duplicates within a
         // city into one page) supersedes the city-level filter below (a
@@ -339,6 +348,30 @@ class Listing extends Model implements Auditable
                         });
                 });
             });
+        } elseif ($provinceId > 0) {
+            // Province tier: same COALESCE semantics as city_id above, one
+            // level up — the reverse-geocoded pin's city wins when present,
+            // the agent-picked barangay covers the rest. Both membership
+            // checks are uncorrelated IN (...) subqueries, constant per
+            // statement — never a per-row correlated subquery.
+            $query->whereHas('property', function ($q) use ($provinceId) {
+                $q->where(function ($w) use ($provinceId) {
+                    $w->whereIn('geo_city_id', function ($sub) use ($provinceId) {
+                        $sub->select('id')
+                            ->from('cities')
+                            ->where('province_id', $provinceId);
+                    })
+                        ->orWhere(function ($o) use ($provinceId) {
+                            $o->whereNull('geo_city_id')
+                                ->whereIn('address_id', function ($sub) use ($provinceId) {
+                                    $sub->select('barangays.id')
+                                        ->from('barangays')
+                                        ->join('cities', 'cities.id', '=', 'barangays.city_id')
+                                        ->where('cities.province_id', $provinceId);
+                                });
+                        });
+                });
+            });
         }
 
         // Only filter by location when at least one level is actually provided,
@@ -346,7 +379,7 @@ class Listing extends Model implements Auditable
         // triple-nested barangay→city→province `name LIKE "%%"` EXISTS on EVERY
         // search (the dominant cost behind the slow filter / RDS hot query); with
         // no location params that chain is a no-op match, so we skip it entirely.
-        if ($cityId <= 0 && ($brgy !== '' || $city !== '' || $prov !== '')) {
+        if ($cityId <= 0 && $provinceId <= 0 && ($brgy !== '' || $city !== '' || $prov !== '')) {
             $query->whereHas('property.barangay', function ($q) use ($brgy, $city, $prov) {
                 if ($brgy !== '') {
                     $q->where('name', 'LIKE', "%{$brgy}%");
@@ -383,8 +416,9 @@ class Listing extends Model implements Auditable
             $search = trim($request->input('search', ''));
             $address = $request->input('address');
 
-            // city_id is authoritative — see the registry filter above.
-            if (! empty($address) && $cityId <= 0) {
+            // city_id / province_id are authoritative — see the registry
+            // filter above.
+            if (! empty($address) && $cityId <= 0 && $provinceId <= 0) {
                 // Tokenize the address string and AND-match each term as a
                 // LIKE substring — same approach the `search` branch below
                 // already uses. The single-LIKE form was breaking

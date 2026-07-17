@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentListingResource;
+use App\Support\AvatarUrl;
 use App\Support\OfficeRegionMap;
 
 class AgentResource extends JsonResource
@@ -38,7 +39,7 @@ class AgentResource extends JsonResource
                                 ->join(' ')
                              ?: $user?->name
                              ?: 'Guest User',
-            'avatar'       => $this->avatar ?? $user?->avatar,
+            'avatar'       => AvatarUrl::clean($this->avatar ?? $user?->avatar),
             'email'        => $user?->email,
             'lr_email'     => $this->lr_email,
             'birthdate'    => $this->birthdate,

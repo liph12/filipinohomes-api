@@ -191,11 +191,20 @@ class ComputeMarketStats extends Command
                 }
             }
             $ppsqm = $cohort['ppsqm'];
+            // Trimmed mean: drop fat-finger outliers (> 10× the cohort median,
+            // i.e. extra-zero prices) from the MEAN only — a single ₱95B typo
+            // otherwise dominates the average. The median is already robust,
+            // so it and listing_count keep the full set.
+            $medianPrice = $median($prices);
+            $trimmed = array_values(array_filter(
+                $prices,
+                static fn (float $p) => $p <= $medianPrice * 10,
+            ));
             $inserts[] = $cohort['meta'] + [
                 'month' => $month,
                 'listing_count' => count($prices),
-                'median_price' => round($median($prices), 2),
-                'avg_price' => round(array_sum($prices) / count($prices), 2),
+                'median_price' => round($medianPrice, 2),
+                'avg_price' => round(array_sum($trimmed) / max(count($trimmed), 1), 2),
                 'median_ppsqm' => count($ppsqm) > 0 ? round($median($ppsqm), 2) : null,
                 'ppsqm_count' => count($ppsqm),
                 'computed_at' => $now,

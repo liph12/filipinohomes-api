@@ -1,6 +1,7 @@
 <?php
 namespace App\Http\Resources;
 use App\Services\TeamLeadershipService;
+use App\Support\AvatarUrl;
 use App\Support\Impersonation;
 use App\Support\OfficeRegionMap;
 use Illuminate\Http\Request;
@@ -41,7 +42,7 @@ class UserResource extends JsonResource
             // frontend computation.
             'birthdate' => $this->birthdate,
             'gender'    => $this->gender,
-            'avatar'    => $this->avatar,
+            'avatar'    => AvatarUrl::clean($this->avatar),
             'role'      => $this->role?->name,
             // Office region (from the agent profile) — lets the frontend show a
             // secretary's region and gate region-scoped UI. Null for users with

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\AvatarUrl;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -26,7 +27,7 @@ class AgentPageResource extends JsonResource
                                 ->join(' ')
                              ?: $user?->name
                              ?: 'Guest User',
-            'avatar'       => $this->avatar ?? $user?->avatar,
+            'avatar'       => AvatarUrl::clean($this->avatar ?? $user?->avatar),
             'email'        => $user?->email,
             'whats_app_no' => $this->whatsapp_no,
             'mobile_no'    => $this->mobile_no ?? $user?->mobile_no,

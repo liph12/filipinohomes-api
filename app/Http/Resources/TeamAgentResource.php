@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\AvatarUrl;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -21,7 +22,7 @@ class TeamAgentResource extends JsonResource
             'agent_name'   => $this->agent
                 ? (collect([$this->agent->first_name, $this->agent->middle_name, $this->agent->last_name])->filter()->join(' ') ?: $this->agent->user?->name)
                 : null,
-            'agent_avatar' => $this->agent?->avatar ?? $this->agent?->user?->avatar ?? null,
+            'agent_avatar' => AvatarUrl::clean($this->agent?->avatar ?? $this->agent?->user?->avatar ?? null),
             'team_name'    => $this->team?->name,
             'is_leader'             => $this->is_leader,
             'status'                => $this->status,

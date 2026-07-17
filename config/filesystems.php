@@ -59,6 +59,12 @@ return [
             'throw' => false,
             'report' => false,
             // 'visibility' => 'public',
+            // Default write headers forwarded into every putObject on this disk
+            // (per-call options still override). Keys are unique per upload, so
+            // immutable is safe.
+            'options' => [
+                'CacheControl' => 'public, max-age=31536000, immutable',
+            ],
         ],
 
         's3_new' => [
@@ -72,6 +78,12 @@ return [
             'use_path_style_endpoint' => env('AWS2_USE_PATH_STYLE_ENDPOINT', false),
             'throw' => false,
             'report' => false,
+            // Default write headers forwarded into every putObject on this disk
+            // (per-call options still override). Keys are unique per upload, so
+            // immutable is safe.
+            'options' => [
+                'CacheControl' => 'public, max-age=31536000, immutable',
+            ],
         ],
 
     ],
