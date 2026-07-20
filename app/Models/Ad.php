@@ -2,17 +2,18 @@
 
 namespace App\Models;
 
+use App\Auditing\LogsActivity;
+use App\Casts\FlexibleDateTime;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Auditing\LogsActivity;
 use OwenIt\Auditing\Contracts\Auditable;
 
 class Ad extends Model implements Auditable
 {
     use HasFactory;
-    use SoftDeletes;
     use LogsActivity;
+    use SoftDeletes;
 
     protected string $auditCategory = 'ads';
 
@@ -28,8 +29,8 @@ class Ad extends Model implements Auditable
     ];
 
     protected $casts = [
-        'starts_at' => 'datetime',
-        'ends_at'   => 'datetime',
+        'starts_at' => FlexibleDateTime::class,
+        'ends_at' => FlexibleDateTime::class,
     ];
 
     public function campaign()
@@ -54,6 +55,23 @@ class Ad extends Model implements Auditable
         return $this->hasMany(AdAnalytics::class);
     }
 
+    /**
+     * Add impression/click totals as DB-side aggregate columns
+     * (analytics_sum_impressions, analytics_sum_total_impressions,
+     * analytics_sum_clicks, analytics_sum_total_clicks) instead of eager-loading
+     * the entire analytics relation just to sum it in PHP. The analytics table
+     * holds per-hour x per-geo rows, so hydrating the full collection for every
+     * ad on a page is what made the ads list slow / memory-heavy.
+     */
+    public function scopeWithAnalyticsTotals($query)
+    {
+        return $query
+            ->withSum('analytics', 'impressions')
+            ->withSum('analytics', 'total_impressions')
+            ->withSum('analytics', 'clicks')
+            ->withSum('analytics', 'total_clicks');
+    }
+
     public function scopeGetAnalytics($q, $groupBy = 'hour', $start = null, $end = null)
     {
         switch ($groupBy) {
@@ -72,13 +90,13 @@ class Ad extends Model implements Auditable
             default:
                 $format = '%Y-%m-%d %h:00 %p';
         }
-    
+
         return $q->with(['analytics' => function ($query) use ($format, $start, $end) {
-    
+
             if ($start && $end) {
                 $query->whereBetween('created_at', [$start, $end]);
             }
-    
+
             $query->selectRaw("
                 ad_id,
                 country,
@@ -90,8 +108,8 @@ class Ad extends Model implements Auditable
                 SUM(clicks) as clicks,
                 SUM(total_clicks) as total_clicks
             ")
-            ->groupBy('ad_id', 'country', 'state', 'city', 'period')
-            ->orderBy('period', 'asc');
-        },'campaign:id,name,advertiser']);
+                ->groupBy('ad_id', 'country', 'state', 'city', 'period')
+                ->orderBy('period', 'asc');
+        }, 'campaign:id,name,advertiser']);
     }
 }

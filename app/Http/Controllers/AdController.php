@@ -2,15 +2,27 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Ad;
 use App\Http\Resources\AdResource;
+use App\Models\Ad;
 use Illuminate\Http\Request;
 
 class AdController extends Controller
 {
+    /**
+     * Base query for ad responses: relations the resource renders plus DB-side
+     * analytics totals (never the full analytics relation — see
+     * Ad::scopeWithAnalyticsTotals).
+     */
+    private function baseQuery()
+    {
+        return Ad::query()
+            ->with(['campaign', 'placements.section'])
+            ->withAnalyticsTotals();
+    }
+
     public function index(Request $request)
     {
-        $query = Ad::with(['campaign', 'placements.section', 'analytics']);
+        $query = $this->baseQuery();
 
         if ($campaignId = $request->input('campaign_id')) {
             $query->where('ad_campaign_id', $campaignId);
@@ -19,9 +31,9 @@ class AdController extends Controller
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
-                  ->orWhereHas('campaign', function ($cq) use ($search) {
-                      $cq->where('name', 'like', "%{$search}%");
-                  });
+                    ->orWhereHas('campaign', function ($cq) use ($search) {
+                        $cq->where('name', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -52,12 +64,12 @@ class AdController extends Controller
 
         $ad = Ad::create($validated);
 
-        return new AdResource($ad->load(['campaign', 'placements.section', 'analytics']));
+        return new AdResource($this->baseQuery()->findOrFail($ad->id));
     }
 
     public function show($id)
     {
-        $ad = Ad::with(['campaign', 'placements.section', 'analytics'])->findOrFail($id);
+        $ad = $this->baseQuery()->findOrFail($id);
 
         return new AdResource($ad);
     }
@@ -79,7 +91,7 @@ class AdController extends Controller
 
         $ad->update($validated);
 
-        return new AdResource($ad->load(['campaign', 'placements.section', 'analytics']));
+        return new AdResource($this->baseQuery()->findOrFail($ad->id));
     }
 
     public function destroy($id)

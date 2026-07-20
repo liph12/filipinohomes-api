@@ -9,10 +9,10 @@ class AdResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $impressions = $this->analytics->sum('impressions');
-        $totalImpressions = $this->analytics->sum('total_impressions');
-        $clicks = $this->analytics->sum('clicks');
-        $totalClicks = $this->analytics->sum('total_clicks');
+        $impressions = $this->analyticsTotal('impressions');
+        $totalImpressions = $this->analyticsTotal('total_impressions');
+        $clicks = $this->analyticsTotal('clicks');
+        $totalClicks = $this->analyticsTotal('total_clicks');
 
         return [
             'id' => $this->id,
@@ -36,5 +36,27 @@ class AdResource extends JsonResource
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * Resolve an analytics total without ever triggering a lazy load.
+     * Prefers the DB-side aggregate column added by Ad::scopeWithAnalyticsTotals
+     * (analytics_sum_<column>); falls back to summing an already eager-loaded
+     * analytics collection for callers that still load the full relation.
+     */
+    private function analyticsTotal(string $column): int
+    {
+        $aggregate = "analytics_sum_{$column}";
+        $attributes = $this->resource->getAttributes();
+
+        if (array_key_exists($aggregate, $attributes)) {
+            return (int) ($attributes[$aggregate] ?? 0);
+        }
+
+        if ($this->resource->relationLoaded('analytics')) {
+            return (int) $this->resource->analytics->sum($column);
+        }
+
+        return 0;
     }
 }

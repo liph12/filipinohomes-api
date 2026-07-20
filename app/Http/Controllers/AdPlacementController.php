@@ -2,15 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AdPlacement;
 use App\Http\Resources\AdPlacementResource;
+use App\Models\AdPlacement;
 use Illuminate\Http\Request;
 
 class AdPlacementController extends Controller
 {
     public function index(Request $request)
     {
-        $query = AdPlacement::with(['ad', 'section']);
+        $query = AdPlacement::with(['ad' => fn ($q) => $q->withAnalyticsTotals(), 'section']);
 
         if ($adId = $request->input('ad_id')) {
             $query->where('ad_id', $adId);
@@ -41,12 +41,12 @@ class AdPlacementController extends Controller
 
         $placement = AdPlacement::create($validated);
 
-        return new AdPlacementResource($placement->load(['ad', 'section']));
+        return new AdPlacementResource($placement->load(['ad' => fn ($q) => $q->withAnalyticsTotals(), 'section']));
     }
 
     public function show($id)
     {
-        $placement = AdPlacement::with(['ad', 'section'])->findOrFail($id);
+        $placement = AdPlacement::with(['ad' => fn ($q) => $q->withAnalyticsTotals(), 'section'])->findOrFail($id);
 
         return new AdPlacementResource($placement);
     }
@@ -65,7 +65,7 @@ class AdPlacementController extends Controller
 
         $placement->update($validated);
 
-        return new AdPlacementResource($placement->load(['ad', 'section']));
+        return new AdPlacementResource($placement->load(['ad' => fn ($q) => $q->withAnalyticsTotals(), 'section']));
     }
 
     public function destroy($id)
@@ -79,16 +79,16 @@ class AdPlacementController extends Controller
     public function leaderboard(int $sectionId)
     {
         $placements = AdPlacement::where('ad_section_id', $sectionId)
-            ->whereHas('ad', fn($q) => $q->where('status', 'active')
-                ->whereHas('campaign', fn($cq) => $cq->active()))
-            ->with(['ad.campaign'])
+            ->whereHas('ad', fn ($q) => $q->where('status', 'active')
+                ->whereHas('campaign', fn ($cq) => $cq->active()))
+            ->with(['ad.campaign', 'ad' => fn ($q) => $q->withAnalyticsTotals()])
             ->orderByDesc('is_fixed')
             ->orderByDesc('priority')
             ->orderByDesc('weight')
             ->get();
 
         return response()->json([
-            'data' => $placements->map(fn($p) => [
+            'data' => $placements->map(fn ($p) => [
                 'ad_id' => $p->ad_id,
                 'title' => $p->ad->title,
                 'priority' => $p->priority,
@@ -122,9 +122,9 @@ class AdPlacementController extends Controller
             );
         }
 
-        $ids = array_map(fn($p) => $p->id, $created);
+        $ids = array_map(fn ($p) => $p->id, $created);
 
-        $placements = AdPlacement::with(['ad', 'section'])->whereIn('id', $ids)->get();
+        $placements = AdPlacement::with(['ad' => fn ($q) => $q->withAnalyticsTotals(), 'section'])->whereIn('id', $ids)->get();
 
         return AdPlacementResource::collection($placements);
     }

@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AdCampaign;
 use App\Http\Resources\AdCampaignResource;
+use App\Models\AdCampaign;
 use Illuminate\Http\Request;
 
 class AdCampaignController extends Controller
@@ -15,7 +15,7 @@ class AdCampaignController extends Controller
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('advertiser', 'like', "%{$search}%");
+                    ->orWhere('advertiser', 'like', "%{$search}%");
             });
         }
 
@@ -47,7 +47,7 @@ class AdCampaignController extends Controller
     public function show($id)
     {
         $campaign = AdCampaign::withCount('ads')
-            ->with('ads')
+            ->with(['ads' => fn ($q) => $q->withAnalyticsTotals()])
             ->findOrFail($id);
 
         return new AdCampaignResource($campaign);
