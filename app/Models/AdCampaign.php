@@ -7,7 +7,7 @@ use App\Casts\FlexibleDateTime;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use OwenIt\Auditing\Contracts\Auditable;
+use OwenIt\Auditing\Contracts\Auditable; 
 
 class AdCampaign extends Model implements Auditable
 {
