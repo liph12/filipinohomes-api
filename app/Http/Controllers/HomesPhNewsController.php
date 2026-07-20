@@ -42,18 +42,19 @@ class HomesPhNewsController extends Controller
         // Cache key is scoped to the query string so different pages / filters
         // are cached independently. 5 minute TTL is a sensible default for
         // news lists — tune if needed.
-        $cacheKey = 'homesphnews:list:' . md5(http_build_query($query));
+        $cacheKey = 'homesphnews:list:'.md5(http_build_query($query));
 
-        $cached = Cache::remember($cacheKey, now()->addMinutes(5), function () use ($baseUrl, $apiKey, $query) {
+        $cached = Cache::get($cacheKey);
+        if ($cached === null) {
             try {
                 $response = Http::withHeaders([
                     'X-Site-Key' => $apiKey,
                     'Accept' => 'application/json',
                 ])
                     ->timeout(15)
-                    ->get($baseUrl . '/external/articles', $query);
+                    ->get($baseUrl.'/external/articles', $query);
 
-                return [
+                $cached = [
                     'status' => $response->status(),
                     'body' => $response->json(),
                 ];
@@ -62,12 +63,19 @@ class HomesPhNewsController extends Controller
                     'error' => $e->getMessage(),
                 ]);
 
-                return [
+                $cached = [
                     'status' => 502,
                     'body' => ['message' => 'Upstream news service unavailable.'],
                 ];
             }
-        });
+
+            // Only cache a successful response. Caching a transient upstream
+            // error (5xx / 502) would keep the news blank for the whole TTL even
+            // after the upstream recovers — the "no news until later" bug.
+            if ($cached['status'] >= 200 && $cached['status'] < 300) {
+                Cache::put($cacheKey, $cached, now()->addMinutes(5));
+            }
+        }
 
         $body = $cached['body'];
         if (is_array($body)) {
@@ -92,18 +100,19 @@ class HomesPhNewsController extends Controller
             );
         }
 
-        $cacheKey = 'homesphnews:article:' . $identifier;
+        $cacheKey = 'homesphnews:article:'.$identifier;
 
-        $cached = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($baseUrl, $apiKey, $identifier) {
+        $cached = Cache::get($cacheKey);
+        if ($cached === null) {
             try {
                 $response = Http::withHeaders([
                     'X-Site-Key' => $apiKey,
                     'Accept' => 'application/json',
                 ])
                     ->timeout(15)
-                    ->get($baseUrl . '/external/articles/' . rawurlencode($identifier));
+                    ->get($baseUrl.'/external/articles/'.rawurlencode($identifier));
 
-                return [
+                $cached = [
                     'status' => $response->status(),
                     'body' => $response->json(),
                 ];
@@ -113,12 +122,18 @@ class HomesPhNewsController extends Controller
                     'error' => $e->getMessage(),
                 ]);
 
-                return [
+                $cached = [
                     'status' => 502,
                     'body' => ['message' => 'Upstream news service unavailable.'],
                 ];
             }
-        });
+
+            // Only cache a successful response so a transient upstream error
+            // doesn't stick for the whole TTL.
+            if ($cached['status'] >= 200 && $cached['status'] < 300) {
+                Cache::put($cacheKey, $cached, now()->addMinutes(30));
+            }
+        }
 
         $body = $cached['body'];
         if (is_array($body)) {
@@ -177,13 +192,15 @@ class HomesPhNewsController extends Controller
             $articles = &$body;
         }
 
-        if (!is_array($articles)) {
+        if (! is_array($articles)) {
             return;
         }
 
         $identifiers = [];
         foreach ($articles as $article) {
-            if (!is_array($article)) continue;
+            if (! is_array($article)) {
+                continue;
+            }
             $identifier = $this->extractIdentifier($article);
             if ($identifier !== null) {
                 $identifiers[] = $identifier;
@@ -200,9 +217,13 @@ class HomesPhNewsController extends Controller
             ->keyBy('identifier');
 
         foreach ($articles as &$article) {
-            if (!is_array($article)) continue;
+            if (! is_array($article)) {
+                continue;
+            }
             $identifier = $this->extractIdentifier($article);
-            if ($identifier === null) continue;
+            if ($identifier === null) {
+                continue;
+            }
 
             /** @var NewsAnalytics|null $metric */
             $metric = $metrics->get($identifier);
@@ -210,14 +231,14 @@ class HomesPhNewsController extends Controller
                 continue;
             }
 
-            $article['views'] = number_format((int) $metric->impressions) . ' views';
+            $article['views'] = number_format((int) $metric->impressions).' views';
             $article['views_count'] = (int) $metric->clicks;
         }
     }
 
     private function applyMetricsToSingleResponse(array &$body, string $fallbackIdentifier): void
     {
-        if (!isset($body['article']) || !is_array($body['article'])) {
+        if (! isset($body['article']) || ! is_array($body['article'])) {
             return;
         }
 
@@ -225,18 +246,23 @@ class HomesPhNewsController extends Controller
         $identifier = $this->extractIdentifier($article) ?? $fallbackIdentifier;
         $metric = NewsAnalytics::query()->where('identifier', $identifier)->first();
 
-        if (!$metric) return;
+        if (! $metric) {
+            return;
+        }
 
-        $article['views'] = number_format((int) $metric->impressions) . ' views';
+        $article['views'] = number_format((int) $metric->impressions).' views';
         $article['views_count'] = (int) $metric->clicks;
     }
 
     private function extractIdentifier(array $article): ?string
     {
         $slug = isset($article['slug']) ? trim((string) $article['slug']) : '';
-        if ($slug !== '') return $slug;
+        if ($slug !== '') {
+            return $slug;
+        }
 
         $id = isset($article['id']) ? trim((string) $article['id']) : '';
+
         return $id !== '' ? $id : null;
     }
 
@@ -252,7 +278,8 @@ class HomesPhNewsController extends Controller
             return $bodyDeviceId;
         }
 
-        $fallback = ($request->ip() ?? 'unknown') . '|' . ((string) $request->userAgent() ?: 'ua');
+        $fallback = ($request->ip() ?? 'unknown').'|'.((string) $request->userAgent() ?: 'ua');
+
         return hash('sha256', $fallback);
     }
 
@@ -282,13 +309,14 @@ class HomesPhNewsController extends Controller
         }
 
         Cache::put($cacheKey, true, now()->addYear());
+
         return true;
     }
 
     private function getCurrentStats(string $identifier): array
     {
         $metric = NewsAnalytics::query()->where('identifier', $identifier)->first();
-        if (!$metric) {
+        if (! $metric) {
             return ['impressions' => 0, 'clicks' => 0];
         }
 
