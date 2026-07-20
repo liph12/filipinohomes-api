@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Ad;
-use App\Models\AdAnalytics;
-use App\Services\AdServingService;
 use App\Http\Resources\AdResource;
 use App\Http\Resources\AdSectionResource;
+use App\Models\Ad;
+use App\Models\AdAnalytics;
+use App\Models\AdSection;
+use App\Services\AdServingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
@@ -21,7 +22,7 @@ class PublicAdController extends Controller
         $result = $this->adServingService->getAdsForSection($key);
         $ads = $result['ads'];
         $loopDuration = $result['loop_duration'];
-        $section = \App\Models\AdSection::where('key', $key)->first();
+        $section = AdSection::where('key', $key)->first();
 
         if ($ads->isEmpty()) {
             return response()->json([
@@ -41,13 +42,13 @@ class PublicAdController extends Controller
     public function trackImpression(Request $request, int $id)
     {
         $ad = Ad::find($id);
-        if (!$ad) {
+        if (! $ad) {
             return response()->json(['message' => 'Ad not found'], 404);
         }
 
         $deviceId = $request->input('device_id');
-        
-        if (!$deviceId) {
+
+        if (! $deviceId) {
             return response()->json(['success' => false, 'message' => 'device_id required'], 422);
         }
 
@@ -73,7 +74,7 @@ class PublicAdController extends Controller
         );
         $analytics->increment('total_impressions');
 
-        if (!Cache::has($cacheKey)) {
+        if (! Cache::has($cacheKey)) {
             $analytics->increment('impressions');
 
             $ttl = $this->getCacheTtl($ad);
@@ -86,12 +87,12 @@ class PublicAdController extends Controller
     public function trackClick(Request $request, int $id)
     {
         $ad = Ad::find($id);
-        if (!$ad) {
+        if (! $ad) {
             return response()->json(['message' => 'Ad not found'], 404);
         }
 
         $deviceId = $request->input('device_id');
-        if (!$deviceId) {
+        if (! $deviceId) {
             return response()->json(['success' => false, 'message' => 'device_id required'], 422);
         }
 
@@ -118,7 +119,7 @@ class PublicAdController extends Controller
         ];
 
         // If no impression was recorded yet, record it now
-        if (!Cache::has($impCacheKey)) {
+        if (! Cache::has($impCacheKey)) {
             $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
             $analytics->increment('impressions');
             Cache::put($impCacheKey, true, $ttl);
@@ -131,7 +132,7 @@ class PublicAdController extends Controller
         // Click dedup logic
         $cached = Cache::get($clickCacheKey);
 
-        if (!$cached) {
+        if (! $cached) {
             // First click — record it
             $analytics = AdAnalytics::firstOrCreate($lookupKeys, $defaults);
             $analytics->increment('clicks');
@@ -149,7 +150,7 @@ class PublicAdController extends Controller
             $sameHour = $cachedHour === $currentHour;
             $sameDay = $cachedDate === $currentDate;
 
-            if (!$sameHour || !$sameDay) {
+            if (! $sameHour || ! $sameDay) {
                 // Different hour OR different day — allow click
                 $analytics = AdAnalytics::firstOrCreate(
                     [
@@ -177,18 +178,18 @@ class PublicAdController extends Controller
 
     private function getGeoData(Request $request): array
     {
-        $userInfo = $request->input("user_info");
+        $userInfo = $request->input('user_info');
 
         // The frontend doesn't always send user_info (server-side
         // renders, guest tokens, OG-image bots, ad-blockers that
         // strip the payload). Bail with nulls instead of indexing
         // into null — these endpoints are fire-and-forget trackers
         // and shouldn't 500 just because we can't geo-tag the row.
-        if (!is_array($userInfo) || empty($userInfo['ip'])) {
+        if (! is_array($userInfo) || empty($userInfo['ip'])) {
             return [
                 'country' => null,
-                'state'   => null,
-                'city'    => null,
+                'state' => null,
+                'city' => null,
             ];
         }
 
@@ -197,8 +198,8 @@ class PublicAdController extends Controller
         return Cache::remember($cacheKey, now()->addHours(24), function () use ($userInfo) {
             return [
                 'country' => $userInfo['country'] ?? null,
-                'state'   => $userInfo['region']  ?? null,
-                'city'    => $userInfo['city']    ?? null,
+                'state' => $userInfo['region'] ?? null,
+                'city' => $userInfo['city'] ?? null,
             ];
         });
     }
@@ -217,9 +218,28 @@ class PublicAdController extends Controller
 
     public function getAnalytics(Request $request)
     {
-        $gr = $request->group;
-        $hours = Ad::getAnalytics($gr)->get();
+        // UI filter names -> SQL grouping granularity. The frontend sends
+        // hour | day | last_day | last_week | last_month | custom.
+        $filter = $request->route('group');
+        $groupBy = match ($filter) {
+            'day', 'last_week', 'last_month', 'custom' => 'day',
+            default => 'hour', // hour, last_day
+        };
 
-        return response()->json($hours);
+        // Scope to a single ad when the panel asks for one. Without this the
+        // endpoint aggregates every ad's entire analytics history on each call,
+        // which is fine locally but times out on production-sized data — the
+        // reason the drilldown showed nothing. start/end were also being dropped
+        // before (only the group was passed), so date filtering never applied.
+        $adId = $request->query('ad_id');
+        $start = $request->query('start');
+        $end = $request->query('end');
+
+        $ads = Ad::query()
+            ->when($adId, fn ($q) => $q->whereKey($adId))
+            ->getAnalytics($groupBy, $start, $end)
+            ->get();
+
+        return response()->json($ads);
     }
 }
