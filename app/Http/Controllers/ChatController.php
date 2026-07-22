@@ -390,6 +390,19 @@ class ChatController extends Controller
             abort(403, 'Secretaries cannot inquire on listings.');
         }
 
+        // A closed listing (sold / rented / leased — anything but active) no
+        // longer accepts inquiries. Guarded here so it holds for BOTH fresh
+        // inquiries and re-inquiries, and even if a stale or public page
+        // bypasses the frontend gate. Fail-open when the listing/property or its
+        // status is missing (unknown) so a valid chat is never wrongly blocked.
+        if ($validated['type'] === 'listing') {
+            $inquiryListing = Listing::with('property:id,status')->find($validated['type_id']);
+            $propertyStatus = $inquiryListing?->property?->status;
+            if ($propertyStatus !== null && $propertyStatus !== 'active') {
+                abort(422, 'This property is no longer available for inquiries.');
+            }
+        }
+
         // Block-check the sender BEFORE we touch chats/conversations. This
         // closes the loophole where a blocked client could open a brand-new
         // inquiry on a different listing owned by the same agent (or any
