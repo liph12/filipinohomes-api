@@ -369,6 +369,10 @@ class AgentController extends Controller
 
         $ids = User::query()
             ->whereHas('role', fn ($q) => $q->where('name', 'agent'))
+            // Public "N agents online" pill — only count active agents, matching
+            // the public agents-directory gate (excludes inactive/resigned/
+            // deactivated and soft-deleted agents).
+            ->whereHas('agent', fn ($q) => $q->where('status', 'active'))
             ->where('last_online_at', '>=', $threshold)
             ->whereHas('agent.listings', function ($lq) {
                 $lq->whereNull('listings.deleted_at');
