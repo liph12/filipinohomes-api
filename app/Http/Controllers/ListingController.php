@@ -285,8 +285,12 @@ class ListingController extends Controller
                     Cache::put($cacheKey, true, now()->addDay());
                 }
 
-                // Only public listings are exposed (matches the prior visibility guard).
-                $listing = $found->visibility === 'public' ? $found : null;
+                // Only public listings whose owning agent is still active are
+                // exposed. A public listing of an inactive/resigned/deactivated
+                // (or soft-deleted) agent is treated as not-viewable → the
+                // "no longer available" page below (reason = agent_inactive).
+                $agentActive = $found->agent && $found->agent->status === 'active';
+                $listing = ($found->visibility === 'public' && $agentActive) ? $found : null;
             }
         }
 
@@ -294,11 +298,18 @@ class ListingController extends Controller
         // can show a clear "no longer available" page (HTTP 200 + noindex) instead
         // of a bare 404 — a private row ($found, not public) vs a soft-deleted row.
         // A truly unknown slug stays reason=null (genuine 404 on the frontend).
-        $reason = null;            // null | 'private' | 'deleted'
+        $reason = null;            // null | 'private' | 'deleted' | 'agent_inactive'
         $goneListing = null;       // { name, location } for the page heading
         if ($listing === null && ! empty($slug)) {
             $row = null;
-            if ($found && $found->visibility !== 'public') {
+            if ($found && $found->visibility === 'public'
+                && ! ($found->agent && $found->agent->status === 'active')) {
+                // Public listing whose owning agent is no longer active — show
+                // the "no longer available" page (HTTP 200 + noindex) so the URL
+                // drops from the index while a human with the link sees why.
+                $reason = 'agent_inactive';
+                $row = $found;
+            } elseif ($found && $found->visibility !== 'public') {
                 $reason = 'private';
                 $row = $found;
             } else {
@@ -2420,6 +2431,24 @@ class ListingController extends Controller
             );
             if (! $canView) {
                 abort(403, 'This listing is private. Only the owner or admin can view it.');
+            }
+        }
+
+        // Agent-status gate: a public listing whose owning agent is no longer
+        // active 404s for the public (as if it doesn't exist), matching the
+        // site-wide gate. The same privileged viewers as the visibility guard
+        // keep access; the owner check uses the agent_id column so it still holds
+        // when the relation is null for a soft-deleted agent.
+        if (optional($listing->agent)->status !== 'active') {
+            $canView = $user && (
+                $user->role->name === 'admin'
+                || $listing->agent_id === ($user->agent->id ?? null)
+                || ($user->isSecretary()
+                    && $user->secretaryRegion() !== null
+                    && optional($listing->agent)->region === $user->secretaryRegion())
+            );
+            if (! $canView) {
+                abort(404);
             }
         }
 

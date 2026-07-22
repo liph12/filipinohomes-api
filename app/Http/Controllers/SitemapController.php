@@ -43,6 +43,11 @@ class SitemapController extends Controller
 
         $paginator = Agent::query()
             ->select('id', 'first_name', 'middle_name', 'last_name', 'created_at', 'updated_at')
+            // Only active agents are indexable — an inactive/resigned/deactivated
+            // agent's profile leaves the sitemap (their listings are already
+            // gated by Listing::scopePubliclyListed). Trashed agents are excluded
+            // by the SoftDeletes global scope.
+            ->where('status', 'active')
             ->has('listings')
             ->orderBy('id')
             ->paginate($perPage);
@@ -135,6 +140,15 @@ class SitemapController extends Controller
     {
         $rows = DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
+            // Agent-status gate: mirror Listing::scopePubliclyListed()'s
+            // whereHas('agent', active) so an inactive/resigned/deactivated (or
+            // soft-deleted) agent's listings leave these counts too. INNER JOIN
+            // on the PK (agent_id is NOT NULL + FK) never fans out COUNT(*).
+            ->join('agents', function ($j) {
+                $j->on('agents.id', '=', 'listings.agent_id')
+                  ->where('agents.status', 'active')
+                  ->whereNull('agents.deleted_at');
+            })
             // Effective city = reverse-geocoded map pin when present, else the
             // agent-picked barangay's city (address_id, 100% filled). Same
             // COALESCE semantics as the public `city_id` filter in
@@ -354,6 +368,15 @@ class SitemapController extends Controller
     {
         return DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
+            // Agent-status gate: mirror Listing::scopePubliclyListed()'s
+            // whereHas('agent', active) so an inactive/resigned/deactivated (or
+            // soft-deleted) agent's listings leave these counts too. INNER JOIN
+            // on the PK (agent_id is NOT NULL + FK) never fans out COUNT(*).
+            ->join('agents', function ($j) {
+                $j->on('agents.id', '=', 'listings.agent_id')
+                  ->where('agents.status', 'active')
+                  ->whereNull('agents.deleted_at');
+            })
             // Effective city = COALESCE(geo pin, agent-picked barangay's city)
             // — same registry semantics as locationCounts and the public
             // city_id filter, so modifier/band counts match on-page results.
@@ -604,6 +627,8 @@ class SitemapController extends Controller
 
         $paginator = Agent::query()
             ->select('id', 'first_name', 'middle_name', 'last_name', 'avatar', 'updated_at')
+            // Only active agents are indexable (matches the agents sitemap shard).
+            ->where('status', 'active')
             ->orderBy('id')
             ->paginate($perPage);
 

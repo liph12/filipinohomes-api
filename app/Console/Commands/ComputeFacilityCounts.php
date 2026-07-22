@@ -91,6 +91,15 @@ class ComputeFacilityCounts extends Command
 
         return DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
+            // Agent-status gate: mirror Listing::scopePubliclyListed()'s
+            // whereHas('agent', active) so an inactive/resigned/deactivated (or
+            // soft-deleted) agent's listings leave the near-facility counts too.
+            // INNER JOIN on the PK (agent_id NOT NULL + FK) never fans out.
+            ->join('agents', function ($j) {
+                $j->on('agents.id', '=', 'listings.agent_id')
+                  ->where('agents.status', 'active')
+                  ->whereNull('agents.deleted_at');
+            })
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
             ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')

@@ -194,6 +194,9 @@ class DataLayerService
     {
         $inquiredAgents = [];
         $agents = Agent::withCount('listings')
+        // Only surface active agents in public AI search (their listings are
+        // already gated by publiclyListed() in the eager-load below).
+        ->where('status', 'active')
         ->with(['listings' => function($q) {
             $q->publiclyListed()->with('property.propertyAttribute.subtype.type')
               ->orderBy('clicks', 'DESC')

@@ -170,6 +170,11 @@ class User extends Authenticatable implements Auditable
         // Date-level threshold (today, not now) keeps the grace window exact:
         // its last day still counts as inside at any hour of the day.
         if ($lastSeen->lt(\Illuminate\Support\Carbon::today()->subDays(self::DORMANT_DAYS))) {
+            // Distinguish the system auto-deactivation from an admin's manual
+            // status change in the activity log (owen-it still records the
+            // active → deactivated diff; this adds the readable label + source).
+            $agent->auditDescription = 'Auto-deactivated (dormant ' . self::DORMANT_DAYS . 'd)';
+            $agent->auditSource = 'auto_dormant';
             $agent->update(['status' => 'deactivated']);
             \Illuminate\Support\Facades\Log::info('Agent auto-deactivated at login — no activity in 45 days', [
                 'agent_id' => $agent->id,

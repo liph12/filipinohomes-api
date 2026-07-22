@@ -14,6 +14,8 @@ use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Mail\AgentCertificateMailer;
 use App\Services\AuditMailService;
+use App\Services\IndexNowService;
+use App\Jobs\PingIndexNow;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -708,8 +710,23 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             ->findOrFail($id);
         $this->guardSecretaryRegion($request, $agent);
 
+        // Public visibility gate: hide a non-active agent's listings from
+        // non-privileged viewers. This endpoint powers BOTH the public agent
+        // profile (already noindexed on the frontend for inactive agents) and
+        // the client "share a listing" picker, so we keep the 200 response and
+        // just empty the listings rather than 404 — matching the site-wide
+        // agent-status gate. Admins and region secretaries (vetted just above
+        // by guardSecretaryRegion) keep full visibility.
+        $viewer = $request->user();
+        $hideListings = $agent->status !== 'active'
+            && ! ($viewer && ($viewer->role?->name === 'admin' || $viewer->isSecretary()));
+        if ($hideListings) {
+            $agent->listings_count = 0;
+        }
+
         $listingsQuery = $agent->listings()
             ->where('visibility', 'public')
+            ->when($hideListings, fn ($q) => $q->whereRaw('1 = 0'))
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
@@ -915,6 +932,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         $validated = $request->validate([
             'status' => 'required|in:active,inactive,resigned,deactivated',
         ]);
+        $old = $agent->status;
 
         if ($validated['status'] === 'deactivated') {
             $dormantDays = User::DORMANT_DAYS;
@@ -930,7 +948,34 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             }
         }
 
+        // First-class audit: a readable summary + a distinct source so an admin
+        // status change stands out in the activity log and is separable from a
+        // generic profile edit or the dormancy auto-deactivation. The owen-it
+        // 'updated' event still records the old→new status diff in
+        // old_values/new_values; this only adds the human-readable label. No
+        // audit row is written when the status is unchanged (nothing dirty).
+        $agent->auditDescription = "Status: {$old} → {$validated['status']}";
+        $agent->auditSource = 'admin_status_dropdown';
         $agent->update(['status' => $validated['status']]);
+
+        // Nudge search engines to recrawl this agent's listing URLs so the
+        // now-hidden (blocked) or newly-restored (active) pages leave/return to
+        // the index faster than the sitemap revalidate window. Fires only on a
+        // real change. Uses raw visibility (NOT publiclyListed(), which would now
+        // exclude a blocked agent's listings entirely).
+        if ($old !== $validated['status'] && config('services.indexnow.enabled')) {
+            $svc  = app(IndexNowService::class);
+            $urls = $agent->listings()
+                ->where('visibility', 'public')
+                ->pluck('slug')
+                ->filter(fn ($s) => is_string($s) && $s !== '' && ! str_starts_with($s, 'tmp-'))
+                ->map(fn ($s) => $svc->listingUrl($s))
+                ->values()
+                ->all();
+            foreach (array_chunk($urls, 10000) as $chunk) {
+                PingIndexNow::dispatch($chunk)->afterCommit();
+            }
+        }
 
         return response()->json(['data' => new AgentResource($agent)]);
     }

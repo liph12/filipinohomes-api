@@ -249,6 +249,15 @@ class ModifierThresholdService
     {
         return DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
+            // Agent-status gate: mirror Listing::scopePubliclyListed()'s
+            // whereHas('agent', active) so an inactive/resigned/deactivated (or
+            // soft-deleted) agent's listings leave the affordable percentiles.
+            // INNER JOIN on the PK (agent_id NOT NULL + FK) never fans out.
+            ->join('agents', function ($j) {
+                $j->on('agents.id', '=', 'listings.agent_id')
+                  ->where('agents.status', 'active')
+                  ->whereNull('agents.deleted_at');
+            })
             ->join('barangays', 'barangays.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', 'barangays.city_id')
             ->join('provinces', 'provinces.id', '=', 'cities.province_id')

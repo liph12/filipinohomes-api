@@ -38,6 +38,15 @@ class ComputeBarangayCounts extends Command
         // URL tier in the frontend yet.
         $cohorts = DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
+            // Agent-status gate: mirror Listing::scopePubliclyListed()'s
+            // whereHas('agent', active) so an inactive/resigned/deactivated (or
+            // soft-deleted) agent's listings leave the barangay counts too.
+            // INNER JOIN on the PK (agent_id NOT NULL + FK) never fans out.
+            ->join('agents', function ($j) {
+                $j->on('agents.id', '=', 'listings.agent_id')
+                  ->where('agents.status', 'active')
+                  ->whereNull('agents.deleted_at');
+            })
             ->leftJoin('barangays as addr_b', 'addr_b.id', '=', 'properties.address_id')
             // Effective barangay: pin wins; the agent dropdown only counts
             // when it doesn't contradict the pin's city (or there is no pin).

@@ -56,6 +56,15 @@ class ComputeMarketStats extends Command
         // needs the full value list; ~15K rows fits comfortably in memory).
         $rows = DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
+            // Agent-status gate: mirror Listing::scopePubliclyListed()'s
+            // whereHas('agent', active) so an inactive/resigned/deactivated (or
+            // soft-deleted) agent's listings leave the market-stats aggregates.
+            // INNER JOIN on the PK (agent_id NOT NULL + FK) never fans out.
+            ->join('agents', function ($j) {
+                $j->on('agents.id', '=', 'listings.agent_id')
+                  ->where('agents.status', 'active')
+                  ->whereNull('agents.deleted_at');
+            })
             ->leftJoin('barangays as addr_b', 'addr_b.id', '=', 'properties.address_id')
             ->join('cities', 'cities.id', '=', DB::raw(
                 'COALESCE(properties.geo_city_id, addr_b.city_id)'

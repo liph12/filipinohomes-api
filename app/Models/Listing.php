@@ -663,6 +663,18 @@ class Listing extends Model implements Auditable
             ->where(function ($q) {
                 $q->whereNull('verification_status')
                     ->orWhere('verification_status', '!=', 'flagged');
+            })
+            // Agent-status gate: a listing is public only while its owning
+            // agent is active. Marking the agent inactive/resigned/deactivated
+            // pulls every one of their listings off public + SEO surfaces;
+            // setting it back to 'active' restores them on the next query
+            // (reversible, non-destructive — nothing about the listing changes).
+            // whereHas also applies Agent's SoftDeletes scope, so a trashed
+            // agent's listings drop out too. agent_id is NOT NULL + FK, so this
+            // is a single primary-key (eq_ref) probe per row — no null-agent
+            // edge case and no full scan.
+            ->whereHas('agent', function ($q) {
+                $q->where('status', 'active');
             });
     }
 
