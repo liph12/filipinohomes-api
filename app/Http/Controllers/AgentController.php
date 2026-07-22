@@ -88,6 +88,17 @@ class AgentController extends Controller
                 $q->where('name', $request->boolean('include_admins') ? 'admin' : 'agent');
             });
 
+        // Public visibility gate: the public agents directory opts in with
+        // `public=1` (see lib/agents.ts + hooks/useAgents.ts) and must surface
+        // ONLY active agents — for search-engine crawlers AND for any signed-in
+        // viewer (an admin browsing the public page still gets the public view).
+        // Admin/analytics callers (Agents Management, Top Agents, Leaderboard,
+        // chat stats) omit the flag and keep every status. Mirrors the
+        // site-wide agent-status gate.
+        if ($request->boolean('public')) {
+            $query->where('agents.status', 'active');
+        }
+
         // Secretary (FH role 5): in the management DASHBOARD the agents list is
         // region-scoped to their office region. This same endpoint also powers
         // the PUBLIC agents directory, which must show everyone — even when a
