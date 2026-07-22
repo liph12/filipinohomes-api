@@ -115,14 +115,45 @@ class PageBuilderController extends Controller
 
     public function show(string $slug)
     {
-        $pageBuilder = PageBuilder::where('slug', $slug)->firstOrFail();
+        $pageBuilder = PageBuilder::where('slug', $slug)->with('agent')->firstOrFail();
+        $this->guardInactiveAgentPage($pageBuilder);
         return new PageBuilderResource($pageBuilder);
     }
 
     public function showByAgent(string $agentId)
     {
-        $pageBuilder = PageBuilder::where('agent_id', $agentId)->firstOrFail();
+        $pageBuilder = PageBuilder::where('agent_id', $agentId)->with('agent')->firstOrFail();
+        $this->guardInactiveAgentPage($pageBuilder);
         return new PageBuilderResource($pageBuilder);
+    }
+
+    /**
+     * Public visibility gate for an agent page: a page whose owning agent is no
+     * longer active (inactive/resigned/deactivated) or is soft-deleted 404s for
+     * the public — matching the site-wide agent-status gate on listings — while
+     * the owning agent, admins, and region secretaries keep access. These routes
+     * carry no auth middleware, so the token is resolved on demand via the
+     * sanctum guard.
+     */
+    private function guardInactiveAgentPage(PageBuilder $page): void
+    {
+        $agent = $page->agent;
+        if ($agent && $agent->status === 'active') {
+            return;
+        }
+
+        $user = auth('sanctum')->user();
+        $privileged = $user && (
+            $user->role?->name === 'admin'
+            || ($user->agent && $user->agent->id === $page->agent_id)
+            || ($user->isSecretary()
+                && $user->secretaryRegion() !== null
+                && optional($agent)->region === $user->secretaryRegion())
+        );
+
+        if (! $privileged) {
+            abort(404);
+        }
     }
 
 public function store(Request $request)

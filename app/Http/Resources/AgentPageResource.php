@@ -19,6 +19,9 @@ class AgentPageResource extends JsonResource
         
          return [
             'id'             => $this->id,
+            // Drives the page-builder sitemap filter (only active agents'
+            // pages are indexable) — mirrors the site-wide agent-status gate.
+            'status'         => $this->status,
             'first_name'   => $this->first_name,
             'middle_name'  => $this->middle_name,
             'last_name'    => $this->last_name,
