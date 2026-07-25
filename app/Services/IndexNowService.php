@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -49,6 +50,42 @@ class IndexNowService
     public function projectUrl(string $slug): string
     {
         return $this->siteUrl() . '/projects/' . ltrim($slug, '/');
+    }
+
+    /**
+     * Build the absolute public URL for a "near {facility}" SEO page:
+     *   /{for-sale|for-rent}/{type-slug}/near-{facility_slug}/in-{city}-{province}
+     * mirroring the frontend facilities sitemap shard
+     * (src/app/api/sitemap/facilities/[page]/route.ts). Category/type/city/
+     * province arrive as raw display names (e.g. "For Sale", "Condominium",
+     * "Cebu City", "Cebu") straight from facility_listing_counts. Returns
+     * null for a category with no URL tier (e.g. Foreclosure).
+     */
+    public function nearFacilityUrl(
+        string $category,
+        string $type,
+        string $facilitySlug,
+        string $city,
+        string $province,
+    ): ?string {
+        $categorySlug = match ($category) {
+            'For Sale' => 'for-sale',
+            'For Rent' => 'for-rent',
+            default    => null,
+        };
+        if ($categorySlug === null || $facilitySlug === '' || $city === '' || $province === '') {
+            return null;
+        }
+
+        return sprintf(
+            '%s/%s/%s/near-%s/in-%s-%s',
+            $this->siteUrl(),
+            $categorySlug,
+            Str::slug($type),
+            $facilitySlug,
+            Str::slug($city),
+            Str::slug($province),
+        );
     }
 
     /**

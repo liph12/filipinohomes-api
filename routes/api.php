@@ -54,6 +54,9 @@ use App\Http\Controllers\{
     InquiryController,
     InquiryAnalyticsController,
     ActivityLogController,
+    FacilityAdminController,
+    SeoCommandController,
+    SeoInventoryController,
     MobileStatisticsController,
     DeviceTokenController,
     NotificationController,
@@ -427,6 +430,34 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/mobile-stats', [MobileStatisticsController::class, 'stats']);
                 Route::get('/admin/mobile-users', [MobileStatisticsController::class, 'users']);
                 Route::patch('/admin/users/{user}/notification-preferences', [NotificationController::class, 'adminUpdatePreferences']);
+
+                // ── SEO Manage page (admin) ─────────────────────────────
+                // Overview inventory (per-tier counts + freshness, cached).
+                Route::get('/admin/seo/overview', [SeoInventoryController::class, 'overview']);
+
+                // Curated "near {facility}" registry CRUD. Slug is server-
+                // generated; renames go through /rebrand (alias + 301
+                // invariant); DELETE soft-retires (never hard-deletes).
+                Route::get('/admin/seo/facilities', [FacilityAdminController::class, 'index']);
+                Route::post('/admin/seo/facilities', [FacilityAdminController::class, 'store']);
+                Route::post('/admin/seo/facilities/preview-count', [FacilityAdminController::class, 'previewCount']);
+                Route::get('/admin/seo/facilities/{facility}', [FacilityAdminController::class, 'show']);
+                Route::patch('/admin/seo/facilities/{facility}', [FacilityAdminController::class, 'update']);
+                Route::delete('/admin/seo/facilities/{facility}', [FacilityAdminController::class, 'deactivate']);
+                Route::post('/admin/seo/facilities/{facility}/activate', [FacilityAdminController::class, 'activate']);
+                Route::post('/admin/seo/facilities/{facility}/rebrand', [FacilityAdminController::class, 'rebrand']);
+                Route::post('/admin/seo/facilities/{facility}/recompute', [FacilityAdminController::class, 'recompute']);
+                Route::post('/admin/seo/facilities/{facility}/ping-indexnow', [FacilityAdminController::class, 'pingIndexNow']);
+                Route::post('/admin/seo/facilities/{facility}/geocode', [FacilityAdminController::class, 'geocode'])
+                    ->middleware('throttle:10,1'); // Google bills per lookup
+
+                // SEO pipeline commands: registry + last/next runs, queued
+                // manual trigger (RunSeoCommand — never synchronous), history.
+                Route::get('/admin/seo/commands', [SeoCommandController::class, 'index']);
+                Route::post('/admin/seo/commands/{command}/run', [SeoCommandController::class, 'trigger'])
+                    ->middleware('throttle:6,1');
+                Route::get('/admin/seo/runs', [SeoCommandController::class, 'runs']);
+                Route::get('/admin/seo/runs/{run}', [SeoCommandController::class, 'showRun']);
             });
 
             // Magazine, Office & Ad management (admin + editor only)

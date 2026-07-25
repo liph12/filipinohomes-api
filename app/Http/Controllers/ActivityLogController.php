@@ -45,6 +45,10 @@ class ActivityLogController extends Controller
         // is built client-side, so these are direct Audit::create writes from
         // AuditReelService via the /reels/events endpoint.
         'reels',
+        // Admin SEO Manage actions: facility CRUD/rebrand/deactivate (via the
+        // Facility model's LogsActivity trait, $auditCategory='seo') and
+        // manual pipeline triggers (AuditSeoService::recordCommandTrigger).
+        'seo',
     ];
 
     /**
