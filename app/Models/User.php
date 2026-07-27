@@ -50,6 +50,9 @@ class User extends Authenticatable implements Auditable
         'slug',
         'credentials',
         "role_id",
+        // Admin-pinned role: when true, LR-driven role syncs must not touch
+        // role_id (set/cleared from System Users alongside a role change).
+        'role_locked',
         'verification',
         'active_at',
         'inquiry_notify_channel',
@@ -87,6 +90,7 @@ class User extends Authenticatable implements Auditable
             'notify_new_inquiry' => 'boolean',
             'notify_listing_verified' => 'boolean',
             'notify_status_change' => 'boolean',
+            'role_locked' => 'boolean',
         ];
     }
 

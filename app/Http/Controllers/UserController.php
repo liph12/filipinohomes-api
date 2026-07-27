@@ -491,6 +491,20 @@ class UserController extends Controller
     public function update($id, Request $request)
     {
         $user = User::findOrFail($id);
+        $actor = $request->user();
+        $actorIsAdmin = $actor?->role?->name === 'admin';
+
+        // Authorization. Role fields are privilege changes → admin only
+        // (previously ANY authenticated user could PATCH role_id — a
+        // privilege-escalation hole). Profile fields: self or admin.
+        if ($request->has('role_id') || $request->has('role_locked')) {
+            if (! $actorIsAdmin) {
+                abort(403, 'Only admins can change user roles.');
+            }
+        } elseif (! $actorIsAdmin && $actor?->id !== $user->id) {
+            abort(403, 'You can only update your own profile.');
+        }
+
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             // 'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
@@ -501,9 +515,52 @@ class UserController extends Controller
             'birthdate'         => 'nullable|date',
             'gender'            => 'nullable|string|in:male,female',
             'role_id' => 'sometimes|exists:roles,id',
+            // Admin-pinned role (System Users "force" checkbox): while true,
+            // LR-driven login syncs must not adjust role_id. Sent alongside a
+            // role change; may also be toggled on its own to re-enable sync.
+            'role_locked' => 'sometimes|boolean',
         ]);
+
+        // Readable audit line for role changes — the owen-it diff already
+        // records old/new role_id; this makes the System Logs row legible
+        // and separable from ordinary profile edits.
+        $roleChanged = array_key_exists('role_id', $validated)
+            && (int) $validated['role_id'] !== (int) $user->role_id;
+        $lockChanged = array_key_exists('role_locked', $validated)
+            && (bool) $validated['role_locked'] !== (bool) $user->role_locked;
+        if ($roleChanged || $lockChanged) {
+            $oldRole = $user->role?->name ?? "role#{$user->role_id}";
+            $newRole = $roleChanged
+                ? (\App\Models\Role::find((int) $validated['role_id'])?->name ?? "role#{$validated['role_id']}")
+                : $oldRole;
+            $lockNote = array_key_exists('role_locked', $validated)
+                ? ($validated['role_locked'] ? ' (forced — LR login sync disabled)' : ' (unforced — LR login sync re-enabled)')
+                : '';
+            $user->auditDescription = $roleChanged
+                ? "Role: {$oldRole} → {$newRole}{$lockNote}"
+                : "Role lock changed for {$user->name}{$lockNote}";
+            $user->auditSource = 'system_users';
+        }
+
         $user->update($validated);
-        return new UserResource($user);
+
+        // A manual switch to agent must also guarantee an agents profile —
+        // the LR create-branches do this on signup, but a user who was
+        // created as admin/client has no row, and without one every
+        // agent-scoped surface (chat, listings, team sync, dormancy)
+        // breaks. Minimal row; LR backfill fills the rest on her next login.
+        if ($roleChanged && (int) $validated['role_id'] === 2 && ! $user->agent()->exists()) {
+            $nameParts = app(LrApiService::class)->parseName($user->name ?? $user->email);
+            Agent::create([
+                'user_id'     => $user->id,
+                'first_name'  => $nameParts['first_name'],
+                'middle_name' => $nameParts['middle_name'],
+                'last_name'   => $nameParts['last_name'],
+                'mobile_no'   => $user->mobile_no,
+            ]);
+        }
+
+        return new UserResource($user->refresh());
     }
 
     public function destroy($id)
@@ -755,9 +812,11 @@ class UserController extends Controller
         } elseif ($lrData) {
             // Existing dev user: keep role + region in sync with LR so testing
             // reflects the live profile (e.g. a pre-existing agent now mapped to
-            // secretary).
+            // secretary). role_locked = admin pinned the role in System Users —
+            // every LR-driven sync (this is currently the only existing-user
+            // one; keep the guard on any future path) must leave it alone.
             $fhRoleId = $lrService->mapToFhRoleId($lrData);
-            if ((int) $user->role_id !== $fhRoleId) {
+            if (! $user->role_locked && (int) $user->role_id !== $fhRoleId) {
                 $user->role_id = $fhRoleId;
                 $user->save();
             }

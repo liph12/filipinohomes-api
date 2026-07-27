@@ -44,6 +44,10 @@ class UserResource extends JsonResource
             'gender'    => $this->gender,
             'avatar'    => AvatarUrl::clean($this->avatar),
             'role'      => $this->role?->name,
+            'role_id'   => $this->role_id,
+            // Admin-pinned role (System Users "force" checkbox): true = LR
+            // login syncs must not change role_id; drives the lock badge.
+            'role_locked' => (bool) $this->role_locked,
             // Office region (from the agent profile) — lets the frontend show a
             // secretary's region and gate region-scoped UI. Null for users with
             // no agent profile / no region.
