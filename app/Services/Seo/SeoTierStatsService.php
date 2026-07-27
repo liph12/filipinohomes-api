@@ -102,17 +102,28 @@ class SeoTierStatsService
         $latestMonthRows = $agg->latest_month
             ? DB::table('market_stats')->where('month', $agg->latest_month)->count()
             : 0;
+        // Market stats own no standalone URLs — they're embedded blocks on
+        // money pages. "Eligible" = how many live stat blocks exist this
+        // month: one per (scope × location × category × type) cohort (rows
+        // additionally split by bedroom_count, hence rows > cohorts). A null
+        // here rendered as "—" and read like the run wasn't visible.
+        $liveBlocks = $agg->latest_month
+            ? (int) DB::table('market_stats')
+                ->where('month', $agg->latest_month)
+                ->selectRaw('COUNT(DISTINCT scope, city_id, province_id, category, type) as c')
+                ->value('c')
+            : 0;
 
         return [
             'key'              => 'market_stats',
             'label'            => 'Market statistics',
             'command'          => 'seo:compute-market-stats',
             'row_count'        => $latestMonthRows,
-            'eligible_count'   => null,
+            'eligible_count'   => $liveBlocks,
             'last_computed_at' => $this->iso($agg->last_computed_at),
             'floor'            => null,
             'radius_km'        => null,
-            'note'             => 'Monthly snapshot feeding the market-stats blocks on money pages (history kept; count = current month).',
+            'note'             => 'Embedded on money pages (no standalone URLs) — eligible = live stat blocks this month (location × type × scope); rows split further by bedrooms.',
         ];
     }
 
@@ -127,11 +138,14 @@ class SeoTierStatsService
             'label'            => 'Affordable thresholds',
             'command'          => 'seo:compute-modifier-thresholds',
             'row_count'        => (int) ($agg->row_count ?? 0),
-            'eligible_count'   => null,
+            // Every stored row IS a live "affordable" ceiling cohort (the
+            // compute already applies its ≥40-sample gate); the page itself
+            // additionally needs ≥10 matching listings (query-counts floor).
+            'eligible_count'   => (int) ($agg->row_count ?? 0),
             'last_computed_at' => $this->iso($agg->last_computed_at),
             'floor'            => null,
             'radius_km'        => null,
-            'note'             => 'Percentile ceilings behind "affordable" modifier pages; the live page gate is the query-counts ≥10 floor.',
+            'note'             => 'Each row is one "affordable" ceiling cohort; the live page additionally needs ≥10 matching listings (query-counts floor).',
         ];
     }
 }
