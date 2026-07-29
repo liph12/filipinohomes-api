@@ -111,4 +111,17 @@ return [
         'queue' => env('INDEXNOW_QUEUE', 'default'),
     ],
 
+    // OpenStreetMap Overpass API — powers facilities:scan-candidates (the
+    // nationwide facility discovery for "near {facility}" SEO pages).
+    // Public instances allow ~10k queries/day; we run strictly sequential
+    // with an identifying User-Agent per fair-use etiquette. The fallback
+    // instance takes over after repeated primary failures.
+    'overpass' => [
+        'endpoint' => env('OVERPASS_ENDPOINT', 'https://overpass-api.de/api/interpreter'),
+        'fallback_endpoint' => env('OVERPASS_FALLBACK_ENDPOINT', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'),
+        'user_agent' => env('OVERPASS_USER_AGENT', 'filipinohomes-facility-scanner/1.0 (info@filipinohomes.com)'),
+        'timeout' => (int) env('OVERPASS_TIMEOUT', 60),       // HTTP timeout; server budget is [timeout:25]
+        'query_timeout' => (int) env('OVERPASS_QUERY_TIMEOUT', 25),
+    ],
+
 ];

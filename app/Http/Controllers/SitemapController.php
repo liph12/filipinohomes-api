@@ -439,20 +439,30 @@ class SitemapController extends Controller
      * barangay sitemap shard, and the page indexability floors — a table
      * read only, no live GROUP BY per request.
      */
-    public function barangayCounts(): JsonResponse
+    public function barangayCounts(Request $request): JsonResponse
     {
+        // ?v>=2 additionally returns the cohort's average listing coordinates
+        // (avg_lat/avg_lng — powers the admin Barangays map). Version-gated
+        // like marketStats so v1 consumers' cached payload shape (frontend
+        // Data-Cache keys on the URL) is byte-identical to before.
+        $columns = [
+            'barangay_id',
+            'barangay',
+            'city_id',
+            'city',
+            'province_id',
+            'province',
+            'category',
+            'type',
+            'total',
+        ];
+        if ((int) $request->input('v', 1) >= 2) {
+            $columns[] = 'avg_lat';
+            $columns[] = 'avg_lng';
+        }
+
         $rows = DB::table('barangay_listing_counts')
-            ->select(
-                'barangay_id',
-                'barangay',
-                'city_id',
-                'city',
-                'province_id',
-                'province',
-                'category',
-                'type',
-                'total'
-            )
+            ->select($columns)
             ->orderBy('city')
             ->orderBy('barangay')
             ->orderBy('category')

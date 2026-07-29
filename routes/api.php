@@ -55,6 +55,7 @@ use App\Http\Controllers\{
     InquiryAnalyticsController,
     ActivityLogController,
     FacilityAdminController,
+    FacilityCandidateController,
     SeoCommandController,
     SeoInventoryController,
     MobileStatisticsController,
@@ -450,6 +451,13 @@ Route::middleware('strip.tags')->group(function(){
                 Route::post('/admin/seo/facilities/{facility}/ping-indexnow', [FacilityAdminController::class, 'pingIndexNow']);
                 Route::post('/admin/seo/facilities/{facility}/geocode', [FacilityAdminController::class, 'geocode'])
                     ->middleware('throttle:10,1'); // Google bills per lookup
+
+                // Scanner-discovered candidates review queue (approve creates
+                // a live Facility + recompute; dismiss reversible via restore).
+                Route::get('/admin/seo/facility-candidates', [FacilityCandidateController::class, 'index']);
+                Route::post('/admin/seo/facility-candidates/{candidate}/approve', [FacilityCandidateController::class, 'approve']);
+                Route::post('/admin/seo/facility-candidates/{candidate}/dismiss', [FacilityCandidateController::class, 'dismiss']);
+                Route::post('/admin/seo/facility-candidates/{candidate}/restore', [FacilityCandidateController::class, 'restore']);
 
                 // SEO pipeline commands: registry + last/next runs, queued
                 // manual trigger (RunSeoCommand — never synchronous), history.

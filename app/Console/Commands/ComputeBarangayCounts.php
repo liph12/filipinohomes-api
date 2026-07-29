@@ -80,6 +80,12 @@ class ComputeBarangayCounts extends Command
                 'categories.name as category',
                 'property_types.name as type',
                 DB::raw('COUNT(*) as total'),
+                // Average listing pin per cohort — powers the admin Barangays
+                // map (pin sits where the inventory actually is). AVG skips
+                // NULL JSON extracts, so unpinned listings don't distort it;
+                // a cohort with zero pinned listings yields NULL (no pin).
+                DB::raw("AVG(CAST(JSON_UNQUOTE(JSON_EXTRACT(properties.geo_coordinates, '$.lat')) AS DECIMAL(12,8))) as avg_lat"),
+                DB::raw("AVG(CAST(JSON_UNQUOTE(JSON_EXTRACT(properties.geo_coordinates, '$.lng')) AS DECIMAL(12,8))) as avg_lng"),
             )
             ->groupBy(
                 'eff_b.id', 'eff_b.name',
@@ -99,6 +105,8 @@ class ComputeBarangayCounts extends Command
             'category'    => $c->category,
             'type'        => $c->type,
             'total'       => (int) $c->total,
+            'avg_lat'     => $c->avg_lat !== null ? round((float) $c->avg_lat, 7) : null,
+            'avg_lng'     => $c->avg_lng !== null ? round((float) $c->avg_lng, 7) : null,
             'computed_at' => $now,
         ])->all();
 

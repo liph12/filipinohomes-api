@@ -61,6 +61,12 @@ class SeoCommandRegistry
             'description' => 'Fills lat/lng for facilities without coordinates via Google Geocoding (~$0.005 per facility).',
             'table'       => null,
         ],
+        'facilities:scan-candidates' => [
+            'cron'        => null, // on-demand only (review-queue workflow)
+            'label'       => 'Scan facility candidates (OSM)',
+            'description' => 'Discovers named malls/universities/hospitals on OpenStreetMap in every city with listings, scores each against the ≥10-listings floor, and fills the Candidates review queue. Resumable — repeat runs continue where the last stopped.',
+            'table'       => 'facility_candidates',
+        ],
     ];
 
     /** @return array<string, array> every registered command keyed by signature */
