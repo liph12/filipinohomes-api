@@ -455,6 +455,8 @@ Route::middleware('strip.tags')->group(function(){
                 // Scanner-discovered candidates review queue (approve creates
                 // a live Facility + recompute; dismiss reversible via restore).
                 Route::get('/admin/seo/facility-candidates', [FacilityCandidateController::class, 'index']);
+                Route::get('/admin/seo/facility-candidates/map', [FacilityCandidateController::class, 'mapData']);
+                Route::post('/admin/seo/facility-candidates/bulk', [FacilityCandidateController::class, 'bulk']);
                 Route::post('/admin/seo/facility-candidates/{candidate}/approve', [FacilityCandidateController::class, 'approve']);
                 Route::post('/admin/seo/facility-candidates/{candidate}/dismiss', [FacilityCandidateController::class, 'dismiss']);
                 Route::post('/admin/seo/facility-candidates/{candidate}/restore', [FacilityCandidateController::class, 'restore']);

@@ -31,8 +31,89 @@ class FacilityCandidateController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = FacilityCandidate::query();
+        // Rows honour every filter INCLUDING city; city facets honour every
+        // filter EXCEPT city (so the header dropdown can still offer the other
+        // cities to switch to). Both share the same status/category/clears/
+        // search base via applyListFilters().
+        $query = $this->applyListFilters(FacilityCandidate::query(), $request);
+        if (($city = trim((string) $request->query('city', ''))) !== '') {
+            $query->where('city', $city);
+        }
 
+        $perPage = max(1, min((int) $request->query('per_page', 25), 100));
+        $paginator = $query
+            ->orderByDesc('clears_floor')
+            ->orderByDesc('max_total')
+            ->orderBy('name')
+            ->paginate($perPage);
+
+        // City facets: {city, count} for the column-header filter, ordered by
+        // count desc. Cap the list so an unfiltered "all statuses" view can't
+        // return a thousand one-off cities.
+        $cityFacets = $this->applyListFilters(FacilityCandidate::query(), $request)
+            ->whereNotNull('city')
+            ->where('city', '!=', '')
+            ->selectRaw('city, COUNT(*) as total')
+            ->groupBy('city')
+            ->orderByDesc('total')
+            ->orderBy('city')
+            ->limit(200)
+            ->get()
+            ->map(fn ($r) => ['city' => $r->city, 'count' => (int) $r->total]);
+
+        return response()->json([
+            'data' => $paginator->items(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page'    => $paginator->lastPage(),
+                'total'        => $paginator->total(),
+            ],
+            'cities' => $cityFacets,
+            // Header counters for the tile (cheap on an indexed table).
+            'counts' => [
+                'pending'        => FacilityCandidate::query()->pending()->count(),
+                'pending_clears' => FacilityCandidate::query()->pending()->clearsFloor()->count(),
+            ],
+        ]);
+    }
+
+    /**
+     * Geocoded candidates for the map view. The list grid is server-paginated,
+     * but the map needs the whole filtered set at once — so this returns a
+     * capped, slimmed projection (no cohorts blob) honouring the same filters,
+     * city included.
+     */
+    public function mapData(Request $request): JsonResponse
+    {
+        $query = $this->applyListFilters(FacilityCandidate::query(), $request);
+        if (($city = trim((string) $request->query('city', ''))) !== '') {
+            $query->where('city', $city);
+        }
+
+        $rows = $query
+            ->whereNotNull('lat')
+            ->whereNotNull('lng')
+            ->orderByDesc('clears_floor')
+            ->orderByDesc('max_total')
+            ->limit(3000)
+            ->get([
+                'id', 'name', 'category', 'city', 'province', 'lat', 'lng',
+                'max_total', 'clears_floor', 'status', 'matched_facility_id',
+            ]);
+
+        return response()->json([
+            'data'    => $rows,
+            'capped'  => $rows->count() >= 3000,
+        ]);
+    }
+
+    /**
+     * Apply the shared list filters (status / category / clears / search) to a
+     * candidate query. City is intentionally NOT applied here — callers layer
+     * it on when they want it, so the facet query can omit it.
+     */
+    private function applyListFilters($query, Request $request)
+    {
         $status = (string) $request->query('status', FacilityCandidate::STATUS_PENDING);
         if ($status === FacilityCandidate::STATUS_PENDING) {
             // Default queue excludes candidates matched to an existing
@@ -59,42 +140,100 @@ class FacilityCandidateController extends Controller
             });
         }
 
-        $perPage = max(1, min((int) $request->query('per_page', 25), 100));
-        $paginator = $query
-            ->orderByDesc('clears_floor')
-            ->orderByDesc('max_total')
-            ->orderBy('name')
-            ->paginate($perPage);
-
-        return response()->json([
-            'data' => $paginator->items(),
-            'meta' => [
-                'current_page' => $paginator->currentPage(),
-                'last_page'    => $paginator->lastPage(),
-                'total'        => $paginator->total(),
-            ],
-            // Header counters for the tile (cheap on an indexed table).
-            'counts' => [
-                'pending'        => FacilityCandidate::query()->pending()->count(),
-                'pending_clears' => FacilityCandidate::query()->pending()->clearsFloor()->count(),
-            ],
-        ]);
+        return $query;
     }
 
     /** Promote a candidate into the live registry. */
     public function approve(Request $request, FacilityCandidate $candidate): JsonResponse
     {
+        $result = $this->promote($candidate);
+        if (! $result['ok']) {
+            return response()->json(['message' => $result['message']], 422);
+        }
+
+        return response()->json([
+            'data' => [
+                'facility'     => $result['facility'],
+                'rows_written' => $result['written'],
+            ],
+        ], 201);
+    }
+
+    /**
+     * Bulk apply a single review verb to many candidates. Approve creates live
+     * public pages, so the frontend gates it behind hold-to-confirm; here we
+     * process best-effort and report per-row outcomes rather than failing the
+     * whole batch on the first slug collision.
+     */
+    public function bulk(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'action' => 'required|in:approve,dismiss,restore',
+            'ids'    => 'required|array|min:1|max:200',
+            'ids.*'  => 'integer',
+        ]);
+        $action = $validated['action'];
+
+        $candidates = FacilityCandidate::query()
+            ->whereIn('id', $validated['ids'])
+            ->get();
+
+        $succeeded = 0;
+        $failed = 0;
+        $written = 0;
+        $errors = [];
+
+        foreach ($candidates as $candidate) {
+            if ($action === 'approve') {
+                $result = $this->promote($candidate);
+                if ($result['ok']) {
+                    $succeeded++;
+                    $written += $result['written'];
+                } else {
+                    $failed++;
+                    $errors[] = ['id' => $candidate->id, 'name' => $candidate->name, 'message' => $result['message']];
+                }
+            } else {
+                $newStatus = $action === 'dismiss'
+                    ? FacilityCandidate::STATUS_DISMISSED
+                    : FacilityCandidate::STATUS_PENDING;
+                $candidate->update(['status' => $newStatus]);
+                $this->auditReview($request, $candidate, $action === 'dismiss' ? 'dismissed' : 'restored to pending');
+                $succeeded++;
+            }
+        }
+
+        return response()->json([
+            'data' => [
+                'action'       => $action,
+                'succeeded'    => $succeeded,
+                'failed'       => $failed,
+                'rows_written' => $written,
+                'errors'       => array_slice($errors, 0, 10),
+            ],
+        ]);
+    }
+
+    /**
+     * Core promote: candidate → live Facility + recompute. Returns a result
+     * array instead of a response so both the single approve and bulk can use
+     * it. ok=false carries a user-facing reason (already approved / bad slug /
+     * slug collision).
+     */
+    private function promote(FacilityCandidate $candidate): array
+    {
         if ($candidate->status === FacilityCandidate::STATUS_APPROVED) {
-            return response()->json(['message' => 'This candidate is already approved.'], 422);
+            return ['ok' => false, 'message' => 'This candidate is already approved.'];
         }
 
         $slug = Str::slug($candidate->name);
         if ($slug === '' || Facility::slugInUse($slug)) {
-            return response()->json([
+            return [
+                'ok'      => false,
                 'message' => $slug === ''
                     ? 'This candidate\'s name does not produce a usable URL slug — add it manually with a better name.'
                     : "A facility with the slug \"{$slug}\" already exists (as a current or former slug). Dismiss this candidate or rename the existing facility.",
-            ], 422);
+            ];
         }
 
         $facility = new Facility([
@@ -120,12 +259,7 @@ class FacilityCandidateController extends Controller
             'approved_facility_id' => $facility->id,
         ]);
 
-        return response()->json([
-            'data' => [
-                'facility'     => $facility,
-                'rows_written' => $written,
-            ],
-        ], 201);
+        return ['ok' => true, 'message' => null, 'facility' => $facility, 'written' => $written];
     }
 
     public function dismiss(Request $request, FacilityCandidate $candidate): JsonResponse
