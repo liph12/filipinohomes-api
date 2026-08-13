@@ -297,21 +297,7 @@ final class InviteService
             // Per-event, not per-deployment: a config default would silently
             // give next year's email this year's banner.
             bannerUrl:      $event->email_banner_url ?: (string) config('natcon.email.banner_url'),
-            unsubscribeUrl: $this->unsubscribeUrl($recipient, $token),
         );
-    }
-
-    public function unsubscribeUrl(Recipient $recipient, string $rawToken): string
-    {
-        $base = rtrim(
-            $recipient->event?->update_profile_url
-                ?: 'https://filipinohomes.com/natcon/update-profile',
-            '/',
-        );
-
-        // Sibling path of the update-profile page, same token.
-        return preg_replace('#/update-profile$#', '/unsubscribe', $base)
-            . '?' . http_build_query(['t' => $rawToken]);
     }
 
     /**

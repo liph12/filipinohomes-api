@@ -8,7 +8,6 @@ use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Mail\Mailables\Headers;
 use Illuminate\Queue\SerializesModels;
 
 /**
@@ -58,7 +57,6 @@ class PhotoInviteMailer extends Mailable
         public string  $eventDates,
         public string  $eventVenue,
         public string  $bannerUrl,
-        public ?string $unsubscribeUrl = null,
         public ?int    $reminderIndex = null,
         /**
          * Prepended to the subject in whitelist mode so a QA pass can tell whose
@@ -105,26 +103,16 @@ class PhotoInviteMailer extends Mailable
         );
     }
 
-    /**
-     * List-Unsubscribe + one-click POST.
-     *
-     * This is a campaign send rather than a transactional one, and this domain has
-     * no bulk-sending history. Gmail and Yahoo's bulk-sender rules expect these
-     * headers, and in practice they're the single biggest complaint-rate reducer:
-     * they turn "mark as spam" — which damages the sending domain and would
-     * eventually take login OTPs down with it — into a quiet unsubscribe.
-     */
-    public function headers(): Headers
-    {
-        if (! $this->unsubscribeUrl) {
-            return new Headers();
-        }
-
-        return new Headers(text: [
-            'List-Unsubscribe'      => '<' . $this->unsubscribeUrl . '>',
-            'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click',
-        ]);
-    }
+    // NOTE: no headers() override, and no List-Unsubscribe header.
+    //
+    // Gmail renders its own Unsubscribe button whenever that header is present,
+    // so advertising it while /natcon/unsubscribe returns 404 is worse than
+    // omitting it — the recipient clicks, nothing happens, and the next step is
+    // "Report spam", which is exactly what the header exists to prevent.
+    //
+    // Below Gmail's ~5,000/day bulk threshold this list doesn't require one.
+    // If the campaign ever crosses it: build the page first, then add the
+    // header and the footer link together.
 
     public function content(): Content
     {

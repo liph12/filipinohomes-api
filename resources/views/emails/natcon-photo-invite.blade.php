@@ -300,18 +300,27 @@
                     <tr>
                         <td align="center" class="pad" bgcolor="{{ $ink }}"
                             style="background-color:{{ $ink }};padding:0 40px 26px;">
+                            {{-- No unsubscribe link, deliberately.
+
+                                 This goes to a known, finite awardee list about an
+                                 event they are attending, not a marketing list —
+                                 and an awardee who unsubscribes never confirms
+                                 their photo, which is the entire point of the send.
+
+                                 If volume ever exceeds ~5,000/day to Gmail, their
+                                 bulk-sender rules make one-click unsubscribe
+                                 mandatory. At that point BUILD /natcon/unsubscribe
+                                 first, then add both the link and the
+                                 List-Unsubscribe header. Do not add the header on
+                                 its own: Gmail renders its own Unsubscribe button
+                                 from it, and pointing that at a 404 is worse than
+                                 having none. (It did exactly that until now.) --}}
                             <span style="display:block;font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:19px;color:{{ $muted }};">
                                 Leuterio Realty &amp; Brokerage &middot; Filipino Homes &middot; Rent.ph &middot; Homes.ph
                                 <br />
                                 You&rsquo;re receiving this because you&rsquo;re on the {{ $eventName }} awardee list.
                                 <br />
                                 This is an automated message — please do not reply.
-                                @if($unsubscribeUrl)
-                                <br />
-                                <a href="{{ $unsubscribeUrl }}" target="_blank" style="color:{{ $muted }};text-decoration:underline;">
-                                    Stop receiving NATCON emails
-                                </a>
-                                @endif
                             </span>
                         </td>
                     </tr>

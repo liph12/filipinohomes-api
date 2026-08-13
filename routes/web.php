@@ -238,7 +238,6 @@ if (config('app.debug')) {
                     eventDates:      'October 18–19, 2026',
                     eventVenue:      'JPark Island Resort & Waterpark Mactan, Cebu',
                     bannerUrl:       'https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/filipinohomes-new/natcon-2026/email/banner-1200.jpg',
-                    unsubscribeUrl:  'https://filipinohomes.com/natcon/unsubscribe?t=demo-token',
                     reminderIndex:   $isReminder ? 1 : null,
                 );
             })(),
