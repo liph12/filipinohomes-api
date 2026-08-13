@@ -52,7 +52,9 @@
     <style>
         @media only screen and (max-width: 620px) {
             .pad      { padding-left: 22px !important; padding-right: 22px !important; }
-            .h1       { font-size: 24px !important; letter-spacing: 2px !important; }
+            {{-- Must stay <= the desktop size above, or the greeting grows on a
+                 phone. It was a 27px display heading when this said 24px. --}}
+            .h1       { font-size: 19px !important; letter-spacing: 0.3px !important; }
             .cta      { display: block !important; width: auto !important; margin: 0 0 12px 0 !important; }
             .photo    { height: 200px !important; }
             .stackcol { display: block !important; width: 100% !important; }
@@ -105,10 +107,13 @@
                         </td>
                     </tr>
 
-                    {{-- Greeting --}}
+                    {{-- Greeting. Left-aligned and set at letter-opening size rather
+                         than as a centred display heading: it reads as the start of a
+                         letter, which is what it is, and it shares a left edge with the
+                         body copy directly under it. --}}
                     <tr>
-                        <td align="center" class="pad" bgcolor="{{ $inkSoft }}"
-                            style="background-color:{{ $inkSoft }};padding:10px 40px 0;">
+                        <td align="left" class="pad" bgcolor="{{ $inkSoft }}"
+                            style="background-color:{{ $inkSoft }};padding:12px 40px 0;">
                             @php
                                 /**
                                  * Recipient::displayName() falls back to the EMAIL when no name is
@@ -121,15 +126,18 @@
                                 $looksMail = $raw === '' || str_contains($raw, '@');
                                 $greetName = $looksMail ? '' : ucwords(strtolower($raw));
                             @endphp
-                            <span class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:27px;font-weight:bold;letter-spacing:1px;color:{{ $cream }};line-height:34px;">
+                            <span class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:bold;letter-spacing:0.3px;color:{{ $cream }};line-height:28px;">
                                 {{ $greetName !== '' ? 'Dear ' . $greetName . ',' : 'Dear Awardee,' }}
                             </span>
                         </td>
                     </tr>
 
-                    {{-- Small gold divider --}}
+                    {{-- Small gold divider. Left-aligned with the greeting — centred
+                         under left-aligned text left the block looking unrelated to it.
+                         Uses the same 40px side padding as .pad so it lines up with the
+                         copy on mobile too. --}}
                     <tr>
-                        <td align="center" bgcolor="{{ $inkSoft }}" style="background-color:{{ $inkSoft }};padding:14px 0 0;">
+                        <td align="left" class="pad" bgcolor="{{ $inkSoft }}" style="background-color:{{ $inkSoft }};padding:12px 40px 0;">
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                                 <tr>
                                     <td width="70" bgcolor="{{ $theme['accent'] }}"
@@ -164,10 +172,11 @@
                                         <strong style="color:{{ $theme['accent'] }};">Option 1</strong> &nbsp;Use your existing photo from last year.
                                         <br />
                                         <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Submit a new photo. Please send a
-                                        high-resolution portrait (vertical) photo with a solid background.
+                                        high-resolution portrait/vertical photo with a solid background.
                                     @else
-                                        We don&rsquo;t have a photo of you on file yet, so we kindly ask you to submit one.
-                                        Please send a high-resolution portrait (vertical) photo with a solid background.
+                                        We kindly ask you to submit a new photo.
+                                        <br />
+                                        Please send a high-resolution portrait photo with a solid background.
                                     @endif
                                     <br /><br />
                                     <strong style="color:{{ $theme['accent'] }};">Deadline: {{ $deadlineLabel }}</strong>
@@ -177,8 +186,8 @@
                                         If no suitable photo is available, the organizers reserve the discretion to select the
                                         photo to be used for the official materials.
                                     @else
-                                        If we do not receive a photo by the deadline, the organizers reserve the discretion to
-                                        select the photo to be used for the official materials.
+                                        If no suitable photo is available, the organizers reserve the discretion to select the
+                                        photo to be used for the official materials.
                                     @endif
                                     <br /><br />
                                     Thank you for your prompt cooperation, and congratulations once again on your
@@ -190,12 +199,12 @@
                                         <br /><br />
                                         <strong style="color:{{ $theme['accent'] }};">Option 1</strong> &nbsp;Keep your existing photo from last year.
                                         <br />
-                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Send a new high-resolution portrait
-                                        (vertical) photo with a solid background.
+                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Send a new high-resolution
+                                        portrait/vertical photo with a solid background.
                                     @else
-                                        We still don&rsquo;t have a photo of you on file for
+                                        We still need your photo for
                                         <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
-                                        Please send a high-resolution portrait (vertical) photo with a solid background.
+                                        Please send a high-resolution portrait photo with a solid background.
                                     @endif
                                     <br /><br />
                                     @if($daysRemaining <= 0)
