@@ -78,11 +78,16 @@ final class PhotoService
     }
 
     /**
-     * Encode, upload, and make it the recipient's active photo.
+     * Encode, upload, and add it to the recipient's set of photos.
      *
-     * The previous active submission is flipped to `superseded` rather than
-     * deleted — someone uploads the wrong photo, uploads again, then wants the
-     * first one back, and that conversation happens at least once per campaign.
+     * ─── Why this accumulates instead of replacing ───────────────────────────
+     * It used to flip the previous active submission to `superseded`, so an
+     * awardee could only ever have one photo on file. The organizers asked for
+     * three, so they can choose rather than being handed whatever single file
+     * arrives. Submissions therefore stack up to natcon.photo.max_count.
+     *
+     * `superseded` is still used, just not here — the reset endpoint uses it to
+     * retire a photo without orphaning the S3 object.
      */
     public function store(
         Recipient $recipient,
@@ -90,6 +95,21 @@ final class PhotoService
         ?string $ip = null,
         ?string $userAgent = null,
     ): PhotoSubmission {
+        // Before decoding anything: no point spending a 40-megapixel decode and
+        // an S3 round trip on a file that has nowhere to go.
+        $existing = $recipient->activePhotos()->count();
+        $max      = Recipient::maxPhotoCount();
+
+        if ($existing >= $max) {
+            // RuntimeException because PublicController::photo() already maps it
+            // to a 422 carrying this message — no new error plumbing needed.
+            throw new RuntimeException(
+                $max === 1
+                    ? 'You already have a photo on file. Please remove it before sending another.'
+                    : "You've already sent {$max} photos. Please remove one before sending another."
+            );
+        }
+
         $check = $this->inspect($file);
         if (! $check['ok']) {
             throw new RuntimeException($check['reason'] ?? 'Unsupported image.');
@@ -120,10 +140,6 @@ final class PhotoService
         $url = rtrim((string) config('filesystems.disks.s3.url'), '/') . '/' . $key;
 
         return DB::transaction(function () use ($recipient, $key, $url, $encoded, $file, $image, $ip, $userAgent) {
-            PhotoSubmission::where('natcon_recipient_id', $recipient->id)
-                ->where('status', PhotoSubmission::STATUS_ACTIVE)
-                ->update(['status' => PhotoSubmission::STATUS_SUPERSEDED]);
-
             $submission = PhotoSubmission::create([
                 'natcon_recipient_id' => $recipient->id,
                 'natcon_event_id'     => $recipient->natcon_event_id,
@@ -140,14 +156,111 @@ final class PhotoService
                 'uploaded_user_agent' => $userAgent ? mb_substr($userAgent, 0, 255) : null,
             ]);
 
-            $recipient->forceFill([
-                'current_photo_url' => $url,
-                'photo_uploaded_at' => Carbon::now(),
-                'status'            => Recipient::STATUS_PHOTO_UPLOADED,
-            ])->save();
+            $this->syncResponseState($recipient);
 
             return $submission;
         });
+    }
+
+    /**
+     * Retire one photo at the awardee's request.
+     *
+     * Marked `deleted`, not actually deleted. The S3 object stays — same call as
+     * the reset endpoint: removing the row while the file lives on leaves an
+     * object in the bucket with nothing pointing at it, so it can never be found
+     * again to clean up. It also means "they deleted the good one by mistake" is
+     * a recoverable conversation.
+     */
+    public function remove(Recipient $recipient, PhotoSubmission $submission): void
+    {
+        DB::transaction(function () use ($recipient, $submission) {
+            $submission->forceFill(['status' => PhotoSubmission::STATUS_DELETED])->save();
+
+            $this->syncResponseState($recipient);
+        });
+    }
+
+    /**
+     * ★ The single owner of "has this awardee finished?"
+     *
+     * ─── Why this exists at all ──────────────────────────────────────────────
+     * PublicController::photo() used to set response = change and responded_at
+     * itself, right after the upload, under the comment "uploading IS the change
+     * response". With one required photo that was true. With three it is a silent
+     * data-loss bug: someone who uploads one photo and gives up would be recorded
+     * as responded, drop out of the reminder query (DrainOutbox::skipReason →
+     * 'already responded'), and show in the admin as confirmed — with one photo
+     * instead of three, discovered on deadline day.
+     *
+     * So completion is DERIVED, in one place, from the only thing that actually
+     * evidences it: how many photos are standing.
+     *
+     *   responded  ⟺  active photo count >= natcon.photo.required_count
+     *
+     * It is deliberately reversible. Delete a photo and drop below the threshold
+     * and responded_at clears, so the reminders resume — the alternative is an
+     * awardee who is permanently "done" holding two photos.
+     *
+     * ⚠️ Do not write response / responded_at / current_photo_url from anywhere
+     *    else. Two writers is how the original bug got in.
+     */
+    public function syncResponseState(Recipient $recipient): void
+    {
+        // ⚠️ Reload before computing. Eloquent's save() persists only attributes
+        //    it considers DIRTY, and dirtiness is judged against whatever the
+        //    instance held when it was loaded. Callers hand us models loaded
+        //    earlier in the request — reviewPhoto passes $submission->recipient,
+        //    remove() passes whatever the controller had — and a stale baseline
+        //    makes a needed write look like a no-op and vanish. Caught in testing:
+        //    deleting a photo then re-adding one left responded_at NULL with three
+        //    photos on file, because the in-memory copy still said "responded".
+        $recipient->refresh();
+
+        $photos   = $recipient->activePhotos()->get();
+        $count    = $photos->count();
+        $complete = $count >= Recipient::requiredPhotoCount();
+
+        // What the events team will actually print: the photo they picked, else
+        // the most recent upload. Keeping this on current_photo_url rather than a
+        // new column means finalPhotoUrl(), finalPhotoSource(), the admin
+        // resource and the CSV export all keep working untouched.
+        $chosen = $photos->firstWhere('review_status', PhotoSubmission::REVIEW_APPROVED)
+            ?? $photos->last();
+
+        $fields = [
+            'current_photo_url' => $chosen?->photo_url,
+            'photo_uploaded_at' => $count > 0
+                ? ($recipient->photo_uploaded_at ?? Carbon::now())
+                : null,
+        ];
+
+        if ($complete) {
+            $fields['response']     = Recipient::RESPONSE_CHANGE;
+            // Preserved if already set, so a later swap doesn't relabel someone
+            // as having responded today when they finished last week.
+            $fields['responded_at'] = $recipient->responded_at ?? Carbon::now();
+            $fields['status']       = Recipient::STATUS_PHOTO_UPLOADED;
+        } elseif ($recipient->response === Recipient::RESPONSE_RETAIN) {
+            // They already chose to keep last year's photo, and a half-finished
+            // replacement does not undo that: the organizers still hold a usable
+            // photo, so there is nothing to chase them about. Their answer stands
+            // until the replacement is actually complete, at which point the
+            // branch above takes over.
+            //
+            // status deliberately stays RESPONDED_RETAIN. An earlier draft moved
+            // it to RESPONDED_CHANGE while `response` still read 'retain', and the
+            // two columns contradicting each other is worse than either value.
+            $fields['status'] = Recipient::STATUS_RESPONDED_RETAIN;
+        } else {
+            // Incomplete. This is the arm that keeps the reminders coming.
+            $fields['response']     = $count > 0 ? Recipient::RESPONSE_CHANGE : null;
+            $fields['responded_at'] = null;
+            $fields['status']       = $count > 0
+                ? Recipient::STATUS_RESPONDED_CHANGE
+                : ($recipient->invited_at ? Recipient::STATUS_INVITED : Recipient::STATUS_PENDING);
+        }
+
+        $recipient->forceFill($fields)->save();
     }
 
     /**

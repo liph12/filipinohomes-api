@@ -69,6 +69,12 @@ class RecipientResource extends JsonResource
             'final_photo_url'    => $r->finalPhotoUrl(),
             'final_photo_source' => $r->finalPhotoSource(),
 
+            // On the LIST row, not just the detail view: the table needs to show
+            // "2 of 3" and a needs-new-photo chip without opening every drawer.
+            'active_photo_count' => $r->activePhotos()->count(),
+            'photos_required'    => Recipient::requiredPhotoCount(),
+            'requires_new_photo' => (bool) $r->requires_new_photo,
+
             'source'        => $r->source,
             'send_failures' => (int) $r->send_failures,
             'last_error'    => $r->last_error,
@@ -83,6 +89,13 @@ class RecipientResource extends JsonResource
 
         return $base + [
             'lr_payload' => $r->lr_payload,
+
+            // The reason and the attribution, shown together. This flag makes a
+            // real person go and re-shoot a photo, so the drawer says who decided.
+            'requires_new_photo_note' => $r->requires_new_photo_note,
+            'requires_new_photo_at'   => $this->iso($r->requires_new_photo_at, $tz),
+            'requires_new_photo_by'   => $r->requiresNewPhotoBy?->only(['id', 'name']),
+
             'photo_submissions' => $r->photoSubmissions()
                 ->orderByDesc('id')
                 ->get()

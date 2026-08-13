@@ -73,9 +73,15 @@ class Outbox extends Model
         return $this->belongsTo(NatconEvent::class, 'natcon_event_id');
     }
 
+    /**
+     * FQCN because `User` lives in App\Models, not here. This threw
+     * `Class "App\Natcon\Models\User" not found` for anyone who called it —
+     * survivable only because nothing did yet. Fixed on the way past while
+     * adding the same relation to Recipient.
+     */
     public function requester()
     {
-        return $this->belongsTo(User::class, 'requested_by');
+        return $this->belongsTo(\App\Models\User::class, 'requested_by');
     }
 
     /**

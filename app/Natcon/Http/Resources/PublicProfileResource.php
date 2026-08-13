@@ -2,6 +2,7 @@
 
 namespace App\Natcon\Http\Resources;
 
+use App\Natcon\Models\PhotoSubmission;
 use App\Natcon\Models\Recipient;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -44,6 +45,14 @@ class PublicProfileResource extends JsonResource
             ? $r->formSubmission
             : $r->formSubmission()->first();
 
+        // Oldest first, so a photo keeps the slot it was added in and the tray on
+        // the awardee's page doesn't reshuffle every time they add another.
+        $uploaded = $r->relationLoaded('activePhotos')
+            ? $r->activePhotos
+            : $r->activePhotos()->get();
+
+        $required = Recipient::requiredPhotoCount();
+
         return [
             'recipient' => [
                 'first_name'   => $r->first_name,
@@ -72,11 +81,39 @@ class PublicProfileResource extends JsonResource
                 // case — the frontend renders a "we don't have one yet" state
                 // rather than a broken <img>.
                 'existing' => $r->displayPhotos(),
-                'uploaded' => $r->current_photo_url,
+
+                // An ARRAY now, not a single url. The event asks for several
+                // photos so the organizers have something to choose from, and the
+                // id travels with each one because the page needs it to delete.
+                'uploaded' => $uploaded->map(fn ($p) => [
+                    'id'          => $p->id,
+                    'url'         => $p->photo_url,
+                    'uploaded_at' => $this->iso($p->created_at, $tz),
+                    // So the awardee can see which one was picked, rather than
+                    // wondering whether anyone looked.
+                    'chosen'      => $p->review_status === PhotoSubmission::REVIEW_APPROVED,
+                ])->values(),
+
+                // Sent so the copy on the page and the copy in the email cannot
+                // disagree about the number, and so lowering the requirement
+                // mid-campaign needs no frontend deploy.
+                'required_count' => $required,
+                'max_count'      => Recipient::maxPhotoCount(),
+                'remaining'      => max(0, $required - $uploaded->count()),
+                'complete'       => $uploaded->count() >= $required,
+
                 'final'    => [
                     'url'    => $r->finalPhotoUrl(),
                     'source' => $r->finalPhotoSource(),
                 ],
+            ],
+
+            // Whether a reviewer has ruled the photo on file unusable. The page
+            // hides Keep when this is set, and PublicController::respond() refuses
+            // a retain regardless — the emailed retain link outlives the UI.
+            'policy' => [
+                'requires_new_photo' => (bool) $r->requires_new_photo,
+                'requires_new_photo_note' => $r->requires_new_photo_note,
             ],
 
             // Every timestamp is emitted in the event's timezone, not UTC. The

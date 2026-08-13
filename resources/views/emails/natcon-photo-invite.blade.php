@@ -34,6 +34,26 @@
             : ['accent' => '#f0b429', 'label' => 'REMINDER — PHOTO DEADLINE APPROACHING']);
 
     $hasPhotos = count($photos) > 0;
+
+    /**
+     * Three cases, not two.
+     *
+     * "We have your photo" and "we have your photo but you cannot keep it" are
+     * different messages, and collapsing them means offering Option 1 to someone
+     * a reviewer has already ruled against — which produces a reply and a phone
+     * call rather than a photo.
+     */
+    $mustReplace = $requiresNewPhoto && $hasPhotos;
+    $canRetain   = $hasPhotos && ! $requiresNewPhoto;
+
+    // Wording for the ask. Plural only when it is actually plural.
+    $needed   = max(0, $requiredCount - $uploadedCount);
+    $askCount = $requiredCount === 1
+        ? 'a high-resolution portrait photo with a solid background'
+        : "{$requiredCount} high-resolution portrait photos with a solid background";
+    $partial  = $uploadedCount > 0 && $uploadedCount < $requiredCount;
+    // "1 more photo" / "2 more photos". Nobody writes "photo(s)" on purpose.
+    $neededLabel = $needed . ' more ' . ($needed === 1 ? 'photo' : 'photos');
     $shown     = array_slice($photos, 0, 2);   // two reads well at 640px; three is mush
     $cols      = max(1, count($shown));
 
@@ -65,7 +85,15 @@
     {{-- Preheader: the line Gmail shows next to the subject in the list. Hidden
          in the body itself. Without it, clients preview the alt text. --}}
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:{{ $ink }};font-size:1px;line-height:1px;">
-        {{ $hasPhotos ? 'Keep the photo we have on file, or send us a new one.' : 'We still need your photo for the event.' }}
+        @if($partial)
+            {{ $needed }} more photo(s) and you're done.
+        @elseif($mustReplace)
+            The photo we have on file can't be used. Please send us new ones.
+        @elseif($canRetain)
+            Keep the photo we have on file, or send us new ones.
+        @else
+            We still need your photos for the event.
+        @endif
         &nbsp;Deadline {{ $deadlineLabel }}.
     </div>
 
@@ -166,23 +194,30 @@
                                     Our <strong style="color:{{ $cream }};">{{ $eventName }}</strong> is in the works,
                                     and we will need your cooperation for this event to be a success.
                                     <br /><br />
-                                    @if($hasPhotos)
+                                    @if($canRetain)
                                         We kindly ask you to confirm your preferred photo:
                                         <br /><br />
                                         <strong style="color:{{ $theme['accent'] }};">Option 1</strong> &nbsp;Use your existing photo from last year.
                                         <br />
-                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Submit a new photo. Please send a
-                                        high-resolution portrait/vertical photo with a solid background.
+                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Submit new photos. Please send
+                                        {{ $askCount }}.
+                                    @elseif($mustReplace)
+                                        {{-- No Option 1: it has already been ruled out, and offering it
+                                             anyway is how you get a reply instead of a photo. --}}
+                                        The photo we have on file for you cannot be used for the official materials,
+                                        so we will need new ones from you.
+                                        <br /><br />
+                                        Please send {{ $askCount }}.
                                     @else
-                                        We kindly ask you to submit a new photo.
+                                        We kindly ask you to submit new photos.
                                         <br />
-                                        Please send a high-resolution portrait photo with a solid background.
+                                        Please send {{ $askCount }}.
                                     @endif
                                     <br /><br />
                                     <strong style="color:{{ $theme['accent'] }};">Deadline: {{ $deadlineLabel }}</strong>
                                     <br /><br />
-                                    @if($hasPhotos)
-                                        If we do not receive a new photo by the deadline, we will use your photo from last year.
+                                    @if($canRetain)
+                                        If we do not receive new photos by the deadline, we will use your photo from last year.
                                         If no suitable photo is available, the organizers reserve the discretion to select the
                                         photo to be used for the official materials.
                                     @else
@@ -193,18 +228,37 @@
                                     Thank you for your prompt cooperation, and congratulations once again on your
                                     well-deserved recognition!
                                 @else
-                                    @if($hasPhotos)
+                                    {{-- ⚠️ The partial arm has to come FIRST. Someone who has already
+                                         sent two photos being told "we still need your photo" is how a
+                                         campaign loses the benefit of the doubt on every later email. --}}
+                                    @if($partial)
+                                        We&rsquo;ve received
+                                        <strong style="color:{{ $theme['accent'] }};">{{ $uploadedCount }} of {{ $requiredCount }}</strong>
+                                        photos from you for
+                                        <strong style="color:{{ $cream }};">{{ $eventName }}</strong> — thank you.
+                                        <br /><br />
+                                        {{-- The apostrophe entity lives OUTSIDE {{ }} on purpose:
+                                             Blade escapes &, so an entity inside an echo prints
+                                             literally as "you&rsquo;re". --}}
+                                        {{ $needed === 1 ? 'One more' : $needed . ' more' }} and you&rsquo;re done.
+                                        Please keep to a high-resolution portrait photo with a solid background.
+                                    @elseif($mustReplace)
+                                        We haven&rsquo;t received your new photos for
+                                        <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
+                                        The photo we have on file cannot be used for the official materials.
+                                        <br /><br />
+                                        Please send {{ $askCount }}.
+                                    @elseif($canRetain)
                                         We haven&rsquo;t heard back about which photo to use for you at
                                         <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
                                         <br /><br />
                                         <strong style="color:{{ $theme['accent'] }};">Option 1</strong> &nbsp;Keep your existing photo from last year.
                                         <br />
-                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Send a new high-resolution
-                                        portrait/vertical photo with a solid background.
+                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Send {{ $askCount }}.
                                     @else
-                                        We still need your photo for
+                                        We still need your photos for
                                         <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
-                                        Please send a high-resolution portrait photo with a solid background.
+                                        Please send {{ $askCount }}.
                                     @endif
                                     <br /><br />
                                     @if($daysRemaining <= 0)
@@ -216,7 +270,7 @@
                                         <strong style="color:{{ $theme['accent'] }};">{{ $daysRemaining }} days</strong>, on the {{ $deadlineDay }}.
                                     @endif
                                     <br /><br />
-                                    @if($hasPhotos)
+                                    @if($canRetain)
                                         If we do not hear from you by then, we will use your photo from last year.
                                     @else
                                         If no suitable photo is available, the organizers reserve the discretion to select the
@@ -247,8 +301,15 @@
                                     @endforeach
                                 </tr>
                             </table>
-                            <span style="display:block;margin-top:10px;font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:1px;color:{{ $muted }};">
-                                {{ count($photos) > 1 ? 'PHOTOS CURRENTLY ON FILE' : 'PHOTO CURRENTLY ON FILE' }}
+                            {{-- Shown even when it has been rejected: "we need a new
+                                 photo" with nothing to look at reads as arbitrary,
+                                 and seeing the old one is what makes the ask land. --}}
+                            <span style="display:block;margin-top:10px;font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:1px;color:{{ $mustReplace ? '#ff8f8f' : $muted }};">
+                                @if($mustReplace)
+                                    {{ count($photos) > 1 ? 'PHOTOS ON FILE — NOT SUITABLE FOR PRINT' : 'PHOTO ON FILE — NOT SUITABLE FOR PRINT' }}
+                                @else
+                                    {{ count($photos) > 1 ? 'PHOTOS CURRENTLY ON FILE' : 'PHOTO CURRENTLY ON FILE' }}
+                                @endif
                             </span>
                         </td>
                     </tr>
@@ -264,9 +325,14 @@
                     <tr>
                         <td align="center" class="pad" bgcolor="{{ $inkSoft }}"
                             style="background-color:{{ $inkSoft }};padding:26px 40px 6px;">
-                            @if($hasPhotos)
+                            @if($canRetain)
                             {{-- Bulletproof button: a table, so Outlook renders the
-                                 fill instead of collapsing to bare text. --}}
+                                 fill instead of collapsing to bare text.
+
+                                 Gated on $canRetain, not $hasPhotos: a KEEP button
+                                 for a photo we have already rejected would 422 on
+                                 the way through, and the awardee would read that as
+                                 the site being broken. --}}
                             <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center"
                                 style="display:inline-block;margin:0 5px 12px;">
                                 <tr>
@@ -286,7 +352,7 @@
                                         style="background-color:{{ $inkSoft }};padding:13px 28px;border:2px solid {{ $theme['accent'] }};">
                                         <a class="cta" href="{{ $changeUrl }}" target="_blank"
                                             style="font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:bold;letter-spacing:1.5px;color:{{ $theme['accent'] }};text-decoration:none;display:inline-block;">
-                                            SEND A NEW PHOTO
+                                            {{ $requiredCount > 1 ? 'SEND NEW PHOTOS' : 'SEND A NEW PHOTO' }}
                                         </a>
                                     </td>
                                 </tr>
@@ -299,7 +365,11 @@
                                         style="background-color:{{ $theme['accent'] }};padding:15px 34px;">
                                         <a href="{{ $changeUrl }}" target="_blank"
                                             style="font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:bold;letter-spacing:1.5px;color:{{ $ink }};text-decoration:none;display:inline-block;">
-                                            SEND MY PHOTO
+                                            @if($partial)
+                                                SEND {{ strtoupper($neededLabel) }}
+                                            @else
+                                                {{ $requiredCount > 1 ? 'SEND MY PHOTOS' : 'SEND MY PHOTO' }}
+                                            @endif
                                         </a>
                                     </td>
                                 </tr>

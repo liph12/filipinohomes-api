@@ -300,12 +300,23 @@ final class InviteService
             // Per-event, not per-deployment: a config default would silently
             // give next year's email this year's banner.
             bannerUrl:      $event->email_banner_url ?: (string) config('natcon.email.banner_url'),
+            // A reviewer's judgment on the photo already on file, and how far
+            // through the upload they are. Both change what the message says, so
+            // both have to reach the template rather than being re-derived there.
+            requiresNewPhoto: (bool) $recipient->requires_new_photo,
+            requiredCount:    Recipient::requiredPhotoCount(),
+            uploadedCount:    $recipient->activePhotos()->count(),
         );
     }
 
     /**
-     * Recipients still eligible for a reminder: invited or already reminded, and
-     * not yet responded. Index-backed by (natcon_event_id, status).
+     * Recipients still eligible for a reminder: invited, already reminded, or
+     * part-way through uploading — and not yet finished. Index-backed by
+     * (natcon_event_id, status).
+     *
+     * "Not yet finished" is `responded_at IS NULL`, which now means "hasn't sent
+     * all the photos the event asks for" rather than "hasn't clicked anything".
+     * See PhotoService::syncResponseState().
      */
     public function reminderTargets(NatconEvent $event)
     {

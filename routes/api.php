@@ -199,6 +199,11 @@ Route::middleware('strip.tags')->group(function(){
                 ->middleware('throttle:20,1');
             Route::post('/natcon/photo', [NatconPublicController::class, 'photo'])
                 ->middleware('throttle:natcon-upload');
+            // Removing a photo to free a slot. Cheaper than an upload, so it takes
+            // the ordinary limit rather than the upload throttle — but it still
+            // writes, so it is not on the profile read's budget either.
+            Route::delete('/natcon/photo', [NatconPublicController::class, 'deletePhoto'])
+                ->middleware('throttle:20,1');
             Route::post('/natcon/form', [NatconPublicController::class, 'form'])
                 ->middleware('throttle:20,1');
             // Deliberately a useless oracle — same body either way. Tight limit
@@ -442,6 +447,9 @@ Route::middleware('strip.tags')->group(function(){
                 // loop hitting it would be wiping response data, not reading it.
                 Route::post('/admin/natcon/recipients/{recipient}/reset', [NatconAdminController::class, 'resetRecipient'])
                     ->middleware('throttle:20,1');
+                // Rules the photo on file unusable, forcing a fresh submission.
+                Route::post('/admin/natcon/recipients/{recipient}/photo-policy', [NatconAdminController::class, 'setPhotoPolicy'])
+                    ->middleware('throttle:30,1');
 
                 Route::post('/admin/natcon/preflight', [NatconAdminController::class, 'preflight']);
                 Route::post('/admin/natcon/send-invites', [NatconAdminController::class, 'sendInvites'])

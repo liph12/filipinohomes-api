@@ -43,8 +43,24 @@ class Recipient extends Model implements Auditable
     public const LR_NOT_FOUND = 'not_found';
     public const LR_ERROR     = 'error';
 
-    /** Statuses that are still eligible for a reminder. */
-    public const REMINDABLE = [self::STATUS_INVITED, self::STATUS_REMINDED];
+    /**
+     * Statuses still eligible for a reminder.
+     *
+     * ⚠️ RESPONDED_CHANGE belongs here, and leaving it out was a bug caught in
+     *    testing. Now that the event asks for several photos, that status is what
+     *    a PARTIAL submitter sits at — one or two photos in, not finished. They
+     *    are precisely who a reminder is for, and without this they were filtered
+     *    out of reminderTargets() and silently stopped being chased while holding
+     *    two of three photos.
+     *
+     *    `responded_at IS NULL` in reminderTargets() is what still excludes the
+     *    ones who actually finished; this list only decides who is in the running.
+     */
+    public const REMINDABLE = [
+        self::STATUS_INVITED,
+        self::STATUS_REMINDED,
+        self::STATUS_RESPONDED_CHANGE,
+    ];
 
     protected $fillable = [
         'natcon_event_id', 'email',
@@ -69,6 +85,8 @@ class Recipient extends Model implements Auditable
         'responded_at'      => 'datetime',
         'photo_uploaded_at' => 'datetime',
         'form_submitted_at' => 'datetime',
+        'requires_new_photo'    => 'boolean',
+        'requires_new_photo_at' => 'datetime',
     ];
 
     // The invite token hash is a credential-adjacent value. Keep it out of any
@@ -105,6 +123,63 @@ class Recipient extends Model implements Auditable
         return $this->hasOne(PhotoSubmission::class, 'natcon_recipient_id')
             ->where('status', PhotoSubmission::STATUS_ACTIVE)
             ->latestOfMany();
+    }
+
+    /**
+     * Every photo this awardee currently has standing, oldest first.
+     *
+     * Oldest first so the tray on their page doesn't reshuffle when they add a
+     * photo — the slot a photo sits in is stable for as long as it exists.
+     */
+    public function activePhotos()
+    {
+        return $this->hasMany(PhotoSubmission::class, 'natcon_recipient_id')
+            ->where('status', PhotoSubmission::STATUS_ACTIVE)
+            ->orderBy('id');
+    }
+
+    /**
+     * Who ruled this awardee's existing photo unusable.
+     *
+     * Fully-qualified rather than imported: `User` is not in this namespace. A
+     * bare `User::class` here resolves to App\Natcon\Models\User and throws —
+     * which is exactly what Outbox::requester() did until it was fixed alongside
+     * this, having never been called.
+     */
+    public function requiresNewPhotoBy()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'requires_new_photo_by');
+    }
+
+    /** The submission the organizers picked, if they have picked one. */
+    public function chosenPhoto()
+    {
+        return $this->hasOne(PhotoSubmission::class, 'natcon_recipient_id')
+            ->where('status', PhotoSubmission::STATUS_ACTIVE)
+            ->where('review_status', PhotoSubmission::REVIEW_APPROVED)
+            ->latestOfMany();
+    }
+
+    /**
+     * True once they have sent everything the event asks for.
+     *
+     * This — not "has uploaded anything" — is what completion means now, and it
+     * is the rule PhotoService::syncResponseState() writes into responded_at.
+     * Reading it anywhere else is fine; writing the state anywhere else is not.
+     */
+    public function hasAllRequiredPhotos(): bool
+    {
+        return $this->activePhotos()->count() >= self::requiredPhotoCount();
+    }
+
+    public static function requiredPhotoCount(): int
+    {
+        return max(1, (int) config('natcon.photo.required_count', 3));
+    }
+
+    public static function maxPhotoCount(): int
+    {
+        return max(self::requiredPhotoCount(), (int) config('natcon.photo.max_count', 3));
     }
 
     public function sends()
@@ -152,8 +227,22 @@ class Recipient extends Model implements Auditable
      * an upload they made, else the LR photo they explicitly retained, else the
      * LR default. Null when we have nothing.
      */
+    /**
+     * What the events team should actually print.
+     *
+     * ⚠️ The fallback chain STOPS at the upload when a reviewer has ruled the
+     *    photo on file unusable. Without that guard, a flagged awardee who never
+     *    sends a replacement still resolves to their retained photo — or to the LR
+     *    default — and the pipeline quietly hands the design team the exact image
+     *    somebody rejected. Returning null instead makes the gap visible in the
+     *    admin and in the CSV export, which is the only way it gets chased.
+     */
     public function finalPhotoUrl(): ?string
     {
+        if ($this->requires_new_photo) {
+            return $this->current_photo_url;
+        }
+
         return $this->current_photo_url
             ?: $this->retained_photo_url
             ?: $this->lr_primary_photo
@@ -162,7 +251,10 @@ class Recipient extends Model implements Auditable
 
     public function finalPhotoSource(): string
     {
-        if ($this->current_photo_url)  return 'uploaded';
+        if ($this->current_photo_url) return 'uploaded';
+        // Same guard: neither the retained photo nor the LR default counts as a
+        // source once it has been rejected.
+        if ($this->requires_new_photo) return 'none';
         if ($this->retained_photo_url) return 'retained';
         if ($this->finalPhotoUrl())    return 'lr_default';
 

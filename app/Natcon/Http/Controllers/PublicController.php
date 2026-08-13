@@ -9,6 +9,7 @@ use App\Natcon\Http\Resources\PublicProfileResource;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Outbox;
 use App\Natcon\Models\Recipient;
+use App\Natcon\Models\PhotoSubmission;
 use App\Natcon\Models\Suppression;
 use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
@@ -150,6 +151,18 @@ class PublicController extends Controller
             $retained = null;
 
             if ($choice === Recipient::RESPONSE_RETAIN) {
+                // Enforced here, not just by hiding the button. The retain URL is
+                // already sitting in a delivered email — it can be re-opened,
+                // forwarded, or fetched by a link prescanner long after a reviewer
+                // decides the photo on file is unusable.
+                if ($recipient->requires_new_photo) {
+                    return response()->json([
+                        'message' => $recipient->requires_new_photo_note
+                            ?: 'The photo we have on file cannot be used for the official materials. Please send us a new one.',
+                        'code'    => 'new_photo_required',
+                    ], 422);
+                }
+
                 $available = $recipient->displayPhotos();
 
                 if (! $available) {
@@ -240,13 +253,65 @@ class PublicController extends Controller
                 ], 500);
             }
 
-            // Uploading IS the change response — someone who lands straight on the
-            // uploader from ?intent=change should not have to also tap Retain/Change.
-            $recipient->forceFill([
-                'response'     => Recipient::RESPONSE_CHANGE,
-                'responded_at' => $recipient->responded_at ?? Carbon::now(),
-            ])->save();
+            // ⚠️ This used to forceFill response = change and responded_at right
+            //    here, under "uploading IS the change response". That was true
+            //    when one photo was the whole ask. Now that the event asks for
+            //    three, marking someone responded on their FIRST upload would
+            //    drop them out of the reminder query holding one photo, and show
+            //    them as confirmed in the admin — a silent partial failure found
+            //    on deadline day.
+            //
+            //    Completion is derived from the photo count in exactly one place.
+            //    See PhotoService::syncResponseState().
+            $this->photos->syncResponseState($recipient);
 
+            $this->refreshCounters($recipient->event);
+
+            return $this->profilePayload($recipient->fresh(['event']));
+        });
+    }
+
+    /**
+     * Remove one of their own photos, so a slot can be re-used.
+     *
+     * Needed the moment more than one photo is collected: without it, an awardee
+     * who sends a bad shot as their second of three is stuck with it, and the cap
+     * on submissions turns into a trap rather than a limit.
+     */
+    public function deletePhoto(Request $request)
+    {
+        $data = $request->validate([
+            't'             => 'required|string|min:16|max:160',
+            'submission_id' => 'required|integer',
+        ]);
+
+        return $this->withRecipient($data['t'], function (Recipient $recipient) use ($data) {
+            // Deleting after the print deadline would let someone drop to zero
+            // photos with no way to replace them — uploads are already closed by
+            // then. The window has to gate both directions.
+            if ($recipient->event->isPhotoWindowClosed()) {
+                return response()->json([
+                    'message' => 'The photo collection deadline has passed, so photos can no longer be changed. Please contact the NATCON team.',
+                    'code'    => 'deadline_passed',
+                ], 422);
+            }
+
+            // Scoped to THIS recipient, so an id from someone else's record is a
+            // 404 rather than a cross-account delete. The token identifies the
+            // recipient; the body must not be able to widen that.
+            $submission = PhotoSubmission::where('id', $data['submission_id'])
+                ->where('natcon_recipient_id', $recipient->id)
+                ->where('status', PhotoSubmission::STATUS_ACTIVE)
+                ->first();
+
+            if (! $submission) {
+                return response()->json([
+                    'message' => 'That photo is no longer on file.',
+                    'code'    => 'unknown_photo',
+                ], 404);
+            }
+
+            $this->photos->remove($recipient, $submission);
             $this->refreshCounters($recipient->event);
 
             return $this->profilePayload($recipient->fresh(['event']));

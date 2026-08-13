@@ -104,6 +104,21 @@ return [
         // worker. Checked with getimagesize() BEFORE Intervention touches it.
         'max_megapixels' => 40,
         'max_dimension'  => 8000,
+
+        /*
+         | How many photos an awardee sends.
+         |
+         | The organizers asked for three so they have something to choose from
+         | rather than being stuck with whatever single file arrives.
+         |
+         | ⚠️ required_count is env-driven and NOT a literal on purpose. Requiring
+         |    three costs completion rate — plenty of agents have exactly one
+         |    usable headshot on their phone — so this is the relief valve when
+         |    the deadline is close and the stragglers are stuck at one. Lower it
+         |    and `config:clear`; no deploy, no code change.
+         */
+        'required_count' => (int) env('NATCON_PHOTO_REQUIRED_COUNT', 3),
+        'max_count'      => (int) env('NATCON_PHOTO_MAX_COUNT', 3),
     ],
 
     /*

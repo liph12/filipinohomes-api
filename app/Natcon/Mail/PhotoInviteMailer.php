@@ -57,6 +57,18 @@ class PhotoInviteMailer extends Mailable
         public string  $eventDates,
         public string  $eventVenue,
         public string  $bannerUrl,
+        /**
+         * A reviewer has ruled the photo on file unusable for print.
+         *
+         * Changes the message rather than just the buttons: offering "keep the
+         * one we have" to somebody we have already decided against is the ask
+         * that generates a reply, a phone call, and no photo.
+         */
+        public bool    $requiresNewPhoto = false,
+        /** From config, so lowering the requirement needs no template edit. */
+        public int     $requiredCount = 1,
+        /** How many they have already sent — drives the partial reminder. */
+        public int     $uploadedCount = 0,
         public ?int    $reminderIndex = null,
         /**
          * Prepended to the subject in whitelist mode so a QA pass can tell whose
@@ -84,8 +96,30 @@ class PhotoInviteMailer extends Mailable
     {
         $event = $this->eventName;
 
+        // A flagged awardee has no choice to make, and a partial submitter has
+        // already started — telling either of them to "keep it or send a new one"
+        // is the kind of wrong subject line that gets the next one ignored.
+        $partial    = $this->uploadedCount > 0 && $this->uploadedCount < $this->requiredCount;
+        $short      = $this->requiredCount - $this->uploadedCount;
+        $shortLabel = $short . ' more ' . ($short === 1 ? 'photo' : 'photos');
+
         $subject = match (true) {
-            $this->mode === 'invite'      => "Your {$event} photo — keep it or send a new one",
+            $this->mode === 'invite' && $this->requiresNewPhoto
+                => "We need a new photo for {$event}",
+            $this->mode === 'invite' && ! $this->hasPhotos()
+                => "We need your {$event} photo",
+            $this->mode === 'invite'
+                => "Your {$event} photo — keep it or send a new one",
+            $partial && $this->daysRemaining <= 0
+                => "Today is the deadline — {$shortLabel} needed for {$event}",
+            $partial
+                => "Almost there — {$shortLabel} for {$event}",
+            // A flagged awardee has nothing to "confirm". Reusing the confirm
+            // wording tells them to do something the page will not let them do.
+            $this->requiresNewPhoto && $this->daysRemaining <= 0
+                => "Today is the deadline — we still need a new photo for {$event}",
+            $this->requiresNewPhoto
+                => "We still need a new photo for {$event}",
             $this->daysRemaining <= 0     => "Today is the deadline — confirm your {$event} photo",
             $this->daysRemaining === 1    => "Last day tomorrow — confirm your {$event} photo",
             default                       => "Reminder: {$this->daysRemaining} days left to confirm your {$event} photo",

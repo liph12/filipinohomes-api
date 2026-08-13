@@ -14,6 +14,7 @@ use App\Natcon\Models\Suppression;
 use App\Natcon\Services\AwardeeService;
 use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
+use App\Natcon\Services\PhotoService;
 use App\Natcon\Services\RecipientImportService;
 use App\Natcon\Services\Sources\ManualListSource;
 use Illuminate\Http\JsonResponse;
@@ -193,6 +194,15 @@ class AdminController extends Controller
                                     ->where(fn ($q) => $q->whereNull('lr_photos')->orWhere('lr_photos', '[]'))
                                     ->whereNull('current_photo_url')->count(),
             'excluded'       => (int) ($byStatus[Recipient::STATUS_EXCLUDED] ?? 0),
+            // Started but not finished. The bucket that only exists because the
+            // event asks for several photos — these people are NOT responded and
+            // are still being reminded, and without a number for them "2 of 6
+            // confirmed" hides the fact that three more are half done.
+            'photos_partial' => (clone $base)->whereNull('responded_at')
+                                    ->whereHas('activePhotos')->count(),
+            'photos_required' => Recipient::requiredPhotoCount(),
+            // Awardees a reviewer has told to re-shoot.
+            'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
             'queued_to_send' => Outbox::where('natcon_event_id', $event->id)
                                     ->where('status', Outbox::STATUS_QUEUED)->count(),
             'deadline_at'    => $event->deadlineLocal()?->toIso8601String(),
@@ -235,6 +245,17 @@ class AdminController extends Controller
             if ($request->filled($filter)) {
                 $query->where($filter, $request->input($filter));
             }
+        }
+
+        if ($request->filled('requires_new_photo')) {
+            $query->where('requires_new_photo', $request->boolean('requires_new_photo'));
+        }
+
+        // "Who is stuck part-way?" — at least one photo, not yet enough of them.
+        // Expressed against responded_at rather than a count, so it stays in step
+        // with PhotoService::syncResponseState() if the requirement changes.
+        if ($request->input('photo_progress') === 'partial') {
+            $query->whereNull('responded_at')->whereHas('activePhotos');
         }
 
         if ($request->filled('has_photo')) {
@@ -726,6 +747,15 @@ class AdminController extends Controller
         ]);
     }
 
+    /**
+     * Review one uploaded photo — and, by approving it, choose it.
+     *
+     * Approving is exclusive: exactly one photo per awardee can be the chosen
+     * one, because exactly one goes on the materials. Approving a second without
+     * clearing the first would leave "which one did we pick?" answered twice, and
+     * PhotoService::syncResponseState() would resolve it by array order, which is
+     * not a decision anybody made.
+     */
     public function reviewPhoto(Request $request, PhotoSubmission $submission): JsonResponse
     {
         $data = $request->validate([
@@ -733,12 +763,83 @@ class AdminController extends Controller
             'review_note'   => 'nullable|string|max:512',
         ]);
 
-        $submission->forceFill($data + [
-            'reviewed_by' => $request->user()?->id,
-            'reviewed_at' => Carbon::now(),
+        $recipient = $submission->recipient;
+
+        DB::transaction(function () use ($submission, $data, $request, $recipient) {
+            if ($data['review_status'] === PhotoSubmission::REVIEW_APPROVED && $recipient) {
+                PhotoSubmission::where('natcon_recipient_id', $recipient->id)
+                    ->where('id', '!=', $submission->id)
+                    ->where('review_status', PhotoSubmission::REVIEW_APPROVED)
+                    ->update([
+                        'review_status' => PhotoSubmission::REVIEW_PENDING,
+                        'reviewed_by'   => $request->user()?->id,
+                        'reviewed_at'   => Carbon::now(),
+                    ]);
+            }
+
+            $submission->forceFill($data + [
+                'reviewed_by' => $request->user()?->id,
+                'reviewed_at' => Carbon::now(),
+            ])->save();
+
+            // Republishes current_photo_url — and therefore finalPhotoUrl() and
+            // the CSV export column — from the new choice.
+            if ($recipient) {
+                app(PhotoService::class)->syncResponseState($recipient);
+            }
+        });
+
+        return response()->json([
+            'data' => $submission->fresh(),
+            'meta' => [
+                'final_photo_url' => $recipient?->fresh()->finalPhotoUrl(),
+            ],
+        ]);
+    }
+
+    /**
+     * Rule an awardee's existing photo unusable, forcing a fresh submission.
+     *
+     * ─── Why this is per-awardee ────────────────────────────────────────────
+     * The campaign lets anyone with a photo on file keep it, which is wrong when
+     * that photo cannot be printed. Making it a blanket policy would throw away
+     * the retain flow — and its response rate — for the majority whose photo is
+     * fine. So it is a judgment recorded one awardee at a time, by whoever looked
+     * at the photo.
+     *
+     * Setting it does NOT clear an existing retain response. Someone who already
+     * chose to keep a photo we have since rejected needs to be asked again, and
+     * the admin can see they had answered — which is the conversation the events
+     * team will actually be having with them.
+     */
+    public function setPhotoPolicy(Request $request, Recipient $recipient): JsonResponse
+    {
+        $data = $request->validate([
+            'requires_new_photo' => 'required|boolean',
+            // Shown to the awardee, so it has to be a reason and not a code.
+            'note'               => 'nullable|string|max:255',
+        ]);
+
+        $flagged = (bool) $data['requires_new_photo'];
+
+        $recipient->auditSource      = 'admin_photo_policy';
+        $recipient->auditDescription = $flagged
+            ? 'Required a new NATCON photo (existing photo ruled unusable)'
+            : 'Cleared the require-new-photo flag';
+
+        $recipient->forceFill([
+            'requires_new_photo'      => $flagged,
+            'requires_new_photo_note' => $flagged ? ($data['note'] ?: null) : null,
+            'requires_new_photo_at'   => $flagged ? Carbon::now() : null,
+            'requires_new_photo_by'   => $flagged ? $request->user()?->id : null,
         ])->save();
 
-        return response()->json(['data' => $submission->fresh()]);
+        return response()->json([
+            'data'    => RecipientResource::detailed($recipient->fresh()->load('event')),
+            'message' => $flagged
+                ? 'This awardee must now send a new photo. Keeping the old one is blocked.'
+                : 'Cleared. This awardee can keep their existing photo again.',
+        ]);
     }
 
     // ── Suppressions ────────────────────────────────────────────────────────
