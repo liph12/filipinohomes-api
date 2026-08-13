@@ -37,9 +37,17 @@ class Outbox extends Model
     public const INVITE_LIKE = [self::KIND_INVITE, self::KIND_RESEND];
 
     public const STATUS_QUEUED    = 'queued';
+    // Claimed by a drain run and currently being handed to the mail transport.
+    // Exists so two overlapping drains cannot both send the same row — see
+    // DrainOutbox::claim(). A row only sits here for the duration of one SMTP
+    // round trip; anything older is a crashed run and gets recovered.
+    public const STATUS_SENDING   = 'sending';
     public const STATUS_SENT      = 'sent';
     public const STATUS_FAILED    = 'failed';
     public const STATUS_CANCELLED = 'cancelled';
+
+    /** A row stuck in `sending` longer than this is assumed abandoned. */
+    public const SENDING_STALE_MINUTES = 10;
 
     protected $fillable = [
         'natcon_recipient_id', 'natcon_event_id', 'kind', 'send_date',

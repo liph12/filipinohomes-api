@@ -57,6 +57,11 @@ class DrainOutbox extends Command
         $limit  = (int) ($this->option('limit') ?: config('natcon.drain_limit', 40));
         $dryRun = (bool) $this->option('dry-run') || $mode === 'off';
 
+        // Rescue rows abandoned by a drain that died mid-send (deploy, OOM,
+        // killed process). Without this they'd sit in `sending` forever and the
+        // awardee would never be emailed.
+        $this->recoverStaleClaims();
+
         $pending = Outbox::with(['recipient.event'])
             ->where('status', Outbox::STATUS_QUEUED)
             ->orderBy('id')
@@ -101,6 +106,13 @@ class DrainOutbox extends Command
 
             if ($dryRun) {
                 $this->line("  [dry] {$send->kind} -> {$recipient->email}");
+                $skipped++;
+                continue;
+            }
+
+            // ★ Atomically take ownership of this row before touching SMTP.
+            //   Returns false if another drain already claimed it.
+            if (! $this->claim($send)) {
                 $skipped++;
                 continue;
             }
@@ -249,6 +261,70 @@ class DrainOutbox extends Command
                 'status'     => Recipient::STATUS_INVITED,
                 'invited_at' => $recipient->invited_at ?? Carbon::now(),
             ])->save();
+        }
+    }
+
+    /**
+     * Take exclusive ownership of one outbox row.
+     *
+     * ─── Why this exists, given ->withoutOverlapping() ──────────────────────
+     * The schedule already declares withoutOverlapping(), but that lock lives in
+     * the cache store — and on api2 the cache driver is `file`, whose lock files
+     * have silently become unwritable before (root-owned cache dirs from an
+     * artisan run that wasn't `sudo -u www-data`). When that happens
+     * withoutOverlapping degrades to a no-op with no error, two drains overlap,
+     * both SELECT the same `queued` rows, and both send. Every minute for twelve
+     * days, to real awardees.
+     *
+     * This is a conditional UPDATE, so MySQL's row lock decides the winner:
+     * exactly one caller sees 1 affected row. It holds whether or not the cache
+     * lock worked, which is the point — the guarantee stops depending on
+     * filesystem permissions.
+     *
+     * Note the outbox UNIQUE index does NOT cover this. That prevents a row
+     * being CLAIMED twice; this prevents an already-claimed row being SENT twice.
+     */
+    private function claim(Outbox $send): bool
+    {
+        $claimed = Outbox::where('id', $send->id)
+            ->where('status', Outbox::STATUS_QUEUED)
+            ->update([
+                'status'     => Outbox::STATUS_SENDING,
+                'attempts'   => $send->attempts + 1,
+                'updated_at' => Carbon::now(),
+            ]);
+
+        if ($claimed === 1) {
+            $send->status   = Outbox::STATUS_SENDING;
+            $send->attempts = $send->attempts + 1;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Return rows abandoned mid-send to the queue.
+     *
+     * A drain killed between claim and send (deploy, OOM, cron kill) leaves its
+     * row in `sending`. Without recovery that awardee is never emailed and
+     * nothing reports it — the silent failure mode this whole feature is built
+     * to avoid. `attempts` was already incremented at claim time, so a row that
+     * keeps dying still exhausts its retries rather than looping forever.
+     */
+    private function recoverStaleClaims(): void
+    {
+        $cutoff = Carbon::now()->subMinutes(Outbox::SENDING_STALE_MINUTES);
+
+        $recovered = Outbox::where('status', Outbox::STATUS_SENDING)
+            ->where('updated_at', '<', $cutoff)
+            ->where('attempts', '<', (int) config('natcon.max_attempts', 3))
+            ->update(['status' => Outbox::STATUS_QUEUED]);
+
+        if ($recovered > 0) {
+            Log::warning('NATCON recovered stale outbox claims', ['count' => $recovered]);
+            $this->warn("Recovered {$recovered} message(s) abandoned by an interrupted run.");
         }
     }
 

@@ -235,27 +235,30 @@ final class InviteService
             ->first();
     }
 
+    // NOTE on `attempts`: it is incremented once, by DrainOutbox::claim(), at the
+    // moment a row is taken off the queue. Neither method below touches it —
+    // incrementing here too would double-count and burn the retry budget in half
+    // the runs it should take.
+
     public function markSent(Outbox $send, string $subject): void
     {
         $send->forceFill([
-            'status'   => Outbox::STATUS_SENT,
-            'subject'  => mb_substr($subject, 0, 255),
-            'sent_at'  => Carbon::now(),
-            'error'    => null,
-            'attempts' => $send->attempts + 1,
+            'status'  => Outbox::STATUS_SENT,
+            'subject' => mb_substr($subject, 0, 255),
+            'sent_at' => Carbon::now(),
+            'error'   => null,
         ])->save();
     }
 
     public function markFailed(Outbox $send, \Throwable $e): void
     {
-        $attempts = $send->attempts + 1;
-        $max      = (int) config('natcon.max_attempts', 3);
+        $max = (int) config('natcon.max_attempts', 3);
 
         $send->forceFill([
-            // Stay 'queued' while retries remain so the next drain tick picks it
-            // up; only settle on 'failed' once we've genuinely given up.
-            'status'    => $attempts >= $max ? Outbox::STATUS_FAILED : Outbox::STATUS_QUEUED,
-            'attempts'  => $attempts,
+            // Back to 'queued' while retries remain so the next drain tick picks
+            // it up; only settle on 'failed' once we've genuinely given up.
+            // Returning it to 'queued' also releases the claim.
+            'status'    => $send->attempts >= $max ? Outbox::STATUS_FAILED : Outbox::STATUS_QUEUED,
             'error'     => mb_substr($e->getMessage(), 0, 500),
             'failed_at' => Carbon::now(),
         ])->save();
