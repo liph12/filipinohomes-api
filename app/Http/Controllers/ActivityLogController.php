@@ -49,6 +49,11 @@ class ActivityLogController extends Controller
         // Facility model's LogsActivity trait, $auditCategory='seo') and
         // manual pipeline triggers (AuditSeoService::recordCommandTrigger).
         'seo',
+        // NATCON convention campaign: event config, awardee recipients, photo
+        // submissions and form fields (LogsActivity, $auditCategory='natcon').
+        // The outbox and send batches are deliberately NOT audited — they exist
+        // to churn status flips, and the sends themselves land under 'mailer'.
+        'natcon',
     ];
 
     /**
@@ -210,11 +215,19 @@ class ActivityLogController extends Controller
         }
 
         if ($subjectType = $request->input('subject_type')) {
-            // Accept either short class name ("Listing") or fully qualified.
-            if (!str_contains($subjectType, '\\')) {
-                $subjectType = 'App\\Models\\' . $subjectType;
+            // Accept either a short class name ("Listing") or a fully qualified
+            // one. Models don't all live under App\Models any more — the NATCON
+            // module keeps its own under App\Natcon\Models — so a short name is
+            // matched by suffix rather than by prepending one fixed namespace,
+            // which could never have produced App\Natcon\Models\Recipient.
+            if (! str_contains($subjectType, '\\')) {
+                $query->where(function ($q) use ($subjectType) {
+                    $q->where('auditable_type', 'App\\Models\\' . $subjectType)
+                      ->orWhere('auditable_type', 'like', '%\\\\' . $subjectType);
+                });
+            } else {
+                $query->where('auditable_type', $subjectType);
             }
-            $query->where('auditable_type', $subjectType);
         }
 
         if ($from = $request->input('from')) {

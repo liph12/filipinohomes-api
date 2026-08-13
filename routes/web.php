@@ -9,6 +9,7 @@ use App\Mail\ListingFlaggedMailer;
 use App\Mail\ListingVerifiedMailer;
 use App\Mail\LoginOtpMailer;
 use App\Mail\MessageNotificationMailer;
+use App\Natcon\Mail\PhotoInviteMailer;
 
 Route::get('/', function () {
     return view('welcome');
@@ -203,7 +204,46 @@ if (config('app.debug')) {
                 '482913',
                 'Juan Dela Cruz',
             ),
-            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp'),
+
+            // NATCON 2026 photo-confirmation campaign. Four variants because the
+            // template branches on two independent things — mode and whether we
+            // hold a photo — and all four go to real awardees.
+            'natcon-invite',
+            'natcon-invite-no-photo',
+            'natcon-reminder',
+            'natcon-reminder-last' => (function () use ($type) {
+                $photos = [
+                    'https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/natcon-invitation/photos/IV1R1757541872.png',
+                    'https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/natcon-invitation/photos/1EVN1757541872.png',
+                ];
+
+                $isReminder = str_starts_with($type, 'natcon-reminder');
+                $days       = match ($type) {
+                    'natcon-reminder'      => 4,
+                    'natcon-reminder-last' => 0,
+                    default                => 12,
+                };
+
+                return new PhotoInviteMailer(
+                    mode:            $isReminder ? 'reminder' : 'invite',
+                    recipientName:   'Eutequio Rallos Jr.',
+                    team:            'LR Alliance',
+                    photos:          $type === 'natcon-invite-no-photo' ? [] : $photos,
+                    retainUrl:       'https://filipinohomes.com/natcon/update-profile?email=demo%40example.com&intent=retain&t=demo-token',
+                    changeUrl:       'https://filipinohomes.com/natcon/update-profile?email=demo%40example.com&intent=change&t=demo-token',
+                    deadlineLabel:   'August 24, 2026',
+                    deadlineDay:     '24th',
+                    daysRemaining:   $days,
+                    eventName:       'NATCON 2026',
+                    eventDates:      'October 18–19, 2026',
+                    eventVenue:      'JPark Island Resort & Waterpark Mactan, Cebu',
+                    bannerUrl:       'https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/filipinohomes-new/natcon-2026/email/banner-1200.jpg',
+                    unsubscribeUrl:  'https://filipinohomes.com/natcon/unsubscribe?t=demo-token',
+                    reminderIndex:   $isReminder ? 1 : null,
+                );
+            })(),
+
+            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
         };
     });
 }

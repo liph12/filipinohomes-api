@@ -14,6 +14,21 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Artisan only auto-discovers app/Console/Commands. The NATCON module keeps
+    // its commands with the rest of the feature, so that path is registered
+    // explicitly — withCommands() MERGES with the default rather than replacing
+    // it, so the other 21 commands are unaffected.
+    //
+    // ⚠️ Point at the Console directory, not app/Natcon: discovery is recursive
+    //    and would otherwise reflect over every class in the module on each
+    //    console boot.
+    //
+    // ⚠️ `php artisan schedule:list` will NOT catch a mistake here. Schedule
+    //    entries pass a signature string, so Laravel never resolves the class —
+    //    all three NATCON entries render fine whether or not this line exists,
+    //    and you'd find out from cron stderr at 00:01. Verify with
+    //    `php artisan list natcon` (must show 3).
+    ->withCommands([__DIR__.'/../app/Natcon/Console'])
     ->withMiddleware(function (Middleware $middleware): void {
         // Traffic arrives through Cloudflare, so REMOTE_ADDR is a Cloudflare
         // edge IP and the real visitor is in X-Forwarded-For. Trust ONLY

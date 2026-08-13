@@ -51,6 +51,23 @@ class AppServiceProvider extends ServiceProvider
             );
         });
 
+        // NATCON awardee photo upload. This is the only unauthenticated route in
+        // the app that writes to production S3, so it gets its own tight limiter
+        // rather than riding the 120/min `api` allowance.
+        //
+        // Two keys on purpose: the per-token limit stops one awardee re-uploading
+        // in a loop, and the per-IP limit stops one actor cycling stolen or
+        // guessed tokens. Neither alone is sufficient — a shared office NAT would
+        // trip a per-IP-only limit for legitimate colleagues.
+        RateLimiter::for('natcon-upload', function (Request $request) {
+            $token = (string) $request->input('t');
+
+            return [
+                Limit::perHour(6)->by('natcon-tok:' . sha1($token ?: 'anon')),
+                Limit::perHour(30)->by('natcon-ip:' . $request->ip()),
+            ];
+        });
+
         // Global outbound-mail audit. Every successful Mail::send
         // in the app fires Illuminate\Mail\Events\MessageSent, so
         // this listener captures all of them — Get In Touch,

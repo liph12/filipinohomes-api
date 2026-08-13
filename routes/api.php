@@ -65,6 +65,9 @@ use App\Http\Controllers\{
     SessionController,
     EmailChangeController,
 };
+use App\Natcon\Http\Controllers\AdminController as NatconAdminController;
+use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
+use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -166,6 +169,43 @@ Route::middleware('strip.tags')->group(function(){
         Route::post('/page/agents/{slug}/click', [PageBuilderController::class, 'trackClick']);
         // Buyer Form (Open House): public fetch by share slug for the client registration page
         Route::get('/buyer-forms/{slug}', [BuyerFormController::class, 'show']);
+
+        // ── NATCON 2026 awardee photo confirmation ──────────────────────────
+        // Reached from a link in the invite email. Identity comes from the
+        // per-recipient signed token in `t`, NOT from the ?email= in the URL
+        // (that's decorative, so the page can paint a name before this call
+        // returns — mail clients mangle query strings, and matching on it would
+        // turn cosmetic damage into a false 404).
+        //
+        // ⚠️ None of these may answer 401: the frontend axios interceptor treats
+        //    a message-keyed 401 as a dead session and clears the user's login.
+        //    Link problems are 404/410, validation is 422.
+        // ⚠️ Nothing here mutates on GET. Outlook SafeLinks and friends fetch
+        //    every URL in an email within seconds of delivery, so a GET "retain"
+        //    would mark hundreds of people as responded before a human saw it.
+        // Event facts only — name, dates, venue, deadline. No PII, so it sits
+        // outside the guest-token group alongside the other genuinely public
+        // reference endpoints (provinces, app-config, buyer-forms/{slug}). The
+        // /natcon landing page fetches this during SSR.
+        Route::get('/natcon/event', [NatconPublicController::class, 'event']);
+
+        // Everything token-bound goes behind verify.guest.token. That is a bot
+        // speed bump, not a security control — POST /api/guest-token is itself
+        // public — but it's free, since the frontend axios instance attaches the
+        // header automatically. The real control is the per-recipient token.
+        Route::middleware('verify.guest.token')->group(function () {
+            Route::get('/natcon/profile', [NatconPublicController::class, 'profile']);
+            Route::post('/natcon/respond', [NatconPublicController::class, 'respond'])
+                ->middleware('throttle:20,1');
+            Route::post('/natcon/photo', [NatconPublicController::class, 'photo'])
+                ->middleware('throttle:natcon-upload');
+            Route::post('/natcon/form', [NatconPublicController::class, 'form'])
+                ->middleware('throttle:20,1');
+            // Deliberately a useless oracle — same body either way. Tight limit
+            // because it's the one endpoint keyed by email rather than by token.
+            Route::post('/natcon/resend-link', [NatconPublicController::class, 'resendLink'])
+                ->middleware('throttle:3,60');
+        });
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
 
@@ -376,6 +416,47 @@ Route::middleware('strip.tags')->group(function(){
             // GET /admin/inquiries/{id}     → single inquiry with thread
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class . ':admin')->group(function () {
+                // ── NATCON 2026 campaign admin ──────────────────────────────
+                // ⚠️ /send-invites does NOT send. It writes natcon_outbox rows
+                //    and returns; natcon:drain-outbox does the sending, paced by
+                //    the scheduler. Sending inline would 524 behind Cloudflare
+                //    partway through and the admin would click Send again.
+                Route::get('/admin/natcon/events', [NatconAdminController::class, 'events']);
+                // Start a new convention year (clones the previous year's questions).
+                Route::post('/admin/natcon/events', [NatconAdminController::class, 'storeEvent']);
+                Route::patch('/admin/natcon/events/{event}', [NatconAdminController::class, 'updateEvent']);
+                Route::get('/admin/natcon/stats', [NatconAdminController::class, 'stats']);
+
+                Route::get('/admin/natcon/recipients', [NatconAdminController::class, 'recipients']);
+                Route::post('/admin/natcon/recipients', [NatconAdminController::class, 'storeRecipients']);
+                Route::get('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'showRecipient']);
+                Route::patch('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'updateRecipient']);
+                Route::delete('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'destroyRecipient']);
+                Route::post('/admin/natcon/recipients/{recipient}/refresh-lr', [NatconAdminController::class, 'refreshLr'])
+                    ->middleware('throttle:30,1');
+                // Rotates the token — any previously emailed link stops working.
+                Route::post('/admin/natcon/recipients/{recipient}/issue-link', [NatconAdminController::class, 'issueLink'])
+                    ->middleware('throttle:20,1');
+
+                Route::post('/admin/natcon/preflight', [NatconAdminController::class, 'preflight']);
+                Route::post('/admin/natcon/send-invites', [NatconAdminController::class, 'sendInvites'])
+                    ->middleware('throttle:6,1');
+                Route::get('/admin/natcon/batches/{batchId}', [NatconAdminController::class, 'batch']);
+
+                Route::get('/admin/natcon/submissions', [NatconAdminController::class, 'submissions']);
+                Route::patch('/admin/natcon/photo-submissions/{submission}', [NatconAdminController::class, 'reviewPhoto']);
+                Route::get('/admin/natcon/suppressions', [NatconAdminController::class, 'suppressions']);
+                Route::post('/admin/natcon/suppressions', [NatconAdminController::class, 'suppress']);
+
+                // Form builder — edit the questions/choices the awardee page renders.
+                // Reorder is registered BEFORE /{field} so "reorder" is never bound
+                // as a model id.
+                Route::get('/admin/natcon/form-fields', [NatconFormFieldController::class, 'index']);
+                Route::post('/admin/natcon/form-fields', [NatconFormFieldController::class, 'store']);
+                Route::post('/admin/natcon/form-fields/reorder', [NatconFormFieldController::class, 'reorder']);
+                Route::patch('/admin/natcon/form-fields/{field}', [NatconFormFieldController::class, 'update']);
+                Route::delete('/admin/natcon/form-fields/{field}', [NatconFormFieldController::class, 'destroy']);
+
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);
                 Route::post('/admin/inquiries/mark-all-read', [InquiryController::class, 'markAllRead']);

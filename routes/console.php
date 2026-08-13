@@ -35,3 +35,39 @@ foreach (SeoCommandRegistry::scheduled() as $command => $meta) {
 // (the command exits immediately when disabled). Half-hourly pacing + the
 // daily_upload_cap config keep renders light on the box and inside quota.
 Schedule::command('youtube:process-uploads')->everyThirtyMinutes()->withoutOverlapping();
+
+// ── NATCON 2026 photo-collection campaign ───────────────────────────────────
+//
+// Sending is a cron drain, not a queue: production has no `queue:work` worker
+// (see the comment in app/Mail/MessageNotificationMailer.php, where a previous
+// ShouldQueue mailer silently dropped every message into the `jobs` table).
+// The admin's Send button only writes natcon_outbox rows; this drains them.
+//
+// Inert until NATCON_SEND_MODE is flipped off `off` — the drain reports what it
+// would send and stops.
+//
+// ⚠️ config('app.timezone') is UTC and no other entry in this file sets a
+//    timezone. ->timezone('Asia/Manila') here is deliberate: without it the
+//    reminder pass fires at 17:00 Manila, which is the worst send hour of the
+//    day and the highest complaint risk.
+//    Verify after ANY change here: `php artisan schedule:list` (it prints UTC).
+Schedule::command('natcon:drain-outbox')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+// Self-checks against natcon_events.reminder_offsets vs photo_deadline_at and
+// no-ops on any other day, so this is safe to leave scheduled forever. Default
+// offsets [4,3,2] against the Aug 24 2026 deadline == Aug 20 / 21 / 22. Moving
+// the deadline in the admin moves the reminders with it — no deploy.
+Schedule::command('natcon:queue-reminders')
+    ->dailyAt('09:00')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping();
+
+// Backfills Leuterio Realty awardee data for recipients still pending or errored.
+// Import deliberately doesn't call LR inline (they rate-limit to 60 req/min from
+// a single IP), so this drains the backlog and heals a transient LR outage
+// without anyone having to notice.
+Schedule::command('natcon:hydrate-awardees --limit=200')
+    ->hourly()
+    ->withoutOverlapping();
