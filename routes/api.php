@@ -204,6 +204,10 @@ Route::middleware('strip.tags')->group(function(){
             // writes, so it is not on the profile read's budget either.
             Route::delete('/natcon/photo', [NatconPublicController::class, 'deletePhoto'])
                 ->middleware('throttle:20,1');
+            // Which of the photos already on file they are keeping. Declarative:
+            // the body is the whole set, not a delta.
+            Route::post('/natcon/photos/keep', [NatconPublicController::class, 'keepPhotos'])
+                ->middleware('throttle:20,1');
             Route::post('/natcon/form', [NatconPublicController::class, 'form'])
                 ->middleware('throttle:20,1');
             // Deliberately a useless oracle — same body either way. Tight limit

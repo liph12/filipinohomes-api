@@ -89,10 +89,20 @@ class PublicProfileResource extends JsonResource
                     'id'          => $p->id,
                     'url'         => $p->photo_url,
                     'uploaded_at' => $this->iso($p->created_at, $tz),
+                    // 'uploaded' | 'lr_retained'. The tray labels a kept photo
+                    // differently from one they sent, even though both count
+                    // toward the same total.
+                    'source'      => $p->source,
                     // So the awardee can see which one was picked, rather than
                     // wondering whether anyone looked.
                     'chosen'      => $p->review_status === PhotoSubmission::REVIEW_APPROVED,
                 ])->values(),
+
+                // True once they have saved ANY decision. The page uses it to
+                // tell "hasn't decided yet" — where the photos on file are
+                // pre-selected — from "decided, and dropped that one", where
+                // re-adding it would resurrect a photo they removed on purpose.
+                'has_saved_set' => $uploaded->isNotEmpty(),
 
                 // Sent so the copy on the page and the copy in the email cannot
                 // disagree about the number, and so lowering the requirement

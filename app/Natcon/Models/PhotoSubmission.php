@@ -22,12 +22,23 @@ class PhotoSubmission extends Model implements Auditable
     public const STATUS_SUPERSEDED = 'superseded';
     public const STATUS_DELETED    = 'deleted';
 
+    /**
+     * Where the photo came from.
+     *
+     * A kept photo is a submission like any other so the set can be counted,
+     * chosen from and exported without special cases — see the 000002 migration.
+     * The difference is only that we do not host it: LR_RETAINED rows point at
+     * Leuterio Realty's url and carry no s3_key.
+     */
+    public const SOURCE_UPLOADED    = 'uploaded';
+    public const SOURCE_LR_RETAINED = 'lr_retained';
+
     public const REVIEW_PENDING  = 'pending';
     public const REVIEW_APPROVED = 'approved';
     public const REVIEW_REJECTED = 'rejected';
 
     protected $fillable = [
-        'natcon_recipient_id', 'natcon_event_id',
+        'natcon_recipient_id', 'natcon_event_id', 'source',
         'photo_url', 's3_key', 'original_filename', 'mime_type',
         'byte_size', 'width', 'height',
         'status', 'review_status', 'review_note', 'reviewed_by', 'reviewed_at',

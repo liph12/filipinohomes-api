@@ -272,6 +272,45 @@ class PublicController extends Controller
     }
 
     /**
+     * Declare which existing photos the awardee is keeping.
+     *
+     * Sent alongside their uploads when they press Save, so the whole set lands
+     * as one decision rather than as a keep and a change that could disagree.
+     */
+    public function keepPhotos(Request $request)
+    {
+        $data = $request->validate([
+            't'      => 'required|string|min:16|max:160',
+            'urls'   => 'present|array|max:10',
+            'urls.*' => 'string|max:2048',
+        ]);
+
+        return $this->withRecipient($data['t'], function (Recipient $recipient) use ($data) {
+            if ($recipient->event->isPhotoWindowClosed()) {
+                return response()->json([
+                    'message' => 'The photo collection deadline has passed. Please contact the NATCON team.',
+                    'code'    => 'deadline_passed',
+                ], 422);
+            }
+
+            // Same enforcement as respond(): a reviewer's rejection of the photos
+            // on file cannot be worked around by keeping them through this route.
+            if ($recipient->requires_new_photo && $data['urls']) {
+                return response()->json([
+                    'message' => $recipient->requires_new_photo_note
+                        ?: 'The photo we have on file cannot be used for the official materials. Please send us new ones.',
+                    'code'    => 'new_photo_required',
+                ], 422);
+            }
+
+            $this->photos->keepExisting($recipient, $data['urls']);
+            $this->refreshCounters($recipient->event);
+
+            return $this->profilePayload($recipient->fresh(['event']));
+        });
+    }
+
+    /**
      * Remove one of their own photos, so a slot can be re-used.
      *
      * Needed the moment more than one photo is collected: without it, an awardee

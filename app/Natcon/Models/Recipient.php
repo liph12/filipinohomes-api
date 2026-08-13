@@ -31,6 +31,16 @@ class Recipient extends Model implements Auditable
     public const STATUS_RESPONDED_RETAIN = 'responded_retain';
     public const STATUS_RESPONDED_CHANGE = 'responded_change';
     public const STATUS_PHOTO_UPLOADED   = 'photo_uploaded';
+    /**
+     * Assembling their set — at least one photo in, not yet enough of them.
+     *
+     * Its own status rather than reusing RESPONDED_CHANGE, because a set can now
+     * be built from kept photos as well as new ones: someone holding two kept
+     * photos and no uploads is part-way, and labelling that "change" would have
+     * `response` and `status` telling the admin two different stories. No
+     * migration — status is a string column precisely so this is cheap.
+     */
+    public const STATUS_PHOTOS_PARTIAL   = 'photos_partial';
     public const STATUS_COMPLETED        = 'completed';
     public const STATUS_FAILED           = 'failed';
     public const STATUS_EXCLUDED         = 'excluded';
@@ -60,6 +70,7 @@ class Recipient extends Model implements Auditable
         self::STATUS_INVITED,
         self::STATUS_REMINDED,
         self::STATUS_RESPONDED_CHANGE,
+        self::STATUS_PHOTOS_PARTIAL,
     ];
 
     protected $fillable = [
@@ -251,7 +262,19 @@ class Recipient extends Model implements Auditable
 
     public function finalPhotoSource(): string
     {
-        if ($this->current_photo_url) return 'uploaded';
+        if ($this->current_photo_url) {
+            // A kept photo is a submission too now, so "there is a
+            // current_photo_url" no longer implies they sent us a file. Answer
+            // from the row it came from rather than from its existence.
+            $chosen = $this->activePhotos()
+                ->where('photo_url', $this->current_photo_url)
+                ->first();
+
+            return $chosen?->source === PhotoSubmission::SOURCE_LR_RETAINED
+                ? 'retained'
+                : 'uploaded';
+        }
+
         // Same guard: neither the retained photo nor the LR default counts as a
         // source once it has been rejected.
         if ($this->requires_new_photo) return 'none';

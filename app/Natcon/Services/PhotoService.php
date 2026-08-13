@@ -143,6 +143,7 @@ final class PhotoService
             $submission = PhotoSubmission::create([
                 'natcon_recipient_id' => $recipient->id,
                 'natcon_event_id'     => $recipient->natcon_event_id,
+                'source'              => PhotoSubmission::SOURCE_UPLOADED,
                 'photo_url'           => $url,
                 's3_key'              => $key,
                 'original_filename'   => mb_substr((string) $file->getClientOriginalName(), 0, 255),
@@ -159,6 +160,70 @@ final class PhotoService
             $this->syncResponseState($recipient);
 
             return $submission;
+        });
+    }
+
+    /**
+     * Set exactly which of the awardee's existing LR photos they are keeping.
+     *
+     * ─── Why keeping writes a row ────────────────────────────────────────────
+     * The page asks for a SET of photos, however assembled — two kept plus one
+     * new is a valid answer. That is only expressible if a kept photo and an
+     * uploaded one are the same kind of thing, so keeping materialises a
+     * submission pointing at Leuterio Realty's url. It is not copied into our
+     * bucket: that would be a second source of truth for the same image, and the
+     * url is already stable and public.
+     *
+     * Declarative rather than incremental — the caller sends the urls they want
+     * kept and this makes reality match. Un-ticking a photo and re-ticking it in
+     * the same session therefore ends where it started, with no drift.
+     *
+     * @param array<int,string> $urls
+     */
+    public function keepExisting(Recipient $recipient, array $urls): void
+    {
+        // Only a photo we actually hold for this person may be kept. Without
+        // this the field is an open write of an arbitrary url into what the
+        // events team will print.
+        $allowed = $recipient->displayPhotos();
+        $urls    = array_values(array_unique(array_filter(
+            $urls,
+            fn ($u) => is_string($u) && in_array($u, $allowed, true),
+        )));
+
+        DB::transaction(function () use ($recipient, $urls) {
+            $existing = PhotoSubmission::where('natcon_recipient_id', $recipient->id)
+                ->where('source', PhotoSubmission::SOURCE_LR_RETAINED)
+                ->where('status', PhotoSubmission::STATUS_ACTIVE)
+                ->get();
+
+            foreach ($existing as $row) {
+                if (! in_array($row->photo_url, $urls, true)) {
+                    $row->forceFill(['status' => PhotoSubmission::STATUS_DELETED])->save();
+                }
+            }
+
+            $held = $existing->pluck('photo_url')->all();
+
+            foreach ($urls as $url) {
+                if (in_array($url, $held, true)) {
+                    continue;
+                }
+
+                PhotoSubmission::create([
+                    'natcon_recipient_id' => $recipient->id,
+                    'natcon_event_id'     => $recipient->natcon_event_id,
+                    'source'              => PhotoSubmission::SOURCE_LR_RETAINED,
+                    'photo_url'           => $url,
+                    // Null: the file is Leuterio Realty's, not ours. This is why
+                    // the 000002 migration made s3_key nullable.
+                    's3_key'              => null,
+                    'status'              => PhotoSubmission::STATUS_ACTIVE,
+                    'review_status'       => PhotoSubmission::REVIEW_PENDING,
+                ]);
+            }
+
+            $this->syncResponseState($recipient);
         });
     }
 
@@ -220,6 +285,16 @@ final class PhotoService
         $count    = $photos->count();
         $complete = $count >= Recipient::requiredPhotoCount();
 
+        // A set assembled entirely from photos we already had is a "retain"; the
+        // moment one new file is in it, it is a "change". Keeps the existing
+        // response vocabulary meaningful now that the two can be mixed.
+        $anyUploaded = $photos->contains(
+            fn ($p) => $p->source !== PhotoSubmission::SOURCE_LR_RETAINED,
+        );
+        $retained = $photos->first(
+            fn ($p) => $p->source === PhotoSubmission::SOURCE_LR_RETAINED,
+        );
+
         // What the events team will actually print: the photo they picked, else
         // the most recent upload. Keeping this on current_photo_url rather than a
         // new column means finalPhotoUrl(), finalPhotoSource(), the admin
@@ -229,34 +304,44 @@ final class PhotoService
 
         $fields = [
             'current_photo_url' => $chosen?->photo_url,
-            'photo_uploaded_at' => $count > 0
+            'photo_uploaded_at' => $anyUploaded
                 ? ($recipient->photo_uploaded_at ?? Carbon::now())
                 : null,
+            // Kept for the admin's "Kept" chip and for finalPhotoUrl()'s fallback.
+            // First rather than chosen: it answers "did they keep anything?", and
+            // which one they print is current_photo_url's job.
+            'retained_photo_url' => $retained?->photo_url,
         ];
 
         if ($complete) {
-            $fields['response']     = Recipient::RESPONSE_CHANGE;
+            $fields['response']     = $anyUploaded
+                ? Recipient::RESPONSE_CHANGE
+                : Recipient::RESPONSE_RETAIN;
             // Preserved if already set, so a later swap doesn't relabel someone
             // as having responded today when they finished last week.
             $fields['responded_at'] = $recipient->responded_at ?? Carbon::now();
-            $fields['status']       = Recipient::STATUS_PHOTO_UPLOADED;
-        } elseif ($recipient->response === Recipient::RESPONSE_RETAIN) {
-            // They already chose to keep last year's photo, and a half-finished
-            // replacement does not undo that: the organizers still hold a usable
-            // photo, so there is nothing to chase them about. Their answer stands
-            // until the replacement is actually complete, at which point the
-            // branch above takes over.
-            //
-            // status deliberately stays RESPONDED_RETAIN. An earlier draft moved
-            // it to RESPONDED_CHANGE while `response` still read 'retain', and the
-            // two columns contradicting each other is worse than either value.
+            $fields['status']       = $anyUploaded
+                ? Recipient::STATUS_PHOTO_UPLOADED
+                : Recipient::STATUS_RESPONDED_RETAIN;
+        } elseif ($recipient->response === Recipient::RESPONSE_RETAIN && $count === 0) {
+            // A legacy retain: answered through the old single-photo flow, before
+            // keeping wrote a submission row. There is nothing in the set to
+            // count, but they did answer, so their response stands rather than
+            // being silently reopened by a deploy.
             $fields['status'] = Recipient::STATUS_RESPONDED_RETAIN;
         } else {
             // Incomplete. This is the arm that keeps the reminders coming.
-            $fields['response']     = $count > 0 ? Recipient::RESPONSE_CHANGE : null;
+            //
+            // `response` follows what is actually in the set — keeping two photos
+            // and sending none is a retain in progress, not a change — while
+            // `status` says plainly that they are part-way. Both are in
+            // REMINDABLE, so neither reading drops them out of the chase.
+            $fields['response']     = $count === 0
+                ? null
+                : ($anyUploaded ? Recipient::RESPONSE_CHANGE : Recipient::RESPONSE_RETAIN);
             $fields['responded_at'] = null;
             $fields['status']       = $count > 0
-                ? Recipient::STATUS_RESPONDED_CHANGE
+                ? Recipient::STATUS_PHOTOS_PARTIAL
                 : ($recipient->invited_at ? Recipient::STATUS_INVITED : Recipient::STATUS_PENDING);
         }
 
