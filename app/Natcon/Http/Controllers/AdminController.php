@@ -4,6 +4,7 @@ namespace App\Natcon\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Natcon\Http\Resources\RecipientResource;
+use App\Natcon\Models\FormSubmission;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Outbox;
 use App\Natcon\Models\PhotoSubmission;
@@ -351,6 +352,85 @@ class AdminController extends Controller
             'url'        => $this->invites->buildLink($recipient, $raw),
             'expires_at' => $recipient->token_expires_at?->toIso8601String(),
         ]]);
+    }
+
+    /**
+     * Put one recipient back to pending so they can be invited again.
+     *
+     * ─── Why this endpoint exists ───────────────────────────────────────────
+     * natcon_outbox has UNIQUE(recipient, kind, send_date). That index is what
+     * makes a double-clicked Send button, a cron double-fire and the axios 401
+     * replay all collapse to exactly one email — but it equally blocks a
+     * DELIBERATE re-send on the same day. Until now the only way to re-run the
+     * invite flow against a test address was an artisan tinker session on the
+     * production box, which is both slow and the sort of thing that eventually
+     * gets run against the wrong rows.
+     *
+     * The outbox rows are DELETED rather than cancelled. A cancelled row still
+     * occupies its (recipient, kind, send_date) slot, so the re-send would be
+     * silently skipped and this would appear to do nothing.
+     */
+    public function resetRecipient(Request $request, Recipient $recipient): JsonResponse
+    {
+        $data = $request->validate([
+            // Photos and answers cost the awardee real effort to re-supply, so
+            // clearing them is opt-in rather than part of what "reset" means.
+            'clear_submissions' => 'sometimes|boolean',
+        ]);
+
+        $clear = (bool) ($data['clear_submissions'] ?? false);
+
+        DB::transaction(function () use ($recipient, $clear) {
+            Outbox::where('natcon_recipient_id', $recipient->id)->delete();
+
+            $fields = [
+                'status'             => Recipient::STATUS_PENDING,
+                'invited_at'         => null,
+                'last_reminded_at'   => null,
+                'reminders_sent'     => 0,
+                'first_opened_at'    => null,
+                'open_count'         => 0,
+                'response'           => null,
+                'responded_at'       => null,
+                'retained_photo_url' => null,
+                'send_failures'      => 0,
+                'last_error'         => null,
+            ];
+
+            if ($clear) {
+                // Superseded, not deleted: the S3 object stays put and the row
+                // stays auditable. Deleting would orphan the file in the bucket
+                // with nothing left pointing at it to clean up later.
+                PhotoSubmission::where('natcon_recipient_id', $recipient->id)
+                    ->where('status', PhotoSubmission::STATUS_ACTIVE)
+                    ->update(['status' => PhotoSubmission::STATUS_SUPERSEDED]);
+
+                FormSubmission::where('natcon_recipient_id', $recipient->id)->delete();
+
+                $fields['current_photo_url'] = null;
+                $fields['photo_uploaded_at'] = null;
+                $fields['form_submitted_at'] = null;
+            }
+
+            // The token is deliberately NOT rotated. Re-sending mints the same
+            // derived link, so leaving it alone means a tester can re-open the
+            // email they already have instead of waiting for the new one.
+            $recipient->auditSource      = 'admin_reset_recipient';
+            $recipient->auditDescription = $clear
+                ? 'Reset NATCON recipient, including photo and form submissions'
+                : 'Reset NATCON recipient send history and response';
+
+            $recipient->forceFill($fields)->save();
+        });
+
+        return response()->json([
+            // ::detailed, matching showRecipient — the drawer that calls this
+            // renders the full record and would lose half its fields otherwise.
+            'data'    => RecipientResource::detailed($recipient->fresh()->load('event')),
+            'message' => $clear
+                ? 'Reset. Send history, response, photo and answers cleared.'
+                : 'Reset. Send history and response cleared; photo and answers kept.',
+        ]);
     }
 
     // ── Sending ──────────────────────────────────────────────────────────────

@@ -437,6 +437,11 @@ Route::middleware('strip.tags')->group(function(){
                 // Rotates the token — any previously emailed link stops working.
                 Route::post('/admin/natcon/recipients/{recipient}/issue-link', [NatconAdminController::class, 'issueLink'])
                     ->middleware('throttle:20,1');
+                // Clears send history + response so an invite can go out again.
+                // Throttled low: this is a testing and correction tool, and a
+                // loop hitting it would be wiping response data, not reading it.
+                Route::post('/admin/natcon/recipients/{recipient}/reset', [NatconAdminController::class, 'resetRecipient'])
+                    ->middleware('throttle:20,1');
 
                 Route::post('/admin/natcon/preflight', [NatconAdminController::class, 'preflight']);
                 Route::post('/admin/natcon/send-invites', [NatconAdminController::class, 'sendInvites'])

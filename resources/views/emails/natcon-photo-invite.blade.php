@@ -109,9 +109,20 @@
                     <tr>
                         <td align="center" class="pad" bgcolor="{{ $inkSoft }}"
                             style="background-color:{{ $inkSoft }};padding:10px 40px 0;">
-                            @php $greetName = trim($recipientName) !== '' ? ucwords(strtolower($recipientName)) : ''; @endphp
+                            @php
+                                /**
+                                 * Recipient::displayName() falls back to the EMAIL when no name is
+                                 * known, and plenty of awardees aren't on the LR list — so without
+                                 * this check the greeting renders
+                                 * "Johnrobertmaizo2@Gmail.Com" in 27px bold display type.
+                                 * An address is not a name; "Awardee" is the honest fallback.
+                                 */
+                                $raw       = trim($recipientName);
+                                $looksMail = $raw === '' || str_contains($raw, '@');
+                                $greetName = $looksMail ? '' : ucwords(strtolower($raw));
+                            @endphp
                             <span class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:27px;font-weight:bold;letter-spacing:1px;color:{{ $cream }};line-height:34px;">
-                                {{ $greetName !== '' ? $greetName : 'Ma\'am / Sir' }}
+                                {{ $greetName !== '' ? 'Dear ' . $greetName . ',' : 'Dear Awardee,' }}
                             </span>
                         </td>
                     </tr>
@@ -128,35 +139,63 @@
                         </td>
                     </tr>
 
-                    {{-- ── Copy. The invite carries the team's wording verbatim;
-                         the reminder deliberately does not reuse "good news!",
-                         which reads as a broken template on deadline day. ── --}}
+                    {{-- ── Copy ────────────────────────────────────────────────
+                         The invite carries the team's wording. It is NOT one block
+                         of text: an awardee with nothing on file cannot be offered
+                         "use your existing photo from last year", and telling them
+                         we'll fall back to it is worse than saying nothing — so the
+                         no-photo variant drops Option 1 and its fallback sentence
+                         rather than printing a choice that does not exist.
+
+                         The reminder deliberately reads differently. Re-sending an
+                         invite's opening line four days from the deadline reads as a
+                         broken template, so it leads with the silence instead. ── --}}
                     <tr>
                         <td align="left" class="pad" bgcolor="{{ $inkSoft }}"
                             style="background-color:{{ $inkSoft }};padding:22px 40px 0;">
                             <span style="font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:27px;color:{{ $cream }};">
                                 @if($mode === 'invite')
-                                    <strong style="color:{{ $theme['accent'] }};">Good news!</strong>
+                                    Our <strong style="color:{{ $cream }};">{{ $eventName }}</strong> is in the works,
+                                    and we will need your cooperation for this event to be a success.
                                     <br /><br />
                                     @if($hasPhotos)
-                                        We are now preparing for the NATCON event and we saw that we have a picture with you.
-                                        Do you want this picture to be used in our event, or do you want to change it?
+                                        We kindly ask you to confirm your preferred photo:
                                         <br /><br />
-                                        If you want to have a new photo for the NATCON, our deadline for collection will be on
-                                        <strong style="color:{{ $theme['accent'] }};">the {{ $deadlineDay }}</strong>.
+                                        <strong style="color:{{ $theme['accent'] }};">Option 1</strong> &nbsp;Use your existing photo from last year.
+                                        <br />
+                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Submit a new photo. Please send a
+                                        high-resolution portrait (vertical) photo with a solid background.
                                     @else
-                                        We are now preparing for the NATCON event, but we don&rsquo;t have a photo of you on file yet.
-                                        <br /><br />
-                                        Please send us the photo you&rsquo;d like us to use. Our deadline for collection will be on
-                                        <strong style="color:{{ $theme['accent'] }};">the {{ $deadlineDay }}</strong>.
+                                        We don&rsquo;t have a photo of you on file yet, so we kindly ask you to submit one.
+                                        Please send a high-resolution portrait (vertical) photo with a solid background.
                                     @endif
+                                    <br /><br />
+                                    <strong style="color:{{ $theme['accent'] }};">Deadline: {{ $deadlineLabel }}</strong>
+                                    <br /><br />
+                                    @if($hasPhotos)
+                                        If we do not receive a new photo by the deadline, we will use your photo from last year.
+                                        If no suitable photo is available, the organizers reserve the discretion to select the
+                                        photo to be used for the official materials.
+                                    @else
+                                        If we do not receive a photo by the deadline, the organizers reserve the discretion to
+                                        select the photo to be used for the official materials.
+                                    @endif
+                                    <br /><br />
+                                    Thank you for your prompt cooperation, and congratulations once again on your
+                                    well-deserved recognition!
                                 @else
                                     @if($hasPhotos)
-                                        We haven&rsquo;t heard back about the photo we&rsquo;ll be using for you at {{ $eventName }}.
-                                        Please let us know whether to keep the picture below, or send us a new one instead.
+                                        We haven&rsquo;t heard back about which photo to use for you at
+                                        <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
+                                        <br /><br />
+                                        <strong style="color:{{ $theme['accent'] }};">Option 1</strong> &nbsp;Keep your existing photo from last year.
+                                        <br />
+                                        <strong style="color:{{ $theme['accent'] }};">Option 2</strong> &nbsp;Send a new high-resolution portrait
+                                        (vertical) photo with a solid background.
                                     @else
-                                        We still don&rsquo;t have a photo of you on file for {{ $eventName }}.
-                                        Please send us the photo you&rsquo;d like us to use.
+                                        We still don&rsquo;t have a photo of you on file for
+                                        <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
+                                        Please send a high-resolution portrait (vertical) photo with a solid background.
                                     @endif
                                     <br /><br />
                                     @if($daysRemaining <= 0)
@@ -166,6 +205,13 @@
                                     @else
                                         Photo collection closes in
                                         <strong style="color:{{ $theme['accent'] }};">{{ $daysRemaining }} days</strong>, on the {{ $deadlineDay }}.
+                                    @endif
+                                    <br /><br />
+                                    @if($hasPhotos)
+                                        If we do not hear from you by then, we will use your photo from last year.
+                                    @else
+                                        If no suitable photo is available, the organizers reserve the discretion to select the
+                                        photo to be used for the official materials.
                                     @endif
                                 @endif
                             </span>
