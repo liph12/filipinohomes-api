@@ -18,6 +18,7 @@ class PageBuilderResource extends JsonResource
             'seo_tags' => $this->seo_tags,
             'description' => $this->description,
             'about_me' => $this->about_me,
+            'about_photo' => $this->about_photo,
             'heading' => $this->heading,
             'theme' => $this->theme,
             'banner_settings' => $this->banner_settings,

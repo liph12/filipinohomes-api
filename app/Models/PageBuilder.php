@@ -28,6 +28,7 @@ class PageBuilder extends Model implements Auditable
         'seo_tags',
         'description',
         'about_me',
+        'about_photo',
         'heading',
         'theme',
         'banner_settings',
