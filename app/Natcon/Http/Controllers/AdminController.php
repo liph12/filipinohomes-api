@@ -46,9 +46,42 @@ class AdminController extends Controller
 
     // ── Event ────────────────────────────────────────────────────────────────
 
+    /**
+     * Every convention year, shaped for the admin's edit form.
+     *
+     * ─── Why this is not just ->get() ────────────────────────────────────────
+     * It was, and two fields arrived unusable because a raw model serialises for
+     * machines while this payload feeds HTML inputs:
+     *
+     *  · photo_deadline_at is stored UTC and config('app.timezone') is UTC, so it
+     *    came back as 15:59 for a deadline the admin had typed as 23:59. The form
+     *    put that straight into the input, and saving again re-read it as Manila
+     *    wall-clock — so every save walked the deadline eight hours earlier.
+     *    photo_deadline_local is the same instant in the event's own timezone,
+     *    which is the only thing the admin ever typed or should see.
+     *
+     *  · starts_on / ends_on are `date` casts and serialise as full ISO
+     *    datetimes. <input type="date"> accepts ONLY Y-m-d and silently renders
+     *    nothing else, which is why both fields looked empty on an event that
+     *    has had dates all along.
+     *
+     * ⚠️ array_merge, not `+`. The union operator keeps the LEFT operand's keys,
+     *    so `$e->toArray() + [...]` would quietly discard every override here.
+     */
     public function events(): JsonResponse
     {
-        return response()->json(['data' => NatconEvent::orderByDesc('id')->get()]);
+        $events = NatconEvent::orderByDesc('id')->get()->map(fn (NatconEvent $e) => array_merge(
+            $e->toArray(),
+            [
+                'starts_on' => $e->starts_on?->format('Y-m-d'),
+                'ends_on'   => $e->ends_on?->format('Y-m-d'),
+                // Form-ready wall clock. photo_deadline_at stays alongside it as
+                // the true instant, for anything that needs to compare moments.
+                'photo_deadline_local' => $e->deadlineLocal()?->format('Y-m-d\TH:i'),
+            ],
+        ));
+
+        return response()->json(['data' => $events]);
     }
 
     /**
