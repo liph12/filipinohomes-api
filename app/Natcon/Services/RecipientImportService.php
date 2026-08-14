@@ -5,6 +5,7 @@ namespace App\Natcon\Services;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Recipient;
 use App\Natcon\Models\Suppression;
+use App\Natcon\Services\ProvidesRecipientAttributes;
 use Illuminate\Support\Str;
 
 /**
@@ -19,8 +20,13 @@ use Illuminate\Support\Str;
 final class RecipientImportService
 {
     /**
+     * @param bool $updateExisting Refresh LR-owned fields on rows that already
+     *        exist, instead of counting them as skipped. Only meaningful when the
+     *        source implements ProvidesRecipientAttributes — a paste of bare
+     *        emails has nothing to update WITH.
+     *
      * @return array{
-     *   batch_id:string, created:int, skipped:int, suppressed:int,
+     *   batch_id:string, created:int, updated:int, skipped:int, suppressed:int,
      *   invalid:array<int,array{email:string,reason:string}>
      * }
      */
@@ -29,12 +35,18 @@ final class RecipientImportService
         RecipientSource $source,
         ?int $userId = null,
         bool $dryRun = false,
+        bool $updateExisting = false,
     ): array {
         $batchId    = (string) Str::uuid();
         $created    = 0;
+        $updated    = 0;
         $skipped    = 0;
         $suppressed = 0;
         $invalid    = [];
+
+        // Sources opt in to carrying more than an address. ManualListSource does
+        // not implement it and is entirely unaffected by any of this.
+        $enriched = $source instanceof ProvidesRecipientAttributes ? $source : null;
 
         // Within-batch dedupe. The unique index on (event, email) catches the rest,
         // but a paste of 400 rows routinely contains the same person twice and we
@@ -46,10 +58,12 @@ final class RecipientImportService
 
         // Existing rows for this event, so a re-import reports honestly instead of
         // firing 400 failing inserts.
+        // email => id, so an existing row can be UPDATED rather than only
+        // recognised. withTrashed because a soft-deleted row still occupies the
+        // unique (event, email) index — but it is never updated, see below.
         $existing = Recipient::withTrashed()
             ->where('natcon_event_id', $event->id)
-            ->pluck('email')
-            ->flip();
+            ->pluck('id', 'email');
 
         foreach ($source->emails() as $raw) {
             $email = strtolower(trim((string) $raw));
@@ -88,7 +102,38 @@ final class RecipientImportService
             }
 
             if ($existing->has($email)) {
-                $skipped++;
+                $attributes = $enriched?->attributesFor($email) ?? [];
+
+                if (! $updateExisting || ! $attributes) {
+                    $skipped++;
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $updated++;
+                    continue;
+                }
+
+                $row = Recipient::find($existing->get($email));
+
+                // Soft-deleted rows are left alone. They were removed on purpose,
+                // and quietly refreshing one would make it look live again in
+                // every admin query that forgets withTrashed().
+                if (! $row) {
+                    $skipped++;
+                    continue;
+                }
+
+                // ⚠️ ONLY the LR-owned fields. Not email, not status, not
+                //    responded_at, not photos, not notes, not the
+                //    require-new-photo flag. A re-sync must never undo a decision
+                //    a person made — an awardee who already sent three photos
+                //    must still have them afterwards.
+                $row->auditSource      = 'lr_qualifiers_sync';
+                $row->auditDescription = 'Refreshed from the LR qualifiers list';
+                $row->forceFill($attributes)->save();
+
+                $updated++;
                 continue;
             }
 
@@ -105,9 +150,11 @@ final class RecipientImportService
                 'created_by'        => $userId,
                 'status'            => Recipient::STATUS_PENDING,
                 'lr_lookup_status'  => Recipient::LR_PENDING,
-            ]);
+            ] + ($enriched?->attributesFor($email) ?? []));
 
-            $existing->put($email, true);
+            // Value is unused for a row created in this run — nothing later in
+            // the loop can collide with it, because `seen` already caught that.
+            $existing->put($email, 0);
             $created++;
         }
 
@@ -120,6 +167,7 @@ final class RecipientImportService
         return [
             'batch_id'   => $batchId,
             'created'    => $created,
+            'updated'    => $updated,
             'skipped'    => $skipped,
             'suppressed' => $suppressed,
             'invalid'    => $invalid,

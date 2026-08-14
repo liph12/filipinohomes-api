@@ -75,6 +75,26 @@ class RecipientResource extends JsonResource
             'photos_required'    => Recipient::requiredPhotoCount(),
             'requires_new_photo' => (bool) $r->requires_new_photo,
 
+            // From LR's qualifiers list. On the LIST row, not just the detail
+            // view: with 285 imported awardees sitting beside a handful of
+            // hand-added test addresses, telling them apart has to be possible
+            // without opening each drawer.
+            'total_sales'            => $r->total_sales !== null ? (float) $r->total_sales : null,
+            'lr_confirmation_status' => $r->lr_confirmation_status,
+
+            /**
+             * Is this person actually on LR's qualifier roster?
+             *
+             * ⚠️ NOT the same question as `source`. Source records how the row
+             *    first got here — Eutequio was pasted in by hand during testing
+             *    and is also a genuine qualifier, so his source reads 'paste'
+             *    forever. Labelling the list by source would file a real awardee
+             *    under "added manually", which is exactly the confusion the label
+             *    exists to prevent. Presence of the qualifier payload is the
+             *    honest answer, and a sync sets it regardless of origin.
+             */
+            'is_qualifier' => $r->qualifier_payload !== null,
+
             'source'        => $r->source,
             'send_failures' => (int) $r->send_failures,
             'last_error'    => $r->last_error,
@@ -92,6 +112,17 @@ class RecipientResource extends JsonResource
 
             // The reason and the attribution, shown together. This flag makes a
             // real person go and re-shoot a photo, so the drawer says who decided.
+            // Flattened from qualifier_payload rather than given columns of their
+            // own — the drawer is the only thing that reads them.
+            'qualifier' => $r->qualifier_payload ? [
+                'agent_id'          => $r->qualifier_payload['agentid'] ?? null,
+                'team_id'           => $r->qualifier_payload['sales_team_member']['sales_team']['id'] ?? null,
+                'team_logo'         => $r->qualifier_payload['sales_team_member']['sales_team']['teamlogo'] ?: null,
+                'is_leader'         => (bool) ($r->qualifier_payload['sales_team_member']['isleader'] ?? false),
+                'date_joined'       => $r->qualifier_payload['sales_team_member']['datejoined'] ?? null,
+                'confirmed_at'      => $r->qualifier_payload['member'][0]['natcon_confirmation']['updated_at'] ?? null,
+            ] : null,
+
             'requires_new_photo_note' => $r->requires_new_photo_note,
             'requires_new_photo_at'   => $this->iso($r->requires_new_photo_at, $tz),
             'requires_new_photo_by'   => $r->requiresNewPhotoBy?->only(['id', 'name']),

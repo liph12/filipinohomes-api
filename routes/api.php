@@ -438,6 +438,10 @@ Route::middleware('strip.tags')->group(function(){
 
                 Route::get('/admin/natcon/recipients', [NatconAdminController::class, 'recipients']);
                 Route::post('/admin/natcon/recipients', [NatconAdminController::class, 'storeRecipients']);
+                // Pulls the awardee roster from LR's qualifiers list. Throttled
+                // low: it is a ~288KB external fetch and nobody needs it often.
+                Route::post('/admin/natcon/recipients/sync-lr', [NatconAdminController::class, 'syncQualifiers'])
+                    ->middleware('throttle:6,1');
                 Route::get('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'showRecipient']);
                 Route::patch('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'updateRecipient']);
                 Route::delete('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'destroyRecipient']);

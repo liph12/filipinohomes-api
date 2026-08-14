@@ -16,6 +16,7 @@ use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
 use App\Natcon\Services\PhotoService;
 use App\Natcon\Services\RecipientImportService;
+use App\Natcon\Services\Sources\LrQualifiersSource;
 use App\Natcon\Services\Sources\ManualListSource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -241,7 +242,15 @@ class AdminController extends Controller
                 ->orWhere('reg_id', 'like', $like));
         }
 
-        foreach (['status', 'response', 'lr_lookup_status', 'team'] as $filter) {
+        // Filters on the qualifier ROSTER, not on how the row was added — see
+        // RecipientResource::is_qualifier for why those differ.
+        if ($request->filled('qualifier')) {
+            $request->boolean('qualifier')
+                ? $query->whereNotNull('qualifier_payload')
+                : $query->whereNull('qualifier_payload');
+        }
+
+        foreach (['status', 'response', 'lr_lookup_status', 'team', 'source'] as $filter) {
             if ($request->filled($filter)) {
                 $query->where($filter, $request->input($filter));
             }
@@ -316,6 +325,79 @@ class AdminController extends Controller
         );
 
         return response()->json(['data' => $result]);
+    }
+
+    /**
+     * Pull the awardee roster from Leuterio Realty's qualifiers list.
+     *
+     * The list is authoritative for WHO qualified and what to call them; it
+     * carries no photos, so natcon:hydrate-awardees still fills those in
+     * afterwards from get-awardee/{email}.
+     *
+     * Updates existing rows as well as creating new ones — the whole reason this
+     * exists is that the admin was full of bare email addresses that nobody could
+     * put a name to. Only LR-owned fields are refreshed; see the guard in
+     * RecipientImportService.
+     *
+     * Rows that are NOT in the list are deliberately left exactly as they are.
+     * They are hand-added test addresses and one-off invitees, and the admin
+     * tells them apart by `source` rather than by having them quietly removed.
+     */
+    public function syncQualifiers(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'event_id' => 'nullable|integer|exists:natcon_events,id',
+            'dry_run'  => 'boolean',
+        ]);
+
+        $event  = $this->resolveEvent($request);
+        $dryRun = (bool) ($data['dry_run'] ?? false);
+
+        try {
+            $source = new LrQualifiersSource();
+        } catch (\RuntimeException $e) {
+            // Their outage is not our 500. The message is written to be shown to
+            // an admin as-is.
+            return response()->json(['message' => $e->getMessage(), 'code' => 'lr_unavailable'], 502);
+        }
+
+        $result = $this->importer->import(
+            $event,
+            $source,
+            $request->user()?->id,
+            $dryRun,
+            updateExisting: true,
+        );
+
+        if (! $dryRun) {
+            // One audit row per sync, in the feed an admin already reads. The
+            // import itself writes ~285 rows; this is the record of who asked.
+            Audit::create([
+                'event'          => 'natcon',
+                'auditable_type' => NatconEvent::class,
+                'auditable_id'   => $event->id,
+                'user_type'      => $request->user() ? get_class($request->user()) : null,
+                'user_id'        => $request->user()?->id,
+                'new_values'     => [
+                    'source'     => 'admin_sync_qualifiers',
+                    'fetched'    => $source->count(),
+                    'created'    => $result['created'],
+                    'updated'    => $result['updated'],
+                    'skipped'    => $result['skipped'],
+                    'suppressed' => $result['suppressed'],
+                    'invalid'    => count($result['invalid']),
+                ],
+            ]);
+        }
+
+        return response()->json([
+            'data' => $result + ['fetched' => $source->count()],
+            'meta' => [
+                'dry_run' => $dryRun,
+                // Photos are the one thing this list cannot supply.
+                'note'    => 'Names and teams are set immediately. Photos arrive as natcon:hydrate-awardees works through the list.',
+            ],
+        ]);
     }
 
     public function updateRecipient(Request $request, Recipient $recipient): JsonResponse

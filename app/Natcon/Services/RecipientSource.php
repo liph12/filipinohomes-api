@@ -6,10 +6,15 @@ namespace App\Natcon\Services;
  * Where a batch of awardee emails comes from.
  *
  * This is the seam that lets the recipient list change origin without touching
- * the import pipeline. Today the list is entered by hand; Leuterio Realty are
- * expected to expose a bulk awardee endpoint later. When they do, only
- * LrBulkListSource::emails() gets filled in — the controller, the dedupe, the
- * MX pre-validation, the batch bookkeeping and the LR hydration all stay put.
+ * the import pipeline, and it did its job: the list started out pasted in by
+ * hand, and when Leuterio Realty published their qualifiers endpoint the only
+ * new code was LrQualifiersSource. The controller, the dedupe, the MX
+ * pre-validation, the batch bookkeeping and the LR hydration all stayed put.
+ *
+ * One thing the original design did not anticipate: a bulk list that carries
+ * more than addresses. A source with names, teams and sales figures also
+ * implements ProvidesRecipientAttributes — see that interface for why it is
+ * separate rather than folded in here.
  */
 interface RecipientSource
 {

@@ -152,7 +152,13 @@
                                  */
                                 $raw       = trim($recipientName);
                                 $looksMail = $raw === '' || str_contains($raw, '@');
-                                $greetName = $looksMail ? '' : ucwords(strtolower($raw));
+                                // ⚠️ NOT ucwords(strtolower()). That was harmless while
+                                // names were absent, and the moment 285 real ones arrived
+                                // it started turning "Jo-ann and Albert Maranian" into
+                                // "Jo-Ann And Albert Maranian" — damaging 282 correctly
+                                // cased names to fix the 3 that shout. tidyName() only
+                                // re-cases a name that is entirely upper case.
+                                $greetName = $looksMail ? '' : \App\Natcon\Models\Recipient::tidyName($raw);
                             @endphp
                             <span class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:bold;letter-spacing:0.3px;color:{{ $cream }};line-height:28px;">
                                 {{ $greetName !== '' ? 'Dear ' . $greetName . ',' : 'Dear Awardee,' }}

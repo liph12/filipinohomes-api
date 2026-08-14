@@ -81,6 +81,9 @@ class Recipient extends Model implements Auditable
         'lr_fetched_at', 'lr_lookup_status', 'lr_last_error',
         'source', 'imported_batch_id', 'created_by',
         'status', 'notes',
+        // From LR's qualifiers list. Mass-assignable because the import service
+        // merges them straight into Recipient::create().
+        'display_name', 'total_sales', 'lr_confirmation_status', 'qualifier_payload',
     ];
 
     protected $casts = [
@@ -98,6 +101,8 @@ class Recipient extends Model implements Auditable
         'form_submitted_at' => 'datetime',
         'requires_new_photo'    => 'boolean',
         'requires_new_photo_at' => 'datetime',
+        'qualifier_payload'     => 'array',
+        'total_sales'           => 'decimal:2',
     ];
 
     // The invite token hash is a credential-adjacent value. Keep it out of any
@@ -203,11 +208,57 @@ class Recipient extends Model implements Auditable
         return $this->hasOne(FormSubmission::class, 'natcon_recipient_id');
     }
 
+    /**
+     * What to call this person.
+     *
+     * ⚠️ `display_name` wins, and the order matters.
+     *
+     * It comes from LR's qualifiers list, where 116 of 285 names are couples —
+     * "Jo-ann and Albert Maranian". first_name/last_name come from a DIFFERENT
+     * endpoint (get-awardee, via AwardeeService::mapAwardee) which knows one
+     * person per record, and hydration runs AFTER a sync. Without this
+     * precedence, hydrating would quietly replace the couple with whichever half
+     * of it LR's awardee record happens to name, and nobody would notice until an
+     * email went out addressed to one of two people.
+     */
     public function displayName(): string
     {
+        if ($this->display_name) {
+            return $this->display_name;
+        }
+
         $name = trim(($this->first_name ?? '') . ' ' . ($this->last_name ?? ''));
 
         return $name !== '' ? $name : ($this->owner_name ?: $this->email);
+    }
+
+    /**
+     * Tidy a name that arrived from an external list.
+     *
+     * Two problems, measured on the live qualifiers payload:
+     *
+     *   · 66 of 285 contain double spaces ("Jo-ann and Albert  Maranian").
+     *   · 3 arrive shouting ("KIRBY CYRL MAGDOSA FERNANDEZ").
+     *
+     * The obvious fix — ucwords(strtolower($name)) — would repair those 3 and
+     * DAMAGE the other 282, which are already correctly cased: "Jo-ann and
+     * Albert" becomes "Jo-Ann And Albert". So re-casing is conditional on the
+     * name actually being all-caps, and everything else is left exactly as the
+     * list has it.
+     */
+    public static function tidyName(?string $raw): ?string
+    {
+        $name = preg_replace('/\s+/u', ' ', trim((string) $raw));
+
+        if ($name === '') {
+            return null;
+        }
+
+        if ($name === mb_strtoupper($name, 'UTF-8')) {
+            $name = mb_convert_case($name, MB_CASE_TITLE, 'UTF-8');
+        }
+
+        return mb_substr($name, 0, 191);
     }
 
     public function hasResponded(): bool

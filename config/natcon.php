@@ -81,6 +81,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Leuterio Realty qualifiers list
+    |--------------------------------------------------------------------------
+    |
+    | The bulk awardee list — a different service from the get-awardee endpoint
+    | above, on a different host. ~285 records, ~288KB, one request.
+    |
+    | ⚠️ The three dates define the QUALIFYING SALES WINDOW and will be different
+    | for 2027. They live in env rather than as literals so the window can move
+    | without a deploy. If NATCON keeps running, they arguably belong on
+    | natcon_events beside the other per-year data.
+    |
+    | Note this list carries no photos — those still come from get-awardee, which
+    | is why hydration is still needed after a sync.
+    |
+    */
+    'qualifiers' => [
+        'url'        => env('NATCON_LR_QUALIFIERS_URL', 'https://leuteriorealty.com/api/natcon-qualifiers-v2'),
+        'from'       => env('NATCON_LR_QUALIFIERS_FROM', '2025-08-01'),
+        'lastdate_x' => env('NATCON_LR_QUALIFIERS_LASTDATE_X', '2026-07-31'),
+        'lastdate_y' => env('NATCON_LR_QUALIFIERS_LASTDATE_Y', '2026-08-05'),
+        'timeout'    => (int) env('NATCON_LR_QUALIFIERS_TIMEOUT', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Photo storage
     |--------------------------------------------------------------------------
     |
