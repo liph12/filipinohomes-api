@@ -136,13 +136,18 @@ return [
          | The organizers asked for three so they have something to choose from
          | rather than being stuck with whatever single file arrives.
          |
-         | ⚠️ required_count is env-driven and NOT a literal on purpose. Requiring
-         |    three costs completion rate — plenty of agents have exactly one
-         |    usable headshot on their phone — so this is the relief valve when
-         |    the deadline is close and the stragglers are stuck at one. Lower it
-         |    and `config:clear`; no deploy, no code change.
+         | required_count is the MINIMUM that completes a submission; max_count is
+         | the ceiling. They started life equal at 3, and the organizers moved to
+         | "send 1-3" once it was clear how many agents have exactly one usable
+         | headshot on their phone. Being env-driven is what made that a config
+         | edit rather than a release.
+         |
+         | ⚠️ Copy is derived from BOTH. When they differ the wording becomes a
+         |    range ("1-3 photos"); when they are equal it is a single number.
+         |    Changing one without the other silently changes what every email
+         |    and every page says.
          */
-        'required_count' => (int) env('NATCON_PHOTO_REQUIRED_COUNT', 3),
+        'required_count' => (int) env('NATCON_PHOTO_REQUIRED_COUNT', 1),
         'max_count'      => (int) env('NATCON_PHOTO_MAX_COUNT', 3),
     ],
 

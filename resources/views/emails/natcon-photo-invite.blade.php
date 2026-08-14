@@ -47,10 +47,23 @@
     $canRetain   = $hasPhotos && ! $requiresNewPhoto;
 
     // Wording for the ask. Plural only when it is actually plural.
-    $needed   = max(0, $requiredCount - $uploadedCount);
-    $askCount = $requiredCount === 1
-        ? 'a high-resolution portrait photo with a solid background'
-        : "{$requiredCount} high-resolution portrait photos with a solid background";
+    $needed = max(0, $requiredCount - $uploadedCount);
+
+    /**
+     * The ask, phrased once and reused everywhere below.
+     *
+     * A RANGE whenever the minimum and the ceiling differ — the organizers ask
+     * for "1-3", not for one. Saying "please send 1 photo" would be technically
+     * true and would throw away the request for more, which is the entire reason
+     * several are collected.
+     */
+    $countPhrase = $requiredCount >= $maxCount
+        ? $maxCount                       // "3 photos"
+        : "{$requiredCount}-{$maxCount}"; // "1-3 photos"
+
+    $askCount = $maxCount === 1
+        ? 'a high-resolution formal or business portrait photo with a plain background'
+        : "{$countPhrase} high-resolution formal or business portrait photos with a plain background";
     $partial  = $uploadedCount > 0 && $uploadedCount < $requiredCount;
     // "1 more photo" / "2 more photos". Nobody writes "photo(s)" on purpose.
     $neededLabel = $needed . ' more ' . ($needed === 1 ? 'photo' : 'photos');
@@ -247,7 +260,7 @@
                                              Blade escapes &, so an entity inside an echo prints
                                              literally as "you&rsquo;re". --}}
                                         {{ $needed === 1 ? 'One more' : $needed . ' more' }} and you&rsquo;re done.
-                                        Please keep to a high-resolution portrait photo with a solid background.
+                                        Please keep to a high-resolution formal or business portrait photo with a plain background.
                                     @elseif($mustReplace)
                                         We haven&rsquo;t received your new photos for
                                         <strong style="color:{{ $cream }};">{{ $eventName }}</strong>.
@@ -358,7 +371,10 @@
                                         style="background-color:{{ $inkSoft }};padding:13px 28px;border:2px solid {{ $theme['accent'] }};">
                                         <a class="cta" href="{{ $changeUrl }}" target="_blank"
                                             style="font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:bold;letter-spacing:1.5px;color:{{ $theme['accent'] }};text-decoration:none;display:inline-block;">
-                                            {{ $requiredCount > 1 ? 'SEND NEW PHOTOS' : 'SEND A NEW PHOTO' }}
+                                            {{-- $maxCount, not $requiredCount: with a minimum of 1 and a
+                                                 ceiling of 3 the button would read singular while three are
+                                                 welcome. --}}
+                                            {{ $maxCount > 1 ? 'SEND NEW PHOTOS' : 'SEND A NEW PHOTO' }}
                                         </a>
                                     </td>
                                 </tr>
@@ -374,7 +390,7 @@
                                             @if($partial)
                                                 SEND {{ strtoupper($neededLabel) }}
                                             @else
-                                                {{ $requiredCount > 1 ? 'SEND MY PHOTOS' : 'SEND MY PHOTO' }}
+                                                {{ $maxCount > 1 ? 'SEND MY PHOTOS' : 'SEND MY PHOTO' }}
                                             @endif
                                         </a>
                                     </td>

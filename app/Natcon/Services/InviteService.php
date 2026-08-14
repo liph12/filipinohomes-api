@@ -305,6 +305,7 @@ final class InviteService
             // both have to reach the template rather than being re-derived there.
             requiresNewPhoto: (bool) $recipient->requires_new_photo,
             requiredCount:    Recipient::requiredPhotoCount(),
+            maxCount:         Recipient::maxPhotoCount(),
             uploadedCount:    $recipient->activePhotos()->count(),
         );
     }

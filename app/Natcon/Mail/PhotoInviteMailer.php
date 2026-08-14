@@ -65,8 +65,12 @@ class PhotoInviteMailer extends Mailable
          * that generates a reply, a phone call, and no photo.
          */
         public bool    $requiresNewPhoto = false,
-        /** From config, so lowering the requirement needs no template edit. */
+        /** Minimum that completes a submission. From config, so the organizers
+         *  can move it without a release. */
         public int     $requiredCount = 1,
+        /** Ceiling. Needed because the ask is a RANGE whenever the two differ —
+         *  "send 1-3 photos" cannot be phrased from requiredCount alone. */
+        public int     $maxCount = 1,
         /** How many they have already sent — drives the partial reminder. */
         public int     $uploadedCount = 0,
         public ?int    $reminderIndex = null,
