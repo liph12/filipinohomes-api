@@ -3,17 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\PageBuilderResource;
+use App\Models\Agent;
 use App\Models\PageBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use App\Models\Agent;
 use Illuminate\Support\Facades\Cache;
+
 class PageBuilderController extends Controller
 {
     private function trackingIdentifier(Request $request): string
     {
         if ($request->user()) {
-            return 'user_' . $request->user()->id;
+            return 'user_'.$request->user()->id;
         }
 
         $deviceId = $request->input('device_id')
@@ -22,13 +23,15 @@ class PageBuilderController extends Controller
             ?? $request->cookie('device_id');
 
         if ($deviceId) {
-            return 'dev_' . (string) $deviceId . '|' . (string) $request->ip();
+            return 'dev_'.(string) $deviceId.'|'.(string) $request->ip();
         }
 
         $ua = (string) ($request->userAgent() ?? 'unknown');
         $ip = (string) $request->ip();
-        return 'guest_' . substr(hash('sha256', $ip . '|' . $ua), 0, 32);
+
+        return 'guest_'.substr(hash('sha256', $ip.'|'.$ua), 0, 32);
     }
+
     public function index(Request $request)
     {
         $perPage = (int) ($request->input('per_page', 12));
@@ -73,18 +76,21 @@ class PageBuilderController extends Controller
      */
     protected function applyPageSort($query, Request $request): bool
     {
-        $sortBy  = (string) $request->input('sort_by', '');
+        $sortBy = (string) $request->input('sort_by', '');
         $sortDir = strtolower((string) $request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
 
         switch ($sortBy) {
             case 'title':
                 $query->orderBy('title', $sortDir);
+
                 return true;
             case 'views':
                 $query->orderBy('clicks', $sortDir);
+
                 return true;
             case 'created':
                 $query->orderBy('created_at', $sortDir);
+
                 return true;
             case 'agent':
                 // Order by the related agent's name via a correlated subquery
@@ -92,6 +98,7 @@ class PageBuilderController extends Controller
                 $query
                     ->orderBy(Agent::select('first_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir)
                     ->orderBy(Agent::select('last_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir);
+
                 return true;
             default:
                 return false;
@@ -109,7 +116,7 @@ class PageBuilderController extends Controller
         }
 
         return response()->json([
-            'available' => !$query->exists(),
+            'available' => ! $query->exists(),
         ]);
     }
 
@@ -117,6 +124,7 @@ class PageBuilderController extends Controller
     {
         $pageBuilder = PageBuilder::where('slug', $slug)->with('agent')->firstOrFail();
         $this->guardInactiveAgentPage($pageBuilder);
+
         return new PageBuilderResource($pageBuilder);
     }
 
@@ -124,6 +132,7 @@ class PageBuilderController extends Controller
     {
         $pageBuilder = PageBuilder::where('agent_id', $agentId)->with('agent')->firstOrFail();
         $this->guardInactiveAgentPage($pageBuilder);
+
         return new PageBuilderResource($pageBuilder);
     }
 
@@ -156,47 +165,60 @@ class PageBuilderController extends Controller
         }
     }
 
-public function store(Request $request)
-{
-    $user = $request->user();
+    public function store(Request $request)
+    {
+        $user = $request->user();
 
-    $agent = Agent::where('user_id', $user->id)->first();
+        $agent = Agent::where('user_id', $user->id)->first();
 
-    if (!$agent) {
-        return response()->json([
-            'success' => false,
-            'message' => 'You must have an agent profile to create a page.',
-        ], 403);
+        if (! $agent) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You must have an agent profile to create a page.',
+            ], 403);
+        }
+
+        // Check if agent already has a page
+        if (PageBuilder::where('agent_id', $agent->id)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You can only have one page.',
+            ], 403);
+        }
+
+        $data = $request->validate([
+            'title' => 'required|string',
+            'slug' => 'nullable|string|unique:page_builder,slug',
+            'seo_tags' => 'nullable|array',
+            'description' => 'nullable|string',
+            'about_me' => 'nullable|string',
+            'heading' => 'nullable|string|max:255',
+            'theme' => 'nullable|array',
+            'theme.gold' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme.brand' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme.title' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme.description' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'banner_settings' => 'nullable|array',
+            'banner_settings.pos_x' => 'nullable|integer|min:0|max:100',
+            'banner_settings.pos_y' => 'nullable|integer|min:0|max:100',
+            'banner_settings.overlay' => 'nullable|integer|min:0|max:100',
+            'banner_settings.zoom' => 'nullable|integer|min:100|max:300',
+            'featured_listings' => 'nullable|array',
+            'featured_listings.*' => 'integer',
+            'banner' => 'nullable|array',
+            'gallery' => 'nullable|array',
+            'flyers' => 'nullable|array',
+            'certificates' => 'nullable|array',
+            'awards' => 'nullable|array',
+            'video_url' => 'nullable|array',
+        ]);
+
+        $data['agent_id'] = $agent->id;
+
+        $page = PageBuilder::create($data);
+
+        return new PageBuilderResource($page);
     }
-
-    // Check if agent already has a page
-    if (PageBuilder::where('agent_id', $agent->id)->exists()) {
-        return response()->json([
-            'success' => false,
-            'message' => 'You can only have one page.',
-        ], 403);
-    }
-
-    $data = $request->validate([
-        'title'       => 'required|string',
-        'slug'        => 'nullable|string|unique:page_builder,slug',
-        'seo_tags'    => 'nullable|array',
-        'description' => 'nullable|string',
-        'tagline'     => 'nullable|string|max:255',
-        'banner'      => 'nullable|array',
-        'gallery'      => 'nullable|array',
-        'flyers'       => 'nullable|array',
-        'certificates' => 'nullable|array',
-        'awards'       => 'nullable|array',
-        'video_url'    => 'nullable|array',
-    ]);
-
-    $data['agent_id'] = $agent->id;
-
-    $page = PageBuilder::create($data);
-
-    return new PageBuilderResource($page);
-}
 
     public function update(Request $request, $id)
     {
@@ -204,17 +226,30 @@ public function store(Request $request)
         $this->authorize('update', $pageBuilder);
 
         $data = $request->validate([
-            'title'       => 'sometimes|required|string',
-            'slug'        => 'sometimes|nullable|string|unique:page_builder,slug,' . $pageBuilder->id,
-            'seo_tags'    => 'nullable|array',
+            'title' => 'sometimes|required|string',
+            'slug' => 'sometimes|nullable|string|unique:page_builder,slug,'.$pageBuilder->id,
+            'seo_tags' => 'nullable|array',
             'description' => 'nullable|string',
-            'tagline'     => 'nullable|string|max:255',
-            'banner'      => 'nullable|array',
-            'gallery'      => 'nullable|array',
-            'flyers'       => 'nullable|array',
+            'about_me' => 'nullable|string',
+            'heading' => 'nullable|string|max:255',
+            'theme' => 'nullable|array',
+            'theme.gold' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme.brand' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme.title' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme.description' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'banner_settings' => 'nullable|array',
+            'banner_settings.pos_x' => 'nullable|integer|min:0|max:100',
+            'banner_settings.pos_y' => 'nullable|integer|min:0|max:100',
+            'banner_settings.overlay' => 'nullable|integer|min:0|max:100',
+            'banner_settings.zoom' => 'nullable|integer|min:100|max:300',
+            'featured_listings' => 'nullable|array',
+            'featured_listings.*' => 'integer',
+            'banner' => 'nullable|array',
+            'gallery' => 'nullable|array',
+            'flyers' => 'nullable|array',
             'certificates' => 'nullable|array',
-            'awards'       => 'nullable|array',
-            'video_url'    => 'nullable|array',
+            'awards' => 'nullable|array',
+            'video_url' => 'nullable|array',
         ]);
 
         $pageBuilder->update($data);
@@ -231,7 +266,7 @@ public function store(Request $request)
 
         return response()->json([
             'success' => true,
-            'message' => 'Page deleted successfully.'
+            'message' => 'Page deleted successfully.',
         ]);
     }
 
@@ -243,7 +278,7 @@ public function store(Request $request)
 
         return response()->json([
             'success' => true,
-            'message' => 'Page restored successfully.'
+            'message' => 'Page restored successfully.',
         ]);
     }
 
@@ -251,62 +286,65 @@ public function store(Request $request)
     {
         $this->authorize('viewDeleted', PageBuilder::class);
 
-        $perPage = (int)($request->input('per_page', 12));
+        $perPage = (int) ($request->input('per_page', 12));
         $q = PageBuilder::onlyTrashed();
         $this->applyPageSearch($q, (string) $request->input('search', ''));
         // Use the requested sort if any; otherwise default to newest-deleted.
-        if (!$this->applyPageSort($q, $request)) {
+        if (! $this->applyPageSort($q, $request)) {
             $q->orderByDesc('deleted_at');
         }
+
         return PageBuilderResource::collection($q->paginate($perPage));
     }
 
-public function trackImpression(Request $request, string $slug)
-{
-    $page = PageBuilder::where('slug', $slug)->first();
-    if (!$page) {
-        return response()->json(['message' => 'Page not found'], 404);
+    public function trackImpression(Request $request, string $slug)
+    {
+        $page = PageBuilder::where('slug', $slug)->first();
+        if (! $page) {
+            return response()->json(['message' => 'Page not found'], 404);
+        }
+
+        $identifier = $this->trackingIdentifier($request);
+
+        $now = now('Asia/Manila');
+        $today = $now->toDateString();
+        $cacheKey = "{$identifier}_page_{$slug}_imp_{$today}";
+
+        if (! Cache::has($cacheKey)) {
+            $page->increment('impressions');
+            Cache::put($cacheKey, true, $now->copy()->endOfDay());
+        }
+
+        return response()->json(['success' => true]);
     }
 
-    $identifier = $this->trackingIdentifier($request);
+    public function trackClick(Request $request, string $slug)
+    {
+        $identifier = $this->trackingIdentifier($request);
 
-    $now = now('Asia/Manila');
-    $today = $now->toDateString();
-    $cacheKey = "{$identifier}_page_{$slug}_imp_{$today}";
+        $page = PageBuilder::where('slug', $slug)->first();
+        if (! $page) {
+            return response()->json(['message' => 'Page not found'], 404);
+        }
 
-    if (!Cache::has($cacheKey)) {
-        $page->increment('impressions');
-        Cache::put($cacheKey, true, $now->copy()->endOfDay());
+        $now = now('Asia/Manila');
+        $today = $now->toDateString();
+
+        $clickKey = "{$identifier}_page_{$slug}_click";
+        $impKey = "{$identifier}_page_{$slug}_imp_{$today}";
+        // Ensure impression counted if somehow missed
+        if (! Cache::has($impKey)) {
+            $page->increment('impressions');
+            Cache::put($impKey, true, $now->copy()->endOfDay());
+        }
+
+        // Count click once per day per device
+        $lastClicked = Cache::get($clickKey);
+        if ($lastClicked !== $today) {
+            $page->increment('clicks');
+            Cache::put($clickKey, $today, $now->copy()->endOfDay());
+        }
+
+        return response()->json(['success' => true]);
     }
-
-    return response()->json(['success' => true]);
-}
-
-public function trackClick(Request $request, string $slug)
-{
-    $identifier = $this->trackingIdentifier($request);
-
-    $page = PageBuilder::where('slug', $slug)->first();
-    if (!$page) return response()->json(['message' => 'Page not found'], 404);
-
-    $now = now('Asia/Manila');
-    $today = $now->toDateString();
-
-    $clickKey = "{$identifier}_page_{$slug}_click";
-    $impKey   = "{$identifier}_page_{$slug}_imp_{$today}";
-    // Ensure impression counted if somehow missed
-    if (!Cache::has($impKey)) {
-        $page->increment('impressions');
-        Cache::put($impKey, true, $now->copy()->endOfDay());
-    }
-
-    // Count click once per day per device
-    $lastClicked = Cache::get($clickKey);
-    if ($lastClicked !== $today) {
-        $page->increment('clicks');
-        Cache::put($clickKey, $today, $now->copy()->endOfDay());
-    }
-
-    return response()->json(['success' => true]);
-}
 }

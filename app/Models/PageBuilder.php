@@ -27,7 +27,11 @@ class PageBuilder extends Model implements Auditable
         'slug',
         'seo_tags',
         'description',
-        'tagline',
+        'about_me',
+        'heading',
+        'theme',
+        'banner_settings',
+        'featured_listings',
         'banner',
         'gallery',
         'flyers',
@@ -42,6 +46,9 @@ class PageBuilder extends Model implements Auditable
 
     protected $casts = [
         'seo_tags' => 'array',
+        'theme' => 'array',
+        'banner_settings' => 'array',
+        'featured_listings' => 'array',
         'banner' => 'array',
         'gallery' => 'array',
         'flyers' => 'array',

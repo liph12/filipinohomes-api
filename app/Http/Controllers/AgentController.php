@@ -2,28 +2,27 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Agent;
-use App\Models\TeamAgent;
-use App\Models\Conversation;
-use App\Models\ListingInquiry;
-use App\Models\LoginLog;
-use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\AgentResource;
+use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\ExternalAgentResource;
 use App\Http\Resources\UserResource;
-use App\Models\User;
+use App\Jobs\PingIndexNow;
 use App\Mail\AgentCertificateMailer;
+use App\Models\Agent;
+use App\Models\Conversation;
+use App\Models\LoginLog;
+use App\Models\TeamAgent;
+use App\Models\User;
 use App\Services\AuditMailService;
 use App\Services\IndexNowService;
-use App\Jobs\PingIndexNow;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Http\Request;
-use Intervention\Image\ImageManager;
 use Intervention\Image\Drivers\Gd\Driver;
-use Carbon\Carbon;
+use Intervention\Image\ImageManager;
 
 class AgentController extends Controller
 {
@@ -35,22 +34,22 @@ class AgentController extends Controller
         // Used by the admin Top Agents table. When absent, listings_in_range_count
         // falls back to the all-time count so existing callers keep working.
         $dateFrom = $request->query('date_from'); // 'YYYY-MM-DD' or null
-        $dateTo   = $request->query('date_to');
-        $teamId   = $request->query('team_id');
+        $dateTo = $request->query('date_to');
+        $teamId = $request->query('team_id');
 
         // Mirror Laravel's SoftDeletes scope so this matches the other
         // listings counts and /all-listings.
-        $rangeSql = "(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL";
+        $rangeSql = '(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL';
         $rangeBindings = [];
         if ($dateFrom) {
-            $rangeSql .= " AND listings.created_at >= ?";
-            $rangeBindings[] = $dateFrom . ' 00:00:00';
+            $rangeSql .= ' AND listings.created_at >= ?';
+            $rangeBindings[] = $dateFrom.' 00:00:00';
         }
         if ($dateTo) {
-            $rangeSql .= " AND listings.created_at <= ?";
-            $rangeBindings[] = $dateTo . ' 23:59:59';
+            $rangeSql .= ' AND listings.created_at <= ?';
+            $rangeBindings[] = $dateTo.' 23:59:59';
         }
-        $rangeSql .= ") as listings_in_range_count";
+        $rangeSql .= ') as listings_in_range_count';
 
         $query = Agent::query()
             ->select([
@@ -60,7 +59,7 @@ class AgentController extends Controller
                 // Laravel's SoftDeletes scope, otherwise these counts include
                 // trashed rows and diverge from /all-listings (the View Listings
                 // grid). Same applies for the property-joined counts below.
-                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL) as listings_count"),
+                DB::raw('(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL) as listings_count'),
                 DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND listings.visibility = 'public') as public_listings_count"),
                 DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND listings.visibility = 'private') as private_listings_count"),
                 DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'sold') as sold_count"),
@@ -83,7 +82,7 @@ class AgentController extends Controller
                 'pageBuilder:id,agent_id,slug',
                 'teamMembers.team',
             ])
-            ->whereHas('user.role', function($q) use ($request) {
+            ->whereHas('user.role', function ($q) use ($request) {
                 // Opt-in: show ONLY admins that have an agent profile.
                 $q->where('name', $request->boolean('include_admins') ? 'admin' : 'agent');
             });
@@ -158,12 +157,12 @@ class AgentController extends Controller
             $threshold = now()->subDays($over);
             $query->where(function ($q) use ($threshold) {
                 $q->whereDoesntHave('user')
-                  ->orWhereHas('user', function ($uq) use ($threshold) {
-                      $uq->where(function ($w) use ($threshold) {
-                          $w->whereNull('last_online_at')
-                            ->orWhere('last_online_at', '<', $threshold);
-                      });
-                  });
+                    ->orWhereHas('user', function ($uq) use ($threshold) {
+                        $uq->where(function ($w) use ($threshold) {
+                            $w->whereNull('last_online_at')
+                                ->orWhere('last_online_at', '<', $threshold);
+                        });
+                    });
             });
         }
 
@@ -189,17 +188,17 @@ class AgentController extends Controller
         }
 
         if ($search = $request->query('search')) {
-            $term = '%' . $search . '%';
+            $term = '%'.$search.'%';
 
             $query->where(function ($q) use ($term) {
                 $q->where('first_name', 'LIKE', $term)
-                  ->orWhere('last_name', 'LIKE', $term)
-                  ->orWhere('address', 'LIKE', $term)
-                  ->orWhere('mobile_no', 'LIKE', $term)
-                  ->orWhereHas('user', function ($uq) use ($term) {
-                      $uq->where('email', 'LIKE', $term)
-                         ->orWhere('name', 'LIKE', $term);
-                  });
+                    ->orWhere('last_name', 'LIKE', $term)
+                    ->orWhere('address', 'LIKE', $term)
+                    ->orWhere('mobile_no', 'LIKE', $term)
+                    ->orWhereHas('user', function ($uq) use ($term) {
+                        $uq->where('email', 'LIKE', $term)
+                            ->orWhere('name', 'LIKE', $term);
+                    });
             });
         }
 
@@ -221,47 +220,49 @@ class AgentController extends Controller
                 ->filter(fn ($m) => $m->team)
                 ->groupBy('team_id')
                 ->map(fn ($g) => [
-                    'id'    => $g->first()->team->id,
-                    'name'  => $g->first()->team->name,
+                    'id' => $g->first()->team->id,
+                    'name' => $g->first()->team->name,
                     'count' => $g->pluck('agent_id')->unique()->count(),
                 ])
                 ->sortByDesc('count')
                 ->values();
             $teamBreakdown = [
-                'teams'   => $teams,
+                'teams' => $teams,
                 'no_team' => $ids->count() - $memberships->pluck('agent_id')->unique()->count(),
-                'total'   => $ids->count(),
+                'total' => $ids->count(),
             ];
         }
 
-        $sortBy  = $request->query('sort_by');
+        $sortBy = $request->query('sort_by');
         $sortDir = strtolower($request->query('sort_dir', 'desc'));
-        if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'desc';
+        if (! in_array($sortDir, ['asc', 'desc'])) {
+            $sortDir = 'desc';
+        }
 
         $allowed = ['full_name', 'email', 'member_since', 'listings_count', 'listings_in_range', 'transactions_count', 'inquiries_count', 'response_speed', 'highest_rated', 'last_online', 'status', 'login_count'];
 
         if (in_array($sortBy, $allowed)) {
             match ($sortBy) {
-                'full_name'          => $query->orderByRaw("CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) $sortDir"),
-                'email'              => $query->orderByRaw("(SELECT email FROM users WHERE users.id = agents.user_id) $sortDir"),
-                'member_since'       => $query->orderBy('member_since', $sortDir),
-                'listings_count'     => $query->orderBy('listings_count', $sortDir),
-                'listings_in_range'  => $query->orderBy('listings_in_range_count', $sortDir),
+                'full_name' => $query->orderByRaw("CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) $sortDir"),
+                'email' => $query->orderByRaw("(SELECT email FROM users WHERE users.id = agents.user_id) $sortDir"),
+                'member_since' => $query->orderBy('member_since', $sortDir),
+                'listings_count' => $query->orderBy('listings_count', $sortDir),
+                'listings_in_range' => $query->orderBy('listings_in_range_count', $sortDir),
                 'transactions_count' => $query->orderByRaw("(sold_count + rented_count + leased_count) $sortDir"),
-                'inquiries_count'    => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
-                'last_online'        => $query->orderByRaw("(SELECT last_online_at FROM users WHERE users.id = agents.user_id) $sortDir"),
-                'status'             => $query->orderBy('agents.status', $sortDir),
-                'login_count'        => $query->orderByRaw("(SELECT COUNT(*) FROM login_logs WHERE login_logs.user_id = agents.user_id) $sortDir"),
-                'response_speed'     => $query
-                    ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN 0 ELSE 1 END ASC")
-                    ->orderByRaw("CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN median_first_response_seconds ELSE NULL END ASC")
+                'inquiries_count' => $query->orderByRaw("(ongoing_inquiries_count + closed_inquiries_count) $sortDir"),
+                'last_online' => $query->orderByRaw("(SELECT last_online_at FROM users WHERE users.id = agents.user_id) $sortDir"),
+                'status' => $query->orderBy('agents.status', $sortDir),
+                'login_count' => $query->orderByRaw("(SELECT COUNT(*) FROM login_logs WHERE login_logs.user_id = agents.user_id) $sortDir"),
+                'response_speed' => $query
+                    ->orderByRaw('CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN 0 ELSE 1 END ASC')
+                    ->orderByRaw('CASE WHEN response_sample_size >= 3 AND median_first_response_seconds IS NOT NULL AND (unanswered_response_pct IS NULL OR unanswered_response_pct < 50) THEN median_first_response_seconds ELSE NULL END ASC')
                     ->orderByDesc('listings_count'),
                 // Highest rated: agents with <3 reviews or no rating sink to
                 // the bottom so a freshly-rated 5.0 doesn't outrank a
                 // battle-tested 4.6. Within the rated tier, sort by
                 // avg_rating desc then total_reviews desc as tiebreaker.
-                'highest_rated'      => $query
-                    ->orderByRaw("CASE WHEN total_reviews >= 3 AND avg_rating IS NOT NULL THEN 0 ELSE 1 END ASC")
+                'highest_rated' => $query
+                    ->orderByRaw('CASE WHEN total_reviews >= 3 AND avg_rating IS NOT NULL THEN 0 ELSE 1 END ASC')
                     ->orderByDesc('avg_rating')
                     ->orderByDesc('total_reviews')
                     ->orderByDesc('listings_count'),
@@ -294,13 +295,13 @@ class AgentController extends Controller
                 ->addSelect(DB::raw('(SELECT COUNT(*) FROM login_logs WHERE login_logs.user_id = agents.user_id) as export_login_count'))
                 ->with('user')
                 ->get();
-            $filename = 'agents-report-' . now()->format('Y-m-d') . '.csv';
+            $filename = 'agents-report-'.now()->format('Y-m-d').'.csv';
 
             return response()->streamDownload(function () use ($rows, $dateFrom, $dateTo) {
                 $out = fopen('php://output', 'w');
                 fwrite($out, "\xEF\xBB\xBF");
                 $rangeLabel = $dateFrom
-                    ? 'Posted ' . $dateFrom . ' to ' . ($dateTo ?: now()->toDateString())
+                    ? 'Posted '.$dateFrom.' to '.($dateTo ?: now()->toDateString())
                     : 'Posted (all time)';
                 fputcsv($out, [
                     'Agent', 'Email', 'Mobile', 'Status', 'Team', 'Team Role', 'Last Online', 'Total Logins',
@@ -310,7 +311,7 @@ class AgentController extends Controller
                 foreach ($rows as $a) {
                     $tm = $a->teamMembers->first();
                     fputcsv($out, [
-                        trim(($a->first_name ?? '') . ' ' . ($a->last_name ?? '')),
+                        trim(($a->first_name ?? '').' '.($a->last_name ?? '')),
                         $a->user?->email,
                         $a->mobile_no,
                         $a->status,
@@ -405,19 +406,19 @@ class AgentController extends Controller
         $user = $agent->user;
 
         $activeListings = $agent->listings()
-            ->whereHas('property', fn($q) => $q->where('status', 'active'))
+            ->whereHas('property', fn ($q) => $q->where('status', 'active'))
             ->count();
 
         $soldCount = $agent->listings()
-            ->whereHas('property', fn($q) => $q->where('status', 'sold'))
+            ->whereHas('property', fn ($q) => $q->where('status', 'sold'))
             ->count();
 
         $rentedCount = $agent->listings()
-            ->whereHas('property', fn($q) => $q->where('status', 'rented'))
+            ->whereHas('property', fn ($q) => $q->where('status', 'rented'))
             ->count();
 
         $leasedCount = $agent->listings()
-            ->whereHas('property', fn($q) => $q->where('status', 'leased'))
+            ->whereHas('property', fn ($q) => $q->where('status', 'leased'))
             ->count();
 
         $agentUserId = $agent->user_id;
@@ -437,33 +438,33 @@ class AgentController extends Controller
         // Sold chart — last 12 months grouped by month
         $twelveMonthsAgo = Carbon::now()->subMonths(11)->startOfMonth();
 
-$buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): array {
-    $byMonth = DB::table('listings')
-        ->join('properties', 'listings.property_id', '=', 'properties.id')
-        ->where('listings.agent_id', $agent->id)
-        ->where('properties.status', $status)
-        ->whereBetween('properties.status_change_date', [
-            $twelveMonthsAgo,
-            Carbon::now()->endOfMonth(),
-        ])
-        ->select(
-            DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m') as month"),
-            DB::raw('COUNT(*) as count')
-        )
-        ->groupBy('month')
-        ->orderBy('month')
-        ->pluck('count', 'month');
+        $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): array {
+            $byMonth = DB::table('listings')
+                ->join('properties', 'listings.property_id', '=', 'properties.id')
+                ->where('listings.agent_id', $agent->id)
+                ->where('properties.status', $status)
+                ->whereBetween('properties.status_change_date', [
+                    $twelveMonthsAgo,
+                    Carbon::now()->endOfMonth(),
+                ])
+                ->select(
+                    DB::raw("DATE_FORMAT(properties.status_change_date, '%Y-%m') as month"),
+                    DB::raw('COUNT(*) as count')
+                )
+                ->groupBy('month')
+                ->orderBy('month')
+                ->pluck('count', 'month');
 
-    $chart = [];
-    for ($i = 0; $i < 12; $i++) {
-        $key = Carbon::now()->subMonths(11 - $i)->format('Y-m');
-        $chart[] = ['month' => $key, 'count' => (int) ($byMonth[$key] ?? 0)];
-    }
+            $chart = [];
+            for ($i = 0; $i < 12; $i++) {
+                $key = Carbon::now()->subMonths(11 - $i)->format('Y-m');
+                $chart[] = ['month' => $key, 'count' => (int) ($byMonth[$key] ?? 0)];
+            }
 
-    return $chart;
-};
+            return $chart;
+        };
 
-        $soldChart   = $buildMonthlyChart('sold');
+        $soldChart = $buildMonthlyChart('sold');
         $rentedChart = $buildMonthlyChart('rented');
         $leasedChart = $buildMonthlyChart('leased');
 
@@ -481,13 +482,13 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 ->limit(10)
                 ->get()
                 ->map(fn ($conv) => [
-                    'id'           => $conv->id,
+                    'id' => $conv->id,
                     'listing_name' => $conv->chat?->listing?->name ?? 'N/A',
                     'listing_slug' => $conv->chat?->listing?->slug ?? '',
-                    'client_name'  => $conv->chat?->user?->name ?? 'N/A',
+                    'client_name' => $conv->chat?->user?->name ?? 'N/A',
                     'client_email' => $conv->chat?->user?->email ?? '',
-                    'status'       => $conv->status,
-                    'created_at'   => $conv->created_at?->toDateTimeString(),
+                    'status' => $conv->status,
+                    'created_at' => $conv->created_at?->toDateTimeString(),
                 ])
             : collect();
 
@@ -497,10 +498,10 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 ->orderByDesc('logged_in_at')
                 ->limit(20)
                 ->get()
-                ->map(fn($log) => [
-                    'id'          => $log->id,
-                    'ip_address'  => $log->ip_address,
-                    'user_agent'  => $log->user_agent,
+                ->map(fn ($log) => [
+                    'id' => $log->id,
+                    'ip_address' => $log->ip_address,
+                    'user_agent' => $log->user_agent,
                     'logged_in_at' => $log->logged_in_at?->toDateTimeString(),
                 ])
             : [];
@@ -529,41 +530,41 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
 
         return response()->json([
             'agent' => [
-                'id'           => $agent->id,
-                'full_name'    => $fullName,
-                'avatar'       => $agent->avatar ?? $user?->avatar,
-                'address'      => $agent->address,
+                'id' => $agent->id,
+                'full_name' => $fullName,
+                'avatar' => $agent->avatar ?? $user?->avatar,
+                'address' => $agent->address,
                 'member_since' => $agent->member_since,
-                'email'        => $user?->email,
-                'mobile_no'    => $agent->mobile_no ?? $user?->mobile_no,
+                'email' => $user?->email,
+                'mobile_no' => $agent->mobile_no ?? $user?->mobile_no,
             ],
             'kpi' => [
-                'total_listings'    => $agent->listings_count,
-                'active_listings'   => $activeListings,
-                'sold_count'        => $soldCount,
-                'rented_count'      => $rentedCount,
-                'leased_count'      => $leasedCount,
-                'total_inquiries'   => $totalInquiries,
+                'total_listings' => $agent->listings_count,
+                'active_listings' => $activeListings,
+                'sold_count' => $soldCount,
+                'rented_count' => $rentedCount,
+                'leased_count' => $leasedCount,
+                'total_inquiries' => $totalInquiries,
                 'pending_inquiries' => $pendingInquiries,
             ],
-            'sold_chart'        => $soldChart,
-            'rented_chart'      => $rentedChart,
-            'leased_chart'      => $leasedChart,
-            'recent_inquiries'  => $recentInquiries,
-            'login_history'     => $loginHistory,
-            'login_count'       => $loginCount,
-            'login_chart'       => $loginChart,
-            'response_metrics'  => [
+            'sold_chart' => $soldChart,
+            'rented_chart' => $rentedChart,
+            'leased_chart' => $leasedChart,
+            'recent_inquiries' => $recentInquiries,
+            'login_history' => $loginHistory,
+            'login_count' => $loginCount,
+            'login_chart' => $loginChart,
+            'response_metrics' => [
                 'median_first_response_seconds' => $agent->median_first_response_seconds,
-                'within_1h_response_pct'        => $agent->within_1h_response_pct !== null
+                'within_1h_response_pct' => $agent->within_1h_response_pct !== null
                     ? (float) $agent->within_1h_response_pct
                     : null,
-                'unanswered_response_pct'       => $agent->unanswered_response_pct !== null
+                'unanswered_response_pct' => $agent->unanswered_response_pct !== null
                     ? (float) $agent->unanswered_response_pct
                     : null,
-                'sample_size'                   => $agent->response_sample_size,
-                'window_days'                   => $agent->response_metrics_window_days,
-                'updated_at'                    => $agent->response_metrics_updated_at?->toDateTimeString(),
+                'sample_size' => $agent->response_sample_size,
+                'window_days' => $agent->response_metrics_window_days,
+                'updated_at' => $agent->response_metrics_updated_at?->toDateTimeString(),
             ],
         ]);
     }
@@ -585,36 +586,43 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         $userId = $agent->user_id;
 
         $type = $request->query('type');
-        if (!in_array($type, ['logins', 'listings', 'transactions', 'inquiries'], true)) {
+        if (! in_array($type, ['logins', 'listings', 'transactions', 'inquiries'], true)) {
             return response()->json(['message' => 'Invalid type.'], 422);
         }
 
-        $perPage  = max(1, min((int) $request->query('per_page', 10), 50));
+        $perPage = max(1, min((int) $request->query('per_page', 10), 50));
         $dateFrom = $request->query('date_from');
-        $dateTo   = $request->query('date_to');
-        $from     = $dateFrom ? Carbon::parse($dateFrom)->startOfDay() : null;
-        $to       = $dateTo   ? Carbon::parse($dateTo)->endOfDay()     : null;
+        $dateTo = $request->query('date_to');
+        $from = $dateFrom ? Carbon::parse($dateFrom)->startOfDay() : null;
+        $to = $dateTo ? Carbon::parse($dateTo)->endOfDay() : null;
 
         if ($type === 'logins') {
-            if (!$userId) return response()->json(['data' => [], 'meta' => ['total' => 0]]);
+            if (! $userId) {
+                return response()->json(['data' => [], 'meta' => ['total' => 0]]);
+            }
             $q = LoginLog::where('user_id', $userId)->orderByDesc('logged_in_at');
-            if ($from) $q->where('logged_in_at', '>=', $from);
-            if ($to)   $q->where('logged_in_at', '<=', $to);
+            if ($from) {
+                $q->where('logged_in_at', '>=', $from);
+            }
+            if ($to) {
+                $q->where('logged_in_at', '<=', $to);
+            }
             $page = $q->paginate($perPage);
+
             return response()->json([
                 'data' => $page->getCollection()->map(fn ($l) => [
-                    'id'           => $l->id,
+                    'id' => $l->id,
                     'logged_in_at' => $l->logged_in_at?->toDateTimeString(),
-                    'ip_address'   => $l->ip_address,
-                    'user_agent'   => $l->user_agent,
+                    'ip_address' => $l->ip_address,
+                    'user_agent' => $l->user_agent,
                 ]),
                 'meta' => [
                     'current_page' => $page->currentPage(),
-                    'last_page'    => $page->lastPage(),
-                    'per_page'     => $page->perPage(),
-                    'total'        => $page->total(),
-                    'from'         => $page->firstItem(),
-                    'to'           => $page->lastItem(),
+                    'last_page' => $page->lastPage(),
+                    'per_page' => $page->perPage(),
+                    'total' => $page->total(),
+                    'from' => $page->firstItem(),
+                    'to' => $page->lastItem(),
                 ],
             ]);
         }
@@ -623,28 +631,33 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             $q = $agent->listings()
                 ->with(['property:id,address,status,status_change_date', 'category:id,name'])
                 ->orderByDesc('created_at');
-            if ($from) $q->where('listings.created_at', '>=', $from);
-            if ($to)   $q->where('listings.created_at', '<=', $to);
+            if ($from) {
+                $q->where('listings.created_at', '>=', $from);
+            }
+            if ($to) {
+                $q->where('listings.created_at', '<=', $to);
+            }
             $page = $q->paginate($perPage);
+
             return response()->json([
                 'data' => $page->getCollection()->map(fn ($l) => [
-                    'id'         => $l->id,
-                    'name'       => $l->name,
-                    'code'       => $l->code,
-                    'slug'       => $l->slug,
+                    'id' => $l->id,
+                    'name' => $l->name,
+                    'code' => $l->code,
+                    'slug' => $l->slug,
                     'visibility' => $l->visibility,
                     'created_at' => $l->created_at?->toDateTimeString(),
-                    'category'   => $l->category?->name,
-                    'address'    => $l->property?->address,
-                    'status'     => $l->property?->status,
+                    'category' => $l->category?->name,
+                    'address' => $l->property?->address,
+                    'status' => $l->property?->status,
                 ]),
                 'meta' => [
                     'current_page' => $page->currentPage(),
-                    'last_page'    => $page->lastPage(),
-                    'per_page'     => $page->perPage(),
-                    'total'        => $page->total(),
-                    'from'         => $page->firstItem(),
-                    'to'           => $page->lastItem(),
+                    'last_page' => $page->lastPage(),
+                    'per_page' => $page->perPage(),
+                    'total' => $page->total(),
+                    'from' => $page->firstItem(),
+                    'to' => $page->lastItem(),
                 ],
             ]);
         }
@@ -653,36 +666,43 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             $q = $agent->listings()
                 ->whereHas('property', function ($pq) use ($from, $to) {
                     $pq->whereIn('status', ['sold', 'rented', 'leased']);
-                    if ($from) $pq->where('status_change_date', '>=', $from);
-                    if ($to)   $pq->where('status_change_date', '<=', $to);
+                    if ($from) {
+                        $pq->where('status_change_date', '>=', $from);
+                    }
+                    if ($to) {
+                        $pq->where('status_change_date', '<=', $to);
+                    }
                 })
                 ->with(['property:id,address,status,status_change_date', 'category:id,name']);
             $page = $q->paginate($perPage);
+
             return response()->json([
                 'data' => $page->getCollection()->map(fn ($l) => [
-                    'id'                  => $l->id,
-                    'name'                => $l->name,
-                    'code'                => $l->code,
-                    'slug'                => $l->slug,
-                    'category'            => $l->category?->name,
-                    'address'             => $l->property?->address,
-                    'status'              => $l->property?->status,
-                    'status_change_date'  => $l->property?->status_change_date?->toDateTimeString(),
-                    'created_at'          => $l->created_at?->toDateTimeString(),
+                    'id' => $l->id,
+                    'name' => $l->name,
+                    'code' => $l->code,
+                    'slug' => $l->slug,
+                    'category' => $l->category?->name,
+                    'address' => $l->property?->address,
+                    'status' => $l->property?->status,
+                    'status_change_date' => $l->property?->status_change_date?->toDateTimeString(),
+                    'created_at' => $l->created_at?->toDateTimeString(),
                 ]),
                 'meta' => [
                     'current_page' => $page->currentPage(),
-                    'last_page'    => $page->lastPage(),
-                    'per_page'     => $page->perPage(),
-                    'total'        => $page->total(),
-                    'from'         => $page->firstItem(),
-                    'to'           => $page->lastItem(),
+                    'last_page' => $page->lastPage(),
+                    'per_page' => $page->perPage(),
+                    'total' => $page->total(),
+                    'from' => $page->firstItem(),
+                    'to' => $page->lastItem(),
                 ],
             ]);
         }
 
         // inquiries
-        if (!$userId) return response()->json(['data' => [], 'meta' => ['total' => 0]]);
+        if (! $userId) {
+            return response()->json(['data' => [], 'meta' => ['total' => 0]]);
+        }
         $q = Conversation::query()
             ->where('agent_user_id', $userId)
             ->with([
@@ -691,29 +711,34 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 'chat.listing:id,name,slug',
             ])
             ->orderByDesc('created_at');
-        if ($from) $q->where('conversations.created_at', '>=', $from);
-        if ($to)   $q->where('conversations.created_at', '<=', $to);
+        if ($from) {
+            $q->where('conversations.created_at', '>=', $from);
+        }
+        if ($to) {
+            $q->where('conversations.created_at', '<=', $to);
+        }
         $page = $q->paginate($perPage);
+
         return response()->json([
             'data' => $page->getCollection()->map(fn ($conv) => [
-                'id'           => $conv->id,
-                'chat_id'      => $conv->chat?->id,
-                'status'       => $conv->status,
-                'created_at'   => $conv->created_at?->toDateTimeString(),
-                'client_name'  => $conv->chat?->user?->name,
+                'id' => $conv->id,
+                'chat_id' => $conv->chat?->id,
+                'status' => $conv->status,
+                'created_at' => $conv->created_at?->toDateTimeString(),
+                'client_name' => $conv->chat?->user?->name,
                 'client_email' => $conv->chat?->user?->email,
-                'client_avatar'=> $conv->chat?->user?->avatar,
+                'client_avatar' => $conv->chat?->user?->avatar,
                 'listing_name' => $conv->chat?->listing?->name,
                 'listing_slug' => $conv->chat?->listing?->slug,
-                'chat_type'    => $conv->chat?->type,
+                'chat_type' => $conv->chat?->type,
             ]),
             'meta' => [
                 'current_page' => $page->currentPage(),
-                'last_page'    => $page->lastPage(),
-                'per_page'     => $page->perPage(),
-                'total'        => $page->total(),
-                'from'         => $page->firstItem(),
-                'to'           => $page->lastItem(),
+                'last_page' => $page->lastPage(),
+                'per_page' => $page->perPage(),
+                'total' => $page->total(),
+                'from' => $page->firstItem(),
+                'to' => $page->lastItem(),
             ],
         ]);
     }
@@ -721,7 +746,20 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function show(Request $request, $id)
     {
         $agent = Agent::with('user')
+            // select() REPLACES the column list, so it must come BEFORE
+            // withCount() — the other way round wipes the listings_count
+            // subselect and the payload reports 0 active listings.
+            ->select('agents.*')
             ->withCount(['listings' => fn ($q) => $q->where('visibility', 'public')])
+            // Same flat COUNT subqueries as index() — without them the single
+            // agent payload reports sold/inquiry counts as 0 (AgentResource's
+            // `?? 0`), which the public agent-website stats read as real data.
+            ->addSelect([
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'sold') as sold_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
+                DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
+                DB::raw('(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id) as total_inquiries_count'),
+            ])
             ->findOrFail($id);
         $this->guardSecretaryRegion($request, $agent);
 
@@ -772,7 +810,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
 
         if ($subtypes = $request->query('subtypes')) {
             $ids = array_filter(array_map('intval', explode(',', (string) $subtypes)));
-            if (!empty($ids)) {
+            if (! empty($ids)) {
                 $listingsQuery->whereHas(
                     'property.propertyAttribute.subtype',
                     fn ($q) => $q->whereIn('id', $ids),
@@ -825,7 +863,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             ->whereHas('user', fn ($q) => $q->whereRaw('LOWER(email) = ?', [strtolower($email)]))
             ->first();
 
-        if (!$agent) {
+        if (! $agent) {
             return response()->json(['message' => 'Agent not found.'], 404);
         }
 
@@ -857,13 +895,13 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
 
     public function profile()
     {
-        /** @var \App\Models\User $user */
+        /** @var User $user */
         $user = Auth::user();
         $agent = Agent::where('user_id', $user->id)
             ->with('user.role')
             ->first();
 
-        if (!$agent) {
+        if (! $agent) {
             return new UserResource($user->load('role'));
         }
 
@@ -873,41 +911,41 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'first_name'        => 'required|string|max:255',
-            'middle_name'       => 'nullable|string|max:255',
-            'last_name'         => 'required|string|max:255',
-            'mobile_no'         => 'required|string|max:20',
-            'whats_app_no'      => 'nullable|string|max:20',
-            'address'           => 'nullable|string|max:500',
-            'socials'           => 'nullable|array',
-            'socials.facebook'  => 'nullable|string|max:255',
+            'first_name' => 'required|string|max:255',
+            'middle_name' => 'nullable|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'mobile_no' => 'required|string|max:20',
+            'whats_app_no' => 'nullable|string|max:20',
+            'address' => 'nullable|string|max:500',
+            'socials' => 'nullable|array',
+            'socials.facebook' => 'nullable|string|max:255',
             'socials.instagram' => 'nullable|string|max:255',
-            'socials.twitter'   => 'nullable|string|max:255',
-            'socials.linkedin'  => 'nullable|string|max:255',
-            'socials.youtube'   => 'nullable|string|max:255',
-            'socials.tiktok'    => 'nullable|string|max:255',
-            'bio'               => 'nullable|string',
-            'avatar'            => 'nullable|string|url',
-            'geo_location'      => 'nullable|array:lat,lng',
-            'birthdate'         => 'nullable|date',
-            'gender'            => 'nullable|string|in:male,female',
-            'user_id'           => 'nullable|exists:users,id', // ← admin can pass a target user
+            'socials.twitter' => 'nullable|string|max:255',
+            'socials.linkedin' => 'nullable|string|max:255',
+            'socials.youtube' => 'nullable|string|max:255',
+            'socials.tiktok' => 'nullable|string|max:255',
+            'bio' => 'nullable|string',
+            'avatar' => 'nullable|string|url',
+            'geo_location' => 'nullable|array:lat,lng',
+            'birthdate' => 'nullable|date',
+            'gender' => 'nullable|string|in:male,female',
+            'user_id' => 'nullable|exists:users,id', // ← admin can pass a target user
         ]);
 
-        $user      = Auth::user();
-        $role      = $user->role?->name;
-        $targetId  = $user->id; // default to self
+        $user = Auth::user();
+        $role = $user->role?->name;
+        $targetId = $user->id; // default to self
 
         if ($role === 'admin') {
             // Admin can pass user_id to update any agent, or defaults to themselves
-            if (!empty($validated['user_id'])) {
+            if (! empty($validated['user_id'])) {
                 $targetId = $validated['user_id'];
 
                 // Make sure target user is actually an agent (or admin)
-                $targetUser = \App\Models\User::with('role')->findOrFail($targetId);
+                $targetUser = User::with('role')->findOrFail($targetId);
                 $targetRole = $targetUser->role?->name;
 
-                if (!in_array($targetRole, ['agent', 'admin'])) {
+                if (! in_array($targetRole, ['agent', 'admin'])) {
                     abort(403, 'Target user must be an agent or admin.');
                 }
             }
@@ -930,7 +968,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
             $validated
         );
 
-       if (array_key_exists('avatar', $validated) && $agent->user) {
+        if (array_key_exists('avatar', $validated) && $agent->user) {
             $avatarUrl = is_array($agent->avatar) ? ($agent->avatar[0] ?? null) : $agent->avatar;
             $agent->user->update(['avatar' => $avatarUrl]);
         }
@@ -941,7 +979,9 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function updateStatus(Request $request, $id)
     {
         $user = $request->user();
-        if ($user->role?->name !== 'admin') abort(403);
+        if ($user->role?->name !== 'admin') {
+            abort(403);
+        }
 
         $agent = Agent::withTrashed()->findOrFail($id);
         $validated = $request->validate([
@@ -951,9 +991,9 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
 
         if ($validated['status'] === 'deactivated') {
             $dormantDays = User::DORMANT_DAYS;
-            $threshold   = Carbon::now()->subDays($dormantDays);
+            $threshold = Carbon::now()->subDays($dormantDays);
 
-            $hasUser   = User::where('id', $agent->user_id)->exists();
+            $hasUser = User::where('id', $agent->user_id)->exists();
             $isDormant = User::where('id', $agent->user_id)->dormantSince($threshold)->exists();
 
             if ($hasUser && ! $isDormant) {
@@ -979,7 +1019,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         // real change. Uses raw visibility (NOT publiclyListed(), which would now
         // exclude a blocked agent's listings entirely).
         if ($old !== $validated['status'] && config('services.indexnow.enabled')) {
-            $svc  = app(IndexNowService::class);
+            $svc = app(IndexNowService::class);
             $urls = $agent->listings()
                 ->where('visibility', 'public')
                 ->pluck('slug')
@@ -998,7 +1038,9 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function destroy(Request $request, $id)
     {
         $user = $request->user();
-        if ($user->role?->name !== 'admin') abort(403);
+        if ($user->role?->name !== 'admin') {
+            abort(403);
+        }
 
         $agent = Agent::findOrFail($id);
         $agent->delete();
@@ -1009,14 +1051,15 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function restore(Request $request, $id)
     {
         $user = $request->user();
-        if ($user->role?->name !== 'admin') abort(403);
+        if ($user->role?->name !== 'admin') {
+            abort(403);
+        }
 
         $agent = Agent::onlyTrashed()->findOrFail($id);
         $agent->restore();
 
         return response()->json(['data' => new AgentResource($agent)]);
     }
-
 
     public function deletedAgents(Request $request)
     {
@@ -1026,7 +1069,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         // active Agents list. This route is auth:sanctum + dashboard-only (no
         // public counterpart), so no `managed` opt-in is needed here.
         $isSecretary = $user->isSecretary();
-        if ($user->role?->name !== 'admin' && !$isSecretary) {
+        if ($user->role?->name !== 'admin' && ! $isSecretary) {
             abort(403);
         }
 
@@ -1035,7 +1078,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         $query = Agent::onlyTrashed()
             ->select([
                 'agents.*',
-                DB::raw("(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count"),
+                DB::raw('(SELECT COUNT(*) FROM listings WHERE listings.agent_id = agents.id) as listings_count'),
             ])
             ->with(['user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at')])
             ->whereHas('user.role', function ($q) use ($request) {
@@ -1052,26 +1095,28 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         }
 
         if ($search = $request->query('search')) {
-            $term = '%' . $search . '%';
+            $term = '%'.$search.'%';
             $query->where(function ($q) use ($term) {
                 $q->where('first_name', 'LIKE', $term)
-                  ->orWhere('last_name', 'LIKE', $term)
-                  ->orWhere('mobile_no', 'LIKE', $term)
-                  ->orWhereHas('user', function ($uq) use ($term) {
-                      $uq->where('email', 'LIKE', $term)->orWhere('name', 'LIKE', $term);
-                  });
+                    ->orWhere('last_name', 'LIKE', $term)
+                    ->orWhere('mobile_no', 'LIKE', $term)
+                    ->orWhereHas('user', function ($uq) use ($term) {
+                        $uq->where('email', 'LIKE', $term)->orWhere('name', 'LIKE', $term);
+                    });
             });
         }
 
-        $sortBy  = $request->query('sort_by');
+        $sortBy = $request->query('sort_by');
         $sortDir = strtolower($request->query('sort_dir', 'asc'));
-        if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'asc';
+        if (! in_array($sortDir, ['asc', 'desc'])) {
+            $sortDir = 'asc';
+        }
 
         match ($sortBy) {
-            'full_name'      => $query->orderByRaw("CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) $sortDir"),
-            'deleted_at'     => $query->orderBy('deleted_at', $sortDir),
+            'full_name' => $query->orderByRaw("CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) $sortDir"),
+            'deleted_at' => $query->orderBy('deleted_at', $sortDir),
             'listings_count' => $query->orderBy('listings_count', $sortDir),
-            default          => $query->orderByDesc('deleted_at'),
+            default => $query->orderByDesc('deleted_at'),
         };
 
         return new AgentResourceCollection(
@@ -1091,13 +1136,15 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
     public function sendCertificate(Request $request, $id)
     {
         $user = $request->user();
-        if ($user->role?->name !== 'admin') abort(403);
+        if ($user->role?->name !== 'admin') {
+            abort(403);
+        }
 
         $validated = $request->validate([
             'certificate' => 'required|file|mimes:png|max:8192', // ≤ 8 MB PNG
-            'month'       => 'required|string|max:20',
-            'year'        => 'required|integer|min:2000|max:2100',
-            'agent_name'  => 'nullable|string|max:255',
+            'month' => 'required|string|max:20',
+            'year' => 'required|integer|min:2000|max:2100',
+            'agent_name' => 'nullable|string|max:255',
         ]);
 
         $agent = Agent::with('user')->findOrFail($id);
@@ -1114,6 +1161,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
                 'agent_id' => $agent->id,
                 'has_user' => (bool) $agentUser,
             ]);
+
             // 200 (not an error) — the request was valid, there was just no
             // address to send to. The UI reads email_sent=false and says so.
             return response()->json(['email_sent' => false]);
@@ -1139,7 +1187,7 @@ $buildMonthlyChart = function (string $status) use ($agent, $twelveMonthsAgo): a
         $filename = $baseName.'.png';
         $certificateMime = 'image/png';
         try {
-            $manager = new ImageManager(new Driver());
+            $manager = new ImageManager(new Driver);
             $image = $manager->read($rawData)->scaleDown(width: 1600);
             $certificateData = (string) $image->toJpeg(90);
             $filename = $baseName.'.jpg';
