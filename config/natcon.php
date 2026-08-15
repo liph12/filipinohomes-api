@@ -96,6 +96,20 @@ return [
     | is why hydration is still needed after a sync.
     |
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Invite waves
+    |--------------------------------------------------------------------------
+    |
+    | Invites go out in sales tiers — the top band first, the rest a few days
+    | later. This is only the FALLBACK: the number actually in force is
+    | natcon_events.sales_breakpoint, editable from the admin, because the
+    | organizers pick it per convention and should not need a deploy to change
+    | who gets emailed this week.
+    |
+    */
+    'sales_breakpoint' => (float) env('NATCON_SALES_BREAKPOINT', 61000000),
+
     'qualifiers' => [
         'url'        => env('NATCON_LR_QUALIFIERS_URL', 'https://leuteriorealty.com/api/natcon-qualifiers-v2'),
         'from'       => env('NATCON_LR_QUALIFIERS_FROM', '2025-08-01'),

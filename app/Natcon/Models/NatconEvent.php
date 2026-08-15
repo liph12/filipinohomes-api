@@ -27,7 +27,7 @@ class NatconEvent extends Model implements Auditable
         'slug', 'year', 'name', 'short_name', 'starts_on', 'ends_on', 'venue',
         'hashtag', 'photo_deadline_at', 'timezone', 'update_profile_url',
         'banner_base', 'email_banner_url', 'thank_you_message',
-        'reminder_offsets', 'is_active',
+        'reminder_offsets', 'is_active', 'sales_breakpoint',
     ];
 
     protected $casts = [
@@ -37,6 +37,7 @@ class NatconEvent extends Model implements Auditable
         'photo_deadline_at' => 'datetime',
         'reminder_offsets'  => 'array',
         'is_active'         => 'boolean',
+        'sales_breakpoint'  => 'decimal:2',
     ];
 
     public function recipients()
@@ -90,6 +91,19 @@ class NatconEvent extends Model implements Auditable
         rsort($offsets);
 
         return $offsets;
+    }
+
+    /**
+     * The sales figure that divides the invite waves.
+     *
+     * The event's own value wins; config is only the fallback for an event
+     * nobody has set one on yet. Returned as a float because every comparison
+     * against total_sales is numeric — passing the decimal cast's string
+     * straight into a where() works by coercion and reads like a bug.
+     */
+    public function salesBreakpoint(): float
+    {
+        return (float) ($this->sales_breakpoint ?: config('natcon.sales_breakpoint', 61000000));
     }
 
     /** Deadline rendered in the event's own timezone, for display and date math. */

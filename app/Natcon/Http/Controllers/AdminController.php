@@ -237,6 +237,7 @@ class AdminController extends Controller
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
+            'sales_tiers'    => $this->salesTiers($request, $event, clone $base),
             'queued_to_send' => Outbox::where('natcon_event_id', $event->id)
                                     ->where('status', Outbox::STATUS_QUEUED)->count(),
             'deadline_at'    => $event->deadlineLocal()?->toIso8601String(),
@@ -254,6 +255,42 @@ class AdminController extends Controller
                 'is_active'  => (bool) $event->is_active,
             ],
         ]]);
+    }
+
+    /**
+     * Where each invite wave stands.
+     *
+     * `total` is who is in the band; `sent` is who has actually been emailed;
+     * `pending` is who pressing Send right now would email. That last one is the
+     * number an admin needs before a wave — a band of 127 that has already gone
+     * out and a band of 127 that has not look identical until you separate them.
+     *
+     * `sent` reads invited_at rather than status, so it stays honest for anyone
+     * who has since responded, been excluded, or been put through the reset
+     * tool — reset clears invited_at, and the count going back down is correct.
+     */
+    private function salesTiers(Request $request, NatconEvent $event, $base): array
+    {
+        $breakpoint = $request->filled('breakpoint')
+            ? (float) $request->input('breakpoint')
+            : $event->salesBreakpoint();
+
+        $band = fn ($apply) => [
+            'total'   => (int) $apply(clone $base)->count(),
+            'sent'    => (int) $apply(clone $base)->whereNotNull('invited_at')->count(),
+            'pending' => (int) $apply(clone $base)->where('status', Recipient::STATUS_PENDING)->count(),
+        ];
+
+        return [
+            'breakpoint' => $breakpoint,
+            // The real minimum, so the lower band can be LABELLED with it rather
+            // than hardcoding LR's current floor into the UI.
+            'floor'      => (float) ((clone $base)->min('total_sales') ?? 0),
+            'all'        => $band(fn ($q) => $q),
+            'high'       => $band(fn ($q) => $q->where('total_sales', '>=', $breakpoint)),
+            'low'        => $band(fn ($q) => $q->whereNotNull('total_sales')->where('total_sales', '<', $breakpoint)),
+            'none'       => $band(fn ($q) => $q->whereNull('total_sales')),
+        ];
     }
 
     // ── Recipients ───────────────────────────────────────────────────────────
@@ -288,6 +325,9 @@ class AdminController extends Controller
                 $query->where($filter, $request->input($filter));
             }
         }
+
+        // Same band as the send path, so the list is a truthful preview of it.
+        $this->applySalesBand($query, $request);
 
         if ($request->filled('requires_new_photo')) {
             $query->where('requires_new_photo', $request->boolean('requires_new_photo'));
@@ -998,16 +1038,67 @@ class AdminController extends Controller
     {
         $query = Recipient::where('natcon_event_id', $event->id);
 
+        // Explicit list: the deliberate escape hatch for "send to exactly these
+        // people again". It bypasses the status guard below ON PURPOSE, which is
+        // why the sales-wave UI never uses it — see the warning on that guard.
         if ($ids = $request->input('recipient_ids')) {
             return $query->whereIn('id', $ids);
         }
 
         if ($statuses = $request->input('statuses')) {
-            return $query->whereIn('status', $statuses);
+            $query->whereIn('status', $statuses);
+        } else {
+            /**
+             * ⚠️ This is what makes wave 2 safe.
+             *
+             * An invite targets `pending` only. DrainOutbox::applySentState()
+             * moves a recipient to `invited` the moment their invite goes out, so
+             * everyone in an earlier wave drops out of every later one by itself
+             * — "send the rest a few days later" is genuinely just pressing Send
+             * again.
+             *
+             * The sales band below is applied AFTER this, never instead of it.
+             * An earlier draft of the wave feature would have passed explicit ids
+             * from the table selection, which returns above without any status
+             * filter and would have re-invited the entire first wave.
+             */
+            $kind === Outbox::KIND_REMINDER
+                ? $query->whereIn('status', Recipient::REMINDABLE)->whereNull('responded_at')
+                : $query->where('status', Recipient::STATUS_PENDING);
         }
 
-        return $kind === Outbox::KIND_REMINDER
-            ? $query->whereIn('status', Recipient::REMINDABLE)->whereNull('responded_at')
-            : $query->where('status', Recipient::STATUS_PENDING);
+        return $this->applySalesBand($query, $request);
+    }
+
+    /**
+     * Narrow a recipient query to one sales wave.
+     *
+     * Shared by the send path and the admin list so that what an admin is
+     * LOOKING at and who a send would actually email cannot drift apart.
+     *
+     * The upper bound is exclusive: an awardee sitting exactly on the breakpoint
+     * belongs to the upper band and appears in one wave, never in both or
+     * neither.
+     *
+     * `no_sales` is its own case rather than "below the floor". Recipients added
+     * by hand have no sales figure at all, and a `>=` filter drops them silently
+     * — which is how a test address disappears from every view and nobody can
+     * work out where it went.
+     */
+    private function applySalesBand($query, Request $request)
+    {
+        if ($request->boolean('no_sales')) {
+            return $query->whereNull('total_sales');
+        }
+
+        if ($request->filled('min_sales')) {
+            $query->where('total_sales', '>=', (float) $request->input('min_sales'));
+        }
+
+        if ($request->filled('max_sales')) {
+            $query->where('total_sales', '<', (float) $request->input('max_sales'));
+        }
+
+        return $query;
     }
 }
