@@ -68,6 +68,7 @@ use App\Http\Controllers\{
 use App\Natcon\Http\Controllers\AdminController as NatconAdminController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
+use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -208,6 +209,15 @@ Route::middleware('strip.tags')->group(function(){
             // the body is the whole set, not a delta.
             Route::post('/natcon/photos/keep', [NatconPublicController::class, 'keepPhotos'])
                 ->middleware('throttle:20,1');
+
+            // ── Public landing page content ──────────────────────────────────
+            // Read-only, no token in the URL, safe to cache at the edge. Serves
+            // an INDEXABLE page, so nothing awardee-specific is exposed here.
+            // `recaps` is declared first so the literal segment is never bound
+            // as {year}.
+            Route::get('/natcon/recaps', [NatconLandingController::class, 'recaps']);
+            Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
+                ->whereNumber('year');
             Route::post('/natcon/form', [NatconPublicController::class, 'form'])
                 ->middleware('throttle:20,1');
             // Deliberately a useless oracle — same body either way. Tight limit
@@ -477,6 +487,22 @@ Route::middleware('strip.tags')->group(function(){
                 Route::post('/admin/natcon/form-fields/reorder', [NatconFormFieldController::class, 'reorder']);
                 Route::patch('/admin/natcon/form-fields/{field}', [NatconFormFieldController::class, 'update']);
                 Route::delete('/admin/natcon/form-fields/{field}', [NatconFormFieldController::class, 'destroy']);
+
+                // ── Landing-page content ─────────────────────────────────────
+                // Editors as well as admins: this is marketing copy and a list
+                // of video links, not the send machinery. Kept inside the same
+                // auth group and re-gated on the line below.
+                Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
+                    Route::get('/admin/natcon/announcements', [NatconLandingController::class, 'adminAnnouncements']);
+                    Route::post('/admin/natcon/announcements', [NatconLandingController::class, 'storeAnnouncement']);
+                    Route::patch('/admin/natcon/announcements/{announcement}', [NatconLandingController::class, 'updateAnnouncement']);
+                    Route::delete('/admin/natcon/announcements/{announcement}', [NatconLandingController::class, 'destroyAnnouncement']);
+
+                    Route::get('/admin/natcon/recaps', [NatconLandingController::class, 'adminRecaps']);
+                    Route::post('/admin/natcon/recaps', [NatconLandingController::class, 'storeRecap']);
+                    Route::patch('/admin/natcon/recaps/{recap}', [NatconLandingController::class, 'updateRecap']);
+                    Route::delete('/admin/natcon/recaps/{recap}', [NatconLandingController::class, 'destroyRecap']);
+                });
 
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);
