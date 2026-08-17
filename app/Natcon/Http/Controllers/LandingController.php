@@ -81,7 +81,7 @@ class LandingController extends Controller
 
         $row = new NatconAnnouncement($data + ['natcon_event_id' => $event->id]);
         $row->created_by      = $request->user()?->id;
-        $row->published_at    = $this->publishedAt($data, null);
+        $row->published_at    = $this->publishedAt($data, null, $event->timezone);
         $row->auditSource     = 'admin_natcon_announcement';
         $row->save();
 
@@ -93,7 +93,7 @@ class LandingController extends Controller
         $data = $this->validateAnnouncement($request, partial: true);
 
         $announcement->fill($data);
-        $announcement->published_at = $this->publishedAt($data, $announcement);
+        $announcement->published_at = $this->publishedAt($data, $announcement, $announcement->event?->timezone);
         $announcement->auditSource  = 'admin_natcon_announcement';
         $announcement->save();
 
@@ -187,11 +187,20 @@ class LandingController extends Controller
      * Stamped the first time it is published and then left alone, so editing a
      * typo three days later does not shove the post back to the top of the feed.
      * An explicit value always wins, which is how a post gets scheduled.
+     *
+     * ⚠️ $tz is not optional in spirit. The admin form sends a WALL CLOCK
+     *    ("2026-08-20T09:00") because that is what <input type="datetime-local">
+     *    produces, and config('app.timezone') is UTC — so a bare Carbon::parse()
+     *    reads 9am Manila as 9am UTC and the post appears eight hours late. That
+     *    is the same drift that used to walk the photo deadline backwards on
+     *    every save; see AdminController::update().
      */
-    private function publishedAt(array $data, ?NatconAnnouncement $existing): ?Carbon
+    private function publishedAt(array $data, ?NatconAnnouncement $existing, ?string $tz = null): ?Carbon
     {
         if (array_key_exists('published_at', $data)) {
-            return $data['published_at'] ? Carbon::parse($data['published_at']) : null;
+            return $data['published_at']
+                ? Carbon::parse($data['published_at'], $tz ?: 'Asia/Manila')->utc()
+                : null;
         }
 
         if ($existing?->published_at) {
