@@ -10,7 +10,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use OwenIt\Auditing\Contracts\Auditable;
 
@@ -118,9 +120,9 @@ class Listing extends Model implements Auditable
             if ($model->isDirty('slug')) {
                 $oldSlug = $model->getOriginal('slug');
                 if (! empty($oldSlug) && $oldSlug !== $model->slug) {
-                    \Illuminate\Support\Facades\DB::table('listing_slug_histories')->upsert(
+                    DB::table('listing_slug_histories')->upsert(
                         [[
-                            'slug'       => $oldSlug,
+                            'slug' => $oldSlug,
                             'listing_id' => $model->id,
                             'created_at' => now(),
                             'updated_at' => now(),
@@ -131,7 +133,7 @@ class Listing extends Model implements Auditable
                     // If the listing reclaims a slug that lives in history
                     // (e.g. renamed back), remove the shadowed row so the
                     // direct lookup is the single source of truth again.
-                    \Illuminate\Support\Facades\DB::table('listing_slug_histories')
+                    DB::table('listing_slug_histories')
                         ->where('slug', $model->slug)
                         ->delete();
                 }
@@ -145,7 +147,7 @@ class Listing extends Model implements Auditable
         static::saving(function ($model) {
             if ($model->is_featured
                 && ! empty($model->featured_until)
-                && \Illuminate\Support\Carbon::parse($model->featured_until)->isPast()) {
+                && Carbon::parse($model->featured_until)->isPast()) {
                 $model->is_featured = false;
             }
         });
@@ -154,7 +156,7 @@ class Listing extends Model implements Auditable
             try {
                 if ($model->is_featured
                     && ! empty($model->featured_until)
-                    && \Illuminate\Support\Carbon::parse($model->featured_until)->isPast()) {
+                    && Carbon::parse($model->featured_until)->isPast()) {
                     // Don't bump updated_at for a background self-correction.
                     $originalTimestamps = $model->timestamps;
                     $model->timestamps = false;
@@ -280,6 +282,14 @@ class Listing extends Model implements Auditable
 
     public function scopeFilter(Builder $query, Request $request): Builder
     {
+        // ── Agent scope: the agent-website /website/{slug}/properties page
+        // filters the public browse grid down to one agent's inventory. Only
+        // ever narrows (callers already apply publiclyListed), so exposing it
+        // publicly leaks nothing the /agents/{id} endpoint doesn't.
+        if (($agentId = (int) $request->input('agent_id')) > 0) {
+            $query->where('listings.agent_id', $agentId);
+        }
+
         $brgy = trim($request->input('barangay') ?? '');
         $city = trim($request->input('city') ?? '');
         $prov = trim($request->input('province') ?? '');
