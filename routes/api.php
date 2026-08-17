@@ -190,6 +190,18 @@ Route::middleware('strip.tags')->group(function(){
         // /natcon landing page fetches this during SSR.
         Route::get('/natcon/event', [NatconPublicController::class, 'event']);
 
+        // The rest of the landing page's content, outside the token group for the
+        // SAME reason /natcon/event is: the page is server-rendered and
+        // indexable. SSR carries no guest token and neither does Googlebot, so
+        // putting these behind verify.guest.token would 401 the only two
+        // consumers they exist for.
+        //
+        // `recaps` is declared before `{year}` so the literal segment is never
+        // bound as a year.
+        Route::get('/natcon/recaps', [NatconLandingController::class, 'recaps']);
+        Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
+            ->whereNumber('year');
+
         // Everything token-bound goes behind verify.guest.token. That is a bot
         // speed bump, not a security control — POST /api/guest-token is itself
         // public — but it's free, since the frontend axios instance attaches the
@@ -210,14 +222,6 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/natcon/photos/keep', [NatconPublicController::class, 'keepPhotos'])
                 ->middleware('throttle:20,1');
 
-            // ── Public landing page content ──────────────────────────────────
-            // Read-only, no token in the URL, safe to cache at the edge. Serves
-            // an INDEXABLE page, so nothing awardee-specific is exposed here.
-            // `recaps` is declared first so the literal segment is never bound
-            // as {year}.
-            Route::get('/natcon/recaps', [NatconLandingController::class, 'recaps']);
-            Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
-                ->whereNumber('year');
             Route::post('/natcon/form', [NatconPublicController::class, 'form'])
                 ->middleware('throttle:20,1');
             // Deliberately a useless oracle — same body either way. Tight limit
