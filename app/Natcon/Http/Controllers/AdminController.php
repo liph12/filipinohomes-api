@@ -241,6 +241,20 @@ class AdminController extends Controller
                                     ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
                                     ->count(),
             'details_pending' => (int) ($byStatus[Recipient::STATUS_DETAILS_PENDING] ?? 0),
+
+            // Every team with at least one awardee, biggest first, so the admin
+            // can pick "Red Diamonds (52)" instead of typing it into search and
+            // hoping. Counted across the whole event, NOT the current sales band:
+            // the number beside a team has to mean "how many are in this team",
+            // or the filter reads as broken the moment a wave is selected.
+            'teams' => (clone $base)
+                ->selectRaw('team, COUNT(*) AS n')
+                ->whereNotNull('team')->where('team', '!=', '')
+                ->groupBy('team')->orderByDesc('n')->orderBy('team')
+                ->get()
+                ->map(fn ($r) => ['name' => $r->team, 'count' => (int) $r->n])
+                ->values(),
+            'no_team' => (clone $base)->where(fn ($q) => $q->whereNull('team')->orWhere('team', ''))->count(),
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
@@ -345,6 +359,17 @@ class AdminController extends Controller
         // with PhotoService::syncResponseState() if the requirement changes.
         if ($request->input('photo_progress') === 'partial') {
             $query->whereNull('responded_at')->whereHas('activePhotos');
+        }
+
+        // Two views the summary chips filter by. Both are timestamps rather than
+        // statuses — "opened it" and "finished" cut across every status — so
+        // neither could be expressed through the status filter above.
+        if ($request->boolean('opened')) {
+            $query->whereNotNull('first_opened_at');
+        }
+
+        if ($request->boolean('done')) {
+            $query->whereNotNull('responded_at');
         }
 
         if ($request->filled('has_photo')) {
