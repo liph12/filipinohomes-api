@@ -184,7 +184,7 @@ return [
     | The banner must be an absolute, publicly reachable, stable URL: Gmail
     | proxies and caches remote images, so a path that moves breaks every message
     | already delivered. Point it at a pre-resized copy (<=80KB) rather than the
-    | 3218px original — the source banner is 413KB and mail clients don't resize
+    | 3500px original — the source banner is ~4MB and mail clients don't resize
     | before downloading.
     |
     */
