@@ -98,6 +98,12 @@ class AgentController extends Controller
             $query->where('agents.status', 'active');
         }
 
+        // Management quick filter: exact agent status. Used by the Agents
+        // Management dropdown (Default / Fastest reply / … / status picks).
+        if (($status = $request->query('status')) && in_array($status, ['active', 'inactive', 'resigned', 'deactivated'], true)) {
+            $query->where('agents.status', $status);
+        }
+
         // Secretary (FH role 5): in the management DASHBOARD the agents list is
         // region-scoped to their office region. This same endpoint also powers
         // the PUBLIC agents directory, which must show everyone — even when a
