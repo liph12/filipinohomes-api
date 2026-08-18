@@ -157,12 +157,7 @@ class GoogleAuthController extends Controller
         // agent to "deactivated".
         $user->deactivateAgentIfDormant();
 
-        LoginLog::create([
-            'user_id'      => $user->id,
-            'ip_address'   => $request->ip(),
-            'user_agent'   => $request->userAgent(),
-            'logged_in_at' => now(),
-        ]);
+        LoginLog::record($user->id, $request->ip(), $request->userAgent());
 
         // Surface in /admin/activity-logs alongside the LoginLog row.
         app(\App\Services\AuditAuthService::class)

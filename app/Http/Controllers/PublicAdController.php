@@ -13,6 +13,32 @@ use Illuminate\Support\Facades\Cache;
 
 class PublicAdController extends Controller
 {
+    /**
+     * Stand-in for a location we could not resolve.
+     *
+     * ─── Why a placeholder and not NULL, and not the column default ──────────
+     *
+     * getGeoData() used to return null for all three columns, and ad_analytics
+     * declares country/state/city NOT NULL. A column default only applies when
+     * the column is OMITTED from the INSERT — passing an explicit NULL is still
+     * an explicit NULL — so every untagged impression died on an integrity
+     * violation. It ran at roughly 700–1,000 failures a day and every one of
+     * them was an ad view that never reached the analytics table, which is why
+     * the ads figures read low.
+     *
+     * NULL is not the fix either, even with the columns made nullable. These
+     * values are firstOrCreate() lookup keys, and in SQL `country = NULL` is
+     * never true — so every untagged impression would MISS the existing row and
+     * insert another one, growing the table without bound and splitting one
+     * ad's numbers across thousands of duplicates.
+     *
+     * The column defaults ('PH' / 'Manila' / 'Manila City') are worse still:
+     * they would file untraceable traffic as Manila and quietly invent a
+     * geographic story the ads team would then plan against. "Unknown" is the
+     * honest answer, it groups, and it matches itself.
+     */
+    private const GEO_UNKNOWN = 'Unknown';
+
     public function __construct(
         private AdServingService $adServingService
     ) {}
@@ -182,24 +208,28 @@ class PublicAdController extends Controller
 
         // The frontend doesn't always send user_info (server-side
         // renders, guest tokens, OG-image bots, ad-blockers that
-        // strip the payload). Bail with nulls instead of indexing
-        // into null — these endpoints are fire-and-forget trackers
-        // and shouldn't 500 just because we can't geo-tag the row.
+        // strip the payload). Bail with the placeholder instead of
+        // indexing into null — these endpoints are fire-and-forget
+        // trackers and shouldn't 500 just because we can't geo-tag
+        // the row.
         if (! is_array($userInfo) || empty($userInfo['ip'])) {
             return [
-                'country' => null,
-                'state' => null,
-                'city' => null,
+                'country' => self::GEO_UNKNOWN,
+                'state' => self::GEO_UNKNOWN,
+                'city' => self::GEO_UNKNOWN,
             ];
         }
 
         $cacheKey = "geo_ip_{$userInfo['ip']}";
 
         return Cache::remember($cacheKey, now()->addHours(24), function () use ($userInfo) {
+            // ?? then ?: — the key can be absent, and it can also be present
+            // and empty, which a geo lookup returns more often than it returns
+            // nothing at all.
             return [
-                'country' => $userInfo['country'] ?? null,
-                'state' => $userInfo['region'] ?? null,
-                'city' => $userInfo['city'] ?? null,
+                'country' => ($userInfo['country'] ?? null) ?: self::GEO_UNKNOWN,
+                'state' => ($userInfo['region'] ?? null) ?: self::GEO_UNKNOWN,
+                'city' => ($userInfo['city'] ?? null) ?: self::GEO_UNKNOWN,
             ];
         });
     }

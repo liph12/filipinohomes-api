@@ -738,12 +738,7 @@ class UserController extends Controller
         // agent to "deactivated".
         $verified->deactivateAgentIfDormant();
 
-        LoginLog::create([
-            'user_id'      => $verified->id,
-            'ip_address'   => $request->ip(),
-            'user_agent'   => $request->userAgent(),
-            'logged_in_at' => now(),
-        ]);
+        LoginLog::record($verified->id, $request->ip(), $request->userAgent());
 
         app(AuditAuthService::class)->recordLogin($verified, 'otp', $request);
 
@@ -860,12 +855,7 @@ class UserController extends Controller
 
         $user->deactivateAgentIfDormant();
 
-        LoginLog::create([
-            'user_id'      => $user->id,
-            'ip_address'   => $request->ip(),
-            'user_agent'   => $request->userAgent(),
-            'logged_in_at' => now(),
-        ]);
+        LoginLog::record($user->id, $request->ip(), $request->userAgent());
 
         app(AuditAuthService::class)->recordLogin($user, 'dev', $request);
 

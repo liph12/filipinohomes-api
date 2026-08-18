@@ -41,12 +41,7 @@ class LoginUserService
         $label = $deviceName ?: DeviceLabel::fromUserAgent($userAgent);
         $token = TokenIssuer::issue($user, $label, $ipAddress);
 
-        LoginLog::create([
-            'user_id'     => $user->id,
-            'ip_address'  => $ipAddress,
-            'user_agent'  => $userAgent,
-            'logged_in_at' => now(),
-        ]);
+        LoginLog::record($user->id, $ipAddress, $userAgent);
 
         return [
             'user'  => $user,
