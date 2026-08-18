@@ -152,7 +152,11 @@ class RecipientResource extends JsonResource
                     'sent_at'   => $this->iso($s->sent_at, $tz),
                     'error'     => $s->error,
                 ])->all(),
-            'form_answers' => $r->formSubmission()->first()?->answerMap() ?? (object) [],
+            // An ordered list of {key,label,value}, not the raw answers map: the
+            // drawer was deriving labels from the field slug and printing
+            // "natcon polo shirt size". The label is frozen in the snapshot at
+            // submit time, so it survives the question later being renamed.
+            'form_answers' => $r->formSubmission()->first()?->labelledRows() ?? [],
         ];
     }
 

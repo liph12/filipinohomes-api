@@ -77,4 +77,60 @@ class FormSubmission extends Model implements Auditable
 
         return $out;
     }
+
+    /**
+     * Answers as an ordered list of {key, label, value}, ready to render.
+     *
+     * The admin drawer used to receive the raw answers map and derive its own
+     * labels with key.replace(/_/g,' '), which printed the slug —
+     * "natcon polo shirt size" — instead of the question the awardee was asked.
+     * The snapshot already carries the real label and the display value, frozen
+     * at submit time, so nothing has to be reconstructed or looked up.
+     *
+     * Falls back to the raw answers for rows written before answers_snapshot
+     * existed: a slug label beats an empty panel.
+     *
+     * @return array<int,array{key:string,label:string,value:string}>
+     */
+    public function labelledRows(): array
+    {
+        $rows = [];
+
+        foreach ((array) ($this->answers_snapshot ?? []) as $row) {
+            if (! is_array($row) || ! isset($row['key'])) {
+                continue;
+            }
+
+            $rows[] = [
+                'key'   => (string) $row['key'],
+                'label' => (string) ($row['label'] ?? $row['key']),
+                'value' => $this->stringify($row['display_value'] ?? $row['value'] ?? null),
+            ];
+        }
+
+        if ($rows === []) {
+            foreach ($this->answerMap() as $key => $value) {
+                $rows[] = [
+                    'key'   => (string) $key,
+                    'label' => ucfirst(str_replace('_', ' ', (string) $key)),
+                    'value' => $this->stringify($value),
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    /** Checkbox and image_upload answers are arrays; everything else is scalar. */
+    private function stringify($value): string
+    {
+        if (is_array($value)) {
+            return implode(', ', array_filter(array_map(
+                fn ($v) => is_scalar($v) ? (string) $v : '',
+                $value,
+            ), fn ($v) => $v !== ''));
+        }
+
+        return $value === null ? '' : (string) $value;
+    }
 }

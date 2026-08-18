@@ -845,7 +845,9 @@ class AdminController extends Controller
             $query->whereNotNull('responded_at');
         }
 
-        $rows = $query->orderBy('id')->get();
+        // with('activePhotos'): the export lists every photo an awardee sent, and
+        // resolving that per row turned one export into ~300 extra queries.
+        $rows = $query->with('activePhotos')->orderBy('id')->get();
 
         // ⚠️ ALL fields, not just active ones. Building the column list from the
         //    public schema (which filters is_active) meant hiding a question
@@ -870,6 +872,12 @@ class AdminController extends Controller
                     }
                 }
 
+                // EVERY photo they sent, in submission order — the export used to
+                // carry only finalPhotoUrl(), so a set of three arrived as one
+                // link and the other two were invisible to whoever prints the
+                // materials. final_photo_url stays as "the one to use".
+                $photoUrls = $r->activePhotos->pluck('photo_url')->filter()->values()->all();
+
                 return [
                     'id'                 => $r->id,
                     'email'              => $r->email,
@@ -882,19 +890,12 @@ class AdminController extends Controller
                     'seat_number'        => $r->seat_number,
                     'final_photo_url'    => $r->finalPhotoUrl(),
                     'photo_source'       => $r->finalPhotoSource(),
+                    'photo_urls'         => $photoUrls,
+                    'photo_count'        => count($photoUrls),
                     'uploaded_photo_url' => $r->current_photo_url,
                     'retained_photo_url' => $r->retained_photo_url,
                     'lr_photo_count'     => count($r->displayPhotos()),
                     'status'             => $r->status,
-                    'response'           => $r->response,
-                    'responded_at'       => $r->responded_at?->toDateTimeString(),
-                    'photo_uploaded_at'  => $r->photo_uploaded_at?->toDateTimeString(),
-                    'form_submitted_at'  => $r->form_submitted_at?->toDateTimeString(),
-                    'invited_at'         => $r->invited_at?->toDateTimeString(),
-                    'reminders_sent'     => (int) $r->reminders_sent,
-                    'open_count'         => (int) $r->open_count,
-                    'lr_lookup_status'   => $r->lr_lookup_status,
-                    'notes'              => $r->notes,
                     'answers'            => $answers,
                 ];
             })->values(),
