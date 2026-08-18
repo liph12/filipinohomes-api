@@ -378,11 +378,60 @@ class AdminController extends Controller
                 : $query->whereNull('lr_primary_photo')->whereNull('current_photo_url');
         }
 
-        $sort = in_array($request->input('sort'), ['created_at', 'email', 'responded_at', 'invited_at'], true)
-            ? $request->input('sort')
-            : 'id';
+        /**
+         * Sortable columns, keyed by the name the table header sends.
+         *
+         * A whitelist, not a passthrough: `sort` arrives from the query string
+         * and lands in an ORDER BY, so anything unlisted must fall back rather
+         * than reach SQL.
+         *
+         * Two need an expression instead of a column:
+         *
+         *   awardee — the name shown is displayName(), which prefers
+         *             display_name (116 of the qualifiers are couples), then the
+         *             first/last pair, then the email. Sorting by last_name alone
+         *             would scatter every couple to wherever their blank surname
+         *             sorts, which looks like the sort is broken.
+         *
+         *   photos  — lr_photo_count is derived, not stored, so there is no
+         *             column to order by. displayPhotos() unshifts
+         *             lr_primary_photo onto lr_photos and then dedupes, and
+         *             measured against the live event the primary is ALREADY in
+         *             the array every time it is set (166 of 292 rows, none
+         *             otherwise). So the array length IS the rendered count, and
+         *             "length + 1" — the obvious guess — would have disagreed
+         *             with the visible number on 166 rows. The primary-only arm
+         *             is there for a shape the data does not currently take.
+         */
+        $sortable = [
+            'awardee'      => "COALESCE(NULLIF(display_name, ''), NULLIF(CONCAT_WS(' ', first_name, last_name), ''), email)",
+            'team'         => 'team',
+            'sales'        => 'total_sales',
+            'status'       => 'status',
+            'opens'        => 'open_count',
+            'photos'       => "CASE WHEN JSON_LENGTH(lr_photos) > 0 THEN JSON_LENGTH(lr_photos)
+                                     WHEN lr_primary_photo IS NOT NULL AND lr_primary_photo <> '' THEN 1
+                                     ELSE 0 END",
+            'created_at'   => 'created_at',
+            'email'        => 'email',
+            'responded_at' => 'responded_at',
+            'invited_at'   => 'invited_at',
+        ];
 
-        $query->orderBy($sort, $request->input('dir') === 'asc' ? 'asc' : 'desc');
+        $dir = $request->input('dir') === 'asc' ? 'asc' : 'desc';
+        $key = (string) $request->input('sort');
+
+        if (isset($sortable[$key])) {
+            // Null last in both directions. A blank team or a missing sales
+            // figure floating to the top of an A-Z is not "sorted", it is the
+            // empty rows getting in the way of the answer.
+            $expr = $sortable[$key];
+            $query->orderByRaw("CASE WHEN {$expr} IS NULL OR {$expr} = '' THEN 1 ELSE 0 END")
+                  ->orderByRaw("{$expr} {$dir}")
+                  ->orderBy('id', 'desc');
+        } else {
+            $query->orderBy('id', $dir);
+        }
 
         $paginator = $query->paginate(min(100, (int) $request->input('per_page', 25)));
 
