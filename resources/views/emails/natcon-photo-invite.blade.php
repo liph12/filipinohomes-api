@@ -65,6 +65,16 @@
         ? 'a high-resolution formal or business portrait photo with a plain background'
         : "{$countPhrase} high-resolution formal or business portrait photos with a plain background";
     $partial  = $uploadedCount > 0 && $uploadedCount < $requiredCount;
+
+    /* Every photo is in; a required question is not. Completion is both halves
+       (PhotoService::syncResponseState), so this person is still being chased —
+       and MUST NOT be told to send photos we already have. Mutually exclusive
+       with $partial by construction: that one needs uploadedCount BELOW the
+       requirement, this one needs it at or above. */
+    $detailsOnly  = $uploadedCount >= $requiredCount && count($missingDetails) > 0;
+    $detailsLabel = count($missingDetails) === 1
+        ? $missingDetails[0]
+        : implode(' and ', [implode(', ', array_slice($missingDetails, 0, -1)), end($missingDetails)]);
     // "1 more photo" / "2 more photos". Nobody writes "photo(s)" on purpose.
     $neededLabel = $needed . ' more ' . ($needed === 1 ? 'photo' : 'photos');
     $shown     = array_slice($photos, 0, 2);   // two reads well at 640px; three is mush
@@ -98,7 +108,9 @@
     {{-- Preheader: the line Gmail shows next to the subject in the list. Hidden
          in the body itself. Without it, clients preview the alt text. --}}
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:{{ $ink }};font-size:1px;line-height:1px;">
-        @if($partial)
+        @if($detailsOnly)
+            We have your photos — we just need your {{ $detailsLabel }}.
+        @elseif($partial)
             {{ $needed }} more photo(s) and you're done.
         @elseif($mustReplace)
             The photo we have on file can't be used. Please send us new ones.
@@ -250,7 +262,14 @@
                                     {{-- ⚠️ The partial arm has to come FIRST. Someone who has already
                                          sent two photos being told "we still need your photo" is how a
                                          campaign loses the benefit of the doubt on every later email. --}}
-                                    @if($partial)
+                                    @if($detailsOnly)
+                                        We have all your photos for
+                                        <strong style="color:{{ $cream }};">{{ $eventName }}</strong> — thank you.
+                                        <br /><br />
+                                        There&rsquo;s one thing left: we still need your
+                                        <strong style="color:{{ $theme['accent'] }};">{{ $detailsLabel }}</strong>,
+                                        so we can prepare your convention kit.
+                                    @elseif($partial)
                                         We&rsquo;ve received
                                         <strong style="color:{{ $theme['accent'] }};">{{ $uploadedCount }} of {{ $requiredCount }}</strong>
                                         photos from you for
@@ -289,7 +308,9 @@
                                         <strong style="color:{{ $theme['accent'] }};">{{ $daysRemaining }} days</strong>, on the {{ $deadlineDay }}.
                                     @endif
                                     <br /><br />
-                                    @if($canRetain)
+                                    @if($detailsOnly)
+                                        Your photos are safe with us — only the answer above is outstanding.
+                                    @elseif($canRetain)
                                         If we do not hear from you by then, we will use your photo from last year.
                                     @else
                                         If no suitable photo is available, the organizers reserve the discretion to select the
@@ -344,7 +365,24 @@
                     <tr>
                         <td align="center" class="pad" bgcolor="{{ $inkSoft }}"
                             style="background-color:{{ $inkSoft }};padding:26px 40px 6px;">
-                            @if($canRetain)
+                            @if($detailsOnly)
+                            {{-- Neither photo button makes sense here: there is nothing
+                                 to keep a choice between and nothing left to send. The
+                                 link is the same profile page — the form is already on
+                                 it, below the photos. --}}
+                            <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center"
+                                style="display:inline-block;margin:0 5px 12px;">
+                                <tr>
+                                    <td align="center" bgcolor="{{ $theme['accent'] }}"
+                                        style="background-color:{{ $theme['accent'] }};padding:15px 34px;">
+                                        <a href="{{ $changeUrl }}" target="_blank"
+                                            style="font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:bold;letter-spacing:1.5px;color:{{ $ink }};text-decoration:none;display:inline-block;">
+                                            ADD MY DETAILS
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            @elseif($canRetain)
                             {{-- Bulletproof button: a table, so Outlook renders the
                                  fill instead of collapsing to bare text.
 

@@ -73,6 +73,18 @@ class PhotoInviteMailer extends Mailable
         public int     $maxCount = 1,
         /** How many they have already sent — drives the partial reminder. */
         public int     $uploadedCount = 0,
+        /**
+         * Required questions still unanswered, by label.
+         *
+         * Completion is photos AND required answers, so somebody can have every
+         * photo in and still be chased. Without this the reminder would fall
+         * through to "we still need your photos" and send them to re-upload
+         * pictures we already hold — the fastest way to lose their trust in the
+         * rest of the campaign.
+         *
+         * @var array<int,string>
+         */
+        public array   $missingDetails = [],
         public ?int    $reminderIndex = null,
         /**
          * Prepended to the subject in whitelist mode so a QA pass can tell whose

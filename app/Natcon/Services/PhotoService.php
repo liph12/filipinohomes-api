@@ -281,9 +281,23 @@ final class PhotoService
         //    photos on file, because the in-memory copy still said "responded".
         $recipient->refresh();
 
-        $photos   = $recipient->activePhotos()->get();
-        $count    = $photos->count();
-        $complete = $count >= Recipient::requiredPhotoCount();
+        $photos = $recipient->activePhotos()->get();
+        $count  = $photos->count();
+
+        // ─── Complete means BOTH halves of the ask ──────────────────────────
+        //
+        // It used to mean photos alone, and the two saves on the awardee page
+        // are independent by design — saving photos never touched the form. So
+        // an awardee could send their pictures, be marked responded, drop out of
+        // REMINDABLE, and never be asked again for the polo shirt size the
+        // convention kit is built from. The field was flagged required and was
+        // enforced on ITS OWN submit, but nothing ever made anyone reach it.
+        //
+        // Photos remain the visible milestone; they are just no longer the
+        // finish line on their own.
+        $photosDone  = $count >= Recipient::requiredPhotoCount();
+        $detailsDone = app(FormService::class)->hasRequiredAnswers($recipient);
+        $complete    = $photosDone && $detailsDone;
 
         // A set assembled entirely from photos we already had is a "retain"; the
         // moment one new file is in it, it is a "change". Keeps the existing
@@ -323,6 +337,15 @@ final class PhotoService
             $fields['status']       = $anyUploaded
                 ? Recipient::STATUS_PHOTO_UPLOADED
                 : Recipient::STATUS_RESPONDED_RETAIN;
+        } elseif ($photosDone) {
+            // Pictures are all in; a required question is not. Deliberately keeps
+            // responded_at NULL, which is what reminderTargets() filters on, so
+            // these people stay in the chase instead of quietly finishing early.
+            $fields['response']     = $anyUploaded
+                ? Recipient::RESPONSE_CHANGE
+                : Recipient::RESPONSE_RETAIN;
+            $fields['responded_at'] = null;
+            $fields['status']       = Recipient::STATUS_DETAILS_PENDING;
         } elseif ($recipient->response === Recipient::RESPONSE_RETAIN && $count === 0) {
             // A legacy retain: answered through the old single-photo flow, before
             // keeping wrote a submission row. There is nothing in the set to
@@ -340,9 +363,16 @@ final class PhotoService
                 ? null
                 : ($anyUploaded ? Recipient::RESPONSE_CHANGE : Recipient::RESPONSE_RETAIN);
             $fields['responded_at'] = null;
+            // "Reminded" survives. This arm now also runs when someone answers
+            // the form before sending a photo, and collapsing reminded -> invited
+            // there would tell the events team nobody had been chased yet when
+            // they had. Only the outbox promotes a row to REMINDED, so nothing
+            // else restores it.
             $fields['status']       = $count > 0
                 ? Recipient::STATUS_PHOTOS_PARTIAL
-                : ($recipient->invited_at ? Recipient::STATUS_INVITED : Recipient::STATUS_PENDING);
+                : ($recipient->status === Recipient::STATUS_REMINDED
+                    ? Recipient::STATUS_REMINDED
+                    : ($recipient->invited_at ? Recipient::STATUS_INVITED : Recipient::STATUS_PENDING));
         }
 
         $recipient->forceFill($fields)->save();

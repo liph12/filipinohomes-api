@@ -307,6 +307,9 @@ final class InviteService
             requiredCount:    Recipient::requiredPhotoCount(),
             maxCount:         Recipient::maxPhotoCount(),
             uploadedCount:    $recipient->activePhotos()->count(),
+            // Resolved at RENDER time, like everything else here: the questions
+            // an event asks can change between the invite and the last reminder.
+            missingDetails:   app(FormService::class)->missingRequiredLabels($recipient),
         );
     }
 

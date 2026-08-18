@@ -232,8 +232,15 @@ class AdminController extends Controller
             // event asks for several photos — these people are NOT responded and
             // are still being reminded, and without a number for them "2 of 6
             // confirmed" hides the fact that three more are half done.
+            // Genuinely part-way through the PHOTOS. Excludes details_pending
+            // explicitly: those people have sent every picture and are only
+            // missing a required answer, and counting them here would report a
+            // photo problem the events team does not have.
             'photos_partial' => (clone $base)->whereNull('responded_at')
-                                    ->whereHas('activePhotos')->count(),
+                                    ->whereHas('activePhotos')
+                                    ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
+                                    ->count(),
+            'details_pending' => (int) ($byStatus[Recipient::STATUS_DETAILS_PENDING] ?? 0),
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),

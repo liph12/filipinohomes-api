@@ -66,6 +66,66 @@ final class FormService
             ->get();
     }
 
+    /**
+     * Has this awardee answered every required question?
+     *
+     * True when the event asks nothing required — an event with no required
+     * fields must not become impossible to complete.
+     *
+     * ⚠️ Checks the ANSWERS, not form_submitted_at. Someone can submit the form
+     *    while a field is optional and have it turned required afterwards; the
+     *    timestamp would still say "submitted" while the answer the events team
+     *    needs is missing. Reading the stored answers means adding a required
+     *    question correctly reopens whoever never answered it.
+     */
+    public function hasRequiredAnswers(Recipient $recipient): bool
+    {
+        return $this->missingRequiredLabels($recipient) === [];
+    }
+
+    /**
+     * Labels of the required questions this awardee still hasn't answered.
+     *
+     * Returned as LABELS rather than keys because the only two consumers are
+     * human-facing — the reminder email and the awardee page both have to name
+     * the thing being asked for. "We still need your NATCON Polo Shirt Size"
+     * is a message someone can act on; "polo_shirt_size is missing" is not.
+     *
+     * @return array<int,string>
+     */
+    public function missingRequiredLabels(Recipient $recipient): array
+    {
+        $event = $recipient->event;
+
+        if (! $event) {
+            return [];
+        }
+
+        $required = $this->fields($event, activeOnly: true)
+            ->filter(fn (FormField $f) => $f->isInput() && $f->is_required);
+
+        if ($required->isEmpty()) {
+            return [];
+        }
+
+        $answers = FormSubmission::where('natcon_event_id', $event->id)
+            ->where('natcon_recipient_id', $recipient->id)
+            ->value('answers') ?? [];
+
+        return $required
+            ->filter(fn (FormField $f) => $this->isBlank($answers[$f->key] ?? null))
+            ->pluck('label')
+            ->values()
+            ->all();
+    }
+
+    /** Empty in the same terms normalize() uses, so both agree on "unanswered". */
+    private function isBlank($raw): bool
+    {
+        return $raw === null || $raw === ''
+            || (is_array($raw) && count(array_filter($raw, fn ($v) => $v !== null && $v !== '')) === 0);
+    }
+
     /** @return array<string,mixed> */
     private function presentField(FormField $f): array
     {
@@ -215,6 +275,13 @@ final class FormService
             );
 
             $recipient->forceFill(['form_submitted_at' => Carbon::now()])->save();
+
+            // ⚠️ Answering the form can now COMPLETE someone, so completion has
+            //    to be recomputed here as well as on photo changes. Without this
+            //    an awardee who sent every photo and then filled in their shirt
+            //    size would sit at details_pending for ever and keep receiving
+            //    reminders for something they had already done.
+            app(PhotoService::class)->syncResponseState($recipient);
 
             $event->forceFill([
                 'form_submitted_count' => FormSubmission::where('natcon_event_id', $event->id)->count(),

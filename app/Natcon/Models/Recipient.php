@@ -41,6 +41,14 @@ class Recipient extends Model implements Auditable
      * migration — status is a string column precisely so this is cheap.
      */
     public const STATUS_PHOTOS_PARTIAL   = 'photos_partial';
+    /**
+     * Every photo is in, but a required question is still unanswered.
+     *
+     * Its own status rather than reusing photos_partial: the photos are NOT
+     * part-way, and the events team needs to see at a glance who they are still
+     * chasing for a shirt size versus who has not sent a picture at all.
+     */
+    public const STATUS_DETAILS_PENDING  = 'details_pending';
     public const STATUS_COMPLETED        = 'completed';
     public const STATUS_FAILED           = 'failed';
     public const STATUS_EXCLUDED         = 'excluded';
@@ -71,6 +79,8 @@ class Recipient extends Model implements Auditable
         self::STATUS_REMINDED,
         self::STATUS_RESPONDED_CHANGE,
         self::STATUS_PHOTOS_PARTIAL,
+        // Photos done, details outstanding — still owed something, so still chased.
+        self::STATUS_DETAILS_PENDING,
     ];
 
     protected $fillable = [
