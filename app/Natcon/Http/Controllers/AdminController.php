@@ -207,7 +207,24 @@ class AdminController extends Controller
     public function stats(Request $request): JsonResponse
     {
         $event = $this->resolveEvent($request);
-        $base  = Recipient::where('natcon_event_id', $event->id);
+
+        // Event-wide. ONLY sales_tiers may use this: the wave selector has to
+        // show every band's totals, including the bands you are not looking at.
+        $unscoped = Recipient::where('natcon_event_id', $event->id);
+
+        /**
+         * Everything else is scoped to the SELECTED WAVE.
+         *
+         * ⚠️ It was not, and the numbers openly disagreed with the list. Picking
+         *    "₱61M and up" — 127 people — and then the Invited chip showed 133,
+         *    because the chip counted the whole event while the table counted the
+         *    band. Two answers to one question on one screen, and the smaller one
+         *    was the truthful one.
+         *
+         * Same request, same helper the list uses, so a count and the rows it
+         * claims to describe cannot drift again.
+         */
+        $base = $this->applySalesBand(Recipient::where('natcon_event_id', $event->id), $request);
 
         $byStatus = (clone $base)->selectRaw('status, COUNT(*) n')->groupBy('status')->pluck('n', 'status');
 
@@ -250,10 +267,14 @@ class AdminController extends Controller
             'not_done' => (clone $base)->whereNull('responded_at')->count(),
 
             // Every team with at least one awardee, biggest first, so the admin
-            // can pick "Red Diamonds (52)" instead of typing it into search and
-            // hoping. Counted across the whole event, NOT the current sales band:
-            // the number beside a team has to mean "how many are in this team",
-            // or the filter reads as broken the moment a wave is selected.
+            // can pick "Red Diamonds (33)" instead of typing it into search and
+            // hoping.
+            //
+            // Scoped to the selected wave, like every other count here. It used
+            // to be event-wide on the reasoning that a team's size is a fact
+            // about the team — but inside a wave that produced "Red Diamonds
+            // (33)" listing 19 rows, which is the same lie the status chips were
+            // telling.
             'teams' => (clone $base)
                 ->selectRaw('team, COUNT(*) AS n')
                 ->whereNotNull('team')->where('team', '!=', '')
@@ -265,7 +286,9 @@ class AdminController extends Controller
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
-            'sales_tiers'    => $this->salesTiers($request, $event, clone $base),
+            // Deliberately $unscoped: this IS the wave selector, and scoping it to
+            // the chosen wave would leave every other band reading zero.
+            'sales_tiers'    => $this->salesTiers($request, $event, clone $unscoped),
             'queued_to_send' => Outbox::where('natcon_event_id', $event->id)
                                     ->where('status', Outbox::STATUS_QUEUED)->count(),
             'deadline_at'    => $event->deadlineLocal()?->toIso8601String(),
