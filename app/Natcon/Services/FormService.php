@@ -112,8 +112,36 @@ final class FormService
             ->where('natcon_recipient_id', $recipient->id)
             ->value('answers') ?? [];
 
+        $people = max(1, count($recipient->personNames()));
+
         return $required
-            ->filter(fn (FormField $f) => $this->isBlank($answers[$f->key] ?? null))
+            ->filter(function (FormField $f) use ($answers, $people) {
+                $raw = $answers[$f->key] ?? null;
+
+                if (! $this->isPerPerson($f)) {
+                    return $this->isBlank($raw);
+                }
+
+                // ⚠️ Not isBlank(). A couple who answered before per_person
+                //    existed has a bare string stored, and a couple who answered
+                //    for one of two has ["large", null] — array_filter would call
+                //    both "answered" and mark them complete with a size missing.
+                //    Every seat has to be filled, and there have to be as many
+                //    entries as there are people.
+                $entries = is_array($raw) ? $raw : [$raw];
+
+                if (count($entries) < $people) {
+                    return true;
+                }
+
+                foreach (array_slice($entries, 0, $people) as $entry) {
+                    if ($this->isBlank($entry)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
             ->pluck('label')
             ->values()
             ->all();
@@ -230,7 +258,10 @@ final class FormService
             }
 
             $raw = $answers[$field->key] ?? null;
-            [$error, $value, $display] = $this->normalize($field, $raw);
+
+            [$error, $value, $display] = $this->isPerPerson($field)
+                ? $this->normalizePerPerson($field, $raw, $recipient->personNames())
+                : $this->normalize($field, $raw);
 
             if ($error !== null) {
                 $errors["answers.{$field->key}"] = [$error];
@@ -289,6 +320,62 @@ final class FormService
 
             return $submission;
         });
+    }
+
+    /** Does this question get asked once per person on the account? */
+    private function isPerPerson(FormField $field): bool
+    {
+        return $field->isInput() && (bool) $field->config('per_person', false);
+    }
+
+    /**
+     * A per-person field: one answer per human, validated by the SAME rules.
+     *
+     * 118 of the 292 awardees for 2026 are couples on one login, and a single
+     * polo-shirt answer was being collected for two people. Rather than
+     * special-casing that question, any field can be marked per_person and this
+     * asks it once for each name on the account.
+     *
+     * ⚠️ Delegates to normalize() per entry rather than reimplementing the type
+     *    rules. A second copy of "is this a valid choice" would drift from the
+     *    first the moment a field type is added.
+     *
+     * Stored as a positional array aligned to personNames(); the display string
+     * carries the names, so the export and the admin drawer can attribute a size
+     * to a person without re-splitting anything.
+     *
+     * @param  array<int,string>  $people
+     * @return array{0:?string, 1:mixed, 2:?string}
+     */
+    private function normalizePerPerson(FormField $field, $raw, array $people): array
+    {
+        $values = [];
+        $labels = [];
+        $named  = count($people) > 1;
+
+        foreach (array_values($people) as $i => $person) {
+            // A legacy scalar answers for the first person only — that is exactly
+            // what the 16 couples who answered before this existed have stored.
+            $entry = is_array($raw) ? ($raw[$i] ?? null) : ($i === 0 ? $raw : null);
+
+            [$error, $value, $display] = $this->normalize($field, $entry);
+
+            if ($error !== null) {
+                return [$named ? "{$person} — {$error}" : $error, null, null];
+            }
+
+            $values[] = $value;
+            $labels[] = $named ? "{$person}: " . ($display ?? '—') : (string) ($display ?? '');
+        }
+
+        // Optional and untouched by everyone: unanswered, not an array of nulls.
+        $answered = array_filter($values, fn ($v) => $v !== null && $v !== '' && $v !== []);
+
+        if ($answered === []) {
+            return [null, null, null];
+        }
+
+        return [null, $values, implode(' · ', $labels)];
     }
 
     /**

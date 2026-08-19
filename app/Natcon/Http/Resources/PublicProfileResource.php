@@ -58,6 +58,11 @@ class PublicProfileResource extends JsonResource
                 'first_name'   => $r->first_name,
                 'last_name'    => $r->last_name,
                 'display_name' => $r->displayName(),
+                // Who is actually on this account. Carried per-recipient rather
+                // than folded into the form schema, because that schema is
+                // CACHED PER EVENT — baking one couple's names into it would
+                // serve them to all 292 awardees.
+                'person_names' => $r->personNames(),
                 'team'         => $r->team,
                 'email_masked' => $this->maskEmail($r->email),
             ],
