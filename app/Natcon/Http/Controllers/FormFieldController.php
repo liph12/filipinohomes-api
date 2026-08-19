@@ -258,7 +258,14 @@ class FormFieldController extends Controller
 
     private function uniqueKey(NatconEvent $event, string $label): string
     {
-        $base = Str::snake(Str::ascii($label));
+        // ⚠️ lower() BEFORE snake(). Str::snake inserts an underscore ahead of
+        //    every capital, so an acronym shatters: "NATCON Polo Shirt Size"
+        //    became n_a_t_c_o_n_polo_shirt_size and "FH VIP Notes" would become
+        //    f_h_v_i_p_notes. The live 2026 field carries the mangled key to this
+        //    day — it is left alone deliberately, since the key is what the
+        //    stored answers are filed under and renaming it would orphan them.
+        //    Nobody sees it now that labels come from the submission snapshot.
+        $base = Str::snake(Str::lower(Str::ascii($label)));
         $base = preg_replace('/[^a-z0-9_]/', '', $base) ?: 'field';
         $base = ltrim($base, '0..9_') ?: 'field';
         $base = Str::limit($base, 60, '');
