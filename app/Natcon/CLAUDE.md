@@ -156,12 +156,31 @@ pipeline, because these go to a print workflow.
 
 ---
 
-## 7. Announcements are per-event; recaps are global
+## 7. Announcements and sponsors are per-event; recaps are global
 
-`natcon_announcements` has an event FK. `natcon_recaps` does **not** — the
-recordings run back to 2012 and those years have no event row. The admin says so
-out loud, because switching year and seeing the same videos otherwise reads as a
-bug.
+`natcon_announcements` and `natcon_sponsors` have an event FK. `natcon_recaps`
+does **not** — the recordings run back to 2012 and those years have no event row.
+The admin says so out loud, because switching year and seeing the same videos
+otherwise reads as a bug.
+
+### Sponsors
+
+Three public tiers on `Sponsor::TIERS` (`major`, `minor`, `star`) and a fourth on
+`ALL_TIERS`:
+
+⚠️ **`library` is the admin's upload pool and must never be served publicly.**
+`LandingController::sponsors()` filters with `whereIn('tier', Sponsor::TIERS)`
+precisely so the pool cannot leak. Any new public read has to do the same.
+
+There is **no `is_published` column** — it was dropped on purpose. Being in a
+public tier *is* being published, and the flag duplicated removal while
+confusing the admin UI. Do not add it back; `scopeLive()` only orders.
+
+⚠️ **Dropping an index that backs a foreign key fails with MySQL error 1553.**
+The sponsors table hit this: the composite index also backed the
+`natcon_event_id` FK, so the replacement index must be created in its own
+`Schema::table` call BEFORE the old one is dropped. The migration that does it is
+worth reading before you touch any index on these tables.
 
 `NatconAnnouncement` keeps its module prefix because `App\Models\Announcement`
 already exists and is a completely different thing (a push broadcast). Two
