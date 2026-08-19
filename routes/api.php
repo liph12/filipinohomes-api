@@ -201,6 +201,8 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/natcon/recaps', [NatconLandingController::class, 'recaps']);
         Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
             ->whereNumber('year');
+        Route::get('/natcon/{year}/sponsors', [NatconLandingController::class, 'sponsors'])
+            ->whereNumber('year');
 
         // Everything token-bound goes behind verify.guest.token. That is a bot
         // speed bump, not a security control — POST /api/guest-token is itself
@@ -506,6 +508,11 @@ Route::middleware('strip.tags')->group(function(){
                     Route::post('/admin/natcon/recaps', [NatconLandingController::class, 'storeRecap']);
                     Route::patch('/admin/natcon/recaps/{recap}', [NatconLandingController::class, 'updateRecap']);
                     Route::delete('/admin/natcon/recaps/{recap}', [NatconLandingController::class, 'destroyRecap']);
+
+                    Route::get('/admin/natcon/sponsors', [NatconLandingController::class, 'adminSponsors']);
+                    Route::post('/admin/natcon/sponsors', [NatconLandingController::class, 'storeSponsor']);
+                    Route::patch('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'updateSponsor']);
+                    Route::delete('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'destroySponsor']);
                 });
 
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);

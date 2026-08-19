@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Natcon\Models\NatconAnnouncement;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Recap;
+use App\Natcon\Models\Sponsor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -57,6 +58,28 @@ class LandingController extends Controller
         ]);
     }
 
+    /**
+     * Sponsor logos for one convention year — major, minor and star benefactor
+     * tiers in one flat list; the page groups by tier. Keyed by year for the
+     * same reason announcements are.
+     */
+    public function sponsors(int $year): JsonResponse
+    {
+        $event = NatconEvent::forYear($year);
+
+        if (! $event) {
+            return response()->json(['data' => []]);
+        }
+
+        $rows = Sponsor::where('natcon_event_id', $event->id)
+            // The 'library' pool is admin-only — never on the public page.
+            ->whereIn('tier', Sponsor::TIERS)
+            ->live()
+            ->get();
+
+        return response()->json(['data' => $rows->map(fn (Sponsor $s) => $this->presentSponsor($s))]);
+    }
+
     // ── Admin ────────────────────────────────────────────────────────────────
 
     public function adminAnnouncements(Request $request): JsonResponse
@@ -76,13 +99,13 @@ class LandingController extends Controller
 
     public function storeAnnouncement(Request $request): JsonResponse
     {
-        $data  = $this->validateAnnouncement($request);
+        $data = $this->validateAnnouncement($request);
         $event = $this->resolveEvent($request);
 
         $row = new NatconAnnouncement($data + ['natcon_event_id' => $event->id]);
-        $row->created_by      = $request->user()?->id;
-        $row->published_at    = $this->publishedAt($data, null, $event->timezone);
-        $row->auditSource     = 'admin_natcon_announcement';
+        $row->created_by = $request->user()?->id;
+        $row->published_at = $this->publishedAt($data, null, $event->timezone);
+        $row->auditSource = 'admin_natcon_announcement';
         $row->save();
 
         return response()->json(['data' => $this->presentAnnouncement($row, $event, detailed: true)], 201);
@@ -94,7 +117,7 @@ class LandingController extends Controller
 
         $announcement->fill($data);
         $announcement->published_at = $this->publishedAt($data, $announcement, $announcement->event?->timezone);
-        $announcement->auditSource  = 'admin_natcon_announcement';
+        $announcement->auditSource = 'admin_natcon_announcement';
         $announcement->save();
 
         return response()->json([
@@ -122,16 +145,16 @@ class LandingController extends Controller
     public function storeRecap(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'year'          => 'required|integer|min:2000|max:2100|unique:natcon_recaps,year',
-            'title'         => 'required|string|max:191',
-            'video_url'     => 'required|url|max:2048',
+            'year' => 'required|integer|min:2000|max:2100|unique:natcon_recaps,year',
+            'title' => 'required|string|max:191',
+            'video_url' => 'required|url|max:2048',
             'thumbnail_url' => 'nullable|url|max:2048',
-            'is_published'  => 'sometimes|boolean',
-            'sort_order'    => 'sometimes|integer|min:0|max:9999',
+            'is_published' => 'sometimes|boolean',
+            'sort_order' => 'sometimes|integer|min:0|max:9999',
         ]);
 
         $row = new Recap($data);
-        $row->created_by  = $request->user()?->id;
+        $row->created_by = $request->user()?->id;
         $row->auditSource = 'admin_natcon_recap';
         $row->save();
 
@@ -142,12 +165,12 @@ class LandingController extends Controller
     {
         $data = $request->validate([
             // Ignores itself, so saving a row without changing the year works.
-            'year'          => 'sometimes|integer|min:2000|max:2100|unique:natcon_recaps,year,' . $recap->id,
-            'title'         => 'sometimes|string|max:191',
-            'video_url'     => 'sometimes|url|max:2048',
+            'year' => 'sometimes|integer|min:2000|max:2100|unique:natcon_recaps,year,'.$recap->id,
+            'title' => 'sometimes|string|max:191',
+            'video_url' => 'sometimes|url|max:2048',
             'thumbnail_url' => 'sometimes|nullable|url|max:2048',
-            'is_published'  => 'sometimes|boolean',
-            'sort_order'    => 'sometimes|integer|min:0|max:9999',
+            'is_published' => 'sometimes|boolean',
+            'sort_order' => 'sometimes|integer|min:0|max:9999',
         ]);
 
         $recap->auditSource = 'admin_natcon_recap';
@@ -164,6 +187,51 @@ class LandingController extends Controller
         return response()->json(['message' => 'Recap removed.']);
     }
 
+    public function adminSponsors(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+
+        // Hidden rows included — this is the editing surface.
+        $rows = Sponsor::where('natcon_event_id', $event->id)
+            ->orderBy('tier')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['data' => $rows->map(fn (Sponsor $s) => $this->presentSponsor($s, detailed: true))]);
+    }
+
+    public function storeSponsor(Request $request): JsonResponse
+    {
+        $data = $this->validateSponsor($request);
+        $event = $this->resolveEvent($request);
+
+        $row = new Sponsor($data + ['natcon_event_id' => $event->id]);
+        $row->created_by = $request->user()?->id;
+        $row->auditSource = 'admin_natcon_sponsor';
+        $row->save();
+
+        return response()->json(['data' => $this->presentSponsor($row, detailed: true)], 201);
+    }
+
+    public function updateSponsor(Request $request, Sponsor $sponsor): JsonResponse
+    {
+        $data = $this->validateSponsor($request, partial: true);
+
+        $sponsor->auditSource = 'admin_natcon_sponsor';
+        $sponsor->fill($data)->save();
+
+        return response()->json(['data' => $this->presentSponsor($sponsor->fresh(), detailed: true)]);
+    }
+
+    public function destroySponsor(Sponsor $sponsor): JsonResponse
+    {
+        $sponsor->auditSource = 'admin_natcon_sponsor';
+        $sponsor->delete();
+
+        return response()->json(['message' => 'Sponsor removed.']);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private function validateAnnouncement(Request $request, bool $partial = false): array
@@ -171,11 +239,11 @@ class LandingController extends Controller
         $rule = $partial ? 'sometimes' : 'required';
 
         return $request->validate([
-            'title'        => "{$rule}|string|max:191",
-            'body'         => "{$rule}|string|max:5000",
-            'image_url'    => 'sometimes|nullable|url|max:2048',
+            'title' => "{$rule}|string|max:191",
+            'body' => "{$rule}|string|max:5000",
+            'image_url' => 'sometimes|nullable|url|max:2048',
             'is_published' => 'sometimes|boolean',
-            'is_pinned'    => 'sometimes|boolean',
+            'is_pinned' => 'sometimes|boolean',
             // Optional. Omitted means "now, when it is first published".
             'published_at' => 'sometimes|nullable|date',
         ]);
@@ -217,11 +285,11 @@ class LandingController extends Controller
         $tz = $event?->timezone ?: 'Asia/Manila';
 
         $base = [
-            'id'           => $a->id,
-            'title'        => $a->title,
-            'body'         => $a->body,
-            'image_url'    => $a->image_url,
-            'is_pinned'    => (bool) $a->is_pinned,
+            'id' => $a->id,
+            'title' => $a->title,
+            'body' => $a->body,
+            'image_url' => $a->image_url,
+            'is_pinned' => (bool) $a->is_pinned,
             'published_at' => $a->published_at?->copy()->setTimezone($tz)->toIso8601String(),
         ];
 
@@ -235,22 +303,48 @@ class LandingController extends Controller
             // a datetime-local input fed a UTC string shows the wrong time and
             // then saves it back as if it were local.
             'published_local' => $a->published_at?->copy()->setTimezone($tz)->format('Y-m-d\TH:i'),
-            'author'       => $a->author?->only(['id', 'name']),
-            'created_at'   => $a->created_at?->copy()->setTimezone($tz)->toIso8601String(),
+            'author' => $a->author?->only(['id', 'name']),
+            'created_at' => $a->created_at?->copy()->setTimezone($tz)->toIso8601String(),
         ];
+    }
+
+    private function validateSponsor(Request $request, bool $partial = false): array
+    {
+        $rule = $partial ? 'sometimes' : 'required';
+
+        return $request->validate([
+            'tier' => "{$rule}|string|in:".implode(',', Sponsor::ALL_TIERS),
+            'image_url' => "{$rule}|url|max:2048",
+            'name' => 'sometimes|nullable|string|max:191',
+            'sort_order' => 'sometimes|integer|min:0|max:9999',
+        ]);
+    }
+
+    private function presentSponsor(Sponsor $s, bool $detailed = false): array
+    {
+        $base = [
+            'id' => $s->id,
+            'tier' => $s->tier,
+            'name' => $s->name,
+            'image_url' => $s->image_url,
+        ];
+
+        return $detailed
+            ? $base + ['sort_order' => $s->sort_order]
+            : $base;
     }
 
     private function presentRecap(Recap $r, bool $detailed = false): array
     {
         $base = [
-            'id'            => $r->id,
-            'year'          => $r->year,
-            'title'         => $r->title,
+            'id' => $r->id,
+            'year' => $r->year,
+            'title' => $r->title,
             'thumbnail_url' => $r->thumbnail_url,
             // Normalised server-side so the page never has to guess what an
             // editor pasted — see Recap::youtubeEmbedUrl().
-            'embed_url'     => $r->youtubeEmbedUrl(),
-            'video_url'     => $r->video_url,
+            'embed_url' => $r->youtubeEmbedUrl(),
+            'video_url' => $r->video_url,
         ];
 
         return $detailed
