@@ -411,6 +411,23 @@ class AdminController extends Controller
         // and "they have not answered" is the whole of the chasing work, and it
         // could not be expressed before: `status` alone cannot say it, because
         // invited, reminded, photos_partial and details_pending are all this.
+        /**
+         * Has an invite ever gone out — NOT "status is currently invited".
+         *
+         * ⚠️ The two differ by everyone who has moved on since. The Invited chip
+         *    counts invited_at (133), while status='invited' excludes anyone now
+         *    reminded, part-way, needing details or finished (96). Clicking a
+         *    chip that said 133 and getting 96 rows is the same disagreement the
+         *    sales-band scoping just fixed, one axis over.
+         *
+         * The funnel reading is the useful one — Not sent → Sent → Opened →
+         * Submitted, each a superset of the next — so the FILTER moves to match
+         * the count rather than the other way round.
+         */
+        if ($request->boolean('sent')) {
+            $query->whereNotNull('invited_at');
+        }
+
         if ($request->boolean('awaiting')) {
             $query->whereNotNull('invited_at')->whereNull('responded_at');
         }
