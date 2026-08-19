@@ -242,6 +242,13 @@ class AdminController extends Controller
                                     ->count(),
             'details_pending' => (int) ($byStatus[Recipient::STATUS_DETAILS_PENDING] ?? 0),
 
+            // The chasing list: asked, nothing back. Not derivable from the other
+            // counts, because "invited" here means "has an invited_at" and
+            // includes everyone who has since finished.
+            'awaiting' => (clone $base)->whereNotNull('invited_at')->whereNull('responded_at')->count(),
+            // Everyone still owing something, sent or not.
+            'not_done' => (clone $base)->whereNull('responded_at')->count(),
+
             // Every team with at least one awardee, biggest first, so the admin
             // can pick "Red Diamonds (52)" instead of typing it into search and
             // hoping. Counted across the whole event, NOT the current sales band:
@@ -368,8 +375,21 @@ class AdminController extends Controller
             $query->whereNotNull('first_opened_at');
         }
 
-        if ($request->boolean('done')) {
-            $query->whereNotNull('responded_at');
+        // filled(), not boolean(): done=0 is a question in its own right — "who
+        // still owes us something?" — and boolean() alone could not tell it from
+        // the filter being absent.
+        if ($request->filled('done')) {
+            $request->boolean('done')
+                ? $query->whereNotNull('responded_at')
+                : $query->whereNull('responded_at');
+        }
+
+        // Sent, and nothing back. The gap between "we have not asked them yet"
+        // and "they have not answered" is the whole of the chasing work, and it
+        // could not be expressed before: `status` alone cannot say it, because
+        // invited, reminded, photos_partial and details_pending are all this.
+        if ($request->boolean('awaiting')) {
+            $query->whereNotNull('invited_at')->whereNull('responded_at');
         }
 
         if ($request->filled('has_photo')) {
@@ -574,11 +594,35 @@ class AdminController extends Controller
         return response()->json(['data' => new RecipientResource($recipient->fresh('event'))]);
     }
 
-    public function destroyRecipient(Recipient $recipient): JsonResponse
+    /**
+     * Remove a recipient. Soft by default; ?permanent=1 erases them.
+     *
+     * The soft path is the everyday one — the row leaves the list but survives
+     * for the audit trail, and can be restored.
+     *
+     * ⚠️ The permanent path is irreversible and takes their photos, their form
+     *    answers and their send history with it: natcon_photo_submissions,
+     *    natcon_form_submissions and natcon_outbox all declare
+     *    cascadeOnDelete() against natcon_recipients, so the database removes
+     *    them the moment the row goes. That is the intent — a permanent delete
+     *    that left orphaned photos of a person behind would be the worse
+     *    outcome — but it means there is nothing to undo afterwards.
+     *
+     * Either way the token dies first. A row can be gone while an already
+     * delivered email still carries a working link, and that link would let a
+     * stranger's browser walk straight back into the profile page.
+     */
+    public function destroyRecipient(Request $request, Recipient $recipient): JsonResponse
     {
-        // Kill the token as well as the row: a soft delete alone would leave a
-        // working link in an already-delivered email.
         $recipient->forceFill(['token_nonce' => null, 'invite_token_hash' => null])->save();
+
+        if ($request->boolean('permanent')) {
+            $email = $recipient->email;
+            $recipient->forceDelete();
+
+            return response()->json(['message' => "{$email} permanently deleted."]);
+        }
+
         $recipient->delete();
 
         return response()->json(['message' => 'Recipient removed.']);
