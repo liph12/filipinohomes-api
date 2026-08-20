@@ -392,8 +392,9 @@ class LandingController extends Controller
             'title' => $r->title,
             'thumbnail_url' => $r->thumbnail_url,
             // Normalised server-side so the page never has to guess what an
-            // editor pasted — see Recap::youtubeEmbedUrl().
-            'embed_url' => $r->youtubeEmbedUrl(),
+            // editor pasted — see Recap::embedUrl(). Null for a direct MP4,
+            // which the page plays in a <video> instead.
+            'embed_url' => $r->embedUrl(),
             'video_url' => $r->video_url,
         ];
 
