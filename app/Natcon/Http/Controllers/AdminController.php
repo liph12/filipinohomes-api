@@ -188,6 +188,9 @@ class AdminController extends Controller
             'reminder_offsets.*' => 'integer|min:0|max:60',
             'banner_base'        => 'sometimes|nullable|string|max:255',
             'email_banner_url'   => 'sometimes|nullable|url|max:2048',
+            // Landing-page sponsor block display settings (per-tier tile sizes,
+            // gaps, backgrounds). Shape is owned by the admin UI; null = defaults.
+            'sponsor_display'    => 'sometimes|nullable|array',
             'thank_you_message'  => 'sometimes|nullable|string|max:512',
             'is_active'          => 'sometimes|boolean',
             'reactions_enabled'  => 'sometimes|boolean',

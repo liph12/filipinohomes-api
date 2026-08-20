@@ -26,7 +26,7 @@ class NatconEvent extends Model implements Auditable
     protected $fillable = [
         'slug', 'year', 'name', 'short_name', 'starts_on', 'ends_on', 'venue',
         'hashtag', 'photo_deadline_at', 'timezone', 'update_profile_url',
-        'banner_base', 'email_banner_url', 'thank_you_message',
+        'banner_base', 'email_banner_url', 'sponsor_display', 'thank_you_message',
         'reminder_offsets', 'is_active', 'sales_breakpoint',
         'reactions_enabled',
     ];
@@ -37,6 +37,7 @@ class NatconEvent extends Model implements Auditable
         'ends_on'           => 'date',
         'photo_deadline_at' => 'datetime',
         'reminder_offsets'  => 'array',
+        'sponsor_display'   => 'array',
         'is_active'         => 'boolean',
         'reactions_enabled' => 'boolean',
         'sales_breakpoint'  => 'decimal:2',

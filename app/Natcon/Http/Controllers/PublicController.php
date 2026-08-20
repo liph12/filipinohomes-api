@@ -90,6 +90,7 @@ class PublicController extends Controller
             'venue'          => $event->venue,
             'hashtag'        => $event->hashtag,
             'banner_base'    => $event->banner_base,
+            'sponsor_display' => $event->sponsor_display,
             'deadline_at'    => $event->photo_deadline_at?->copy()->setTimezone($tz)->toIso8601String(),
             'timezone'       => $tz,
             'days_remaining' => max(0, (int) ($event->daysUntilDeadline() ?? 0)),
