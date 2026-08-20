@@ -102,6 +102,17 @@ return [
         'privacy_status' => env('YOUTUBE_PRIVACY_STATUS', 'public'),
     ],
 
+    /**
+     * The public Next.js site. `revalidation_secret` must match Vercel's
+     * REVALIDATION_SECRET env var, or /api/revalidate answers 401 and the
+     * NATCON landing page keeps waiting for its ISR window to expire.
+     */
+    'frontend' => [
+        'url' => env('FRONTEND_URL', 'https://filipinohomes.com'),
+        'revalidation_secret' => env('REVALIDATION_SECRET'),
+        'revalidation_timeout' => (int) env('REVALIDATION_TIMEOUT', 5),
+    ],
+
     'indexnow' => [
         'enabled' => env('INDEXNOW_ENABLED', false),
         'submit_endpoint' => env('INDEXNOW_SUBMIT_URL', 'https://filipinohomes.com/api/indexnow/submit'),

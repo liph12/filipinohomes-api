@@ -14,6 +14,7 @@ use App\Natcon\Models\Suppression;
 use App\Natcon\Services\AwardeeService;
 use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
+use App\Natcon\Services\LandingCachePurger;
 use App\Natcon\Services\PhotoService;
 use App\Natcon\Services\RecipientImportService;
 use App\Natcon\Services\Sources\LrQualifiersSource;
@@ -200,6 +201,12 @@ class AdminController extends Controller
         }
 
         $event->fill($data)->save();
+
+        // The landing page renders the name, dates, venue and banner from this
+        // row, so an edit here is invisible until the ISR cache turns over.
+        // Same reasoning as the announcement and sponsor writes — see
+        // LandingCachePurger.
+        app(LandingCachePurger::class)->purgeYear($event->year);
 
         return response()->json(['data' => $event->fresh()]);
     }

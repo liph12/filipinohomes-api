@@ -7,6 +7,7 @@ use App\Natcon\Models\NatconAnnouncement;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Recap;
 use App\Natcon\Models\Sponsor;
+use App\Natcon\Services\LandingCachePurger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -108,6 +109,8 @@ class LandingController extends Controller
         $row->auditSource = 'admin_natcon_announcement';
         $row->save();
 
+        $this->purge($event->year);
+
         return response()->json(['data' => $this->presentAnnouncement($row, $event, detailed: true)], 201);
     }
 
@@ -120,6 +123,8 @@ class LandingController extends Controller
         $announcement->auditSource = 'admin_natcon_announcement';
         $announcement->save();
 
+        $this->purge($announcement->event?->year);
+
         return response()->json([
             'data' => $this->presentAnnouncement($announcement->fresh(), $announcement->event, detailed: true),
         ]);
@@ -127,10 +132,15 @@ class LandingController extends Controller
 
     public function destroyAnnouncement(NatconAnnouncement $announcement): JsonResponse
     {
+        // Read the year BEFORE deleting — the relation is unreachable afterwards.
+        $year = $announcement->event?->year;
+
         // Soft delete: an announcement pulled in a hurry is often wanted back,
         // and the audit trail is worth more than the row.
         $announcement->auditSource = 'admin_natcon_announcement';
         $announcement->delete();
+
+        $this->purge($year);
 
         return response()->json(['message' => 'Announcement removed.']);
     }
@@ -211,6 +221,8 @@ class LandingController extends Controller
         $row->auditSource = 'admin_natcon_sponsor';
         $row->save();
 
+        $this->purge($event->year);
+
         return response()->json(['data' => $this->presentSponsor($row, detailed: true)], 201);
     }
 
@@ -221,18 +233,39 @@ class LandingController extends Controller
         $sponsor->auditSource = 'admin_natcon_sponsor';
         $sponsor->fill($data)->save();
 
+        $this->purge($sponsor->event?->year);
+
         return response()->json(['data' => $this->presentSponsor($sponsor->fresh(), detailed: true)]);
     }
 
     public function destroySponsor(Sponsor $sponsor): JsonResponse
     {
+        // Before the delete: see destroyAnnouncement.
+        $year = $sponsor->event?->year;
+
         $sponsor->auditSource = 'admin_natcon_sponsor';
         $sponsor->delete();
+
+        $this->purge($year);
 
         return response()->json(['message' => 'Sponsor removed.']);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Drop the public page's cached copy so an edit is visible immediately
+     * instead of whenever the ISR window happens to expire.
+     *
+     * Deliberately AFTER the save and never guarded by its result: the content
+     * is already committed, and a frontend that is redeploying or a secret that
+     * is not set must not turn a successful edit into an error. See
+     * LandingCachePurger.
+     */
+    private function purge(?int $year): void
+    {
+        app(LandingCachePurger::class)->purgeYear($year);
+    }
 
     private function validateAnnouncement(Request $request, bool $partial = false): array
     {
