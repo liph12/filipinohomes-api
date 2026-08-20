@@ -175,6 +175,8 @@ class LandingController extends Controller
         $row->auditSource = 'admin_natcon_recap';
         $row->save();
 
+        $this->purgeRecaps();
+
         return response()->json(['data' => $this->presentRecap($row, detailed: true)], 201);
     }
 
@@ -193,6 +195,8 @@ class LandingController extends Controller
         $recap->auditSource = 'admin_natcon_recap';
         $recap->fill($data)->save();
 
+        $this->purgeRecaps();
+
         return response()->json(['data' => $this->presentRecap($recap->fresh(), detailed: true)]);
     }
 
@@ -200,6 +204,8 @@ class LandingController extends Controller
     {
         $recap->auditSource = 'admin_natcon_recap';
         $recap->delete();
+
+        $this->purgeRecaps();
 
         return response()->json(['message' => 'Recap removed.']);
     }
@@ -272,6 +278,19 @@ class LandingController extends Controller
     private function purge(?int $year): void
     {
         app(LandingCachePurger::class)->purgeYear($year);
+    }
+
+    /**
+     * Recaps are global, so they get their own purge rather than a year's.
+     *
+     * This was simply missing: announcements, sponsors and event settings all
+     * purged, recaps did not, and their fetch was on the longest window of the
+     * four — so three recordings added in the admin stayed invisible on a live
+     * page for an hour with nothing to indicate why.
+     */
+    private function purgeRecaps(): void
+    {
+        app(LandingCachePurger::class)->purgeRecaps();
     }
 
     private function validateAnnouncement(Request $request, bool $partial = false): array

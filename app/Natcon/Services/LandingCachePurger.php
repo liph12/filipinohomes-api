@@ -37,15 +37,55 @@ use Illuminate\Support\Facades\Log;
 class LandingCachePurger
 {
     /**
-     * Purge one convention year. A null year is a no-op rather than a guess:
-     * revalidating the wrong path is worse than leaving the cache to expire.
+     * Purge one convention year's page and the data behind it.
+     *
+     * ⚠️ The PATH is not enough on its own, and assuming it was cost an hour of
+     *    "why is this not showing". Next keeps two caches: revalidatePath drops
+     *    the page's rendered output, but each fetch also keeps its own Data
+     *    Cache entry keyed by URL. Purge only the path and the page re-renders
+     *    and reads exactly the same stale payload straight back. Three recaps
+     *    sat in the API, live, invisible, for precisely that reason.
+     *
+     * So both go: the path, and the tags for every fetch that page makes.
+     *
+     * A null year still sends the tags. The year only narrows the path and the
+     * per-year tags; the recaps list is global and must refresh regardless.
      */
     public function purgeYear(?int $year): void
     {
-        if (! $year) {
-            return;
+        $tags = ['natcon-event', 'natcon-recaps'];
+
+        if ($year) {
+            $tags[] = "natcon-announcements-{$year}";
+            $tags[] = "natcon-sponsors-{$year}";
+        } else {
+            // Without a year, widen to the un-suffixed tags rather than guessing.
+            $tags[] = 'natcon-announcements';
+            $tags[] = 'natcon-sponsors';
         }
 
+        $this->send($year ? "natcon/{$year}" : null, $tags);
+    }
+
+    /**
+     * Recordings of past conventions.
+     *
+     * natcon_recaps has no event FK — the conventions run back to 2012 and those
+     * years have no event row — so a recap shows on EVERY year's landing page.
+     * One tag refreshes all of them; doing this by path would mean knowing which
+     * years have pages and purging each, and silently missing any that were
+     * added later.
+     */
+    public function purgeRecaps(): void
+    {
+        $this->send(null, ['natcon-recaps']);
+    }
+
+    /**
+     * @param  array<string>  $tags
+     */
+    private function send(?string $slug, array $tags): void
+    {
         $secret = (string) config('services.frontend.revalidation_secret');
         $base = rtrim((string) config('services.frontend.url'), '/');
 
@@ -53,23 +93,30 @@ class LandingCachePurger
             return;
         }
 
+        $payload = ['tags' => array_values(array_unique($tags))];
+
+        if ($slug !== null) {
+            $payload['slug'] = $slug;
+        }
+
         try {
             $res = Http::timeout((int) config('services.frontend.revalidation_timeout', 5))
                 ->withHeaders(['x-revalidation-token' => $secret])
-                ->post($base.'/api/revalidate', ['slug' => "natcon/{$year}"]);
+                ->post($base.'/api/revalidate', $payload);
 
             // Http does not throw on 4xx/5xx without ->throw(), and a 401 here
             // means the two secrets disagree — worth a log line, because the
             // symptom otherwise is just "the page is slow to update again".
             if ($res->failed()) {
                 Log::warning('natcon: landing revalidate rejected', [
-                    'year' => $year,
+                    'slug' => $slug,
+                    'tags' => $payload['tags'],
                     'status' => $res->status(),
                 ]);
             }
         } catch (\Throwable $e) {
             Log::warning('natcon: landing revalidate failed', [
-                'year' => $year,
+                'slug' => $slug,
                 'error' => $e->getMessage(),
             ]);
         }
