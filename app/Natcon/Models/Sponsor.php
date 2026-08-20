@@ -19,14 +19,14 @@ class Sponsor extends Model implements Auditable
     use LogsActivity;
 
     /** Tiers shown on the public page. */
-    public const TIERS = ['major', 'minor', 'star'];
+    public const TIERS = ['copresentor', 'major', 'minor', 'star'];
 
     /**
      * All storable tiers. 'library' is the admin's upload pool — logos land
      * there once and get copied into a public tier on assignment, so it must
      * never be served by the public endpoint.
      */
-    public const ALL_TIERS = ['major', 'minor', 'star', 'library'];
+    public const ALL_TIERS = ['copresentor', 'major', 'minor', 'star', 'library'];
 
     // The class name drops the module prefix, so Eloquent would infer `sponsors`.
     protected $table = 'natcon_sponsors';
