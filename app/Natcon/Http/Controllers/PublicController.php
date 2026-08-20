@@ -99,6 +99,10 @@ class PublicController extends Controller
             'is_current'     => $current && $current->id === $event->id,
             'current_year'   => $current?->year,
             'server_time'    => now()->setTimezone($tz)->toIso8601String(),
+            // Whether the landing page renders the announcement reaction bar.
+            // Cast because a missing column on an un-migrated environment would
+            // otherwise send null and read as "off".
+            'reactions_enabled' => (bool) ($event->reactions_enabled ?? true),
         ]]);
     }
 

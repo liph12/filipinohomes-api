@@ -28,6 +28,7 @@ class NatconEvent extends Model implements Auditable
         'hashtag', 'photo_deadline_at', 'timezone', 'update_profile_url',
         'banner_base', 'email_banner_url', 'thank_you_message',
         'reminder_offsets', 'is_active', 'sales_breakpoint',
+        'reactions_enabled',
     ];
 
     protected $casts = [
@@ -37,6 +38,7 @@ class NatconEvent extends Model implements Auditable
         'photo_deadline_at' => 'datetime',
         'reminder_offsets'  => 'array',
         'is_active'         => 'boolean',
+        'reactions_enabled' => 'boolean',
         'sales_breakpoint'  => 'decimal:2',
     ];
 

@@ -190,6 +190,7 @@ class AdminController extends Controller
             'email_banner_url'   => 'sometimes|nullable|url|max:2048',
             'thank_you_message'  => 'sometimes|nullable|string|max:512',
             'is_active'          => 'sometimes|boolean',
+            'reactions_enabled'  => 'sometimes|boolean',
             // Accepted as a wall-clock time in the event's timezone, because
             // "the 24th" is a Manila date. Converted to UTC below.
             'photo_deadline_at'  => 'sometimes|date',

@@ -192,7 +192,42 @@ Googlebot send no token.
 
 ---
 
-## 8. Running things on api2
+## 8. Announcement reactions are anonymous, and that shapes everything
+
+`natcon_announcement_reactions`. The landing page has no login, so the actor is
+the browser's persistent `visitor_id` (the same `fh_vid` the web already keeps for
+acquisition tracking) — **not** a user.
+
+⚠️ **The unique key is `(natcon_announcement_id, visitor_id)` and deliberately
+excludes `reaction`.** That one constraint is the whole Facebook behaviour: one
+reaction per person per post, so a different emoji REPLACES the previous one
+rather than stacking. Widen it to include `reaction` and every visitor can hold
+all seven at once.
+
+- **Keys, never emoji.** `AnnouncementReaction::KEYS` is an allowlist and the
+  validator uses `in:`. A public endpoint writing arbitrary strings into a label
+  column is an unbounded set nobody can total or render.
+- **The set is all positive on purpose.** Sad and Angry were declined: the page is
+  public, indexed and sells convention seats, so a one-tap way to attach a
+  visible negative number to the organisers' own announcements is not a feature.
+- **Counts are aggregated on read**, not denormalised into a counter column. The
+  frontend proxies the read behind a short cache so the GROUP BY runs about twice
+  a minute however busy the page is, and a counter that drifts is worse than an
+  aggregate that cannot.
+- **Cast the tally to `(object)` on output.** An empty PHP array serialises as
+  `[]`, so the client is handed a list where it was promised a map — harmless for
+  `counts[key]`, fatal for `Object.keys`. (The submissions payload still has this
+  bug; do not copy it.)
+- **Not Auditable**, unlike the rest of the module. An audit row per tap would
+  bury the sends, photo reviews and slug changes under thousands of clicks.
+- `natcon_events.reactions_enabled` is the valve. Off means the tally endpoint
+  returns nothing AND the write 404s — hiding the bar without refusing the write
+  would be theatre. Existing rows are kept, so switching back on restores them.
+- The FK cascade fires on a real DELETE only. Announcements soft-delete, so a
+  pulled announcement keeps its reactions and a restore brings them back; only a
+  `forceDelete` reaps them. That is the wanted behaviour, not an oversight.
+
+## 9. Running things on api2
 
 **Every artisan command must run as `www-data`:**
 

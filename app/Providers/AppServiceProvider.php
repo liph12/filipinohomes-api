@@ -59,6 +59,25 @@ class AppServiceProvider extends ServiceProvider
         // in a loop, and the per-IP limit stops one actor cycling stolen or
         // guessed tokens. Neither alone is sufficient — a shared office NAT would
         // trip a per-IP-only limit for legitimate colleagues.
+        /**
+         * Reacting to an announcement. Anonymous, so there is no account to
+         * limit — the two keys are the browser's visitor id and the IP, and
+         * both are needed: the visitor id is clearable (one person could loop
+         * it), and the IP is shared (one office is legitimately many people, so
+         * it must be the looser of the two).
+         *
+         * Generous on purpose. Reading the feed and reacting to several posts is
+         * normal behaviour; this exists to stop a script, not a keen reader.
+         */
+        RateLimiter::for('natcon-react', function (Request $request) {
+            $visitor = (string) $request->input('visitor_id');
+
+            return [
+                Limit::perMinute(20)->by('natcon-react-vid:'.sha1($visitor ?: 'anon')),
+                Limit::perMinute(60)->by('natcon-react-ip:'.$request->ip()),
+            ];
+        });
+
         RateLimiter::for('natcon-upload', function (Request $request) {
             $token = (string) $request->input('t');
 

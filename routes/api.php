@@ -68,6 +68,7 @@ use App\Http\Controllers\{
 use App\Natcon\Http\Controllers\AdminController as NatconAdminController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
+use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReactionController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
@@ -203,6 +204,12 @@ Route::middleware('strip.tags')->group(function(){
             ->whereNumber('year');
         Route::get('/natcon/{year}/sponsors', [NatconLandingController::class, 'sponsors'])
             ->whereNumber('year');
+        // Reaction TALLIES, outside the token group for the same reason as the
+        // feed: the caller is the frontend's caching proxy, which runs
+        // server-side and carries no guest token. Counts only — no visitor is
+        // identifiable in the response, because that response is shared.
+        Route::get('/natcon/{year}/reactions', [NatconReactionController::class, 'index'])
+            ->whereNumber('year');
 
         // Everything token-bound goes behind verify.guest.token. That is a bot
         // speed bump, not a security control — POST /api/guest-token is itself
@@ -230,6 +237,13 @@ Route::middleware('strip.tags')->group(function(){
             // because it's the one endpoint keyed by email rather than by token.
             Route::post('/natcon/resend-link', [NatconPublicController::class, 'resendLink'])
                 ->middleware('throttle:3,60');
+
+            // Reacting to an announcement. Anonymous — the actor is the browser's
+            // persistent visitor id, not a login — so the guest token is the only
+            // bot speed bump available and the throttle does the real work.
+            Route::post('/natcon/announcements/{announcement}/reactions',
+                [NatconReactionController::class, 'store'])
+                ->middleware('throttle:natcon-react');
         });
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);

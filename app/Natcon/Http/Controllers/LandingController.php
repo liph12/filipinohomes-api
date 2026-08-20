@@ -3,6 +3,7 @@
 namespace App\Natcon\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Natcon\Models\AnnouncementReaction;
 use App\Natcon\Models\NatconAnnouncement;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Recap;
@@ -95,7 +96,13 @@ class LandingController extends Controller
             ->orderByDesc('id')
             ->get();
 
-        return response()->json(['data' => $rows->map(fn ($a) => $this->presentAnnouncement($a, $event, detailed: true))]);
+        // One aggregate for the whole list rather than a query per row. Admin
+        // only and uncached, so the plain GROUP BY is fine here.
+        $tally = AnnouncementReaction::tallyFor($rows->pluck('id')->all());
+
+        return response()->json(['data' => $rows->map(
+            fn ($a) => $this->presentAnnouncement($a, $event, detailed: true, reactionCounts: $tally[$a->id] ?? [])
+        )]);
     }
 
     public function storeAnnouncement(Request $request): JsonResponse
@@ -313,7 +320,12 @@ class LandingController extends Controller
         return $publishing ? Carbon::now() : null;
     }
 
-    private function presentAnnouncement(NatconAnnouncement $a, ?NatconEvent $event, bool $detailed = false): array
+    /**
+     * @param  array<string,int>  $reactionCounts  Admin views only — the public
+     *                                             feed never carries counts, see
+     *                                             AnnouncementReactionController.
+     */
+    private function presentAnnouncement(NatconAnnouncement $a, ?NatconEvent $event, bool $detailed = false, array $reactionCounts = []): array
     {
         $tz = $event?->timezone ?: 'Asia/Manila';
 
@@ -338,6 +350,11 @@ class LandingController extends Controller
             'published_local' => $a->published_at?->copy()->setTimezone($tz)->format('Y-m-d\TH:i'),
             'author' => $a->author?->only(['id', 'name']),
             'created_at' => $a->created_at?->copy()->setTimezone($tz)->toIso8601String(),
+            // Engagement, admin side only. Keys absent from the tally are zero;
+            // the client fills them in from its own reaction catalogue rather
+            // than us shipping five zeroes per row.
+            'reaction_counts' => $reactionCounts,
+            'reaction_total' => array_sum($reactionCounts),
         ];
     }
 
