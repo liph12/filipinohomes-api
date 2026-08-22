@@ -86,10 +86,12 @@ class UserController extends Controller
             'source'  => 'nullable|string|max:64',
         ]);
 
-        // Notify every admin — role_id=1. Matches MessageNotificationMailer's
-        // admin lookup so the inquiry inbox stays in sync with admin team
-        // membership instead of pointing at a single hardcoded mailbox.
+        // Notify every admin — role_id=1, minus per-user mutes (System Users
+        // mute button). Matches MessageNotificationMailer's admin lookup so
+        // the inquiry inbox stays in sync with admin team membership instead
+        // of pointing at a single hardcoded mailbox.
         $adminEmails = User::where('role_id', 1)
+            ->where('admin_emails_muted', false)
             ->whereNotNull('email')
             ->pluck('email')
             ->filter()
@@ -210,10 +212,11 @@ class UserController extends Controller
             'subject'     => 'nullable|string|max:255',
         ]);
 
-        // Same admin fan-out as sendInquiry — every admin (role_id=1) gets
-        // the message so contact-form submissions don't sit in a single
-        // mailbox.
+        // Same admin fan-out as sendInquiry — every non-muted admin
+        // (role_id=1) gets the message so contact-form submissions don't sit
+        // in a single mailbox.
         $adminEmails = User::where('role_id', 1)
+            ->where('admin_emails_muted', false)
             ->whereNotNull('email')
             ->pluck('email')
             ->filter()
@@ -503,8 +506,10 @@ class UserController extends Controller
 
         // Authorization. Role fields are privilege changes → admin only
         // (previously ANY authenticated user could PATCH role_id — a
-        // privilege-escalation hole). Profile fields: self or admin.
-        if ($request->has('role_id') || $request->has('role_locked')) {
+        // privilege-escalation hole). The per-admin email mute is likewise
+        // admin only — it silences another admin's lead emails. Profile
+        // fields: self or admin.
+        if ($request->has('role_id') || $request->has('role_locked') || $request->has('admin_emails_muted')) {
             if (! $actorIsAdmin) {
                 abort(403, 'Only admins can change user roles.');
             }
@@ -526,6 +531,9 @@ class UserController extends Controller
             // LR-driven login syncs must not adjust role_id. Sent alongside a
             // role change; may also be toggled on its own to re-enable sync.
             'role_locked' => 'sometimes|boolean',
+            // Per-admin mute of the admin notification email fan-outs
+            // (System Users mute button).
+            'admin_emails_muted' => 'sometimes|boolean',
         ]);
 
         // Readable audit line for role changes — the owen-it diff already
@@ -546,6 +554,17 @@ class UserController extends Controller
             $user->auditDescription = $roleChanged
                 ? "Role: {$oldRole} → {$newRole}{$lockNote}"
                 : "Role lock changed for {$user->name}{$lockNote}";
+            $user->auditSource = 'system_users';
+        }
+
+        // Same legibility treatment for the per-admin email mute — the System
+        // Logs row should say what stopped, not just show a 0→1 diff.
+        $muteChanged = array_key_exists('admin_emails_muted', $validated)
+            && (bool) $validated['admin_emails_muted'] !== (bool) $user->admin_emails_muted;
+        if ($muteChanged && ! $roleChanged && ! $lockChanged) {
+            $user->auditDescription = $validated['admin_emails_muted']
+                ? "Admin notification emails muted for {$user->name}"
+                : "Admin notification emails resumed for {$user->name}";
             $user->auditSource = 'system_users';
         }
 

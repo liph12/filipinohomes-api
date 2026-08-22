@@ -48,6 +48,9 @@ class UserResource extends JsonResource
             // Admin-pinned role (System Users "force" checkbox): true = LR
             // login syncs must not change role_id; drives the lock badge.
             'role_locked' => (bool) $this->role_locked,
+            // Per-admin email mute (System Users mute button) — drives the
+            // muted-envelope badge on admin rows.
+            'admin_emails_muted' => (bool) $this->admin_emails_muted,
             // Office region (from the agent profile) — lets the frontend show a
             // secretary's region and gate region-scoped UI. Null for users with
             // no agent profile / no region.

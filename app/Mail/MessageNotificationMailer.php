@@ -315,7 +315,13 @@ class MessageNotificationMailer extends Mailable
             // push instead — skip their email.
             $leaderPrefersPush = $leader && self::prefersInquiryPush($leader);
 
-            if ($leader && $leaderEmail !== '' && !$isSender && !$alreadyEmailed && !$leaderPrefersPush) {
+            // Per-user mute covers the person, not just their admin copy — a
+            // muted admin who also leads a team must not slip back in through
+            // the team-leader send (they're no longer in $adminEmails, so the
+            // alreadyEmailed dedup alone wouldn't catch them).
+            $leaderMuted = (bool) ($leader->admin_emails_muted ?? false);
+
+            if ($leader && $leaderEmail !== '' && !$isSender && !$alreadyEmailed && !$leaderPrefersPush && !$leaderMuted) {
                 Mail::to($sharedInbox)->bcc([$leaderEmail])->send(new self(
                     sender:           $sender,
                     receiver:         $leader,
@@ -441,7 +447,8 @@ class MessageNotificationMailer extends Mailable
      * Admins who prefer push for listing inquiries AND are signed in on a
      * device are dropped here — they get the in-app push instead of the email
      * (see SendInquiryReviewNotification). Admins on 'email', or push-preferring
-     * admins with no registered device, still receive the email.
+     * admins with no registered device, still receive the email. Admins muted
+     * per-user from System Users (users.admin_emails_muted) are dropped too.
      *
      * @param array<int, string> $excludeEmails
      * @return array<int, string>
@@ -449,6 +456,7 @@ class MessageNotificationMailer extends Mailable
     private static function resolveAdminEmails(array $excludeEmails): array
     {
         return User::where('role_id', 1)
+            ->where('admin_emails_muted', false)
             ->withCount('deviceTokens')
             ->get(['id', 'email', 'inquiry_notify_channel'])
             ->reject(fn ($u) => self::prefersInquiryPush($u))

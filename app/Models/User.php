@@ -53,6 +53,10 @@ class User extends Authenticatable implements Auditable
         // Admin-pinned role: when true, LR-driven role syncs must not touch
         // role_id (set/cleared from System Users alongside a role change).
         'role_locked',
+        // Per-admin mute for the admin notification email fan-outs (set from
+        // System Users). Only meaningful for admins; kept on users so it
+        // survives role changes.
+        'admin_emails_muted',
         'verification',
         'active_at',
         'inquiry_notify_channel',
@@ -91,6 +95,7 @@ class User extends Authenticatable implements Auditable
             'notify_listing_verified' => 'boolean',
             'notify_status_change' => 'boolean',
             'role_locked' => 'boolean',
+            'admin_emails_muted' => 'boolean',
         ];
     }
 
