@@ -27,7 +27,6 @@ class MaintenanceController extends Controller
             'force_update'       => 'sometimes|boolean',
             'min_app_version'    => 'nullable|string|max:32',
             'update_message'     => 'nullable|string|max:1000',
-            'admin_emails_muted' => 'sometimes|boolean',
         ]);
 
         // Web maintenance, mobile maintenance and the forced-update gate are all
@@ -52,15 +51,10 @@ class MaintenanceController extends Controller
         if ($request->has('update_message')) {
             Setting::set('update_message', (string) $request->input('update_message', ''));
         }
-        if ($request->has('admin_emails_muted')) {
-            Setting::set('admin_emails_muted', $request->boolean('admin_emails_muted') ? 'true' : 'false');
-        }
-
         return response()->json([
             'maintenance'        => Setting::get('maintenance_mode') === 'true',
             'maintenance_mobile' => Setting::get('maintenance_mode_mobile') === 'true',
             'force_update'       => Setting::get('force_update_mobile') === 'true',
-            'admin_emails_muted' => Setting::adminEmailsMuted(),
             'message'            => 'Maintenance mode updated.',
         ]);
     }

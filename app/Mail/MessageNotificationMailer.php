@@ -3,7 +3,6 @@
 namespace App\Mail;
 
 use App\Mail\Concerns\TagsFhMailerHeader;
-use App\Models\Setting;
 use App\Models\User;
 use App\Services\TeamLeadershipService;
 use Illuminate\Mail\Mailable;
@@ -266,15 +265,8 @@ class MessageNotificationMailer extends Mailable
         $teamName = $teamContext['team_name'] ?? null;
 
         // --- Email 1: admin BCC fan-out -------------------------------------
-        // $adminEmails is resolved even when muted so the team-leader dedup
-        // below keeps treating admin leaders as covered — an admin who leads a
-        // team is still an admin and stays muted with the rest.
         $adminEmails = self::resolveAdminEmails([$senderEmail]);
-        if (Setting::adminEmailsMuted()) {
-            // Admin notification emails are muted from System Settings. The
-            // inquiry is still visible in /admin/listing-inquiries, and the
-            // team-leader email below still goes out.
-        } elseif (!empty($adminEmails)) {
+        if (!empty($adminEmails)) {
             // Receiver is a generic admin persona. The admin blade greets
             // "Hello Admin," and doesn't display the receiver name, so this
             // persona only exists to satisfy the constructor's email/name
@@ -297,7 +289,7 @@ class MessageNotificationMailer extends Mailable
                 teamId:           $teamId,
             ));
         } else {
-            Log::warning('dispatchForSubmission: no admin recipients found (role_id=1)');
+            Log::warning('dispatchForSubmission: no unmuted admin recipients (role_id=1)');
         }
 
         // --- Email 2: team-leader BCC (single recipient) --------------------

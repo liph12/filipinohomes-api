@@ -32,10 +32,6 @@ class AppConfigController extends Controller
             // `min_app_version` are hard-blocked. `update_message` is the copy
             // shown on that "Update required" screen.
             'force_update'    => Setting::get('force_update_mobile') === 'true',
-            // Kill switch for the admin email fan-outs — surfaced here so the
-            // System Settings screen can hydrate its toggle from the same
-            // bootstrap call as the maintenance flags.
-            'admin_emails_muted' => Setting::adminEmailsMuted(),
             'min_app_version' => Setting::get('min_app_version'),
             'update_message'  => $updateMessage !== '' ? $updateMessage : null,
             'downloads_url'   => config('app.downloads_url'),
