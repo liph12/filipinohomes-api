@@ -26,6 +26,7 @@ use App\Models\Agent;
 use Illuminate\Support\Facades\DB;
 use App\Models\UserInfo;
 use App\Models\Inquiry;
+use App\Models\Setting;
 use App\Services\LeuterioreRealty\TeamSyncService;
 
 class UserController extends Controller
@@ -96,7 +97,10 @@ class UserController extends Controller
             ->values()
             ->all();
 
-        if (empty($adminEmails)) {
+        if (Setting::adminEmailsMuted()) {
+            // Admin notification emails are muted from System Settings — the
+            // Inquiry row below still lands in the admin Contact Inbox.
+        } elseif (empty($adminEmails)) {
             // Defensive — should never happen in prod, but a bad migration
             // could leave the admin role empty. Log and bail so we don't
             // silently swallow the inquiry.
@@ -217,7 +221,10 @@ class UserController extends Controller
             ->values()
             ->all();
 
-        if (empty($adminEmails)) {
+        if (Setting::adminEmailsMuted()) {
+            // Muted from System Settings — the submission still persists to
+            // the admin Contact Inbox below.
+        } elseif (empty($adminEmails)) {
             Log::warning('sendContactUs: no admin recipients found (role_id=1)');
         } else {
             // BCC pattern (mirrors sendInquiry above) — admin emails stay
