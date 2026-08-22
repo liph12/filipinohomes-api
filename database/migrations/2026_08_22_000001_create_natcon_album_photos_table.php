@@ -16,7 +16,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('natcon_gallery_photos', function (Blueprint $table) {
+        Schema::create('natcon_album_photos', function (Blueprint $table) {
             $table->id();
             $table->foreignId('natcon_event_id')->constrained('natcon_events')->cascadeOnDelete();
             $table->string('s3_key', 512)->unique();
@@ -46,6 +46,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('natcon_gallery_photos');
+        Schema::dropIfExists('natcon_album_photos');
     }
 };

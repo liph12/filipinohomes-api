@@ -2,12 +2,12 @@
 
 namespace App\Natcon\Console;
 
-use App\Natcon\Models\GalleryPhoto;
+use App\Natcon\Models\AlbumPhoto;
 use App\Natcon\Services\FaceRecognitionService;
 use Illuminate\Console\Command;
 
 /**
- * Retry sweep for gallery photos whose Rekognition indexing failed at upload
+ * Retry sweep for album photos whose Rekognition indexing failed at upload
  * time (uploads index inline — production has no queue worker, see
  * config/natcon.php on drain_limit).
  *
@@ -15,15 +15,15 @@ use Illuminate\Console\Command;
  * stamps it, including the zero-faces case, so nothing here can loop on a
  * photo that simply has no faces in it.
  */
-class IndexGalleryFaces extends Command
+class IndexAlbumFaces extends Command
 {
-    protected $signature = 'natcon:index-gallery-faces {--limit=25}';
+    protected $signature = 'natcon:index-album-faces {--limit=25}';
 
-    protected $description = 'Index un-indexed NATCON gallery photos into their Rekognition face collection';
+    protected $description = 'Index un-indexed NATCON album photos into their Rekognition face collection';
 
     public function handle(FaceRecognitionService $faces): int
     {
-        $pending = GalleryPhoto::whereNull('faces_indexed_at')
+        $pending = AlbumPhoto::whereNull('faces_indexed_at')
             ->with('event')
             ->orderBy('id')
             ->limit((int) $this->option('limit'))

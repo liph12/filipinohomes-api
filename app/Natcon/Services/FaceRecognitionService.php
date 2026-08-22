@@ -2,7 +2,7 @@
 
 namespace App\Natcon\Services;
 
-use App\Natcon\Models\GalleryPhoto;
+use App\Natcon\Models\AlbumPhoto;
 use App\Natcon\Models\NatconEvent;
 use Aws\Rekognition\Exception\RekognitionException;
 use Aws\Rekognition\RekognitionClient;
@@ -10,12 +10,12 @@ use Illuminate\Support\Carbon;
 use RuntimeException;
 
 /**
- * Face indexing + search over an event's gallery, backed by AWS Rekognition
+ * Face indexing + search over an event's album, backed by AWS Rekognition
  * face collections.
  *
  * Rekognition never scans the bucket: only photos explicitly indexed here are
  * searchable, and each convention's vectors live in their own collection
- * (NatconEvent::galleryCollectionId()), so a selfie search is scoped to one
+ * (NatconEvent::albumCollectionId()), so a selfie search is scoped to one
  * album by construction. IndexFaces reads the photo straight from S3 — the
  * client and the bucket must therefore be in the SAME region, which is why the
  * region below comes from the s3 disk config rather than its own env knob.
@@ -58,9 +58,9 @@ final class FaceRecognitionService
      * pics): the row is stamped indexed with face_count 0 so the sweep stops
      * retrying it.
      */
-    public function indexPhoto(GalleryPhoto $photo): int
+    public function indexPhoto(AlbumPhoto $photo): int
     {
-        $collection = $photo->event->galleryCollectionId();
+        $collection = $photo->event->albumCollectionId();
         $this->ensureCollection($collection);
 
         $result = $this->client->indexFaces([
@@ -105,10 +105,10 @@ final class FaceRecognitionService
     {
         try {
             $result = $this->client->searchFacesByImage([
-                'CollectionId' => $event->galleryCollectionId(),
+                'CollectionId' => $event->albumCollectionId(),
                 'Image' => ['Bytes' => $imageBytes],
-                'FaceMatchThreshold' => (float) config('natcon.gallery.match_threshold', 90),
-                'MaxFaces' => (int) config('natcon.gallery.max_matches', 100),
+                'FaceMatchThreshold' => (float) config('natcon.album.match_threshold', 90),
+                'MaxFaces' => (int) config('natcon.album.max_matches', 100),
                 'QualityFilter' => 'AUTO',
             ]);
         } catch (RekognitionException $e) {
@@ -149,7 +149,7 @@ final class FaceRecognitionService
      * Evict a deleted photo's vectors so it can never match again. Missing
      * collection or already-deleted faces are fine — the goal state is reached.
      */
-    public function forgetPhoto(GalleryPhoto $photo): void
+    public function forgetPhoto(AlbumPhoto $photo): void
     {
         $faceIds = $photo->face_ids ?? [];
         if ($faceIds === []) {
@@ -158,7 +158,7 @@ final class FaceRecognitionService
 
         try {
             $this->client->deleteFaces([
-                'CollectionId' => $photo->event->galleryCollectionId(),
+                'CollectionId' => $photo->event->albumCollectionId(),
                 'FaceIds' => $faceIds,
             ]);
         } catch (RekognitionException $e) {

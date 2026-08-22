@@ -92,7 +92,7 @@ class AppServiceProvider extends ServiceProvider
         // sized for one awardee sending 1-3 headshots, and an admin loading an
         // event album pushes hundreds of files in one sitting. Behind
         // auth:sanctum + role:admin, so the keys are the user, not a token.
-        RateLimiter::for('natcon-gallery-upload', function (Request $request) {
+        RateLimiter::for('natcon-album-upload', function (Request $request) {
             return [
                 Limit::perMinute(60)->by('natcon-gal:'.($request->user()?->id ?: $request->ip())),
             ];

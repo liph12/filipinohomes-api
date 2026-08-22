@@ -167,11 +167,13 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Event photo gallery + face search
+    | Face-search album
     |--------------------------------------------------------------------------
     |
-    | The album behind /admin/natcon/{slug}. Deliberately different from the
-    | 'photo' block above (awardee headshots):
+    | The full event album behind /admin/natcon/{slug} — NOT the curated
+    | landing-page 'gallery' block below; the two collided on one config key
+    | once and mine silently shadowed the gallery's thumbs. Deliberately
+    | different from the 'photo' block above (awardee headshots):
     |
     |   Fixed quality 88, NO byte target — these images feed Rekognition, and a
     |     byte budget crushes exactly the small background faces a group-shot
@@ -188,13 +190,13 @@ return [
     | straight from the bucket and the two must match.
     |
     */
-    'gallery' => [
-        'quality' => (int) env('NATCON_GALLERY_QUALITY', 88),
-        'max_dimension' => (int) env('NATCON_GALLERY_MAX_DIMENSION', 4096),
+    'album' => [
+        'quality' => (int) env('NATCON_ALBUM_QUALITY', 88),
+        'max_dimension' => (int) env('NATCON_ALBUM_MAX_DIMENSION', 4096),
         'max_upload_kb' => 25 * 1024,
         'max_source_dimension' => 12000,
         'max_megapixels' => 64,
-        'match_threshold' => (float) env('NATCON_GALLERY_MATCH_THRESHOLD', 90),
+        'match_threshold' => (float) env('NATCON_ALBUM_MATCH_THRESHOLD', 90),
         'max_matches' => 100,
     ],
 
@@ -218,9 +220,9 @@ return [
     |
     */
     'gallery' => [
-        'max_width'     => 1920,
-        'target_bytes'  => 400 * 1024,
-        'thumb_width'   => 640,
+        'max_width' => 1920,
+        'target_bytes' => 400 * 1024,
+        'thumb_width' => 640,
         'thumb_quality' => 78,
         'max_upload_kb' => 15 * 1024,   // 15MB, same ceiling as awardee photos
     ],

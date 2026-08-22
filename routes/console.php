@@ -72,9 +72,9 @@ Schedule::command('natcon:hydrate-awardees --limit=200')
     ->hourly()
     ->withoutOverlapping();
 
-// Retry sweep for gallery photos whose Rekognition indexing failed at upload
+// Retry sweep for album photos whose Rekognition indexing failed at upload
 // time (uploads index inline — no queue worker in production). No-ops when
 // every photo is indexed, so it is safe to leave scheduled forever.
-Schedule::command('natcon:index-gallery-faces --limit=25')
+Schedule::command('natcon:index-album-faces --limit=25')
     ->everyFiveMinutes()
     ->withoutOverlapping();

@@ -70,6 +70,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\VisitController;
 use App\Http\Middleware\RoleMiddleware;
 use App\Natcon\Http\Controllers\AdminController as NatconAdminController;
+use App\Natcon\Http\Controllers\AlbumController as NatconAlbumController;
 use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReactionController;
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
@@ -503,16 +504,18 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/natcon/suppressions', [NatconAdminController::class, 'suppressions']);
                 Route::post('/admin/natcon/suppressions', [NatconAdminController::class, 'suppress']);
 
-                // ── Event photo gallery + face search ────────────────────────
-                // The album behind /admin/natcon/{slug}. Uploads land in
-                // natcon/{slug}/ on S3 and are indexed into that event's own
-                // Rekognition collection; /search compares a selfie against
-                // that collection only. The selfie itself is never stored.
-                Route::get('/admin/natcon/gallery/photos', [NatconGalleryController::class, 'index']);
-                Route::post('/admin/natcon/gallery/photos', [NatconGalleryController::class, 'store'])
-                    ->middleware('throttle:natcon-gallery-upload');
-                Route::delete('/admin/natcon/gallery/photos/{photo}', [NatconGalleryController::class, 'destroy']);
-                Route::post('/admin/natcon/gallery/search', [NatconGalleryController::class, 'search']);
+                // ── Face-search album ────────────────────────────────────────
+                // The full event album behind /admin/natcon/{slug} — distinct
+                // from /admin/natcon/gallery below (the landing page's curated
+                // strip). Uploads land in natcon/{slug}/ on S3 and are indexed
+                // into that event's own Rekognition collection; /search
+                // compares a selfie against that collection only. The selfie
+                // itself is never stored.
+                Route::get('/admin/natcon/album/photos', [NatconAlbumController::class, 'index']);
+                Route::post('/admin/natcon/album/photos', [NatconAlbumController::class, 'store'])
+                    ->middleware('throttle:natcon-album-upload');
+                Route::delete('/admin/natcon/album/photos/{photo}', [NatconAlbumController::class, 'destroy']);
+                Route::post('/admin/natcon/album/search', [NatconAlbumController::class, 'search']);
 
                 // Form builder — edit the questions/choices the awardee page renders.
                 // Reorder is registered BEFORE /{field} so "reorder" is never bound
