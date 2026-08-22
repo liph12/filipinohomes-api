@@ -167,6 +167,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Landing-page gallery
+    |--------------------------------------------------------------------------
+    |
+    | Event photos on the public landing page — a third grade of image,
+    | deliberately between the two existing pipelines:
+    |
+    |   Not the 50KB WebP logo pipeline (the generic /upload route) — fifty
+    |     kilobytes turns a crowd shot into mush, and these fill a grid, not a
+    |     footer strip.
+    |   Not the 600KB print pipeline above — nothing here is printed, and a
+    |     hundred 600KB frames on one indexable page is a Core Web Vitals bill
+    |     nobody asked for.
+    |
+    | So: web-gallery grade. 1920px JPEG under ~400KB for the lightbox, plus a
+    | 640px thumb the grid actually renders.
+    |
+    */
+    'gallery' => [
+        'max_width'     => 1920,
+        'target_bytes'  => 400 * 1024,
+        'thumb_width'   => 640,
+        'thumb_quality' => 78,
+        'max_upload_kb' => 15 * 1024,   // 15MB, same ceiling as awardee photos
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Public link behaviour
     |--------------------------------------------------------------------------
     |

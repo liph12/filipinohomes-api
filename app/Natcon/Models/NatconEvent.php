@@ -173,9 +173,14 @@ class NatconEvent extends Model implements Auditable
      * Where this year's uploaded photos land. Derived from the slug rather than
      * configured, so a new year cannot accidentally inherit the previous year's
      * S3 folder — which is exactly what a config default did before.
+     *
+     * One method for every per-year S3 folder — awardee headshots ('photos'),
+     * the landing gallery ('gallery') — so no upload path can inherit another
+     * year's folder by building its own prefix. Defaulted so PhotoService's
+     * bare call keeps meaning what it always did.
      */
-    public function s3Prefix(): string
+    public function s3Prefix(string $kind = 'photos'): string
     {
-        return 'filipinohomes-new/' . $this->slug . '/photos';
+        return 'filipinohomes-new/' . $this->slug . '/' . $kind;
     }
 }

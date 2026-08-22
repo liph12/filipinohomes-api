@@ -70,6 +70,8 @@ use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReactionController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
+use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
+use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\HomesPhNewsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
@@ -203,6 +205,8 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
             ->whereNumber('year');
         Route::get('/natcon/{year}/sponsors', [NatconLandingController::class, 'sponsors'])
+            ->whereNumber('year');
+        Route::get('/natcon/{year}/gallery', [NatconGalleryController::class, 'gallery'])
             ->whereNumber('year');
         // Reaction TALLIES, outside the token group for the same reason as the
         // feed: the caller is the frontend's caching proxy, which runs
@@ -508,6 +512,11 @@ Route::middleware('strip.tags')->group(function(){
                 Route::patch('/admin/natcon/form-fields/{field}', [NatconFormFieldController::class, 'update']);
                 Route::delete('/admin/natcon/form-fields/{field}', [NatconFormFieldController::class, 'destroy']);
 
+                // AI sponsor thank-you caption for the poster tool. Admin-only. Throttled:
+                // each hit is a real OpenAI call.
+                Route::post('/admin/natcon/sponsor-caption', [NatconSponsorCaptionController::class, 'generate'])
+                    ->middleware('throttle:15,1');
+
                 // ── Landing-page content ─────────────────────────────────────
                 // Editors as well as admins: this is marketing copy and a list
                 // of video links, not the send machinery. Kept inside the same
@@ -527,6 +536,16 @@ Route::middleware('strip.tags')->group(function(){
                     Route::post('/admin/natcon/sponsors', [NatconLandingController::class, 'storeSponsor']);
                     Route::patch('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'updateSponsor']);
                     Route::delete('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'destroySponsor']);
+
+                    Route::get('/admin/natcon/gallery', [NatconGalleryController::class, 'adminGallery']);
+                    // Throttled: each hit is a real image encode plus two S3
+                    // writes. The natcon-upload limiter is keyed on the guest
+                    // token and everyone here is authed without one, so it
+                    // would funnel every admin into a single 'anon' bucket.
+                    Route::post('/admin/natcon/gallery', [NatconGalleryController::class, 'storeGalleryPhoto'])
+                        ->middleware('throttle:30,1');
+                    Route::patch('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto']);
+                    Route::delete('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto']);
                 });
 
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);

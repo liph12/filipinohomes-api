@@ -58,10 +58,12 @@ class LandingCachePurger
         if ($year) {
             $tags[] = "natcon-announcements-{$year}";
             $tags[] = "natcon-sponsors-{$year}";
+            $tags[] = "natcon-gallery-{$year}";
         } else {
             // Without a year, widen to the un-suffixed tags rather than guessing.
             $tags[] = 'natcon-announcements';
             $tags[] = 'natcon-sponsors';
+            $tags[] = 'natcon-gallery';
         }
 
         $this->send($year ? "natcon/{$year}" : null, $tags);
