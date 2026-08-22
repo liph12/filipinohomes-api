@@ -1,92 +1,93 @@
 <?php
-use App\Http\Controllers\{
-    AppConfigController,
-    AppVersionController,
-    UserController,
-    AgentController,
-    CategoryController,
-    PropertyTypeController,
-    FurnishingController,
-    PropertyAttributesController,
-    PropertyController,
-    ListingController,
-    ReelController,
-    AudienceInsightsController,
-    VisitController,
-    FullListingController,
-    PropertySubtypeController,
-    ProjectController,
-    AmenityController,
-    ImageUploadController,
-    GifUploadController,
-    RemovedPhotoUploadController,
-    BlogCategoryController,
-    PostController,
-    GenerateDescriptionController,
-    OfficeController,
-    ProvinceController,
-    CityController,
-    OpenAIController,
-    ChatController,
-    ConversationController,
-    FavoriteController,
-    MagazineController,
-    MessageController,
-    MaintenanceController,
-    FileUploadController,
-    PageBuilderController,
-    BuyerFormController,
-    ReactionController,
-    SitemapController,
-    BackgroundJobController,
-    AdCampaignController,
-    AdController,
-    AdSectionController,
-    AdPlacementController,
-    PublicAdController,
-    BlockedUserController,
-    AgentReviewController,
-    TeamController,
-    TeamAgentController,
-    FeatureTokenController,
-    ImpersonationController,
-    GuestTokenController,
-    InquiryController,
-    InquiryAnalyticsController,
-    ActivityLogController,
-    FacilityAdminController,
-    FacilityCandidateController,
-    SeoCommandController,
-    SeoInventoryController,
-    MobileStatisticsController,
-    DeviceTokenController,
-    NotificationController,
-    AnnouncementController,
-    SessionController,
-    EmailChangeController,
-};
-use App\Natcon\Http\Controllers\AdminController as NatconAdminController;
-use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
-use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
-use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReactionController;
-use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
-use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
-use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
+
+use App\Http\Controllers\ActivityLogController;
+use App\Http\Controllers\AdCampaignController;
+use App\Http\Controllers\AdController;
+use App\Http\Controllers\AdPlacementController;
 use App\Http\Controllers\AdPreviewController;
-use App\Http\Controllers\HomesPhNewsController;
+use App\Http\Controllers\AdSectionController;
+use App\Http\Controllers\AgentController;
+use App\Http\Controllers\AgentReviewController;
+use App\Http\Controllers\AmenityController;
+use App\Http\Controllers\AnnouncementController;
+use App\Http\Controllers\AppConfigController;
+use App\Http\Controllers\AppVersionController;
+use App\Http\Controllers\AudienceInsightsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\BackgroundJobController;
+use App\Http\Controllers\BlockedUserController;
+use App\Http\Controllers\BlogCategoryController;
+use App\Http\Controllers\BoundaryController;
+use App\Http\Controllers\BuyerFormController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ChatController;
+use App\Http\Controllers\CityController;
+use App\Http\Controllers\ConversationController;
+use App\Http\Controllers\DeviceTokenController;
+use App\Http\Controllers\EmailChangeController;
+use App\Http\Controllers\FacilityAdminController;
+use App\Http\Controllers\FacilityCandidateController;
+use App\Http\Controllers\FavoriteController;
+use App\Http\Controllers\FeatureTokenController;
+use App\Http\Controllers\FileUploadController;
+use App\Http\Controllers\FullListingController;
+use App\Http\Controllers\FurnishingController;
+use App\Http\Controllers\GenerateDescriptionController;
+use App\Http\Controllers\GifUploadController;
+use App\Http\Controllers\GuestTokenController;
+use App\Http\Controllers\HomesPhNewsController;
+use App\Http\Controllers\ImageUploadController;
+use App\Http\Controllers\ImpersonationController;
+use App\Http\Controllers\InquiryAnalyticsController;
+use App\Http\Controllers\InquiryController;
+use App\Http\Controllers\ListingController;
+use App\Http\Controllers\MagazineController;
+use App\Http\Controllers\MaintenanceController;
+use App\Http\Controllers\MessageController;
+use App\Http\Controllers\MobileStatisticsController;
+use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\OfficeController;
+use App\Http\Controllers\OpenAIController;
+use App\Http\Controllers\PageBuilderController;
+use App\Http\Controllers\PostController;
+use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\PropertyAttributesController;
+use App\Http\Controllers\PropertyController;
+use App\Http\Controllers\PropertySubtypeController;
+use App\Http\Controllers\PropertyTypeController;
+use App\Http\Controllers\ProvinceController;
+use App\Http\Controllers\PublicAdController;
+use App\Http\Controllers\ReactionController;
+use App\Http\Controllers\ReelController;
+use App\Http\Controllers\RemovedPhotoUploadController;
+use App\Http\Controllers\SeoCommandController;
+use App\Http\Controllers\SeoInventoryController;
+use App\Http\Controllers\SessionController;
+use App\Http\Controllers\SitemapController;
+use App\Http\Controllers\TeamAgentController;
+use App\Http\Controllers\TeamController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\VisitController;
 use App\Http\Middleware\RoleMiddleware;
-Route::middleware('strip.tags')->group(function(){
-    Route::middleware('throttle:auth')->group(function(){
+use App\Natcon\Http\Controllers\AdminController as NatconAdminController;
+use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReactionController;
+use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
+use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
+use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
+use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
+use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
+use Illuminate\Support\Facades\Route;
+
+Route::middleware('strip.tags')->group(function () {
+    Route::middleware('throttle:auth')->group(function () {
         Route::post('/login', [UserController::class, 'login']);
         Route::post('/auth/google', [GoogleAuthController::class, 'authenticate']);
         Route::post('/auth/dev-login', [UserController::class, 'devLogin']);
         Route::post('/auth-send-otp', [UserController::class, 'authWithOtp']);
         Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
     });
-    
-    Route::middleware('throttle:api')->group(function(){
+
+    Route::middleware('throttle:api')->group(function () {
         // Issues a short-lived HMAC guest token for public API access
         Route::post('/guest-token', [GuestTokenController::class, 'issue']);
         // Separate token for the external partner /fh-agent endpoint (own secret).
@@ -280,13 +281,13 @@ Route::middleware('strip.tags')->group(function(){
         Route::get('magazines/years', [MagazineController::class, 'years']);
         Route::get('magazines/{magazine}', [MagazineController::class, 'show']);
         Route::get('magazines/{magazine}/pdf', [MagazineController::class, 'streamPdf']);
-        
+
         // Public ad routes
         Route::get('/ads/section/{key}', [PublicAdController::class, 'show']);
         Route::post('/ads/{id}/impression', [PublicAdController::class, 'trackImpression']);
         Route::post('/ads/{id}/click', [PublicAdController::class, 'trackClick']);
-    
-        Route::middleware(['auth:sanctum', 'agent.active'])->group(function(){
+
+        Route::middleware(['auth:sanctum', 'agent.active'])->group(function () {
             Route::get('/client-logins', [UserController::class, 'getClients']);
             Route::get('/authenticate', [UserController::class, 'authenticate']);
 
@@ -368,7 +369,7 @@ Route::middleware('strip.tags')->group(function(){
             // records open/preview/generate/share into the audit trail).
             Route::post('/reels/events', [ReelController::class, 'logEvent']);
             Route::get('/all-listings/map-markers', [ListingController::class, 'mapMarkers']);
-            Route::get('/admin/map-boundaries', [\App\Http\Controllers\BoundaryController::class, 'index']);
+            Route::get('/admin/map-boundaries', [BoundaryController::class, 'index']);
             Route::get('/user/dashboard', [ListingController::class, 'dashboard']);
             Route::get('/user/status-by-date', [ListingController::class, 'dashboardStatusByDate']);
             Route::get('/user/agent-demographics', [ListingController::class, 'dashboardAgentDemographics']);
@@ -441,7 +442,7 @@ Route::middleware('strip.tags')->group(function(){
             Route::post('/page/agents', [PageBuilderController::class, 'store']);
             Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
             Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);
-            
+
             Route::post('/page/agents/{id}/restore', [PageBuilderController::class, 'restore']);
 
             // Buyer Form (Open House) — agent-created registration forms + client submissions.
@@ -453,12 +454,11 @@ Route::middleware('strip.tags')->group(function(){
             Route::delete('/buyer-forms/{id}', [BuyerFormController::class, 'destroy']);
             Route::post('/buyer-forms/{slug}/register', [BuyerFormController::class, 'register']);
 
-    
             // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.
             // GET /admin/inquiries          → paginated list with replies
             // GET /admin/inquiries/{id}     → single inquiry with thread
             // POST /admin/inquiries/{id}/reply → send a reply from info@
-            Route::middleware(RoleMiddleware::class . ':admin')->group(function () {
+            Route::middleware(RoleMiddleware::class.':admin')->group(function () {
                 // ── NATCON 2026 campaign admin ──────────────────────────────
                 // ⚠️ /send-invites does NOT send. It writes natcon_outbox rows
                 //    and returns; natcon:drain-outbox does the sending, paced by
@@ -503,6 +503,17 @@ Route::middleware('strip.tags')->group(function(){
                 Route::get('/admin/natcon/suppressions', [NatconAdminController::class, 'suppressions']);
                 Route::post('/admin/natcon/suppressions', [NatconAdminController::class, 'suppress']);
 
+                // ── Event photo gallery + face search ────────────────────────
+                // The album behind /admin/natcon/{slug}. Uploads land in
+                // natcon/{slug}/ on S3 and are indexed into that event's own
+                // Rekognition collection; /search compares a selfie against
+                // that collection only. The selfie itself is never stored.
+                Route::get('/admin/natcon/gallery/photos', [NatconGalleryController::class, 'index']);
+                Route::post('/admin/natcon/gallery/photos', [NatconGalleryController::class, 'store'])
+                    ->middleware('throttle:natcon-gallery-upload');
+                Route::delete('/admin/natcon/gallery/photos/{photo}', [NatconGalleryController::class, 'destroy']);
+                Route::post('/admin/natcon/gallery/search', [NatconGalleryController::class, 'search']);
+
                 // Form builder — edit the questions/choices the awardee page renders.
                 // Reorder is registered BEFORE /{field} so "reorder" is never bound
                 // as a model id.
@@ -521,7 +532,7 @@ Route::middleware('strip.tags')->group(function(){
                 // Editors as well as admins: this is marketing copy and a list
                 // of video links, not the send machinery. Kept inside the same
                 // auth group and re-gated on the line below.
-                Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
+                Route::middleware(RoleMiddleware::class.':admin,editor')->group(function () {
                     Route::get('/admin/natcon/announcements', [NatconLandingController::class, 'adminAnnouncements']);
                     Route::post('/admin/natcon/announcements', [NatconLandingController::class, 'storeAnnouncement']);
                     Route::patch('/admin/natcon/announcements/{announcement}', [NatconLandingController::class, 'updateAnnouncement']);
@@ -643,7 +654,7 @@ Route::middleware('strip.tags')->group(function(){
             });
 
             // Magazine, Office & Ad management (admin + editor only)
-            Route::middleware(RoleMiddleware::class . ':admin,editor')->group(function () {
+            Route::middleware(RoleMiddleware::class.':admin,editor')->group(function () {
                 Route::apiResource('magazines', MagazineController::class)->except(['index', 'show']);
                 Route::post('/offices', [OfficeController::class, 'store']);
                 Route::patch('/offices/{office}', [OfficeController::class, 'update']);
@@ -659,9 +670,9 @@ Route::middleware('strip.tags')->group(function(){
             });
         });
     });
-    
-    Route::middleware('throttle:chat')->group(function(){
-        Route::middleware(['auth:sanctum', 'agent.active'])->group(function(){
+
+    Route::middleware('throttle:chat')->group(function () {
+        Route::middleware(['auth:sanctum', 'agent.active'])->group(function () {
             // Aggregate counts for /admin/chat-statistics. Must precede the
             // chats apiResource — otherwise `/chats/stats` matches `show`
             // and tries to bind `stats` as a Chat model id.
@@ -684,11 +695,11 @@ Route::middleware('strip.tags')->group(function(){
             // ChatController::mutateViewerPivot. `purge` is the only
             // terminal action — once set, the chat is hidden from all
             // views for that viewer (the row stays in the DB).
-            Route::post('chats/{chat}/archive',   [ChatController::class, 'archive']);
+            Route::post('chats/{chat}/archive', [ChatController::class, 'archive']);
             Route::post('chats/{chat}/unarchive', [ChatController::class, 'unarchive']);
-            Route::post('chats/{chat}/trash',     [ChatController::class, 'trash']);
-            Route::post('chats/{chat}/restore',   [ChatController::class, 'restore']);
-            Route::post('chats/{chat}/purge',     [ChatController::class, 'purge']);
+            Route::post('chats/{chat}/trash', [ChatController::class, 'trash']);
+            Route::post('chats/{chat}/restore', [ChatController::class, 'restore']);
+            Route::post('chats/{chat}/purge', [ChatController::class, 'purge']);
             // Admin-only hard delete: permanently removes EVERY chat owned by
             // the given user (their inquiries/threads) for all participants.
             Route::delete('chats/purge-by-user/{user}', [ChatController::class, 'purgeByUser']);

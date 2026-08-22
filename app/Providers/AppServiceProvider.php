@@ -4,12 +4,12 @@ namespace App\Providers;
 
 use App\Services\AuditMailService;
 use App\Services\TeamLeadershipService;
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Mail\Events\MessageSent;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -32,6 +32,7 @@ class AppServiceProvider extends ServiceProvider
             if ($buildToken && $request->header('X-Build-Token') === $buildToken) {
                 return Limit::none();
             }
+
             return Limit::perMinute(120)->by(
                 $request->user()?->id ?: $request->ip()
             );
@@ -40,7 +41,7 @@ class AppServiceProvider extends ServiceProvider
         // Optional: auth limiter
         RateLimiter::for('auth', function (Request $request) {
             return Limit::perMinute(5)->by(
-                $request->input('email') . '|' . $request->ip()
+                $request->input('email').'|'.$request->ip()
             );
         });
 
@@ -82,8 +83,18 @@ class AppServiceProvider extends ServiceProvider
             $token = (string) $request->input('t');
 
             return [
-                Limit::perHour(6)->by('natcon-tok:' . sha1($token ?: 'anon')),
-                Limit::perHour(30)->by('natcon-ip:' . $request->ip()),
+                Limit::perHour(6)->by('natcon-tok:'.sha1($token ?: 'anon')),
+                Limit::perHour(30)->by('natcon-ip:'.$request->ip()),
+            ];
+        });
+
+        // Admin gallery uploads — deliberately NOT natcon-upload: that one is
+        // sized for one awardee sending 1-3 headshots, and an admin loading an
+        // event album pushes hundreds of files in one sitting. Behind
+        // auth:sanctum + role:admin, so the keys are the user, not a token.
+        RateLimiter::for('natcon-gallery-upload', function (Request $request) {
+            return [
+                Limit::perMinute(60)->by('natcon-gal:'.($request->user()?->id ?: $request->ip())),
             ];
         });
 

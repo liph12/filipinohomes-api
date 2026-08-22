@@ -31,7 +31,7 @@ return [
     |   live      — real sends to real awardees.
     |
     */
-    'send_mode'       => env('NATCON_SEND_MODE', 'off'),
+    'send_mode' => env('NATCON_SEND_MODE', 'off'),
     'test_recipients' => array_values(array_filter(array_map(
         'trim',
         explode(',', (string) env('NATCON_TEST_RECIPIENTS', ''))
@@ -52,7 +52,7 @@ return [
     | 1,000-recipient campaign over ~25 minutes instead of hammering the provider.
     |
     */
-    'drain_limit'  => (int) env('NATCON_DRAIN_LIMIT', 40),
+    'drain_limit' => (int) env('NATCON_DRAIN_LIMIT', 40),
     'max_attempts' => (int) env('NATCON_MAX_SEND_ATTEMPTS', 3),
 
     /*
@@ -69,10 +69,10 @@ return [
     |
     */
     'lr' => [
-        'base_url'          => env('NATCON_LR_BASE_URL', 'https://api.leuteriorealty.com/natcon/v1/public/api/v2/get-awardee'),
-        'timeout'           => (int) env('NATCON_LR_TIMEOUT', 15),
+        'base_url' => env('NATCON_LR_BASE_URL', 'https://api.leuteriorealty.com/natcon/v1/public/api/v2/get-awardee'),
+        'timeout' => (int) env('NATCON_LR_TIMEOUT', 15),
         'lookups_per_minute' => (int) env('NATCON_LR_RATE', 30),
-        'cache_ttl_found'     => 3600,
+        'cache_ttl_found' => 3600,
         // Short, because LR may add someone after we first looked.
         'cache_ttl_not_found' => 300,
         // Errors are never cached — a transient LR outage must not poison an hour
@@ -111,11 +111,11 @@ return [
     'sales_breakpoint' => (float) env('NATCON_SALES_BREAKPOINT', 61000000),
 
     'qualifiers' => [
-        'url'        => env('NATCON_LR_QUALIFIERS_URL', 'https://leuteriorealty.com/api/natcon-qualifiers-v2'),
-        'from'       => env('NATCON_LR_QUALIFIERS_FROM', '2025-08-01'),
+        'url' => env('NATCON_LR_QUALIFIERS_URL', 'https://leuteriorealty.com/api/natcon-qualifiers-v2'),
+        'from' => env('NATCON_LR_QUALIFIERS_FROM', '2025-08-01'),
         'lastdate_x' => env('NATCON_LR_QUALIFIERS_LASTDATE_X', '2026-07-31'),
         'lastdate_y' => env('NATCON_LR_QUALIFIERS_LASTDATE_Y', '2026-08-05'),
-        'timeout'    => (int) env('NATCON_LR_QUALIFIERS_TIMEOUT', 30),
+        'timeout' => (int) env('NATCON_LR_QUALIFIERS_TIMEOUT', 30),
     ],
 
     /*
@@ -134,15 +134,15 @@ return [
     |
     */
     'photo' => [
-        's3_prefix'     => env('NATCON_S3_PREFIX', 'filipinohomes-new/natcon-2026/photos'),
-        'max_width'     => 2000,
-        'target_bytes'  => 600 * 1024,
+        's3_prefix' => env('NATCON_S3_PREFIX', 'filipinohomes-new/natcon-2026/photos'),
+        'max_width' => 2000,
+        'target_bytes' => 600 * 1024,
         'max_upload_kb' => 15 * 1024,   // 15MB; a headshot is under 5
         // Guards against decompression bombs: a flat-colour 12000x12000 PNG is
         // ~100KB on the wire and decodes to ~576MB in GD, which OOMs a PHP-FPM
         // worker. Checked with getimagesize() BEFORE Intervention touches it.
         'max_megapixels' => 40,
-        'max_dimension'  => 8000,
+        'max_dimension' => 8000,
 
         /*
          | How many photos an awardee sends.
@@ -162,7 +162,40 @@ return [
          |    and every page says.
          */
         'required_count' => (int) env('NATCON_PHOTO_REQUIRED_COUNT', 1),
-        'max_count'      => (int) env('NATCON_PHOTO_MAX_COUNT', 3),
+        'max_count' => (int) env('NATCON_PHOTO_MAX_COUNT', 3),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Event photo gallery + face search
+    |--------------------------------------------------------------------------
+    |
+    | The album behind /admin/natcon/{slug}. Deliberately different from the
+    | 'photo' block above (awardee headshots):
+    |
+    |   Fixed quality 88, NO byte target — these images feed Rekognition, and a
+    |     byte budget crushes exactly the small background faces a group-shot
+    |     search needs. Indexing is billed per image, not per megabyte, so a
+    |     bigger file costs nothing extra.
+    |   4096px, not 2000 — a face 30 rows back in a 2000px hall shot falls
+    |     under Rekognition's detectable size; at 4096 it usually doesn't.
+    |   Higher bomb-gate ceilings — event photographers shoot 45MP+ bodies and
+    |     this route is admin-only.
+    |
+    | match_threshold is the Rekognition similarity floor (0-100). 90 keeps
+    | strangers out of "my photos"; lower it if attendees report missing shots.
+    | The collection region follows the S3 disk region — IndexFaces reads
+    | straight from the bucket and the two must match.
+    |
+    */
+    'gallery' => [
+        'quality' => (int) env('NATCON_GALLERY_QUALITY', 88),
+        'max_dimension' => (int) env('NATCON_GALLERY_MAX_DIMENSION', 4096),
+        'max_upload_kb' => 25 * 1024,
+        'max_source_dimension' => 12000,
+        'max_megapixels' => 64,
+        'match_threshold' => (float) env('NATCON_GALLERY_MATCH_THRESHOLD', 90),
+        'max_matches' => 100,
     ],
 
     /*

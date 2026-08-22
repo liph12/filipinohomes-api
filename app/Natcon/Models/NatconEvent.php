@@ -21,6 +21,7 @@ class NatconEvent extends Model implements Auditable
     use LogsActivity;
 
     protected string $auditCategory = 'natcon';
+
     protected array $auditLabelAttributes = ['name'];
 
     protected $fillable = [
@@ -32,15 +33,15 @@ class NatconEvent extends Model implements Auditable
     ];
 
     protected $casts = [
-        'year'              => 'integer',
-        'starts_on'         => 'date',
-        'ends_on'           => 'date',
+        'year' => 'integer',
+        'starts_on' => 'date',
+        'ends_on' => 'date',
         'photo_deadline_at' => 'datetime',
-        'reminder_offsets'  => 'array',
-        'sponsor_display'   => 'array',
-        'is_active'         => 'boolean',
+        'reminder_offsets' => 'array',
+        'sponsor_display' => 'array',
+        'is_active' => 'boolean',
         'reactions_enabled' => 'boolean',
-        'sales_breakpoint'  => 'decimal:2',
+        'sales_breakpoint' => 'decimal:2',
     ];
 
     public function recipients()
@@ -127,7 +128,7 @@ class NatconEvent extends Model implements Auditable
             return null;
         }
 
-        $tz    = $this->timezone ?: 'Asia/Manila';
+        $tz = $this->timezone ?: 'Asia/Manila';
         $today = ($from ? $from->copy()->setTimezone($tz) : Carbon::now($tz))->startOfDay();
 
         return (int) $today->diffInDays($deadline->copy()->startOfDay(), false);
@@ -152,15 +153,15 @@ class NatconEvent extends Model implements Auditable
         }
 
         if ($this->starts_on->isSameMonth($this->ends_on)) {
-            return $this->starts_on->format('F j') . '–' . $this->ends_on->format('j, Y');
+            return $this->starts_on->format('F j').'–'.$this->ends_on->format('j, Y');
         }
 
-        return $this->starts_on->format('F j') . ' – ' . $this->ends_on->format('F j, Y');
+        return $this->starts_on->format('F j').' – '.$this->ends_on->format('F j, Y');
     }
 
     public function displayShortName(): string
     {
-        return $this->short_name ?: ('NATCON ' . $this->year);
+        return $this->short_name ?: ('NATCON '.$this->year);
     }
 
     public function thankYou(): string
@@ -182,5 +183,29 @@ class NatconEvent extends Model implements Auditable
     public function s3Prefix(string $kind = 'photos'): string
     {
         return 'filipinohomes-new/' . $this->slug . '/' . $kind;
+    }
+
+    /**
+     * Where this year's face-search ALBUM photos land — the full event album
+     * the selfie search runs over, distinct from the curated landing gallery
+     * (s3Prefix('gallery')) and from awardee headshots (s3Prefix()). Like
+     * both, derived from the slug so a new year cannot inherit the previous
+     * year's folder.
+     */
+    public function albumS3Prefix(): string
+    {
+        return 'natcon/' . $this->slug;
+    }
+
+    /**
+     * The Rekognition face collection holding this year's album vectors.
+     * Collection ids are account-global, hence the namespace; the slug keeps
+     * each convention's album searchable — and deletable — on its own.
+     * ⚠️ The 'fh-gallery-' literal predates the gallery/album split and is
+     * kept because live collections (with indexed vectors) already use it.
+     */
+    public function albumCollectionId(): string
+    {
+        return 'fh-gallery-' . $this->slug;
     }
 }
