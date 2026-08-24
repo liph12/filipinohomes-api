@@ -552,6 +552,15 @@ Route::middleware('strip.tags')->group(function () {
                     Route::delete('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'destroySponsor']);
 
                     Route::get('/admin/natcon/gallery', [NatconGalleryController::class, 'adminGallery']);
+                    // Secondary albums (folders) inside one convention's
+                    // gallery — the convention is the primary album; these are
+                    // the single level under it (per photographer/company).
+                    // Registered BEFORE /gallery/{photo} so "albums" is never
+                    // bound as a photo id.
+                    Route::get('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'albums']);
+                    Route::post('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'storeAlbum']);
+                    Route::patch('/admin/natcon/gallery/albums/{album}', [NatconGalleryController::class, 'updateAlbum']);
+                    Route::delete('/admin/natcon/gallery/albums/{album}', [NatconGalleryController::class, 'destroyAlbum']);
                     // Throttled: each hit is a real image encode plus two S3
                     // writes. The natcon-upload limiter is keyed on the guest
                     // token and everyone here is authed without one, so it

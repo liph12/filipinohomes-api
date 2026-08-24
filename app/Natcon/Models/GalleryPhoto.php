@@ -24,8 +24,10 @@ class GalleryPhoto extends Model implements Auditable
 {
     use LogsActivity;
 
-    public const STATUS_ACTIVE  = 'active';
-    public const STATUS_HIDDEN  = 'hidden';
+    public const STATUS_ACTIVE = 'active';
+
+    public const STATUS_HIDDEN = 'hidden';
+
     public const STATUS_DELETED = 'deleted';
 
     // The class name drops the module prefix, so Eloquent would infer `gallery_photos`.
@@ -36,21 +38,26 @@ class GalleryPhoto extends Model implements Auditable
     protected array $auditLabelAttributes = ['caption'];
 
     protected $fillable = [
-        'natcon_event_id', 'image_url', 'thumb_url', 's3_key', 'caption',
-        'album',
+        'natcon_event_id', 'album_id', 'image_url', 'thumb_url', 's3_key', 'caption',
         'width', 'height', 'byte_size', 'status', 'sort_order', 'created_by',
     ];
 
     protected $casts = [
-        'width'      => 'integer',
-        'height'     => 'integer',
-        'byte_size'  => 'integer',
+        'width' => 'integer',
+        'height' => 'integer',
+        'byte_size' => 'integer',
         'sort_order' => 'integer',
     ];
 
     public function event(): BelongsTo
     {
         return $this->belongsTo(NatconEvent::class, 'natcon_event_id');
+    }
+
+    /** Secondary album (folder) within the event's gallery; NULL = event root. */
+    public function album(): BelongsTo
+    {
+        return $this->belongsTo(GalleryAlbum::class, 'album_id');
     }
 
     /** Public-page order: active only, hand-ordered, oldest first on ties. */

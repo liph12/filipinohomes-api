@@ -2,6 +2,7 @@
 
 namespace App\Natcon\Services;
 
+use App\Natcon\Models\GalleryAlbum;
 use App\Natcon\Models\GalleryPhoto;
 use App\Natcon\Models\NatconEvent;
 use Illuminate\Http\UploadedFile;
@@ -32,8 +33,7 @@ final class GalleryService
 {
     public function __construct(
         private PhotoService $photos,
-    ) {
-    }
+    ) {}
 
     /**
      * Encode, upload (main + thumb), and append a row to the event's gallery.
@@ -43,7 +43,7 @@ final class GalleryService
         UploadedFile $file,
         ?int $userId,
         ?string $caption = null,
-        ?string $album = null,
+        ?GalleryAlbum $album = null,
     ): GalleryPhoto {
         // Before Intervention touches the file — see PhotoService's docblock on
         // why the gate runs on getimagesize(), not the decoder.
@@ -52,13 +52,13 @@ final class GalleryService
             throw new RuntimeException($check['reason'] ?? 'Unsupported image.');
         }
 
-        $manager = new ImageManager(new Driver());
-        $image   = $manager->read($file->getRealPath());
+        $manager = new ImageManager(new Driver);
+        $image = $manager->read($file->getRealPath());
 
         // Both dimensions capped — gallery shots come in portrait as well as
         // landscape, and scaleDown never upscales a smaller original.
         $maxWidth = (int) config('natcon.gallery.max_width', 1920);
-        $image    = $image->scaleDown(width: $maxWidth, height: $maxWidth);
+        $image = $image->scaleDown(width: $maxWidth, height: $maxWidth);
 
         $encoded = $this->encodeUnderTarget(
             fn (int $q) => (string) $image->toJpeg($q),
@@ -77,10 +77,10 @@ final class GalleryService
 
         // Derived from the event's slug — see NatconEvent::s3Prefix() for why a
         // config default is how next year's photos land in this year's folder.
-        $prefix   = trim($event->s3Prefix('gallery'), '/');
-        $uuid     = (string) Str::uuid();
-        $key      = $prefix . '/' . $uuid . '.jpg';
-        $thumbKey = $prefix . '/' . $uuid . '-640.jpg';
+        $prefix = trim($event->s3Prefix('gallery'), '/');
+        $uuid = (string) Str::uuid();
+        $key = $prefix.'/'.$uuid.'.jpg';
+        $thumbKey = $prefix.'/'.$uuid.'-640.jpg';
 
         Storage::disk('s3')->put($key, $encoded, 'public');
         Storage::disk('s3')->put($thumbKey, $thumbEncoded, 'public');
@@ -89,20 +89,20 @@ final class GalleryService
 
         $photo = new GalleryPhoto([
             'natcon_event_id' => $event->id,
-            'image_url'       => $base . '/' . $key,
-            'thumb_url'       => $base . '/' . $thumbKey,
-            's3_key'          => $key,
-            'caption'         => $caption,
-            'album'           => $album,
-            'width'           => $image->width(),
-            'height'          => $image->height(),
-            'byte_size'       => strlen($encoded),
-            'status'          => GalleryPhoto::STATUS_ACTIVE,
+            'album_id' => $album?->id,
+            'image_url' => $base.'/'.$key,
+            'thumb_url' => $base.'/'.$thumbKey,
+            's3_key' => $key,
+            'caption' => $caption,
+            'width' => $image->width(),
+            'height' => $image->height(),
+            'byte_size' => strlen($encoded),
+            'status' => GalleryPhoto::STATUS_ACTIVE,
             // Append to the end, so a fresh upload never jumps a hand-ordered
             // grid. Max over ALL statuses — a hidden row keeps its slot, and
             // un-hiding it must not collide with whatever was uploaded since.
-            'sort_order'      => (int) GalleryPhoto::where('natcon_event_id', $event->id)->max('sort_order') + 1,
-            'created_by'      => $userId,
+            'sort_order' => (int) GalleryPhoto::where('natcon_event_id', $event->id)->max('sort_order') + 1,
+            'created_by' => $userId,
         ]);
         $photo->auditSource = 'admin_natcon_gallery';
         $photo->save();
@@ -124,17 +124,17 @@ final class GalleryService
             return $best;
         }
 
-        $lo   = $minQ;
-        $hi   = $maxQ - 1;
+        $lo = $minQ;
+        $hi = $maxQ - 1;
         $best = $encode($minQ);
 
         while ($lo <= $hi) {
-            $mid       = intdiv($lo + $hi, 2);
+            $mid = intdiv($lo + $hi, 2);
             $candidate = $encode($mid);
 
             if (strlen($candidate) <= $targetBytes) {
                 $best = $candidate;
-                $lo   = $mid + 1;
+                $lo = $mid + 1;
             } else {
                 $hi = $mid - 1;
             }
