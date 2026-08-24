@@ -215,6 +215,27 @@ final class FaceRecognitionService
     }
 
     /**
+     * Every collection id in the account's region. Needs the account-level
+     * rekognition:ListCollections permission (Resource "*") — collection-arn
+     * scoped policies don't cover it, so callers must handle AccessDenied.
+     *
+     * @return string[]
+     */
+    public function listCollections(): array
+    {
+        $ids = [];
+        $token = null;
+
+        do {
+            $result = $this->client->listCollections(array_filter(['NextToken' => $token]));
+            $ids = array_merge($ids, $result['CollectionIds'] ?? []);
+            $token = $result['NextToken'] ?? null;
+        } while ($token);
+
+        return $ids;
+    }
+
+    /**
      * Delete an entire face collection — vectors bill monthly, so a retired
      * collection must actually go, not just stop being searched. Missing =
      * already gone = the goal state.
