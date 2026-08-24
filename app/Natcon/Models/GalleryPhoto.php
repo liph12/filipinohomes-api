@@ -37,6 +37,7 @@ class GalleryPhoto extends Model implements Auditable
 
     protected $fillable = [
         'natcon_event_id', 'image_url', 'thumb_url', 's3_key', 'caption',
+        'album',
         'width', 'height', 'byte_size', 'status', 'sort_order', 'created_by',
     ];
 

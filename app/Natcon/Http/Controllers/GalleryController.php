@@ -75,6 +75,9 @@ class GalleryController extends Controller
         $data = $request->validate([
             'photo' => 'required|file|mimes:jpeg,jpg,png,webp|max:' . (int) config('natcon.gallery.max_upload_kb', 15360),
             'caption' => 'sometimes|nullable|string|max:255',
+            // Grouping label — the public gallery renders one section per
+            // album. Null/blank = the general section.
+            'album' => 'sometimes|nullable|string|max:120',
         ], [
             'photo.mimes' => 'Please upload a JPG, PNG or WEBP image.',
             'photo.max'   => 'That image is too large. Please keep it under 15MB.',
@@ -82,12 +85,15 @@ class GalleryController extends Controller
 
         $event = $this->resolveEvent($request);
 
+        $album = trim((string) ($data['album'] ?? ''));
+
         try {
             $row = $this->gallery->store(
                 $event,
                 $request->file('photo'),
                 $request->user()?->id,
                 $data['caption'] ?? null,
+                $album !== '' ? $album : null,
             );
         } catch (RuntimeException $e) {
             // The megapixel / decode gate. A user-fixable problem, so 422 with
@@ -104,10 +110,17 @@ class GalleryController extends Controller
     {
         $data = $request->validate([
             'caption' => 'sometimes|nullable|string|max:255',
+            // Photos can move between albums (or out of one) after upload.
+            'album' => 'sometimes|nullable|string|max:120',
             // 'deleted' only via destroy — a PATCH must not be able to delete.
             'status' => 'sometimes|string|in:active,hidden',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
         ]);
+
+        if (array_key_exists('album', $data)) {
+            $album = trim((string) $data['album']);
+            $data['album'] = $album !== '' ? $album : null;
+        }
 
         $photo->auditSource = 'admin_natcon_gallery';
         $photo->fill($data)->save();
@@ -155,6 +168,7 @@ class GalleryController extends Controller
             'image_url' => $p->image_url,
             'thumb_url' => $p->thumb_url,
             'caption' => $p->caption,
+            'album' => $p->album,
             'sort_order' => $p->sort_order,
         ];
 

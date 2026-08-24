@@ -43,6 +43,7 @@ final class GalleryService
         UploadedFile $file,
         ?int $userId,
         ?string $caption = null,
+        ?string $album = null,
     ): GalleryPhoto {
         // Before Intervention touches the file — see PhotoService's docblock on
         // why the gate runs on getimagesize(), not the decoder.
@@ -92,6 +93,7 @@ final class GalleryService
             'thumb_url'       => $base . '/' . $thumbKey,
             's3_key'          => $key,
             'caption'         => $caption,
+            'album'           => $album,
             'width'           => $image->width(),
             'height'          => $image->height(),
             'byte_size'       => strlen($encoded),
