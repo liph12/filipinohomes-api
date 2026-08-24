@@ -6,6 +6,7 @@ use App\Natcon\Models\GalleryAlbum;
 use App\Natcon\Models\GalleryPhoto;
 use App\Natcon\Models\NatconEvent;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Intervention\Image\Drivers\Gd\Driver;
@@ -22,17 +23,18 @@ use RuntimeException;
  * headshot OOMs it decoding a gallery shot, so there is exactly one definition
  * of "safe to decode".
  *
- * The ENCODER budget is deliberately this service's own. natcon.gallery, not
- * natcon.photo: awardee photos are print-grade (2000px / 600KB) where these
- * are web-grade (1920px / 400KB, plus a 640px thumb for the grid). Coupling
- * the two would let a print-driven retune silently fatten an indexable page —
- * the same argument PhotoService makes for copying encodeUnderTarget instead
- * of inheriting it from the listing pipeline.
+ * The ENCODER budget is deliberately this service's own (natcon.gallery, not
+ * natcon.photo): archive grade since 2026-08 by the owner's call — 4096px,
+ * fixed quality 88, no byte target. These photos are face-indexed, and a byte
+ * budget crushed exactly the small background faces and fine detail that made
+ * a shot worth publishing. The public grid still renders the 640px thumb —
+ * only the lightbox pays for the full-size file.
  */
 final class GalleryService
 {
     public function __construct(
         private PhotoService $photos,
+        private FaceRecognitionService $faces,
     ) {}
 
     /**
@@ -56,16 +58,13 @@ final class GalleryService
         $image = $manager->read($file->getRealPath());
 
         // Both dimensions capped — gallery shots come in portrait as well as
-        // landscape, and scaleDown never upscales a smaller original.
-        $maxWidth = (int) config('natcon.gallery.max_width', 1920);
-        $image = $image->scaleDown(width: $maxWidth, height: $maxWidth);
+        // landscape, and scaleDown never upscales a smaller original. One
+        // fixed encode, album-style: whatever size q88 produces is the size
+        // we serve (grids use the thumb; only the lightbox loads this file).
+        $maxDim = (int) config('natcon.gallery.max_dimension', 4096);
+        $image = $image->scaleDown(width: $maxDim, height: $maxDim);
 
-        $encoded = $this->encodeUnderTarget(
-            fn (int $q) => (string) $image->toJpeg($q),
-            (int) config('natcon.gallery.target_bytes', 400 * 1024),
-            50,
-            88,
-        );
+        $encoded = (string) $image->toJpeg((int) config('natcon.gallery.quality', 88));
 
         // Thumb from a FRESH read of the encoded bytes, not from $image:
         // Intervention v3 mutates in place, so a second scaleDown on the same
@@ -107,39 +106,22 @@ final class GalleryService
         $photo->auditSource = 'admin_natcon_gallery';
         $photo->save();
 
+        // Index inline — production has no queue worker, so a ShouldQueue job
+        // would sit in the jobs table for ever. Best-effort: a Rekognition
+        // blip must not fail the upload; the row stays faces_indexed_at NULL
+        // and natcon:index-gallery-faces retries it.
+        try {
+            $photo->setRelation('event', $event);
+            $this->faces->indexPhoto($photo);
+        } catch (\Throwable $e) {
+            Log::warning('natcon gallery face indexing failed', [
+                'photo_id' => $photo->id,
+                's3_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            $photo->forceFill(['index_error' => mb_substr($e->getMessage(), 0, 512)])->save();
+        }
+
         return $photo;
-    }
-
-    /**
-     * Binary-search the JPEG quality that lands just under the byte target.
-     * Lifted from PhotoService::encodeUnderTarget (itself lifted from
-     * ImageUploadController) — same algorithm, different budget, and
-     * deliberately copied rather than shared so a retune of the print pipeline
-     * can't silently reshape the public gallery.
-     */
-    private function encodeUnderTarget(callable $encode, int $targetBytes, int $minQ, int $maxQ): string
-    {
-        $best = $encode($maxQ);
-        if (strlen($best) <= $targetBytes) {
-            return $best;
-        }
-
-        $lo = $minQ;
-        $hi = $maxQ - 1;
-        $best = $encode($minQ);
-
-        while ($lo <= $hi) {
-            $mid = intdiv($lo + $hi, 2);
-            $candidate = $encode($mid);
-
-            if (strlen($candidate) <= $targetBytes) {
-                $best = $candidate;
-                $lo = $mid + 1;
-            } else {
-                $hi = $mid - 1;
-            }
-        }
-
-        return $best;
     }
 }

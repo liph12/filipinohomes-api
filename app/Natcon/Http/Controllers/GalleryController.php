@@ -6,10 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Natcon\Models\GalleryAlbum;
 use App\Natcon\Models\GalleryPhoto;
 use App\Natcon\Models\NatconEvent;
+use App\Natcon\Services\FaceRecognitionService;
 use App\Natcon\Services\GalleryService;
 use App\Natcon\Services\LandingCachePurger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\ImageManager;
 use RuntimeException;
 
 /**
@@ -26,6 +30,7 @@ class GalleryController extends Controller
 {
     public function __construct(
         private GalleryService $gallery,
+        private FaceRecognitionService $faces,
     ) {}
 
     // ── Public ───────────────────────────────────────────────────────────────
@@ -70,6 +75,95 @@ class GalleryController extends Controller
             ->get();
 
         return response()->json(['data' => $rows->map(fn (GalleryPhoto $p) => $this->present($p, detailed: true))]);
+    }
+
+    /**
+     * Selfies in, GALLERY photos out. One or several faces:
+     *
+     *   selfies[] (1-5 files) + mode:
+     *     all — photos where EVERY searched face appears together (default).
+     *     any — photos containing ANY of the faces.
+     *
+     * Rekognition matches one face per probe (the largest), so N faces cost N
+     * SearchFacesByImage calls; combineMatches folds them. Each probe is
+     * re-encoded server-side (1500px q85) before Rekognition — the Image.Bytes
+     * API caps at 5MB and a phone original is routinely bigger. Selfies are
+     * never stored.
+     */
+    public function faceSearch(Request $request): JsonResponse
+    {
+        $files = $request->file('selfies') ?? [];
+
+        validator(
+            ['selfies' => $files, 'mode' => $request->input('mode')],
+            [
+                'selfies' => 'required|array|min:1|max:5',
+                'selfies.*' => 'required|image|mimes:jpeg,jpg,png,webp|max:15360',
+                'mode' => 'sometimes|nullable|in:all,any',
+            ],
+        )->validate();
+
+        $event = $this->resolveEvent($request);
+        $mode = (string) $request->input('mode', 'all');
+        $total = count($files);
+
+        $manager = new ImageManager(new Driver);
+
+        /** @var array<int, array<int, float>> $perFace one photoId=>similarity map per probe */
+        $perFace = [];
+        foreach (array_values($files) as $i => $file) {
+            $label = $total > 1 ? 'photo '.($i + 1).' of '.$total : 'that photo';
+
+            $info = @getimagesize($file->getRealPath());
+            if ($info === false || ($info[0] * $info[1]) > 40_000_000) {
+                return response()->json(['message' => ucfirst($label).' does not look like a usable photo.'], 422);
+            }
+
+            $probe = (string) $manager->read($file->getRealPath())
+                ->scaleDown(width: 1500, height: 1500)
+                ->toJpeg(85);
+
+            try {
+                $perFace[] = $this->faces->searchByImage($event, $probe);
+            } catch (RuntimeException $e) {
+                return response()->json([
+                    'message' => $total > 1
+                        ? 'No face could be detected in '.$label.'. Please use a clear, well-lit photo of that person.'
+                        : $e->getMessage(),
+                ], 422);
+            }
+        }
+
+        $matches = $this->faces->combineMatches($perFace, $mode);
+
+        // whereIn loses the similarity ordering; reassemble in match order.
+        // Deleted rows stay out (their vectors are evicted lazily); hidden
+        // ones show — this is the editing surface, and finding a hidden photo
+        // by face is precisely how it gets un-hidden.
+        $photos = GalleryPhoto::with('album:id,parent_id,name,sort_order')
+            ->whereIn('id', array_keys($matches))
+            ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+            ->get()
+            ->keyBy('id');
+
+        $data = [];
+        foreach ($matches as $photoId => $similarity) {
+            $photo = $photos->get($photoId);
+            if (! $photo) {
+                continue;
+            }
+            $data[] = $this->present($photo, detailed: true) + ['similarity' => round($similarity, 1)];
+        }
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'matched' => count($data),
+                'threshold' => (float) config('natcon.gallery.match_threshold', 90),
+                'mode' => $mode,
+                'faces_searched' => $total,
+            ],
+        ]);
     }
 
     public function storeGalleryPhoto(Request $request): JsonResponse
@@ -142,6 +236,8 @@ class GalleryController extends Controller
         // object, and removing it would strand the file in the bucket for ever.
         $photo->auditSource = 'admin_natcon_gallery';
         $photo->forceFill(['status' => GalleryPhoto::STATUS_DELETED])->save();
+
+        $this->forgetFaces($photo);
 
         $this->purge($year);
 
@@ -232,22 +328,29 @@ class GalleryController extends Controller
     {
         $year = $album->event?->year;
 
-        // The root no longer shows photos, so the FK's nullOnDelete fallback
-        // would strand a photo where no view lists it. Refuse instead: move or
-        // remove the contents, then delete the empty folder.
-        $remaining = $album->photos()->where('status', '!=', GalleryPhoto::STATUS_DELETED)->count();
-        if ($remaining > 0) {
-            return response()->json([
-                'message' => "This album still holds {$remaining} photo".($remaining === 1 ? '' : 's').'. Move or remove them first.',
-            ], 422);
-        }
-
+        // Sub-albums still block the delete: cascading a whole subtree from
+        // one button is too much blast radius, and the admin can delete the
+        // leaves first. Photos alone do NOT block any more — they are
+        // soft-removed with the album (same status flip as a single photo
+        // delete, so the S3 objects stay findable and support can restore).
         $subAlbums = $album->children()->count();
         if ($subAlbums > 0) {
             return response()->json([
                 'message' => "This album still holds {$subAlbums} sub-album".($subAlbums === 1 ? '' : 's').'. Delete or empty them first.',
             ], 422);
         }
+
+        // Per-row saves, not a mass update, so each photo keeps its audit
+        // trail. The FK's nullOnDelete would otherwise strand them at root,
+        // where the admin view only shows them under a warning.
+        $album->photos()
+            ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+            ->get()
+            ->each(function (GalleryPhoto $photo) {
+                $photo->auditSource = 'admin_natcon_gallery';
+                $photo->forceFill(['status' => GalleryPhoto::STATUS_DELETED])->save();
+                $this->forgetFaces($photo);
+            });
 
         // A real delete, unlike photos: an album owns no S3 object.
         $album->auditSource = 'admin_natcon_gallery';
@@ -272,6 +375,25 @@ class GalleryController extends Controller
     private function purge(?int $year): void
     {
         app(LandingCachePurger::class)->purgeYear($year);
+    }
+
+    /**
+     * Evict a removed photo's face vectors so it can never match again.
+     * Best-effort AFTER the status flip: a Rekognition blip must not turn a
+     * successful delete into an error — the faceSearch read filters deleted
+     * rows anyway, so a leftover vector is invisible until this is retried
+     * manually or the collection is cleaned.
+     */
+    private function forgetFaces(GalleryPhoto $photo): void
+    {
+        try {
+            $this->faces->forgetPhoto($photo);
+        } catch (\Throwable $e) {
+            Log::warning('natcon gallery face eviction failed', [
+                'photo_id' => $photo->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function presentAlbum(GalleryAlbum $a, ?int $photoCount = null): array
@@ -334,6 +456,11 @@ class GalleryController extends Controller
             'width' => $p->width,
             'height' => $p->height,
             'byte_size' => $p->byte_size,
+            // Indexing state for the admin grid's face badge: NULL
+            // faces_indexed_at = still pending (the sweep will retry).
+            'face_count' => $p->face_count,
+            'faces_indexed_at' => $p->faces_indexed_at?->toIso8601String(),
+            'index_error' => $p->index_error,
             'created_at' => $p->created_at?->toIso8601String(),
         ];
     }

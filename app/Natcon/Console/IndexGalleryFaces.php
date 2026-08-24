@@ -2,28 +2,28 @@
 
 namespace App\Natcon\Console;
 
-use App\Natcon\Models\AlbumPhoto;
+use App\Natcon\Models\GalleryPhoto;
 use App\Natcon\Services\FaceRecognitionService;
 use Illuminate\Console\Command;
 
 /**
- * Retry sweep for album photos whose Rekognition indexing failed at upload
- * time (uploads index inline — production has no queue worker, see
- * config/natcon.php on drain_limit).
- *
- * faces_indexed_at NULL is the whole work-list: a successful index always
- * stamps it, including the zero-faces case, so nothing here can loop on a
- * photo that simply has no faces in it.
+ * Retries gallery photos whose inline Rekognition indexing failed at upload
+ * (uploads index inline — production has no queue worker) — and, because the
+ * face columns were added after the gallery existed, it IS the backfill for
+ * every photo uploaded before them (faces_indexed_at NULL is the whole
+ * work-list). Deleted rows are skipped: their bytes stay in S3 as a restore
+ * pointer, but they must never become searchable.
  */
-class IndexAlbumFaces extends Command
+class IndexGalleryFaces extends Command
 {
-    protected $signature = 'natcon:index-album-faces {--limit=25}';
+    protected $signature = 'natcon:index-gallery-faces {--limit=25}';
 
-    protected $description = 'Index un-indexed NATCON album photos into their Rekognition face collection';
+    protected $description = 'Index un-indexed NATCON gallery photos into their Rekognition face collection';
 
     public function handle(FaceRecognitionService $faces): int
     {
-        $pending = AlbumPhoto::whereNull('faces_indexed_at')
+        $pending = GalleryPhoto::whereNull('faces_indexed_at')
+            ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
             ->with('event')
             ->orderBy('id')
             ->limit((int) $this->option('limit'))
@@ -43,7 +43,7 @@ class IndexAlbumFaces extends Command
                 $indexed++;
             } catch (\Throwable $e) {
                 // Recorded, not fatal: one broken photo must not block the rest
-                // of the batch, and the error is visible in the admin grid.
+                // of the batch.
                 $photo->forceFill(['index_error' => mb_substr($e->getMessage(), 0, 512)])->save();
                 $this->warn("#{$photo->id} failed: {$e->getMessage()}");
             }

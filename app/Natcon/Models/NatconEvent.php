@@ -182,30 +182,18 @@ class NatconEvent extends Model implements Auditable
      */
     public function s3Prefix(string $kind = 'photos'): string
     {
-        return 'filipinohomes-new/' . $this->slug . '/' . $kind;
+        return 'filipinohomes-new/'.$this->slug.'/'.$kind;
     }
 
     /**
-     * Where this year's face-search ALBUM photos land — the full event album
-     * the selfie search runs over, distinct from the curated landing gallery
-     * (s3Prefix('gallery')) and from awardee headshots (s3Prefix()). Like
-     * both, derived from the slug so a new year cannot inherit the previous
-     * year's folder.
-     */
-    public function albumS3Prefix(): string
-    {
-        return 'natcon/' . $this->slug;
-    }
-
-    /**
-     * The Rekognition face collection holding this year's album vectors.
+     * The Rekognition face collection holding this year's gallery vectors.
      * Collection ids are account-global, hence the namespace; the slug keeps
-     * each convention's album searchable — and deletable — on its own.
-     * ⚠️ The 'fh-gallery-' literal predates the gallery/album split and is
-     * kept because live collections (with indexed vectors) already use it.
+     * each convention's gallery searchable — and deletable — on its own.
+     * ⚠️ Avoids the legacy 'fh-gallery-{slug}' namespace, which the retired
+     * face-search album pile used (natcon:purge-album-pile cleans those up).
      */
-    public function albumCollectionId(): string
+    public function galleryCollectionId(): string
     {
-        return 'fh-gallery-' . $this->slug;
+        return 'fh-natcon-gallery-'.$this->slug;
     }
 }

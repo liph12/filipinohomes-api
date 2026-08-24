@@ -88,16 +88,6 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
-        // Admin gallery uploads — deliberately NOT natcon-upload: that one is
-        // sized for one awardee sending 1-3 headshots, and an admin loading an
-        // event album pushes hundreds of files in one sitting. Behind
-        // auth:sanctum + role:admin, so the keys are the user, not a token.
-        RateLimiter::for('natcon-album-upload', function (Request $request) {
-            return [
-                Limit::perMinute(60)->by('natcon-gal:'.($request->user()?->id ?: $request->ip())),
-            ];
-        });
-
         // Global outbound-mail audit. Every successful Mail::send
         // in the app fires Illuminate\Mail\Events\MessageSent, so
         // this listener captures all of them — Get In Touch,

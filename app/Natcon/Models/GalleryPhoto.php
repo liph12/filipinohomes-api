@@ -40,6 +40,7 @@ class GalleryPhoto extends Model implements Auditable
     protected $fillable = [
         'natcon_event_id', 'album_id', 'image_url', 'thumb_url', 's3_key', 'caption',
         'width', 'height', 'byte_size', 'status', 'sort_order', 'created_by',
+        'face_ids', 'face_count', 'faces_indexed_at', 'index_error',
     ];
 
     protected $casts = [
@@ -47,7 +48,14 @@ class GalleryPhoto extends Model implements Auditable
         'height' => 'integer',
         'byte_size' => 'integer',
         'sort_order' => 'integer',
+        'face_ids' => 'array',
+        'face_count' => 'integer',
+        'faces_indexed_at' => 'datetime',
     ];
+
+    // Rekognition face ids are an implementation detail of deletion; no client
+    // needs them.
+    protected $hidden = ['face_ids'];
 
     public function event(): BelongsTo
     {

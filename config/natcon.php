@@ -167,64 +167,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Face-search album
+    | Landing-page gallery
     |--------------------------------------------------------------------------
     |
-    | The full event album behind /admin/natcon/{slug} — NOT the curated
-    | landing-page 'gallery' block below; the two collided on one config key
-    | once and mine silently shadowed the gallery's thumbs. Deliberately
-    | different from the 'photo' block above (awardee headshots):
-    |
-    |   Fixed quality 88, NO byte target — these images feed Rekognition, and a
-    |     byte budget crushes exactly the small background faces a group-shot
-    |     search needs. Indexing is billed per image, not per megabyte, so a
-    |     bigger file costs nothing extra.
-    |   4096px, not 2000 — a face 30 rows back in a 2000px hall shot falls
-    |     under Rekognition's detectable size; at 4096 it usually doesn't.
-    |   Higher bomb-gate ceilings — event photographers shoot 45MP+ bodies and
-    |     this route is admin-only.
+    | Event photos on the public landing page, face-indexed for the admin's
+    | Photo search. Encoded at archive grade by the owner's call (2026-08):
+    | 4096px, fixed quality 88, NO byte target — a byte budget crushes exactly
+    | the detail (and small background faces) that made a photo worth keeping,
+    | and Rekognition indexing is billed per image, not per megabyte. The
+    | public grid still renders the 640px thumb; only the lightbox pays for
+    | the full-size original.
     |
     | match_threshold is the Rekognition similarity floor (0-100). 90 keeps
-    | strangers out of "my photos"; lower it if attendees report missing shots.
+    | strangers out of "my photos"; lower it if the team reports missing shots.
     | The collection region follows the S3 disk region — IndexFaces reads
     | straight from the bucket and the two must match.
     |
     */
-    'album' => [
-        'quality' => (int) env('NATCON_ALBUM_QUALITY', 88),
-        'max_dimension' => (int) env('NATCON_ALBUM_MAX_DIMENSION', 4096),
-        'max_upload_kb' => 25 * 1024,
-        'max_source_dimension' => 12000,
-        'max_megapixels' => 64,
-        'match_threshold' => (float) env('NATCON_ALBUM_MATCH_THRESHOLD', 90),
-        'max_matches' => 100,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Landing-page gallery
-    |--------------------------------------------------------------------------
-    |
-    | Event photos on the public landing page — a third grade of image,
-    | deliberately between the two existing pipelines:
-    |
-    |   Not the 50KB WebP logo pipeline (the generic /upload route) — fifty
-    |     kilobytes turns a crowd shot into mush, and these fill a grid, not a
-    |     footer strip.
-    |   Not the 600KB print pipeline above — nothing here is printed, and a
-    |     hundred 600KB frames on one indexable page is a Core Web Vitals bill
-    |     nobody asked for.
-    |
-    | So: web-gallery grade. 1920px JPEG under ~400KB for the lightbox, plus a
-    | 640px thumb the grid actually renders.
-    |
-    */
     'gallery' => [
-        'max_width' => 1920,
-        'target_bytes' => 400 * 1024,
+        'max_dimension' => 4096,
+        'quality' => 88,
         'thumb_width' => 640,
         'thumb_quality' => 78,
         'max_upload_kb' => 15 * 1024,   // 15MB, same ceiling as awardee photos
+        'match_threshold' => (float) env('NATCON_GALLERY_MATCH_THRESHOLD', 90),
+        'max_matches' => 100,
     ],
 
     /*
