@@ -10,10 +10,11 @@ use OpenAI;
  * AI thank-you captions for the sponsor poster tool.
  *
  * Given a sponsor name + tier, produces 3 ready-to-post Facebook captions in
- * the house voice, grounded ONLY in the event row (name, dates, venue, year)
- * and an optional admin-supplied "about" line. Nothing per-year is hardcoded:
- * dates come from dateLabel(), hashtags from $event->year — rolling over to a
- * new convention is data entry, per the module rule.
+ * the house voice (modeled on the page's real past-year thank-you posts),
+ * grounded ONLY in the event row (name, dates, year) and an optional
+ * admin-supplied "about" line. Nothing per-year is hardcoded: dates come from
+ * dateLabel(), hashtags from $event->year — rolling over to a new convention
+ * is data entry, per the module rule.
  *
  * Hashtags are appended deterministically in PHP, never written by the model,
  * so the tag block is always present, always exact, and never eats into the
@@ -24,17 +25,17 @@ class SponsorCaptionService
     protected $client;
 
     /**
-     * Tier → the exact phrase the caption must use. Singular/plural is
-     * load-bearing ("our Star Benefactor" vs "one of our Major Sponsors"),
-     * which is why the prompt forbids the model from restyling it.
-     * `library` is the admin upload pool, not a sponsorship level — it has
-     * no phrase here on purpose.
+     * Tier → the exact phrase the caption must use, matching how the real
+     * posts on the Filipino Homes page word each level ("a Major Sponsor",
+     * "our Co-Presentor") — which is why the prompt forbids the model from
+     * restyling it. `library` is the admin upload pool, not a sponsorship
+     * level — it has no phrase here on purpose.
      */
     public const TIER_PHRASES = [
         'star'        => 'our Star Benefactor',
-        'copresentor' => 'one of our Co-Presentors',
-        'major'       => 'one of our Major Sponsors',
-        'minor'       => 'one of our Minor Sponsors',
+        'copresentor' => 'our Co-Presentor',
+        'major'       => 'a Major Sponsor',
+        'minor'       => 'a Minor Sponsor',
     ];
 
     /**
@@ -49,13 +50,13 @@ class SponsorCaptionService
      */
     private const OPENING_HINTS = [
         'For this batch, lean gratitude-first: favor openings in the spirit of '
-            . '"A huge thank you to…" or "Our heartfelt thanks to…" — still keeping '
+            . '"A warm thank you to…" or "A special thank you to…" — still keeping '
             . 'all three openings distinct from each other.',
-        'For this batch, lean honor-first: favor openings in the spirit of '
-            . '"We are proud to have…" or "We are honored to welcome…" — still keeping '
-            . 'all three openings distinct from each other.',
-        'For this batch, lean recognition-first: favor openings in the spirit of '
-            . '"Shining a spotlight on…" or "Join us in thanking…" — still keeping '
+        'For this batch, lean appreciation-first: favor openings in the spirit of '
+            . '"We appreciate…" or "Thank you, {name}, for coming on board as…" — still '
+            . 'keeping all three openings distinct from each other.',
+        'For this batch, lean shoutout-first: favor openings in the spirit of '
+            . '"Big thanks to…" or "Shoutout to…" — still keeping '
             . 'all three openings distinct from each other.',
     ];
 
@@ -90,25 +91,42 @@ class SponsorCaptionService
 
         $prompt = <<<PROMPT
         You write Facebook posts for Filipino Homes, thanking sponsors of its annual
-        National Real Estate Convention (NATCON). Model the voice on this real post:
+        National Real Estate Convention (NATCON). Match the voice and shape of these
+        REAL posts from a past year (take YOUR facts only from the FACTS block):
 
-        "A huge thank you to EON Realty and Development Corp. for being one of our
-        Minor Sponsors at the Filipino Homes National Real Estate Convention on
-        October 19–20, 2025. Your partnership makes a big difference as we continue
-        to inspire and empower real estate professionals nationwide."
+        "A warm thank you to Taft Property Ventures Development Corporation for
+        joining us as a Minor Sponsor of the Filipino Homes National Real Estate
+        Convention happening October 19–20, 2025.
+
+        Your partnership brings added strength to this event, and we're happy to
+        celebrate alongside you."
+
+        "We appreciate Primary Homes, Inc. for being a Major Sponsor of the Filipino
+        Homes National Real Estate Convention happening this October 19–20, 2025.
+
+        Thank you for supporting this event and for being a trusted partner in
+        providing more Filipinos with access to quality homes and investments."
+
+        "Big thanks to Cebu Landmasters Inc. for being our Co-Presentor at the
+        Filipino Homes National Real Estate Convention this October 19–20, 2025.
+
+        Your support means a lot as we gather thousands of real estate professionals
+        to celebrate growth and success in our industry. We're proud to have you on
+        board!"
 
         STRUCTURE — every caption:
-        - Two short paragraphs of flowing prose, 40–75 words total.
-        - Paragraph 1: thank the sponsor BY NAME (verbatim) for being {$levelPhrase}
-          at the event, naming the event and its dates. Mention the venue in at most
-          one of the three captions, and only where it reads naturally.
-        - Paragraph 2: one or two sentences on what the partnership means — inspiring
-          and empowering real estate professionals nationwide, elevating the industry,
-          making the convention possible. Vary this sentiment across captions.
+        - Two short paragraphs of flowing prose, 35–65 words total.
+        - Paragraph 1: ONE sentence thanking the sponsor BY NAME (verbatim) for
+          being {$levelPhrase} of the event, phrased exactly like the examples:
+          "the Filipino Homes {event name} happening [this] {dates}". Never mention
+          the venue — the real posts never do; it is on the poster.
+        - Paragraph 2: one or two short sentences on what the partnership means —
+          in the spirit of the examples. Vary this sentiment across captions.
 
         VOICE: warm, professional, celebratory — a brand page, not a press release.
         No emojis. No exclamation-mark pileups (one "!" total is fine). No ALL CAPS.
-        No hype filler ("amazing", "incredible journey", "beyond grateful").
+        No hype filler ("amazing", "incredible journey", "beyond grateful") and no
+        corporate filler ("strengthens our shared commitment").
 
         HARD RULES:
         - Use the sponsor name EXACTLY as given — never abbreviate, expand, or
@@ -119,7 +137,8 @@ class SponsorCaptionService
           people, or superlatives that are not in the facts block. If "About this
           sponsor" is provided, you may weave in ONE detail from it; otherwise say
           nothing specific about them.
-        - Dates, event name, and venue come ONLY from the facts block.
+        - Dates and event name come ONLY from the facts block, never from the
+          example posts above.
         - Do NOT write any hashtags — they are appended by the system afterward.
 
         VARIETY: return exactly 3 captions. Each must open differently and structure
@@ -161,7 +180,8 @@ class SponsorCaptionService
 
         // Hashtags are appended here, not by the model: deterministic, always
         // exact, and the year comes from the event row — never a literal.
-        $hashtags = "#FilipinoHomes #RentPh #LRNatCon{$event->year} #NatCon{$event->year}";
+        // #HomesPh joined for 2026 — Homes.ph is on this year's brand lockup.
+        $hashtags = "#FilipinoHomes #RentPh #HomesPh #LRNatCon{$event->year} #NatCon{$event->year}";
 
         return [
             'captions' => array_map(
@@ -174,22 +194,25 @@ class SponsorCaptionService
     /**
      * The complete universe of facts the model may use. Everything per-year
      * is read off the event row; the optional "about" line is the ONLY place
-     * sponsor-specific detail can enter.
+     * sponsor-specific detail can enter. No venue on purpose — the real posts
+     * never mention it (it is on the poster art).
      */
     protected function buildFactsBlock(NatconEvent $event, string $sponsorName, string $levelPhrase, ?string $about): string
     {
+        // Trailing year stripped from the name: the dates already carry it,
+        // and the house phrasing is "...National Real Estate Convention
+        // happening October 18–19, 2026" — never "...Convention 2026
+        // happening ... 2026".
+        $eventName = trim(preg_replace('/\s+\d{4}$/', '', (string) $event->name));
+
         $lines = [
             "Sponsor name (use verbatim): {$sponsorName}",
             "Sponsorship level phrase (use verbatim): {$levelPhrase}",
-            "Event name: {$event->name}",
+            "Event name: {$eventName}",
         ];
 
         if (($dates = $event->dateLabel()) !== '') {
             $lines[] = "Event dates: {$dates}";
-        }
-
-        if (! empty($event->venue)) {
-            $lines[] = "Venue: {$event->venue}";
         }
 
         if ($about !== null && trim($about) !== '') {
@@ -213,7 +236,7 @@ class SponsorCaptionService
                         'maxItems' => 3,
                         'items' => [
                             'type' => 'string',
-                            'description' => 'One complete caption: two short paragraphs separated by a blank line, 40–75 words, no hashtags.',
+                            'description' => 'One complete caption: two short paragraphs separated by a blank line, 35–65 words, no hashtags.',
                         ],
                     ],
                 ],
