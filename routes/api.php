@@ -418,6 +418,10 @@ Route::middleware('strip.tags')->group(function () {
             Route::patch('/projects/{id}', [ProjectController::class, 'update']);
             Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
             Route::post('/upload', [ImageUploadController::class, 'upload']);
+            // High-quality uploader (2560px WebP q88, no byte cap) for the
+            // page builder's photography — /upload's 50KB budget is for
+            // logos/small assets and crushes banners and portraits.
+            Route::post('/upload-hq', [ImageUploadController::class, 'uploadHq']);
             // Re-host a recovered photo from a remote URL (or file). Separate
             // from /upload so the public uploader stays untouched.
             Route::post('/upload-from-url', [RemovedPhotoUploadController::class, 'upload']);
