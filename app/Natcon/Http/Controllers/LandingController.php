@@ -414,7 +414,11 @@ class LandingController extends Controller
             // editor pasted — see Recap::embedUrl(). Null for a direct MP4,
             // which the page plays in a <video> instead.
             'embed_url' => $r->embedUrl(),
-            'video_url' => $r->video_url,
+            // Public payload gets the PLAYABLE form (a Dropbox share link is
+            // rewritten to its direct-file host for the <video> tag); the
+            // detailed/admin payload keeps the editor's pasted original so
+            // the edit form round-trips it unchanged.
+            'video_url' => $detailed ? $r->video_url : $r->playableVideoUrl(),
         ];
 
         return $detailed

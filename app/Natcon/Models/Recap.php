@@ -111,6 +111,44 @@ class Recap extends Model implements Auditable
                 . '&show_text=false';
         }
 
+        // A pasted Drive share link (…/file/d/{id}/view). Drive's own /preview
+        // player embeds cleanly; the file must be shared "Anyone with the
+        // link" or viewers get the request-access screen. drive.google.com is
+        // in the frontend CSP frame-src alongside the other players.
+        if (preg_match('~drive\.google\.com/file/d/([\w-]+)~', $url, $m)) {
+            return 'https://drive.google.com/file/d/' . $m[1] . '/preview';
+        }
+
         return null;
+    }
+
+    /**
+     * The URL the public page's <video> tag should play when embedUrl() is
+     * null. A pasted Dropbox share link (…dropbox.com/scl/fi/…?…&dl=0) serves
+     * an HTML preview page that refuses to be framed AND isn't video bytes —
+     * but the same path on dl.dropboxusercontent.com serves the raw file
+     * (rlkey must ride along; dl/st are viewer-page params and dropped).
+     * Anything else passes through untouched.
+     */
+    public function playableVideoUrl(): ?string
+    {
+        $url = trim((string) $this->video_url);
+
+        if ($url === '') {
+            return null;
+        }
+
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        if (! preg_match('~(^|\.)dropbox\.com$~', $host)) {
+            return $url;
+        }
+
+        $parts = parse_url($url);
+        parse_str($parts['query'] ?? '', $params);
+        unset($params['dl'], $params['st']);
+
+        return 'https://dl.dropboxusercontent.com'
+            . ($parts['path'] ?? '')
+            . ($params !== [] ? '?' . http_build_query($params) : '');
     }
 }
