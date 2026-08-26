@@ -88,6 +88,21 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // Photographer upload invites: hundreds of files per session is the
+        // NORMAL case on event day, so this is sized for throughput, not
+        // suspicion — the invite token (revocable, admin-minted) is the real
+        // control. Keyed on the token first; the IP ceiling is deliberately
+        // loose because several photographers share the venue's NAT'd wifi.
+        RateLimiter::for('gallery-invite-upload', function (Request $request) {
+            $token = (string) $request->input('t');
+
+            return [
+                Limit::perMinute(30)->by('gi-tok:'.sha1($token ?: 'anon')),
+                Limit::perHour(600)->by('gi-tok-h:'.sha1($token ?: 'anon')),
+                Limit::perMinute(90)->by('gi-ip:'.$request->ip()),
+            ];
+        });
+
         // Global outbound-mail audit. Every successful Mail::send
         // in the app fires Illuminate\Mail\Events\MessageSent, so
         // this listener captures all of them — Get In Touch,

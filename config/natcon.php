@@ -206,6 +206,20 @@ return [
         // natcon:purge-album-pile sweeps. Changing this means an IAM change too.
         'public_s3_prefix' => 'filipinohomes-new/gallery',
         'public_collection' => env('GALLERY_PUBLIC_FACE_COLLECTION', 'fh-natcon-gallery-public'),
+
+        // ── Photographer upload invites ──────────────────────────────────────
+        // Default link expiry = the event's last day + this many days, so a
+        // photographer can finish uploading after the convention without the
+        // admin babysitting the link. Revocation is always available sooner.
+        'invite_grace_days' => (int) env('NATCON_GALLERY_INVITE_GRACE_DAYS', 7),
+        // Creation-time nesting cap for photographer-made albums. The read
+        // paths cap their walks at 20; this keeps human-made trees sane.
+        'max_album_depth' => (int) env('NATCON_GALLERY_MAX_ALBUM_DEPTH', 6),
+        // The page an invite link opens. Brand-stable code (the year travels
+        // inside the token), so a config fallback — NOT a natcon_events
+        // column like update_profile_url, which is a campaign asset baked
+        // into emails.
+        'upload_page_url' => env('NATCON_GALLERY_UPLOAD_URL', 'https://filipinohomes.com/natcon/upload'),
     ],
 
     /*

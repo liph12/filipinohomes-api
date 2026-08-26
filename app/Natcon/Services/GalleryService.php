@@ -40,6 +40,12 @@ final class GalleryService
     /**
      * Encode, upload (main + thumb), and append a row to the event's gallery —
      * or, with a null event, to the public albums gallery.
+     *
+     * The last three parameters exist for photographer upload invites:
+     * $uploadInviteId attributes the row to its invite (ownership + counts),
+     * $status lets a review-required invite park uploads as 'hidden', and
+     * $auditSource labels the audit trail. All default to the admin path's
+     * behavior, so existing call sites are untouched.
      */
     public function store(
         ?NatconEvent $event,
@@ -47,6 +53,9 @@ final class GalleryService
         ?int $userId,
         ?string $caption = null,
         ?GalleryAlbum $album = null,
+        ?int $uploadInviteId = null,
+        string $status = GalleryPhoto::STATUS_ACTIVE,
+        ?string $auditSource = null,
     ): GalleryPhoto {
         // Before Intervention touches the file — see PhotoService's docblock on
         // why the gate runs on getimagesize(), not the decoder.
@@ -98,14 +107,15 @@ final class GalleryService
             'width' => $image->width(),
             'height' => $image->height(),
             'byte_size' => strlen($encoded),
-            'status' => GalleryPhoto::STATUS_ACTIVE,
+            'status' => $status,
             // Append to the end, so a fresh upload never jumps a hand-ordered
             // grid. Max over ALL statuses — a hidden row keeps its slot, and
             // un-hiding it must not collide with whatever was uploaded since.
             'sort_order' => (int) GalleryPhoto::forEvent($event)->max('sort_order') + 1,
             'created_by' => $userId,
+            'upload_invite_id' => $uploadInviteId,
         ]);
-        $photo->auditSource = $event ? 'admin_natcon_gallery' : 'admin_gallery';
+        $photo->auditSource = $auditSource ?? ($event ? 'admin_natcon_gallery' : 'admin_gallery');
         $photo->save();
 
         // Index inline — production has no queue worker, so a ShouldQueue job

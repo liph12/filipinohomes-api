@@ -74,6 +74,7 @@ use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReaction
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
+use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
 use Illuminate\Support\Facades\Route;
@@ -261,6 +262,27 @@ Route::middleware('strip.tags')->group(function () {
             // per-IP throttle on top of the guest token.
             Route::post('/albums/face-search', [NatconGalleryController::class, 'publicFaceSearch'])
                 ->middleware('throttle:10,1');
+
+            // ── Photographer upload invites ─────────────────────────────────
+            // Hired photographers upload event photos through a tokenized
+            // link (t) minted from the admin Gallery tab — no account. Same
+            // contract as the awardee routes above: link problems are 404/410,
+            // validation 422, NEVER 401, and no GET mutates (SafeLinks). The
+            // literal 'upload-invite' segment can't collide with /natcon/{year}
+            // — that route is whereNumber'd.
+            Route::get('/natcon/upload-invite', [NatconPhotographerController::class, 'state']);
+            Route::post('/natcon/upload-invite/albums', [NatconPhotographerController::class, 'storeAlbum'])
+                ->middleware('throttle:60,1');
+            Route::patch('/natcon/upload-invite/albums/{album}', [NatconPhotographerController::class, 'updateAlbum'])
+                ->middleware('throttle:60,1');
+            // Sized for throughput, not suspicion — hundreds of files per
+            // session is the NORMAL case on event day.
+            Route::post('/natcon/upload-invite/photos', [NatconPhotographerController::class, 'storePhoto'])
+                ->middleware('throttle:gallery-invite-upload');
+            Route::patch('/natcon/upload-invite/photos/{photo}', [NatconPhotographerController::class, 'updatePhoto'])
+                ->middleware('throttle:60,1');
+            Route::delete('/natcon/upload-invite/photos/{photo}', [NatconPhotographerController::class, 'destroyPhoto'])
+                ->middleware('throttle:60,1');
         });
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
@@ -554,6 +576,16 @@ Route::middleware('strip.tags')->group(function () {
                     Route::delete('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'destroySponsor']);
 
                     Route::get('/admin/natcon/gallery', [NatconGalleryController::class, 'adminGallery']);
+                    // Photographer upload invites: mint/copy/rotate/revoke the
+                    // tokenized links the portal above consumes. Registered
+                    // BEFORE /gallery/{photo} so 'invites' is never bound as a
+                    // photo id.
+                    Route::get('/admin/natcon/gallery/invites', [NatconGalleryController::class, 'invites']);
+                    Route::post('/admin/natcon/gallery/invites', [NatconGalleryController::class, 'storeInvite']);
+                    Route::patch('/admin/natcon/gallery/invites/{invite}', [NatconGalleryController::class, 'updateInvite']);
+                    Route::post('/admin/natcon/gallery/invites/{invite}/link', [NatconGalleryController::class, 'inviteLink']);
+                    Route::post('/admin/natcon/gallery/invites/{invite}/reissue', [NatconGalleryController::class, 'reissueInvite']);
+                    Route::post('/admin/natcon/gallery/invites/{invite}/revoke', [NatconGalleryController::class, 'revokeInvite']);
                     // Secondary albums (folders) inside one convention's
                     // gallery — the convention is the primary album; these are
                     // the single level under it (per photographer/company).

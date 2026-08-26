@@ -5,13 +5,16 @@ namespace App\Natcon\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\GalleryAlbum;
 use App\Models\GalleryPhoto;
+use App\Natcon\Models\GalleryUploadInvite;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Services\FaceRecognitionService;
+use App\Natcon\Services\GalleryInviteService;
 use App\Natcon\Services\GalleryService;
 use App\Natcon\Services\LandingCachePurger;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
@@ -38,6 +41,7 @@ class GalleryController extends Controller
     public function __construct(
         private GalleryService $gallery,
         private FaceRecognitionService $faces,
+        private GalleryInviteService $invites,
     ) {}
 
     // ── Public: convention gallery ───────────────────────────────────────────
@@ -553,6 +557,218 @@ class GalleryController extends Controller
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    // ── Photographer upload invites (admin) ──────────────────────────────────
+
+    /**
+     * Invites for the resolved scope, newest first, with what each one has
+     * produced. `status` derives 'expired' on read — an aged token needs no
+     * sweeper flipping rows.
+     */
+    public function invites(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+
+        $rows = GalleryUploadInvite::forEvent($event)
+            ->with('rootAlbum')
+            ->withCount([
+                'photos' => fn ($q) => $q->where('status', '!=', GalleryPhoto::STATUS_DELETED),
+                'albums',
+            ])
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json(['data' => $rows->map(fn (GalleryUploadInvite $i) => $this->presentInvite($i))]);
+    }
+
+    public function storeInvite(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'label' => 'required|string|max:120',
+            'root_album_id' => 'sometimes|nullable|integer',
+            'review_required' => 'sometimes|boolean',
+            // A wall clock in the EVENT's timezone (datetime-local input) —
+            // module rule #4: parse in that tz, store UTC.
+            'expires_at' => 'sometimes|nullable|date_format:Y-m-d\TH:i',
+        ]);
+
+        $event = $this->resolveEvent($request);
+        $rootAlbum = $this->resolveAlbum($event, $data['root_album_id'] ?? null);
+
+        $invite = new GalleryUploadInvite([
+            'natcon_event_id' => $event?->id,
+            'root_album_id' => $rootAlbum?->id,
+            'label' => trim($data['label']),
+            'review_required' => (bool) ($data['review_required'] ?? false),
+            'created_by' => $request->user()?->id,
+        ]);
+        $invite->auditSource = 'admin_gallery_invite';
+        $invite->save();
+
+        $raw = $this->invites->mintToken($invite);
+        $this->applyExpiryOverride($invite, $event, $data, applyNull: false);
+
+        return response()->json(['data' => [
+            'invite' => $this->presentInvite($invite->fresh(['rootAlbum'])),
+            'url' => $this->invites->buildLink($invite, $raw),
+            'expires_at' => $invite->token_expires_at?->toIso8601String(),
+        ]], 201);
+    }
+
+    public function updateInvite(Request $request, GalleryUploadInvite $invite): JsonResponse
+    {
+        $this->guardInvite($request, $invite);
+
+        $data = $request->validate([
+            'label' => 'sometimes|string|max:120',
+            'root_album_id' => 'sometimes|nullable|integer',
+            'review_required' => 'sometimes|boolean',
+            'expires_at' => 'sometimes|nullable|date_format:Y-m-d\TH:i',
+        ]);
+
+        $event = $invite->event;
+
+        if (array_key_exists('root_album_id', $data)) {
+            $invite->root_album_id = $this->resolveAlbum($event, $data['root_album_id'])?->id;
+        }
+        if (array_key_exists('label', $data)) {
+            $invite->label = trim($data['label']);
+        }
+        if (array_key_exists('review_required', $data)) {
+            $invite->review_required = (bool) $data['review_required'];
+        }
+
+        $invite->auditSource = 'admin_gallery_invite';
+        $invite->save();
+
+        $this->applyExpiryOverride($invite, $event, $data, applyNull: true);
+
+        return response()->json(['data' => $this->presentInvite($invite->fresh(['rootAlbum']))]);
+    }
+
+    /**
+     * "Copy link" — reproduces the CURRENT link (ensureToken never rotates),
+     * so handing the same photographer the URL twice keeps both copies alive.
+     */
+    public function inviteLink(Request $request, GalleryUploadInvite $invite): JsonResponse
+    {
+        $this->guardInvite($request, $invite);
+
+        $raw = $this->invites->ensureToken($invite);
+
+        return response()->json(['data' => [
+            'url' => $this->invites->buildLink($invite, $raw),
+            'expires_at' => $invite->token_expires_at?->toIso8601String(),
+        ]]);
+    }
+
+    /**
+     * Rotate the nonce: every previously shared link dies and a fresh one is
+     * returned. Doubles as un-revoke — re-issuing a revoked invite is the
+     * explicit "give them access again" gesture.
+     */
+    public function reissueInvite(Request $request, GalleryUploadInvite $invite): JsonResponse
+    {
+        $this->guardInvite($request, $invite);
+
+        if ($invite->status !== GalleryUploadInvite::STATUS_ACTIVE) {
+            $invite->auditSource = 'admin_gallery_invite';
+            $invite->forceFill([
+                'status' => GalleryUploadInvite::STATUS_ACTIVE,
+                'revoked_at' => null,
+                'revoked_by' => null,
+            ])->save();
+        }
+
+        $raw = $this->invites->mintToken($invite);
+
+        return response()->json(['data' => [
+            'invite' => $this->presentInvite($invite->fresh(['rootAlbum'])),
+            'url' => $this->invites->buildLink($invite, $raw),
+            'expires_at' => $invite->token_expires_at?->toIso8601String(),
+        ]]);
+    }
+
+    /**
+     * Kill the link. The photographer's uploads stay, attribution intact —
+     * revocation is about access, never about the photos.
+     */
+    public function revokeInvite(Request $request, GalleryUploadInvite $invite): JsonResponse
+    {
+        $this->guardInvite($request, $invite);
+
+        $invite->auditSource = 'admin_gallery_invite';
+        $invite->forceFill([
+            'status' => GalleryUploadInvite::STATUS_REVOKED,
+            'revoked_at' => Carbon::now(),
+            'revoked_by' => $request->user()?->id,
+        ])->save();
+
+        return response()->json(['data' => $this->presentInvite($invite->fresh(['rootAlbum']))]);
+    }
+
+    /** An invite reached by id must belong to the scope being administered. */
+    private function guardInvite(Request $request, GalleryUploadInvite $invite): void
+    {
+        $event = $this->resolveEvent($request);
+
+        abort_unless($invite->natcon_event_id === $event?->id, 404, 'Invite not found.');
+    }
+
+    /**
+     * Admin-set expiry (a datetime-local wall clock in the event tz) applied
+     * AFTER mintToken, which always writes the default. applyNull says whether
+     * an explicit null clears the expiry (updates) or is ignored (creates,
+     * where absent just means "keep the default").
+     */
+    private function applyExpiryOverride(GalleryUploadInvite $invite, ?NatconEvent $event, array $data, bool $applyNull): void
+    {
+        if (! array_key_exists('expires_at', $data)) {
+            return;
+        }
+
+        if ($data['expires_at'] === null) {
+            if ($applyNull) {
+                $invite->forceFill(['token_expires_at' => null])->save();
+            }
+
+            return;
+        }
+
+        $tz = $event?->timezone ?: 'Asia/Manila';
+        $invite->forceFill([
+            'token_expires_at' => Carbon::parse($data['expires_at'], $tz)->utc(),
+        ])->save();
+    }
+
+    private function presentInvite(GalleryUploadInvite $i): array
+    {
+        $expired = $i->status === GalleryUploadInvite::STATUS_ACTIVE
+            && $i->token_expires_at
+            && $i->token_expires_at->isPast();
+
+        $tz = $i->event?->timezone ?: 'Asia/Manila';
+
+        return [
+            'id' => $i->id,
+            'label' => $i->label,
+            'status' => $expired ? 'expired' : $i->status,
+            'review_required' => (bool) $i->review_required,
+            'root_album' => $i->rootAlbum ? [
+                'id' => $i->rootAlbum->id,
+                'name' => $i->rootAlbum->name,
+                'path' => $i->rootAlbum->path(),
+            ] : null,
+            'photos_count' => (int) ($i->photos_count ?? 0),
+            'albums_count' => (int) ($i->albums_count ?? 0),
+            'expires_at' => $i->token_expires_at?->toIso8601String(),
+            // Form-ready wall clock in the event's timezone — edit with THIS,
+            // never expires_at (module rule #4).
+            'expires_local' => $i->token_expires_at?->copy()->setTimezone($tz)->format('Y-m-d\TH:i'),
+            'last_used_at' => $i->last_used_at?->toIso8601String(),
+            'created_at' => $i->created_at?->toIso8601String(),
+        ];
+    }
 
     /**
      * Drop the public page's cached copy so an edit is visible immediately

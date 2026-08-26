@@ -37,6 +37,7 @@ class GalleryAlbum extends Model implements Auditable
 
     protected $fillable = [
         'natcon_event_id', 'parent_id', 'slug', 'name', 'sort_order', 'created_by',
+        'upload_invite_id',
     ];
 
     protected $casts = [

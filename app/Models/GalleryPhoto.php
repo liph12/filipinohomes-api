@@ -43,6 +43,7 @@ class GalleryPhoto extends Model implements Auditable
         'natcon_event_id', 'album_id', 'image_url', 'thumb_url', 's3_key', 'caption',
         'width', 'height', 'byte_size', 'status', 'sort_order', 'created_by',
         'face_ids', 'face_count', 'faces_indexed_at', 'index_error',
+        'upload_invite_id',
     ];
 
     protected $casts = [
