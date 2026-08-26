@@ -2,8 +2,8 @@
 
 namespace App\Natcon\Console;
 
-use App\Natcon\Models\GalleryAlbum;
-use App\Natcon\Models\GalleryPhoto;
+use App\Models\GalleryAlbum;
+use App\Models\GalleryPhoto;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Services\FaceRecognitionService;
 use Illuminate\Console\Command;

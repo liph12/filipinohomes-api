@@ -2,8 +2,8 @@
 
 namespace App\Natcon\Services;
 
-use App\Natcon\Models\GalleryAlbum;
-use App\Natcon\Models\GalleryPhoto;
+use App\Models\GalleryAlbum;
+use App\Models\GalleryPhoto;
 use App\Natcon\Models\NatconEvent;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
@@ -38,10 +38,11 @@ final class GalleryService
     ) {}
 
     /**
-     * Encode, upload (main + thumb), and append a row to the event's gallery.
+     * Encode, upload (main + thumb), and append a row to the event's gallery —
+     * or, with a null event, to the public albums gallery.
      */
     public function store(
-        NatconEvent $event,
+        ?NatconEvent $event,
         UploadedFile $file,
         ?int $userId,
         ?string $caption = null,
@@ -76,7 +77,8 @@ final class GalleryService
 
         // Derived from the event's slug — see NatconEvent::s3Prefix() for why a
         // config default is how next year's photos land in this year's folder.
-        $prefix = trim($event->s3Prefix('gallery'), '/');
+        // Public albums (no event) share one fixed folder.
+        $prefix = trim($event ? $event->s3Prefix('gallery') : (string) config('natcon.gallery.public_s3_prefix', 'filipinohomes-new/gallery'), '/');
         $uuid = (string) Str::uuid();
         $key = $prefix.'/'.$uuid.'.jpg';
         $thumbKey = $prefix.'/'.$uuid.'-640.jpg';
@@ -87,7 +89,7 @@ final class GalleryService
         $base = rtrim((string) config('filesystems.disks.s3.url'), '/');
 
         $photo = new GalleryPhoto([
-            'natcon_event_id' => $event->id,
+            'natcon_event_id' => $event?->id,
             'album_id' => $album?->id,
             'image_url' => $base.'/'.$key,
             'thumb_url' => $base.'/'.$thumbKey,
@@ -100,10 +102,10 @@ final class GalleryService
             // Append to the end, so a fresh upload never jumps a hand-ordered
             // grid. Max over ALL statuses — a hidden row keeps its slot, and
             // un-hiding it must not collide with whatever was uploaded since.
-            'sort_order' => (int) GalleryPhoto::where('natcon_event_id', $event->id)->max('sort_order') + 1,
+            'sort_order' => (int) GalleryPhoto::forEvent($event)->max('sort_order') + 1,
             'created_by' => $userId,
         ]);
-        $photo->auditSource = 'admin_natcon_gallery';
+        $photo->auditSource = $event ? 'admin_natcon_gallery' : 'admin_gallery';
         $photo->save();
 
         // Index inline — production has no queue worker, so a ShouldQueue job

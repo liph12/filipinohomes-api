@@ -2,7 +2,7 @@
 
 namespace App\Natcon\Services;
 
-use App\Natcon\Models\GalleryPhoto;
+use App\Models\GalleryPhoto;
 use App\Natcon\Models\NatconEvent;
 use Aws\Rekognition\Exception\RekognitionException;
 use Aws\Rekognition\RekognitionClient;
@@ -49,6 +49,21 @@ final class FaceRecognitionService
     }
 
     /**
+     * Which Rekognition collection a gallery scope's vectors live in: the
+     * convention's own (NatconEvent::galleryCollectionId()), or ONE shared
+     * collection for the public albums (natcon_event_id NULL) —
+     * fh-natcon-gallery-public by default: the IAM policy only grants
+     * Rekognition on fh-natcon-gallery-* / fh-gallery-* ARNs, and the latter
+     * prefix is what natcon:purge-album-pile sweeps. See config/natcon.php.
+     */
+    public static function collectionFor(?NatconEvent $event): string
+    {
+        return $event
+            ? $event->galleryCollectionId()
+            : (string) config('natcon.gallery.public_collection', 'fh-public-gallery');
+    }
+
+    /**
      * Index every face in one gallery photo into its event's collection and
      * record the outcome on the row.
      *
@@ -60,7 +75,7 @@ final class FaceRecognitionService
      */
     public function indexPhoto(GalleryPhoto $photo): int
     {
-        $collection = $photo->event->galleryCollectionId();
+        $collection = self::collectionFor($photo->event);
         $this->ensureCollection($collection);
 
         $result = $this->client->indexFaces([
@@ -101,11 +116,11 @@ final class FaceRecognitionService
      *
      * @return array<int, float> photo id => best similarity (0-100), best first.
      */
-    public function searchByImage(NatconEvent $event, string $imageBytes): array
+    public function searchByImage(?NatconEvent $event, string $imageBytes): array
     {
         try {
             $result = $this->client->searchFacesByImage([
-                'CollectionId' => $event->galleryCollectionId(),
+                'CollectionId' => self::collectionFor($event),
                 'Image' => ['Bytes' => $imageBytes],
                 'FaceMatchThreshold' => (float) config('natcon.gallery.match_threshold', 90),
                 'MaxFaces' => (int) config('natcon.gallery.max_matches', 100),
@@ -158,7 +173,7 @@ final class FaceRecognitionService
 
         try {
             $this->client->deleteFaces([
-                'CollectionId' => $photo->event->galleryCollectionId(),
+                'CollectionId' => self::collectionFor($photo->event),
                 'FaceIds' => $faceIds,
             ]);
         } catch (RekognitionException $e) {

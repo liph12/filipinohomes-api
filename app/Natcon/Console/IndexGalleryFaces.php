@@ -2,7 +2,7 @@
 
 namespace App\Natcon\Console;
 
-use App\Natcon\Models\GalleryPhoto;
+use App\Models\GalleryPhoto;
 use App\Natcon\Services\FaceRecognitionService;
 use Illuminate\Console\Command;
 

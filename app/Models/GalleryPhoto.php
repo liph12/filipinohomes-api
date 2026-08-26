@@ -1,19 +1,22 @@
 <?php
 
-namespace App\Natcon\Models;
+namespace App\Models;
 
 use App\Auditing\LogsActivity;
+use App\Natcon\Models\NatconEvent;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use OwenIt\Auditing\Contracts\Auditable;
 
 /**
- * One event photo in the public landing page's gallery.
+ * One published photo in a gallery.
  *
- * Belongs to a convention (natcon_event_id) — the gallery is per year. Not to
- * be confused with natcon_photo_submissions: those are awardee headshots and
- * must never reach the public page; these are publication photos an admin
- * chose to show.
+ * Belongs to a convention (natcon_event_id) when it is part of a year's
+ * NATCON gallery, or to no event (NULL) when it sits in a public album
+ * (/albums/{slug}). Not to be confused with natcon_photo_submissions: those
+ * are awardee headshots and must never reach a public page; these are
+ * publication photos an admin chose to show.
  *
  * `status` is the whole lifecycle: active | hidden | deleted. No is_published
  * flag (see the sponsors 000002 migration for why two visibility mechanisms
@@ -30,10 +33,9 @@ class GalleryPhoto extends Model implements Auditable
 
     public const STATUS_DELETED = 'deleted';
 
-    // The class name drops the module prefix, so Eloquent would infer `gallery_photos`.
-    protected $table = 'natcon_gallery_photos';
+    protected $table = 'gallery_photos';
 
-    protected string $auditCategory = 'natcon';
+    protected string $auditCategory = 'gallery';
 
     protected array $auditLabelAttributes = ['caption'];
 
@@ -62,10 +64,18 @@ class GalleryPhoto extends Model implements Auditable
         return $this->belongsTo(NatconEvent::class, 'natcon_event_id');
     }
 
-    /** Secondary album (folder) within the event's gallery; NULL = event root. */
+    /** Album (folder) the photo is filed in; NULL = the scope's root (legacy). */
     public function album(): BelongsTo
     {
         return $this->belongsTo(GalleryAlbum::class, 'album_id');
+    }
+
+    /** Photos of one scope — a convention's, or (null) the public gallery's. */
+    public function scopeForEvent(Builder $query, ?NatconEvent $event): Builder
+    {
+        return $event
+            ? $query->where('natcon_event_id', $event->id)
+            : $query->whereNull('natcon_event_id');
     }
 
     /** Public-page order: active only, hand-ordered, oldest first on ties. */

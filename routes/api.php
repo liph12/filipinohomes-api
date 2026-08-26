@@ -209,6 +209,12 @@ Route::middleware('strip.tags')->group(function () {
             ->whereNumber('year');
         Route::get('/natcon/{year}/gallery', [NatconGalleryController::class, 'gallery'])
             ->whereNumber('year');
+        // PUBLIC photo albums (/albums, /albums/{slug} on the site) — gallery
+        // rows with no convention. Same token-less reasoning as the NATCON
+        // reads above: SSR and Googlebot are the consumers.
+        Route::get('/albums', [NatconGalleryController::class, 'publicAlbums']);
+        Route::get('/albums/{slug}', [NatconGalleryController::class, 'publicAlbum'])
+            ->where('slug', '[a-z0-9-]+');
         // Reaction TALLIES, outside the token group for the same reason as the
         // feed: the caller is the frontend's caching proxy, which runs
         // server-side and carries no guest token. Counts only — no visitor is
@@ -249,6 +255,12 @@ Route::middleware('strip.tags')->group(function () {
             Route::post('/natcon/announcements/{announcement}/reactions',
                 [NatconReactionController::class, 'store'])
                 ->middleware('throttle:natcon-react');
+
+            // "Find my photos" on /albums — selfies in, live public-album
+            // photos out. Each hit is up to 5 Rekognition calls, so a tight
+            // per-IP throttle on top of the guest token.
+            Route::post('/albums/face-search', [NatconGalleryController::class, 'publicFaceSearch'])
+                ->middleware('throttle:10,1');
         });
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
@@ -563,6 +575,26 @@ Route::middleware('strip.tags')->group(function () {
                         ->middleware('throttle:30,1');
                     Route::patch('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto']);
                     Route::delete('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto']);
+
+                    // PUBLIC albums admin — the same controller, the same
+                    // album/photo rules, but `scope=public` makes resolveEvent()
+                    // yield null so every read/write hits rows with no
+                    // convention (see GalleryController::guardScope). Literal
+                    // segments (photos, face-search) are registered before
+                    // /{album} so they are never bound as an album id.
+                    Route::group(['prefix' => '/admin/albums'], function () {
+                        $scope = ['scope' => 'public'];
+                        Route::get('/photos', [NatconGalleryController::class, 'adminGallery'])->setDefaults($scope);
+                        Route::post('/photos', [NatconGalleryController::class, 'storeGalleryPhoto'])
+                            ->middleware('throttle:30,1')->setDefaults($scope);
+                        Route::patch('/photos/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto'])->setDefaults($scope);
+                        Route::delete('/photos/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto'])->setDefaults($scope);
+                        Route::post('/face-search', [NatconGalleryController::class, 'faceSearch'])->setDefaults($scope);
+                        Route::get('/', [NatconGalleryController::class, 'albums'])->setDefaults($scope);
+                        Route::post('/', [NatconGalleryController::class, 'storeAlbum'])->setDefaults($scope);
+                        Route::patch('/{album}', [NatconGalleryController::class, 'updateAlbum'])->setDefaults($scope);
+                        Route::delete('/{album}', [NatconGalleryController::class, 'destroyAlbum'])->setDefaults($scope);
+                    });
                 });
 
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);

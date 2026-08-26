@@ -191,7 +191,21 @@ return [
         'thumb_quality' => 78,
         'max_upload_kb' => 15 * 1024,   // 15MB, same ceiling as awardee photos
         'match_threshold' => (float) env('NATCON_GALLERY_MATCH_THRESHOLD', 90),
-        'max_matches' => 100,
+        // Hits per probe. Priced per call, not per hit, so generous: the public
+        // search filters by album AFTER this cap, and a person in 300 photos
+        // must not lose their album's matches to a 100-row truncation.
+        // Rekognition's own ceiling is 4096.
+        'max_matches' => 1000,
+        // PUBLIC albums (gallery rows with no convention) share one S3 folder
+        // and one Rekognition collection.
+        // ⚠️ The IAM user's policy only allows Rekognition on collections named
+        // fh-natcon-gallery-* and fh-gallery-* (measured 2026-08-26:
+        // 'fh-public-gallery' → AccessDeniedException). So the public
+        // collection borrows the per-event namespace with a slug no event may
+        // use ('public'), and stays off the legacy 'fh-gallery-' prefix that
+        // natcon:purge-album-pile sweeps. Changing this means an IAM change too.
+        'public_s3_prefix' => 'filipinohomes-new/gallery',
+        'public_collection' => env('GALLERY_PUBLIC_FACE_COLLECTION', 'fh-natcon-gallery-public'),
     ],
 
     /*

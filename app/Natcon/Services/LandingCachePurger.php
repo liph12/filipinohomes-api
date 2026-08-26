@@ -70,6 +70,23 @@ class LandingCachePurger
     }
 
     /**
+     * The PUBLIC albums gallery (/albums and every /albums/{slug}).
+     *
+     * One tag, not per-album: every public-album fetch on the frontend carries
+     * `gallery-albums`, so a photo edit deep in a sub-album refreshes the list
+     * page's covers and counts too — and the caller never has to work out
+     * which ancestors changed. Path purge is a belt-and-braces for /albums.
+     */
+    public function purgeAlbums(?string $slug = null): void
+    {
+        $this->send('albums', ['gallery-albums']);
+
+        if ($slug) {
+            $this->send("albums/{$slug}", []);
+        }
+    }
+
+    /**
      * Recordings of past conventions.
      *
      * natcon_recaps has no event FK — the conventions run back to 2012 and those
