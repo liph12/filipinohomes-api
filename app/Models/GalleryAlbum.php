@@ -54,6 +54,12 @@ class GalleryAlbum extends Model implements Auditable
         return $this->hasMany(GalleryPhoto::class, 'album_id');
     }
 
+    /** Decorative frame overlays visitors can put on this album's photos. */
+    public function frames(): HasMany
+    {
+        return $this->hasMany(GalleryAlbumFrame::class, 'album_id');
+    }
+
     public function parent(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_id');

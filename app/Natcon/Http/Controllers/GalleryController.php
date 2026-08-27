@@ -4,6 +4,7 @@ namespace App\Natcon\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\GalleryAlbum;
+use App\Models\GalleryAlbumFrame;
 use App\Models\GalleryPhoto;
 use App\Natcon\Models\GalleryUploadInvite;
 use App\Natcon\Models\NatconEvent;
@@ -11,11 +12,14 @@ use App\Natcon\Services\FaceRecognitionService;
 use App\Natcon\Services\GalleryInviteService;
 use App\Natcon\Services\GalleryService;
 use App\Natcon\Services\LandingCachePurger;
+use App\Natcon\Services\PhotoService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
 use RuntimeException;
@@ -42,6 +46,7 @@ class GalleryController extends Controller
         private GalleryService $gallery,
         private FaceRecognitionService $faces,
         private GalleryInviteService $invites,
+        private PhotoService $photos,
     ) {}
 
     // ── Public: convention gallery ───────────────────────────────────────────
@@ -121,6 +126,10 @@ class GalleryController extends Controller
                 ),
                 'children' => $children,
                 'photos' => $photos->map(fn (GalleryPhoto $p) => $this->present($p)),
+                // Frames offered on this album's photos — its own plus its
+                // ancestors' (see framesFor). Rides the one fetch the page
+                // already makes, so the frame button needs no extra request.
+                'frames' => $this->framesFor($album)->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values(),
             ],
         ]);
     }
@@ -226,6 +235,13 @@ class GalleryController extends Controller
             ->get()
             ->keyBy('id');
 
+        // Whether each matched album offers frames (own or inherited) — one
+        // pass up front, so every tile knows to show its frame button
+        // without a per-photo round trip.
+        $frameFlags = $this->frameFlagsFor(
+            $photos->pluck('album.id')->filter()->unique()->values()->all(),
+        );
+
         $data = [];
         foreach ($matches as $photoId => $similarity) {
             $photo = $photos->get($photoId);
@@ -239,6 +255,7 @@ class GalleryController extends Controller
                     'slug' => $photo->album->slug,
                     'name' => $photo->album->name,
                     'path' => $photo->album->path(),
+                    'has_frames' => (bool) ($frameFlags[$photo->album->id] ?? false),
                 ],
             ];
         }
@@ -547,6 +564,16 @@ class GalleryController extends Controller
                 $this->forgetFaces($photo);
             });
 
+        // Frames too, and BEFORE the delete: their FK cascades, so the audit
+        // row written by this flip is what preserves each frame's s3_key.
+        $album->frames()
+            ->where('status', '!=', GalleryAlbumFrame::STATUS_DELETED)
+            ->get()
+            ->each(function (GalleryAlbumFrame $frame) use ($event) {
+                $frame->auditSource = $this->auditSource($event);
+                $frame->forceFill(['status' => GalleryAlbumFrame::STATUS_DELETED])->save();
+            });
+
         // A real delete, unlike photos: an album owns no S3 object.
         $album->auditSource = $this->auditSource($event);
         $album->delete();
@@ -554,6 +581,246 @@ class GalleryController extends Controller
         $this->purge($event, $album);
 
         return response()->json(['message' => 'Album removed.']);
+    }
+
+    // ── Album frames (decorative PNG overlays on PUBLIC albums) ──────────────
+
+    /**
+     * Product switch: do a parent album's frames apply to photos in its
+     * sub-albums? True per the owner's call — upload the "Vietnam" frames
+     * once on the trip album and every sub-album's photos can wear them.
+     */
+    private const FRAMES_INHERIT = true;
+
+    /** Public: frames offered for one album's photos. Token-less, never 401. */
+    public function publicAlbumFrames(string $slug): JsonResponse
+    {
+        $album = GalleryAlbum::forEvent(null)->where('slug', $slug)->first();
+
+        if (! $album) {
+            return response()->json(['message' => 'Album not found.'], 404);
+        }
+
+        return response()->json([
+            'data' => $this->framesFor($album)->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values(),
+        ]);
+    }
+
+    /** Admin: the album's OWN live frames (inheritance is presentation only). */
+    public function albumFrames(Request $request, GalleryAlbum $album): JsonResponse
+    {
+        $this->guardScope($request, $album->event);
+        abort_unless($album->isPublic(), 404, 'Album not found.');
+
+        $rows = $album->frames()->live()->orderBy('sort_order')->orderBy('id')->get();
+
+        return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))]);
+    }
+
+    public function storeAlbumFrame(Request $request, GalleryAlbum $album): JsonResponse
+    {
+        $this->guardScope($request, $album->event);
+        abort_unless($album->isPublic(), 404, 'Album not found.');
+
+        $data = $request->validate([
+            'frame' => 'required|file|mimes:png|max:'.(int) config('natcon.gallery.max_upload_kb', 15360),
+            'name' => 'required|string|max:120',
+            // The transparent photo window, as fractions of the frame's own
+            // dimensions — detected client-side from the PNG's alpha channel.
+            'window_x' => 'required|numeric|min:0|max:1',
+            'window_y' => 'required|numeric|min:0|max:1',
+            'window_w' => 'required|numeric|min:0.05|max:1',
+            'window_h' => 'required|numeric|min:0.05|max:1',
+            'sort_order' => 'sometimes|integer|min:0|max:9999',
+        ], [
+            'frame.mimes' => 'Please upload a PNG with a transparent photo window.',
+            'frame.max' => 'That frame is too large. Please keep it under 15MB.',
+        ]);
+
+        if ($data['window_x'] + $data['window_w'] > 1.0001 || $data['window_y'] + $data['window_h'] > 1.0001) {
+            return response()->json(['message' => 'The photo window falls outside the frame.'], 422);
+        }
+
+        // Same decompression-bomb gate as every image upload — it runs on
+        // getimagesize(), no decode, so the alpha channel is never touched.
+        $check = $this->photos->inspect($request->file('frame'));
+        if (! $check['ok']) {
+            return response()->json(['message' => $check['reason'] ?? 'Unsupported image.'], 422);
+        }
+
+        // ORIGINAL bytes to S3 — never GalleryService::store, whose JPEG
+        // re-encode would flatten the transparent window the whole feature
+        // depends on (the GifUploadController precedent).
+        $prefix = trim((string) config('natcon.gallery.public_s3_prefix', 'filipinohomes-new/gallery'), '/');
+        $key = $prefix.'/frames/'.Str::uuid().'.png';
+        Storage::disk('s3')->put($key, file_get_contents($request->file('frame')->getRealPath()), 'public');
+
+        $frame = new GalleryAlbumFrame([
+            'album_id' => $album->id,
+            'name' => trim($data['name']),
+            'image_url' => rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key,
+            's3_key' => $key,
+            'width' => $check['width'] ?? null,
+            'height' => $check['height'] ?? null,
+            'byte_size' => $request->file('frame')->getSize(),
+            'window_x' => $data['window_x'],
+            'window_y' => $data['window_y'],
+            'window_w' => $data['window_w'],
+            'window_h' => $data['window_h'],
+            'sort_order' => (int) ($data['sort_order'] ?? 0),
+            'status' => GalleryAlbumFrame::STATUS_ACTIVE,
+            'created_by' => $request->user()?->id,
+        ]);
+        $frame->auditSource = $this->auditSource(null);
+        $frame->save();
+
+        $this->purge(null, $album);
+
+        return response()->json(['data' => $this->presentFrame($frame)], 201);
+    }
+
+    public function updateAlbumFrame(Request $request, GalleryAlbumFrame $frame): JsonResponse
+    {
+        $this->guardScope($request, $frame->album?->event);
+        // Implicit binding happily resolves deleted rows — refuse them, or a
+        // PATCH could resurrect a removed frame's visibility.
+        abort_if($frame->status === GalleryAlbumFrame::STATUS_DELETED, 404, 'Frame not found.');
+
+        $data = $request->validate([
+            'name' => 'sometimes|string|max:120',
+            'sort_order' => 'sometimes|integer|min:0|max:9999',
+            // Window edits come as a complete set or not at all — a lone
+            // coordinate against three stored ones is meaningless.
+            'window_x' => 'sometimes|required_with:window_y,window_w,window_h|numeric|min:0|max:1',
+            'window_y' => 'sometimes|required_with:window_x,window_w,window_h|numeric|min:0|max:1',
+            'window_w' => 'sometimes|required_with:window_x,window_y,window_h|numeric|min:0.05|max:1',
+            'window_h' => 'sometimes|required_with:window_x,window_y,window_w|numeric|min:0.05|max:1',
+        ]);
+
+        if (isset($data['window_x'], $data['window_w'], $data['window_y'], $data['window_h'])
+            && ($data['window_x'] + $data['window_w'] > 1.0001 || $data['window_y'] + $data['window_h'] > 1.0001)) {
+            return response()->json(['message' => 'The photo window falls outside the frame.'], 422);
+        }
+
+        if (isset($data['name'])) {
+            $data['name'] = trim($data['name']);
+        }
+
+        $frame->auditSource = $this->auditSource(null);
+        $frame->fill($data)->save();
+
+        $this->purge(null, $frame->album);
+
+        return response()->json(['data' => $this->presentFrame($frame->fresh())]);
+    }
+
+    public function destroyAlbumFrame(Request $request, GalleryAlbumFrame $frame): JsonResponse
+    {
+        $this->guardScope($request, $frame->album?->event);
+        abort_if($frame->status === GalleryAlbumFrame::STATUS_DELETED, 404, 'Frame not found.');
+
+        // A status flip, not delete() — the row is the only pointer to the
+        // S3 object, same rule as photos.
+        $frame->auditSource = $this->auditSource(null);
+        $frame->forceFill(['status' => GalleryAlbumFrame::STATUS_DELETED])->save();
+
+        $this->purge(null, $frame->album);
+
+        return response()->json(['message' => 'Frame removed.']);
+    }
+
+    /**
+     * Live frames offered for photos in $album: its own, plus (FRAMES_INHERIT)
+     * every ancestor's — own first, then up the chain, each block in
+     * sort_order. One query for the whole set.
+     *
+     * @return \Illuminate\Support\Collection<int, GalleryAlbumFrame>
+     */
+    private function framesFor(GalleryAlbum $album): \Illuminate\Support\Collection
+    {
+        $ids = [$album->id];
+        if (self::FRAMES_INHERIT) {
+            foreach ($album->ancestors() as $ancestor) {
+                $ids[] = $ancestor->id;
+            }
+        }
+
+        $rank = array_flip($ids);
+
+        return GalleryAlbumFrame::whereIn('album_id', $ids)
+            ->live()
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get()
+            ->sortBy(fn (GalleryAlbumFrame $f) => $rank[$f->album_id] ?? 99)
+            ->values();
+    }
+
+    /**
+     * Which of the given PUBLIC album ids offer frames (own or, when
+     * inheriting, an ancestor's). Two small queries for the whole batch —
+     * this feeds a per-tile boolean, never the frames themselves.
+     *
+     * @param  array<int, int>  $albumIds
+     * @return array<int, bool>
+     */
+    private function frameFlagsFor(array $albumIds): array
+    {
+        if ($albumIds === []) {
+            return [];
+        }
+
+        $withFrames = GalleryAlbumFrame::query()
+            ->live()
+            ->whereIn('album_id', GalleryAlbum::forEvent(null)->select('id'))
+            ->distinct()
+            ->pluck('album_id')
+            ->flip();
+
+        if ($withFrames->isEmpty()) {
+            return array_fill_keys($albumIds, false);
+        }
+
+        $parents = GalleryAlbum::forEvent(null)->pluck('parent_id', 'id');
+
+        $flags = [];
+        foreach ($albumIds as $id) {
+            $flag = false;
+            $node = $id;
+            for ($i = 0; $i < 20 && $node !== null; $i++) {
+                if ($withFrames->has($node)) {
+                    $flag = true;
+                    break;
+                }
+                if (! self::FRAMES_INHERIT) {
+                    break;
+                }
+                $node = $parents[$node] ?? null;
+            }
+            $flags[$id] = $flag;
+        }
+
+        return $flags;
+    }
+
+    private function presentFrame(GalleryAlbumFrame $f): array
+    {
+        return [
+            'id' => $f->id,
+            'album_id' => $f->album_id,
+            'name' => $f->name,
+            'image_url' => $f->image_url,
+            'width' => $f->width,
+            'height' => $f->height,
+            'window' => [
+                'x' => (float) $f->window_x,
+                'y' => (float) $f->window_y,
+                'w' => (float) $f->window_w,
+                'h' => (float) $f->window_h,
+            ],
+            'sort_order' => $f->sort_order,
+            'created_at' => $f->created_at?->toIso8601String(),
+        ];
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

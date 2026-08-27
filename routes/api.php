@@ -216,6 +216,10 @@ Route::middleware('strip.tags')->group(function () {
         Route::get('/albums', [NatconGalleryController::class, 'publicAlbums']);
         Route::get('/albums/{slug}', [NatconGalleryController::class, 'publicAlbum'])
             ->where('slug', '[a-z0-9-]+');
+        // Decorative frames a visitor can lay over an album's photos —
+        // token-less like the reads above (the frame picker is public UI).
+        Route::get('/albums/{slug}/frames', [NatconGalleryController::class, 'publicAlbumFrames'])
+            ->where('slug', '[a-z0-9-]+');
         // Reaction TALLIES, outside the token group for the same reason as the
         // feed: the caller is the frontend's caching proxy, which runs
         // server-side and carries no guest token. Counts only — no visitor is
@@ -622,6 +626,16 @@ Route::middleware('strip.tags')->group(function () {
                         Route::patch('/photos/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto'])->setDefaults($scope);
                         Route::delete('/photos/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto'])->setDefaults($scope);
                         Route::post('/face-search', [NatconGalleryController::class, 'faceSearch'])->setDefaults($scope);
+                        // Frames — decorative PNG overlays visitors can put on
+                        // an album's photos. 'frames/{frame}' (two segments)
+                        // can never bind as /{album} (one segment), but it
+                        // stays with the literals above the wildcard per
+                        // house style.
+                        Route::patch('/frames/{frame}', [NatconGalleryController::class, 'updateAlbumFrame'])->setDefaults($scope);
+                        Route::delete('/frames/{frame}', [NatconGalleryController::class, 'destroyAlbumFrame'])->setDefaults($scope);
+                        Route::get('/{album}/frames', [NatconGalleryController::class, 'albumFrames'])->setDefaults($scope);
+                        Route::post('/{album}/frames', [NatconGalleryController::class, 'storeAlbumFrame'])
+                            ->middleware('throttle:30,1')->setDefaults($scope);
                         Route::get('/', [NatconGalleryController::class, 'albums'])->setDefaults($scope);
                         Route::post('/', [NatconGalleryController::class, 'storeAlbum'])->setDefaults($scope);
                         Route::patch('/{album}', [NatconGalleryController::class, 'updateAlbum'])->setDefaults($scope);
