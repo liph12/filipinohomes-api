@@ -79,8 +79,10 @@ class GalleryController extends Controller
 
     /**
      * Top-level public albums with a cover and a recursive live-photo count.
-     * Empty albums (no live photo anywhere underneath) are left out: an empty
-     * folder is admin scaffolding, not publication content.
+     * Empty albums ARE listed (owner's call, 2026-08-27): an album tree like
+     * Vietnam › 2026 › 1st Day is set up before the photos land, and the
+     * public must be able to browse into it — an empty album shows a
+     * placeholder card and "no photos yet" instead of vanishing.
      */
     public function publicAlbums(): JsonResponse
     {
@@ -88,7 +90,7 @@ class GalleryController extends Controller
         $stats = $this->albumStats($albums);
 
         $data = $albums
-            ->filter(fn (GalleryAlbum $a) => $a->parent_id === null && ($stats[$a->id]['count'] ?? 0) > 0)
+            ->filter(fn (GalleryAlbum $a) => $a->parent_id === null)
             ->values()
             ->map(fn (GalleryAlbum $a) => $this->presentPublicAlbum($a, $albums, $stats));
 
@@ -96,8 +98,8 @@ class GalleryController extends Controller
     }
 
     /**
-     * One public album: breadcrumb, its sub-albums (with covers), its own
-     * live photos. Only public albums resolve — a convention album's id or
+     * One public album: breadcrumb, ALL its sub-albums (with covers where
+     * they have photos), its own live photos. Only public albums resolve — a convention album's id or
      * name is never reachable here, even by guessing.
      */
     public function publicAlbum(string $slug): JsonResponse
@@ -112,7 +114,7 @@ class GalleryController extends Controller
         $stats = $this->albumStats($albums);
 
         $children = $albums
-            ->filter(fn (GalleryAlbum $a) => $a->parent_id === $album->id && ($stats[$a->id]['count'] ?? 0) > 0)
+            ->filter(fn (GalleryAlbum $a) => $a->parent_id === $album->id)
             ->values()
             ->map(fn (GalleryAlbum $a) => $this->presentPublicAlbum($a, $albums, $stats));
 
