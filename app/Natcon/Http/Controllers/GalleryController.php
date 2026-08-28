@@ -250,7 +250,16 @@ class GalleryController extends Controller
             if (! $photo || ! $photo->album) {
                 continue;
             }
-            $data[] = $this->present($photo) + [
+            // ⚠️ array_merge, NOT `+`. present() already returns an `album`
+            //    key, and the union operator keeps the LEFT operand's version —
+            //    so this richer album (the one carrying `slug` and
+            //    `has_frames`) was silently thrown away on every match.
+            //    `similarity` survived because nothing collides with it, which
+            //    is exactly why the bug read as "frames are broken in face
+            //    search" rather than as a malformed response: the tiles showed
+            //    their match percentage and no frame button, and the grid could
+            //    neither gate on has_frames nor fetch by slug.
+            $data[] = array_merge($this->present($photo), [
                 'similarity' => round($similarity, 1),
                 'album' => [
                     'id' => $photo->album->id,
@@ -259,7 +268,7 @@ class GalleryController extends Controller
                     'path' => $photo->album->path(),
                     'has_frames' => (bool) ($frameFlags[$photo->album->id] ?? false),
                 ],
-            ];
+            ]);
         }
 
         return response()->json([
