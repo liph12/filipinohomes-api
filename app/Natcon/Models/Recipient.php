@@ -85,7 +85,7 @@ class Recipient extends Model implements Auditable
 
     protected $fillable = [
         'natcon_event_id', 'email',
-        'lr_awardee_id', 'reg_id', 'first_name', 'last_name', 'phone', 'team',
+        'lr_awardee_id', 'reg_id', 'first_name', 'last_name', 'phone', 'team', 'state',
         'owner_name', 'seat_number', 'lr_polo_shirt_size', 'lr_approved',
         'lr_photos', 'lr_primary_photo', 'lr_qr_code', 'lr_payload',
         'lr_fetched_at', 'lr_lookup_status', 'lr_last_error',

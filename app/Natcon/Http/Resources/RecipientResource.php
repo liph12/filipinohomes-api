@@ -42,6 +42,8 @@ class RecipientResource extends JsonResource
             'display_name' => $r->displayName(),
             'phone'        => $r->phone,
             'team'         => $r->team,
+            // LR's province, under LR's name. The admin labels it "Province".
+            'state'        => $r->state,
             'reg_id'       => $r->reg_id,
             'seat_number'  => $r->seat_number,
 

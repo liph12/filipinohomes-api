@@ -235,7 +235,22 @@ class AdminController extends Controller
          * Same request, same helper the list uses, so a count and the rows it
          * claims to describe cannot drift again.
          */
-        $base = $this->applySalesBand(Recipient::where('natcon_event_id', $event->id), $request);
+        $bandOnly = $this->applySalesBand(Recipient::where('natcon_event_id', $event->id), $request);
+
+        /**
+         * ⚠️ Three bases, each blind to its OWN axis — a facet scoped by the
+         *    filter it offers shows you the one option you already picked and
+         *    hides the nine you might switch to:
+         *
+         *      $unscoped  event only          -> sales_tiers (the wave selector)
+         *      $bandOnly  + band              -> states[] / no_state
+         *      $base      + band + province   -> every status count, teams[]
+         *
+         * teams[] IS province-scoped on purpose: the team dropdown filters
+         * WITHIN the province you have chosen, so "Red Diamonds (33)" listing
+         * 19 rows would be the same lie the status chips used to tell.
+         */
+        $base = $this->applyProvince(clone $bandOnly, $request);
 
         $byStatus = (clone $base)->selectRaw('status, COUNT(*) n')->groupBy('status')->pluck('n', 'status');
 
@@ -294,6 +309,17 @@ class AdminController extends Controller
                 ->map(fn ($r) => ['name' => $r->team, 'count' => (int) $r->n])
                 ->values(),
             'no_team' => (clone $base)->where(fn ($q) => $q->whereNull('team')->orWhere('team', ''))->count(),
+            // Province facet, from $bandOnly — see the three-base note above.
+            // Called "state" on the wire because that is LR's key and the
+            // column name; the admin labels it "Province".
+            'states' => (clone $bandOnly)
+                ->selectRaw('state, COUNT(*) AS n')
+                ->whereNotNull('state')->where('state', '!=', '')
+                ->groupBy('state')->orderByDesc('n')->orderBy('state')
+                ->get()
+                ->map(fn ($r) => ['name' => $r->state, 'count' => (int) $r->n])
+                ->values(),
+            'no_state' => (clone $bandOnly)->where(fn ($q) => $q->whereNull('state')->orWhere('state', ''))->count(),
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
@@ -364,90 +390,9 @@ class AdminController extends Controller
         $query = Recipient::with('event')
             ->where('natcon_event_id', $event->id);
 
-        if ($search = trim((string) $request->input('search'))) {
-            $like = '%' . $search . '%';
-            $query->where(fn ($q) => $q
-                ->where('email', 'like', $like)
-                ->orWhere('first_name', 'like', $like)
-                ->orWhere('last_name', 'like', $like)
-                ->orWhere('team', 'like', $like)
-                ->orWhere('reg_id', 'like', $like));
-        }
-
-        // Filters on the qualifier ROSTER, not on how the row was added — see
-        // RecipientResource::is_qualifier for why those differ.
-        if ($request->filled('qualifier')) {
-            $request->boolean('qualifier')
-                ? $query->whereNotNull('qualifier_payload')
-                : $query->whereNull('qualifier_payload');
-        }
-
-        foreach (['status', 'response', 'lr_lookup_status', 'team', 'source'] as $filter) {
-            if ($request->filled($filter)) {
-                $query->where($filter, $request->input($filter));
-            }
-        }
-
-        // Same band as the send path, so the list is a truthful preview of it.
-        $this->applySalesBand($query, $request);
-
-        if ($request->filled('requires_new_photo')) {
-            $query->where('requires_new_photo', $request->boolean('requires_new_photo'));
-        }
-
-        // "Who is stuck part-way?" — at least one photo, not yet enough of them.
-        // Expressed against responded_at rather than a count, so it stays in step
-        // with PhotoService::syncResponseState() if the requirement changes.
-        if ($request->input('photo_progress') === 'partial') {
-            $query->whereNull('responded_at')->whereHas('activePhotos');
-        }
-
-        // Two views the summary chips filter by. Both are timestamps rather than
-        // statuses — "opened it" and "finished" cut across every status — so
-        // neither could be expressed through the status filter above.
-        if ($request->boolean('opened')) {
-            $query->whereNotNull('first_opened_at');
-        }
-
-        // filled(), not boolean(): done=0 is a question in its own right — "who
-        // still owes us something?" — and boolean() alone could not tell it from
-        // the filter being absent.
-        if ($request->filled('done')) {
-            $request->boolean('done')
-                ? $query->whereNotNull('responded_at')
-                : $query->whereNull('responded_at');
-        }
-
-        // Sent, and nothing back. The gap between "we have not asked them yet"
-        // and "they have not answered" is the whole of the chasing work, and it
-        // could not be expressed before: `status` alone cannot say it, because
-        // invited, reminded, photos_partial and details_pending are all this.
-        /**
-         * Has an invite ever gone out — NOT "status is currently invited".
-         *
-         * ⚠️ The two differ by everyone who has moved on since. The Invited chip
-         *    counts invited_at (133), while status='invited' excludes anyone now
-         *    reminded, part-way, needing details or finished (96). Clicking a
-         *    chip that said 133 and getting 96 rows is the same disagreement the
-         *    sales-band scoping just fixed, one axis over.
-         *
-         * The funnel reading is the useful one — Not sent → Sent → Opened →
-         * Submitted, each a superset of the next — so the FILTER moves to match
-         * the count rather than the other way round.
-         */
-        if ($request->boolean('sent')) {
-            $query->whereNotNull('invited_at');
-        }
-
-        if ($request->boolean('awaiting')) {
-            $query->whereNotNull('invited_at')->whereNull('responded_at');
-        }
-
-        if ($request->filled('has_photo')) {
-            $request->boolean('has_photo')
-                ? $query->where(fn ($q) => $q->whereNotNull('lr_primary_photo')->orWhereNotNull('current_photo_url'))
-                : $query->whereNull('lr_primary_photo')->whereNull('current_photo_url');
-        }
+        // Every filter lives in one place so the list, the counts, the
+        // exports and the send path cannot drift apart.
+        $this->applyRecipientFilters($query, $request);
 
         /**
          * Sortable columns, keyed by the name the table header sends.
@@ -477,6 +422,7 @@ class AdminController extends Controller
         $sortable = [
             'awardee'      => "COALESCE(NULLIF(display_name, ''), NULLIF(CONCAT_WS(' ', first_name, last_name), ''), email)",
             'team'         => 'team',
+            'state'        => 'state',
             'sales'        => 'total_sales',
             'status'       => 'status',
             'opens'        => 'open_count',
@@ -863,6 +809,14 @@ class AdminController extends Controller
             'recipient_ids.*' => 'integer',
             'statuses'      => 'nullable|array',
             'statuses.*'    => 'string|max:24',
+            // These narrow who actually receives email (targetQuery), so they
+            // are validated rather than trusted: an unvalidated parameter that
+            // shrinks a wave is how half a wave silently goes unsent.
+            'state'         => 'nullable|string|max:191',
+            'no_state'      => 'nullable|boolean',
+            'min_sales'     => 'nullable|numeric',
+            'max_sales'     => 'nullable|numeric',
+            'no_sales'      => 'nullable|boolean',
         ]);
 
         $event   = $this->resolveEvent($request);
@@ -979,7 +933,13 @@ class AdminController extends Controller
                 'new_values'     => [
                     'batch_id' => $batchId,
                     'kind'     => $kind,
-                    'filters'  => $request->only(['statuses', 'recipient_ids', 'kind']),
+                    // Everything that narrowed the target, not just statuses:
+                    // "who did that send actually go to" has to be answerable
+                    // from this row alone months later.
+                    'filters'  => $request->only([
+                        'statuses', 'recipient_ids', 'kind',
+                        'state', 'no_state', 'min_sales', 'max_sales', 'no_sales',
+                    ]),
                     'total'    => $total,
                     'queued'   => $queued,
                     'skipped'  => $skipped,
@@ -1008,7 +968,14 @@ class AdminController extends Controller
     {
         $event = $this->resolveEvent($request);
 
-        $query = Recipient::where('natcon_event_id', $event->id);
+        // The same filters the LIST applies, so an export describes the rows
+        // the admin was reading when they pressed the button. It used to
+        // ignore them entirely: filtered to "₱61M and up, Davao del Sur — 9
+        // people", Export CSV still wrote all 292.
+        $query = $this->applyRecipientFilters(
+            Recipient::where('natcon_event_id', $event->id),
+            $request,
+        );
 
         if ($request->boolean('responded_only')) {
             $query->whereNotNull('responded_at');
@@ -1031,8 +998,13 @@ class AdminController extends Controller
             ->where('natcon_event_id', $event->id)
             ->pluck('answers_snapshot', 'natcon_recipient_id');
 
+        // Resolved once, not per row: every row belongs to this event, and
+        // `$r->event->timezone` inside the map would be one extra query per
+        // awardee on top of a list this method exists to keep cheap.
+        $tz = $event->timezone ?: 'Asia/Manila';
+
         return response()->json([
-            'data' => $rows->map(function (Recipient $r) use ($answersByRecipient) {
+            'data' => $rows->map(function (Recipient $r) use ($answersByRecipient, $tz) {
                 $snapshot = json_decode((string) ($answersByRecipient[$r->id] ?? '[]'), true) ?: [];
                 $answers  = [];
                 foreach ($snapshot as $a) {
@@ -1054,6 +1026,11 @@ class AdminController extends Controller
                     'last_name'          => $r->last_name,
                     'full_name'          => $r->displayName(),
                     'team'               => $r->team,
+                    'state'              => $r->state,
+                    // (float), not the raw attribute: total_sales is
+                    // decimal:2, which Eloquent serialises as the STRING
+                    // "61000000.00" — same cast RecipientResource makes.
+                    'total_sales'        => $r->total_sales !== null ? (float) $r->total_sales : null,
                     'reg_id'             => $r->reg_id,
                     'phone'              => $r->phone,
                     'seat_number'        => $r->seat_number,
@@ -1065,6 +1042,10 @@ class AdminController extends Controller
                     'retained_photo_url' => $r->retained_photo_url,
                     'lr_photo_count'     => count($r->displayPhotos()),
                     'status'             => $r->status,
+                    // When they finished — the only field that separates "sent
+                    // us everything" from "still owes us a shirt size", and the
+                    // CSV had no way to say which.
+                    'responded_at'       => $r->responded_at?->copy()->setTimezone($tz)->toIso8601String(),
                     'answers'            => $answers,
                 ];
             })->values(),
@@ -1244,7 +1225,145 @@ class AdminController extends Controller
                 : $query->where('status', Recipient::STATUS_PENDING);
         }
 
-        return $this->applySalesBand($query, $request);
+        // Band AND province, in that order and both AFTER the status guard
+        // above: the admin filters the table down to a province and presses
+        // Send, so the send must mean the same thing the screen does. Note
+        // this is deliberately NOT applyRecipientFilters() — a stray status=
+        // or search= on a send request must never silently shrink a wave.
+        return $this->applyProvince(
+            $this->applySalesBand($query, $request),
+            $request,
+        );
+    }
+
+    /**
+     * Every filter the awardee list understands, in one place.
+     *
+     * Extracted from recipients() so submissions() — which feeds BOTH
+     * exports — can apply exactly the same narrowing. Before this, Export
+     * CSV and Download Photos silently returned the whole event no matter
+     * what the admin had selected, so a "₱61M and up" export carried all
+     * 286 awardees.
+     *
+     * NOT used by targetQuery(): a send has its own status guard (that is
+     * what makes wave 2 safe) and only borrows the band and province.
+     */
+    private function applyRecipientFilters($query, Request $request)
+    {
+        if ($search = trim((string) $request->input('search'))) {
+            $like = '%' . $search . '%';
+            $query->where(fn ($q) => $q
+                ->where('email', 'like', $like)
+                ->orWhere('first_name', 'like', $like)
+                ->orWhere('last_name', 'like', $like)
+                ->orWhere('team', 'like', $like)
+                ->orWhere('reg_id', 'like', $like));
+        }
+
+        // Filters on the qualifier ROSTER, not on how the row was added — see
+        // RecipientResource::is_qualifier for why those differ.
+        if ($request->filled('qualifier')) {
+            $request->boolean('qualifier')
+                ? $query->whereNotNull('qualifier_payload')
+                : $query->whereNull('qualifier_payload');
+        }
+
+        foreach (['status', 'response', 'lr_lookup_status', 'team', 'source'] as $filter) {
+            if ($request->filled($filter)) {
+                $query->where($filter, $request->input($filter));
+            }
+        }
+
+        // Same band as the send path, so the list is a truthful preview of it.
+        $this->applySalesBand($query, $request);
+
+        // Same for the province — see applyProvince for why "no province" is
+        // its own case rather than an empty match.
+        $this->applyProvince($query, $request);
+
+        if ($request->filled('requires_new_photo')) {
+            $query->where('requires_new_photo', $request->boolean('requires_new_photo'));
+        }
+
+        // "Who is stuck part-way?" — at least one photo, not yet enough of them.
+        // Expressed against responded_at rather than a count, so it stays in step
+        // with PhotoService::syncResponseState() if the requirement changes.
+        if ($request->input('photo_progress') === 'partial') {
+            $query->whereNull('responded_at')->whereHas('activePhotos');
+        }
+
+        // Two views the summary chips filter by. Both are timestamps rather than
+        // statuses — "opened it" and "finished" cut across every status — so
+        // neither could be expressed through the status filter above.
+        if ($request->boolean('opened')) {
+            $query->whereNotNull('first_opened_at');
+        }
+
+        // filled(), not boolean(): done=0 is a question in its own right — "who
+        // still owes us something?" — and boolean() alone could not tell it from
+        // the filter being absent.
+        if ($request->filled('done')) {
+            $request->boolean('done')
+                ? $query->whereNotNull('responded_at')
+                : $query->whereNull('responded_at');
+        }
+
+        // Sent, and nothing back. The gap between "we have not asked them yet"
+        // and "they have not answered" is the whole of the chasing work, and it
+        // could not be expressed before: `status` alone cannot say it, because
+        // invited, reminded, photos_partial and details_pending are all this.
+        /**
+         * Has an invite ever gone out — NOT "status is currently invited".
+         *
+         * ⚠️ The two differ by everyone who has moved on since. The Invited chip
+         *    counts invited_at (133), while status='invited' excludes anyone now
+         *    reminded, part-way, needing details or finished (96). Clicking a
+         *    chip that said 133 and getting 96 rows is the same disagreement the
+         *    sales-band scoping just fixed, one axis over.
+         *
+         * The funnel reading is the useful one — Not sent → Sent → Opened →
+         * Submitted, each a superset of the next — so the FILTER moves to match
+         * the count rather than the other way round.
+         */
+        if ($request->boolean('sent')) {
+            $query->whereNotNull('invited_at');
+        }
+
+        if ($request->boolean('awaiting')) {
+            $query->whereNotNull('invited_at')->whereNull('responded_at');
+        }
+
+        if ($request->filled('has_photo')) {
+            $request->boolean('has_photo')
+                ? $query->where(fn ($q) => $q->whereNotNull('lr_primary_photo')->orWhereNotNull('current_photo_url'))
+                : $query->whereNull('lr_primary_photo')->whereNull('current_photo_url');
+        }
+
+        return $query;
+    }
+
+    /**
+     * Narrow a recipient query to one province (LR's `state`).
+     *
+     * Shaped like applySalesBand, and applied in the same three places —
+     * the list, the counts and the send path — so what an admin is looking
+     * at, what the chips say and who a send would email stay one thing.
+     *
+     * `no_state` is its own case rather than an empty match: awardees added
+     * by hand have no province at all, and they must stay findable instead
+     * of vanishing from every province view.
+     */
+    private function applyProvince($query, Request $request)
+    {
+        if ($request->boolean('no_state')) {
+            return $query->where(fn ($q) => $q->whereNull('state')->orWhere('state', ''));
+        }
+
+        if ($request->filled('state')) {
+            $query->where('state', $request->input('state'));
+        }
+
+        return $query;
     }
 
     /**

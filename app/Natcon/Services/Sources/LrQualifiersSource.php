@@ -84,6 +84,11 @@ final class LrQualifiersSource implements RecipientSource, ProvidesRecipientAttr
                 ? mb_substr(trim((string) $team['teamname']), 0, 191)
                 : null,
 
+            // LR's "state" is a Philippine province ("Davao del Sur", "Cebu").
+            // Kept under the upstream name so the column, the API field and
+            // the LR key all match; only the admin UI relabels it "Province".
+            'state' => $this->str($member['state'] ?? null, 191),
+
             'total_sales' => isset($record['totalsales']) && is_numeric($record['totalsales'])
                 ? round((float) $record['totalsales'], 2)
                 : null,
