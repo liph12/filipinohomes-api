@@ -18,14 +18,29 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class RecipientResource extends JsonResource
 {
-    public function __construct($resource, private bool $detailed = false)
-    {
-        parent::__construct($resource);
-    }
+    /**
+     * ⚠️ NEVER make this a promoted constructor parameter.
+     *
+     * `RecipientResource::collection()` builds its items through
+     * `Collection::mapInto()`, which calls `new static($value, $key)` — it
+     * passes the array KEY as the second argument. With `$detailed` promoted
+     * into that slot, every row except index 0 was constructed with a truthy
+     * int and serialised in DETAIL mode: the list leaked `lr_payload` (the very
+     * thing the docblock above says is withheld), ran three extra queries per
+     * row, and 500'd on the first row whose sales_team was null.
+     *
+     * A plain property plus a named factory keeps the constructor to the one
+     * argument JsonResource itself declares, so a stray positional argument has
+     * nowhere to land.
+     */
+    private bool $detailed = false;
 
     public static function detailed(Recipient $recipient): self
     {
-        return new self($recipient, true);
+        $resource = new self($recipient);
+        $resource->detailed = true;
+
+        return $resource;
     }
 
     public function toArray(Request $request): array
@@ -119,7 +134,11 @@ class RecipientResource extends JsonResource
             'qualifier' => $r->qualifier_payload ? [
                 'agent_id'          => $r->qualifier_payload['agentid'] ?? null,
                 'team_id'           => $r->qualifier_payload['sales_team_member']['sales_team']['id'] ?? null,
-                'team_logo'         => $r->qualifier_payload['sales_team_member']['sales_team']['teamlogo'] ?: null,
+                // ?? not ?: — the elvis operator still evaluates the array
+                // access first, so a null sales_team threw "Trying to access
+                // array offset on null" rather than yielding null. Every
+                // sibling line here already used ??; this one was the outlier.
+                'team_logo'         => $r->qualifier_payload['sales_team_member']['sales_team']['teamlogo'] ?? null,
                 'is_leader'         => (bool) ($r->qualifier_payload['sales_team_member']['isleader'] ?? false),
                 'date_joined'       => $r->qualifier_payload['sales_team_member']['datejoined'] ?? null,
                 'confirmed_at'      => $r->qualifier_payload['member'][0]['natcon_confirmation']['updated_at'] ?? null,
