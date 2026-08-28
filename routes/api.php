@@ -607,8 +607,11 @@ Route::middleware('strip.tags')->group(function () {
                     // writes. The natcon-upload limiter is keyed on the guest
                     // token and everyone here is authed without one, so it
                     // would funnel every admin into a single 'anon' bucket.
+                    // 120/min: the admin uploader runs 5 photos in parallel and
+                    // retries a 429 after Retry-After, so this is a ceiling on
+                    // sustained abuse, not the pace of a normal bulk upload.
                     Route::post('/admin/natcon/gallery', [NatconGalleryController::class, 'storeGalleryPhoto'])
-                        ->middleware('throttle:30,1');
+                        ->middleware('throttle:120,1');
                     Route::patch('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto']);
                     Route::delete('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto']);
 
@@ -621,8 +624,9 @@ Route::middleware('strip.tags')->group(function () {
                     Route::group(['prefix' => '/admin/albums'], function () {
                         $scope = ['scope' => 'public'];
                         Route::get('/photos', [NatconGalleryController::class, 'adminGallery'])->setDefaults($scope);
+                        // Same 120/min ceiling as the NATCON gallery upload above.
                         Route::post('/photos', [NatconGalleryController::class, 'storeGalleryPhoto'])
-                            ->middleware('throttle:30,1')->setDefaults($scope);
+                            ->middleware('throttle:120,1')->setDefaults($scope);
                         Route::patch('/photos/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto'])->setDefaults($scope);
                         Route::delete('/photos/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto'])->setDefaults($scope);
                         Route::post('/face-search', [NatconGalleryController::class, 'faceSearch'])->setDefaults($scope);
