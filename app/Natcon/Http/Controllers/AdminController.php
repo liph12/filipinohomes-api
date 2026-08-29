@@ -284,6 +284,12 @@ class AdminController extends Controller
                                     ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
                                     ->count(),
             'details_pending' => (int) ($byStatus[Recipient::STATUS_DETAILS_PENDING] ?? 0),
+            // The mirror bucket — form in, photo missing. Same predicate as the
+            // form_only filter, so the chip and the rows it opens agree.
+            'form_only'       => (clone $base)->whereNotNull('form_submitted_at')
+                                    ->whereNull('responded_at')
+                                    ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
+                                    ->count(),
 
             // The chasing list: asked, nothing back. Not derivable from the other
             // counts, because "invited" here means "has an invited_at" and
@@ -1331,6 +1337,30 @@ class AdminController extends Controller
 
         if ($request->boolean('awaiting')) {
             $query->whereNotNull('invited_at')->whereNull('responded_at');
+        }
+
+        /**
+         * The mirror of details_pending: the form is in, the PHOTO is what is
+         * missing. Someone who sent their shirt size and never settled a photo
+         * was previously visible only inside the "Sent, but not submitted"
+         * pile, so the one thing they still owe could not be listed.
+         *
+         * ⚠️ Excluding details_pending is what makes this mean "photos
+         *    missing": that status is defined as photos DONE with an answer
+         *    outstanding, so the two buckets would otherwise overlap on exactly
+         *    the people who belong in the other one.
+         *
+         * Leans on form_submitted_at rather than the answers themselves —
+         * hasRequiredAnswers() reads the stored answers and is not expressible
+         * in SQL. The gap: a question turned required AFTER someone submitted
+         * leaves the timestamp set while an answer is missing, so they would
+         * appear here rather than under details_pending. The form is frozen
+         * mid-campaign, so that is a paper edge, not a live one.
+         */
+        if ($request->boolean('form_only')) {
+            $query->whereNotNull('form_submitted_at')
+                ->whereNull('responded_at')
+                ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING);
         }
 
         if ($request->filled('has_photo')) {

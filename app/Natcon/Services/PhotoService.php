@@ -295,7 +295,34 @@ final class PhotoService
         //
         // Photos remain the visible milestone; they are just no longer the
         // finish line on their own.
-        $photosDone  = $count >= Recipient::requiredPhotoCount();
+        /**
+         * A retain that owns no submission row, but still has a photo to print.
+         *
+         * Two ways to land here: an answer from the old single-decision flow
+         * (`PublicController::respond()`, which writes `response` and no row),
+         * or a kept set that was later emptied while the response stood.
+         *
+         * ⚠️ This arm used to live BELOW as its own branch that set `status`
+         *    and nothing else — which is what stranded people. It intercepted
+         *    before the final arm could clear a stale `response`, so the row
+         *    froze at status=responded_retain with responded_at NULL: a green
+         *    "Retained" badge in the admin on someone the counts filed under
+         *    "Sent, but not submitted", who could never reach Submitted no
+         *    matter what else they did.
+         *
+         * finalPhotoUrl(), not displayPhotos(): it is the same question the
+         * events team asks — is there something to print? — and it correctly
+         * returns null once a reviewer has ruled the photo on file unusable, so
+         * requires_new_photo still reopens them instead of being papered over.
+         * With no printable photo this stays false, the final arm clears the
+         * stale `response`, and they go back to being chased. That is the
+         * honest answer: a retain of nothing is not a settled photo.
+         */
+        $retainedWithoutRow = $count === 0
+            && $recipient->response === Recipient::RESPONSE_RETAIN
+            && $recipient->finalPhotoUrl() !== null;
+
+        $photosDone  = $count >= Recipient::requiredPhotoCount() || $retainedWithoutRow;
         $detailsDone = app(FormService::class)->hasRequiredAnswers($recipient);
         $complete    = $photosDone && $detailsDone;
 
@@ -346,12 +373,6 @@ final class PhotoService
                 : Recipient::RESPONSE_RETAIN;
             $fields['responded_at'] = null;
             $fields['status']       = Recipient::STATUS_DETAILS_PENDING;
-        } elseif ($recipient->response === Recipient::RESPONSE_RETAIN && $count === 0) {
-            // A legacy retain: answered through the old single-photo flow, before
-            // keeping wrote a submission row. There is nothing in the set to
-            // count, but they did answer, so their response stands rather than
-            // being silently reopened by a deploy.
-            $fields['status'] = Recipient::STATUS_RESPONDED_RETAIN;
         } else {
             // Incomplete. This is the arm that keeps the reminders coming.
             //
