@@ -144,7 +144,10 @@ final class FaceRecognitionService
 
         // A group shot holds many indexed faces; several can match the same
         // person (or the probe can match near-duplicates), so collapse to one
-        // score per PHOTO, keeping the best.
+        // entry per PHOTO, keeping the best similarity. face_area is the
+        // matched face's bounding box as a fraction of the frame (w × h, so
+        // 0.25 = a quarter of the photo) — it lets the UI rank a portrait of
+        // the person above a group shot where they are a speck at the back.
         $byPhoto = [];
         foreach ($result['FaceMatches'] ?? [] as $match) {
             $photoId = (int) ($match['Face']['ExternalImageId'] ?? 0);
@@ -152,12 +155,27 @@ final class FaceRecognitionService
                 continue;
             }
             $similarity = (float) ($match['Similarity'] ?? 0);
-            $byPhoto[$photoId] = max($byPhoto[$photoId] ?? 0, $similarity);
+            $box = $match['Face']['BoundingBox'] ?? [];
+            $area = max(0.0, (float) ($box['Width'] ?? 0)) * max(0.0, (float) ($box['Height'] ?? 0));
+            if (! isset($byPhoto[$photoId]) || $similarity > $byPhoto[$photoId]['similarity']) {
+                $byPhoto[$photoId] = ['similarity' => $similarity, 'face_area' => $area];
+            }
         }
 
-        arsort($byPhoto);
+        return self::sortMatches($byPhoto);
+    }
 
-        return $byPhoto;
+    /**
+     * Best similarity first — the contract every caller relies on.
+     *
+     * @param  array<int, array{similarity: float, face_area: float}>  $matches
+     * @return array<int, array{similarity: float, face_area: float}>
+     */
+    private static function sortMatches(array $matches): array
+    {
+        uasort($matches, fn (array $a, array $b) => $b['similarity'] <=> $a['similarity']);
+
+        return $matches;
     }
 
     /**
@@ -184,14 +202,15 @@ final class FaceRecognitionService
     }
 
     /**
-     * Fold per-face result maps into one photoId=>score map, best score first.
+     * Fold per-face result maps into one photoId => match map, best first.
      *
      * mode 'all' is a set intersection scored by the MINIMUM similarity (the
-     * weakest link is what "all of them are in this shot" rests on); 'any' is
-     * a union scored by the MAX.
+     * weakest link is what "all of them are in this shot" rests on) and the
+     * SMALLEST matched face (same reasoning — the person hardest to see);
+     * 'any' is a union scored by the MAX of both.
      *
-     * @param  array<int, array<int, float>>  $perFace
-     * @return array<int, float>
+     * @param  array<int, array<int, array{similarity: float, face_area: float}>>  $perFace
+     * @return array<int, array{similarity: float, face_area: float}>
      */
     public function combineMatches(array $perFace, string $mode): array
     {
@@ -203,8 +222,12 @@ final class FaceRecognitionService
 
         if ($mode === 'any') {
             foreach ($perFace as $matches) {
-                foreach ($matches as $photoId => $similarity) {
-                    $combined[$photoId] = max($combined[$photoId] ?? 0, $similarity);
+                foreach ($matches as $photoId => $m) {
+                    $cur = $combined[$photoId] ?? ['similarity' => 0.0, 'face_area' => 0.0];
+                    $combined[$photoId] = [
+                        'similarity' => max($cur['similarity'], $m['similarity']),
+                        'face_area' => max($cur['face_area'], $m['face_area']),
+                    ];
                 }
             }
         } else {
@@ -212,9 +235,12 @@ final class FaceRecognitionService
             $combined = array_shift($perFace);
             foreach ($perFace as $matches) {
                 $next = [];
-                foreach ($combined as $photoId => $score) {
+                foreach ($combined as $photoId => $m) {
                     if (isset($matches[$photoId])) {
-                        $next[$photoId] = min($score, $matches[$photoId]);
+                        $next[$photoId] = [
+                            'similarity' => min($m['similarity'], $matches[$photoId]['similarity']),
+                            'face_area' => min($m['face_area'], $matches[$photoId]['face_area']),
+                        ];
                     }
                 }
                 $combined = $next;
@@ -224,9 +250,7 @@ final class FaceRecognitionService
             }
         }
 
-        arsort($combined);
-
-        return $combined;
+        return self::sortMatches($combined);
     }
 
     /**

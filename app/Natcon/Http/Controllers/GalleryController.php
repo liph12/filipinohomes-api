@@ -177,12 +177,16 @@ class GalleryController extends Controller
             ->keyBy('id');
 
         $data = [];
-        foreach ($matches as $photoId => $similarity) {
+        foreach ($matches as $photoId => $m) {
             $photo = $photos->get($photoId);
             if (! $photo) {
                 continue;
             }
-            $data[] = $this->present($photo, detailed: true) + ['similarity' => round($similarity, 1)];
+            $data[] = $this->present($photo, detailed: true) + [
+                'similarity' => round($m['similarity'], 1),
+                // Matched face's share of the frame (0-1) — see searchByImage.
+                'face_area' => round($m['face_area'], 4),
+            ];
         }
 
         return response()->json([
@@ -245,7 +249,7 @@ class GalleryController extends Controller
         );
 
         $data = [];
-        foreach ($matches as $photoId => $similarity) {
+        foreach ($matches as $photoId => $m) {
             $photo = $photos->get($photoId);
             if (! $photo || ! $photo->album) {
                 continue;
@@ -260,7 +264,8 @@ class GalleryController extends Controller
             //    their match percentage and no frame button, and the grid could
             //    neither gate on has_frames nor fetch by slug.
             $data[] = array_merge($this->present($photo), [
-                'similarity' => round($similarity, 1),
+                'similarity' => round($m['similarity'], 1),
+                'face_area' => round($m['face_area'], 4),
                 'album' => [
                     'id' => $photo->album->id,
                     'slug' => $photo->album->slug,
@@ -322,7 +327,7 @@ class GalleryController extends Controller
      * API caps at 5MB and a phone original is routinely bigger. Selfies are
      * never stored. Returns a ready 422 for a user-fixable problem.
      *
-     * @return JsonResponse|array{0: array<int, float>, 1: string, 2: int}
+     * @return JsonResponse|array{0: array<int, array{similarity: float, face_area: float}>, 1: string, 2: int}
      */
     private function probeFaces(Request $request, ?NatconEvent $event): JsonResponse|array
     {
