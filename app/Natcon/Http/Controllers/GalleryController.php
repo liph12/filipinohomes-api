@@ -297,7 +297,9 @@ class GalleryController extends Controller
      */
     private function subtreeIds(GalleryAlbum $root): array
     {
-        $byParent = GalleryAlbum::forEvent(null)
+        // Scoped to the root's own gallery (a convention's or the public one) —
+        // parent_id chains never cross scopes, so this is the whole tree.
+        $byParent = GalleryAlbum::forEvent($root->event)
             ->get(['id', 'parent_id'])
             ->groupBy('parent_id');
 
@@ -456,6 +458,27 @@ class GalleryController extends Controller
         $this->purge($event, $album);
 
         return response()->json(['message' => 'Photo removed.']);
+    }
+
+    /**
+     * Re-run Rekognition IndexFaces on one photo, inline (one call, ~1s), and
+     * return the fresh row so the tile's badge updates at once. Same AUTO
+     * quality filter as the upload — this is a retry, not a different scan.
+     */
+    public function reindexGalleryPhoto(Request $request, GalleryPhoto $photo): JsonResponse
+    {
+        $this->guardScope($request, $photo->event);
+        abort_if($photo->status === GalleryPhoto::STATUS_DELETED, 404, 'Photo not found.');
+
+        try {
+            $this->faces->indexPhoto($photo);
+        } catch (\Throwable $e) {
+            $photo->forceFill(['index_error' => mb_substr($e->getMessage(), 0, 512)])->save();
+
+            return response()->json(['message' => 'Re-index failed: '.$e->getMessage()], 502);
+        }
+
+        return response()->json(['data' => $this->present($photo->fresh(), detailed: true)]);
     }
 
     // ── Albums (folders inside one scope's gallery) ──────────────────────────

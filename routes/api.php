@@ -612,6 +612,7 @@ Route::middleware('strip.tags')->group(function () {
                     // sustained abuse, not the pace of a normal bulk upload.
                     Route::post('/admin/natcon/gallery', [NatconGalleryController::class, 'storeGalleryPhoto'])
                         ->middleware('throttle:120,1');
+                    Route::post('/admin/natcon/gallery/{photo}/reindex', [NatconGalleryController::class, 'reindexGalleryPhoto']);
                     Route::patch('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto']);
                     Route::delete('/admin/natcon/gallery/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto']);
 
@@ -627,6 +628,7 @@ Route::middleware('strip.tags')->group(function () {
                         // Same 120/min ceiling as the NATCON gallery upload above.
                         Route::post('/photos', [NatconGalleryController::class, 'storeGalleryPhoto'])
                             ->middleware('throttle:120,1')->setDefaults($scope);
+                        Route::post('/photos/{photo}/reindex', [NatconGalleryController::class, 'reindexGalleryPhoto'])->setDefaults($scope);
                         Route::patch('/photos/{photo}', [NatconGalleryController::class, 'updateGalleryPhoto'])->setDefaults($scope);
                         Route::delete('/photos/{photo}', [NatconGalleryController::class, 'destroyGalleryPhoto'])->setDefaults($scope);
                         Route::post('/face-search', [NatconGalleryController::class, 'faceSearch'])->setDefaults($scope);

@@ -72,11 +72,19 @@ final class FaceRecognitionService
      * matching photo. Zero faces is a legitimate outcome (venue shots, food
      * pics): the row is stamped indexed with face_count 0 so the sweep stops
      * retrying it.
+     *
+     * Re-indexing an already-indexed photo (the admin's per-photo Re-index)
+     * first evicts its old face ids — otherwise the collection would hold two
+     * vectors per face and every search would double-hit the photo.
      */
     public function indexPhoto(GalleryPhoto $photo): int
     {
         $collection = self::collectionFor($photo->event);
         $this->ensureCollection($collection);
+
+        if (! empty($photo->face_ids)) {
+            $this->forgetPhoto($photo);
+        }
 
         $result = $this->client->indexFaces([
             'CollectionId' => $collection,
