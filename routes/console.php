@@ -14,6 +14,14 @@ Schedule::command('listings:expire-featured')->daily();
 Schedule::command('ats:expiry-reminders')->dailyAt('00:00')->withoutOverlapping();
 Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlapping();
 
+// Nightly boss digest — today's site activity to every un-muted admin, at the
+// close of the Manila day. `php artisan reports:send-activity you@x.com` for a
+// one-off test send.
+Schedule::command('reports:send-activity')
+    ->dailyAt('23:59')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping();
+
 // SEO compute pipeline. Commands + cron times live in SeoCommandRegistry —
 // the SAME source the admin SEO Manage page reads for its trigger whitelist
 // and next-run display, so the two can't drift. Each scheduled run records a
