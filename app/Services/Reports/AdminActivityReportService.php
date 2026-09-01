@@ -7,6 +7,7 @@ use App\Services\Audience\AudienceGeographyService;
 use App\Services\Audience\EngagementOverviewService;
 use App\Services\Audience\TrafficSourceService;
 use App\Services\Listing\ListingCreatedService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -146,6 +147,54 @@ class AdminActivityReportService
             ->whereNull('deleted_at')
             ->count();
 
+        // Agent birthdays — today's and the next 30 days, from agents.birthdate
+        // (the LR backfill). Month-day matching in SQL via a generated list of
+        // the 31 'MM-DD' keys, so year-wrap (Dec → Jan) costs nothing; the
+        // 01-01 epoch default is junk data, not a birthday.
+        $endRef = Carbon::parse($end);
+        $mdKeys = [];
+        for ($i = 0; $i <= 30; $i++) {
+            $mdKeys[] = $endRef->copy()->addDays($i)->format('m-d');
+        }
+        $bdayRows = DB::table('agents')
+            ->join('users', 'users.id', '=', 'agents.user_id')
+            ->whereNotNull('agents.birthdate')
+            ->where('agents.birthdate', '!=', '1970-01-01')
+            ->whereIn(DB::raw("DATE_FORMAT(agents.birthdate, '%m-%d')"), $mdKeys)
+            ->get(['users.name', 'agents.birthdate']);
+
+        $birthdaysToday = [];
+        $birthdaysUpcoming = [];
+        foreach ($bdayRows as $row) {
+            $md = Carbon::parse($row->birthdate)->format('m-d');
+            $offset = array_search($md, $mdKeys, true);
+            if ($offset === false) {
+                continue;
+            }
+            $entry = [
+                'name' => (string) $row->name,
+                'date' => $endRef->copy()->addDays($offset)->format('M j'),
+                'offset' => (int) $offset,
+            ];
+            if ($offset === 0) {
+                $birthdaysToday[] = $entry;
+            } else {
+                $birthdaysUpcoming[] = $entry;
+            }
+        }
+        usort($birthdaysUpcoming, fn ($a, $b) => $a['offset'] <=> $b['offset'] ?: strcasecmp($a['name'], $b['name']));
+
+        // Cap the upcoming list at 10 — but never cut off TOMORROW: when today
+        // + tomorrow alone exceed 10, show everything up to tomorrow instead
+        // (and only that far). The blade notes how many more the window holds.
+        $upcomingTotal = count($birthdaysUpcoming);
+        $tomorrowCount = count(array_filter($birthdaysUpcoming, fn ($b) => $b['offset'] === 1));
+        if (count($birthdaysToday) + $tomorrowCount > 10) {
+            $birthdaysUpcoming = array_values(array_filter($birthdaysUpcoming, fn ($b) => $b['offset'] === 1));
+        } else {
+            $birthdaysUpcoming = array_slice($birthdaysUpcoming, 0, 10);
+        }
+
         return [
             'range' => ['start' => $start, 'end' => $end],
             'audience' => [
@@ -154,11 +203,13 @@ class AdminActivityReportService
                 'returning_clients' => (int) ($audience['returning_clients'] ?? 0),
                 'new_agents' => $newAgents,
             ],
-            // Top 8 channels keeps the email scannable; the dashboard has the rest.
-            'traffic_channels' => array_slice($traffic['channels'] ?? [], 0, 8),
+            // Every channel, uncut — the channel list is short by nature
+            // (organic / social / referral / direct / …).
+            'traffic_channels' => $traffic['channels'] ?? [],
             'geo_ph' => [
-                'provinces' => array_slice($geo['states'] ?? [], 0, 8),
-                'cities' => array_slice($geo['cities'] ?? [], 0, 8),
+                // The full top 10 the geography service computes — no trimming.
+                'provinces' => $geo['states'] ?? [],
+                'cities' => $geo['cities'] ?? [],
             ],
             'listings' => [
                 'total' => (int) ($created['total'] ?? 0),
@@ -186,6 +237,11 @@ class AdminActivityReportService
             'inquiry_response' => [
                 'answered' => $answered,
                 'unanswered' => max(0, $approved - $answered),
+            ],
+            'birthdays' => [
+                'today' => $birthdaysToday,
+                'upcoming' => $birthdaysUpcoming,
+                'upcoming_total' => $upcomingTotal,
             ],
         ];
     }
