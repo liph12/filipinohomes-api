@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Mail\AdminActivityReportMailer;
 use App\Mail\AtsStatusUpdatedMailer;
 use App\Mail\AtsExpiryMailer;
 use App\Mail\ContactUsMailer;
@@ -242,7 +243,18 @@ if (config('app.debug')) {
                 );
             })(),
 
-            default    => abort(404, 'Unknown email type. Try one of: flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
+            // Boss activity digest — TODAY's live data only, nothing sampled.
+            'boss-report' => (function () {
+                $today = now()->toDateString();
+
+                return new AdminActivityReportMailer(
+                    report: app(\App\Services\Reports\AdminActivityReportService::class)->build($today, $today),
+                    periodLabel: now()->format('M j, Y'),
+                    recipientName: 'Boss',
+                );
+            })(),
+
+            default    => abort(404, 'Unknown email type. Try one of: boss-report, flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
         };
     });
 }

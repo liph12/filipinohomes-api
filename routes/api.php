@@ -5,6 +5,7 @@ use App\Http\Controllers\AdCampaignController;
 use App\Http\Controllers\AdController;
 use App\Http\Controllers\AdPlacementController;
 use App\Http\Controllers\AdPreviewController;
+use App\Http\Controllers\AdminReportController;
 use App\Http\Controllers\AdSectionController;
 use App\Http\Controllers\AgentController;
 use App\Http\Controllers\AgentReviewController;
@@ -648,6 +649,11 @@ Route::middleware('strip.tags')->group(function () {
                         Route::delete('/{album}', [NatconGalleryController::class, 'destroyAlbum'])->setDefaults($scope);
                     });
                 });
+
+                // Manual "send me today's report" from System Users — a test
+                // hook for the boss activity digest; no schedule sends it yet.
+                Route::post('/admin/reports/activity/send', [AdminReportController::class, 'sendActivityReport'])
+                    ->middleware('throttle:10,1');
 
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);

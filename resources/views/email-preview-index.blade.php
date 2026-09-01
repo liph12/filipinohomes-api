@@ -18,6 +18,7 @@
     <h1>Email previews</h1>
     <p>Renders each Mailable with dummy data. Refresh after editing the blade template — no mail is sent.</p>
     <ul>
+        <li><a href="/preview/email/boss-report">📊 Site Activity Report (boss digest)</a> &nbsp; <code>AdminActivityReportMailer</code> &nbsp; <small>(live last-7-days data)</small></li>
         <li><a href="/preview/email/flagged">⚑ Listing Flagged</a> &nbsp; <code>ListingFlaggedMailer</code></li>
         <li><a href="/preview/email/verified">✓ Listing Verified</a> &nbsp; <code>ListingVerifiedMailer</code></li>
         <li><a href="/preview/email/ats-approved">✓ ATS Updated — Approved</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
