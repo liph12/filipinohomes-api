@@ -22,6 +22,13 @@ Schedule::command('reports:send-activity')
     ->timezone('Asia/Manila')
     ->withoutOverlapping();
 
+// Daily staff-birthdays digest — in the morning so today's celebrants can
+// still be greeted. Same all-admins recipient policy as the activity report.
+Schedule::command('reports:send-birthdays')
+    ->dailyAt('07:00')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping();
+
 // SEO compute pipeline. Commands + cron times live in SeoCommandRegistry —
 // the SAME source the admin SEO Manage page reads for its trigger whitelist
 // and next-run display, so the two can't drift. Each scheduled run records a

@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Mail\AdminActivityReportMailer;
+use App\Mail\StaffBirthdaysMailer;
 use App\Mail\AtsStatusUpdatedMailer;
 use App\Mail\AtsExpiryMailer;
 use App\Mail\ContactUsMailer;
@@ -254,7 +255,14 @@ if (config('app.debug')) {
                 );
             })(),
 
-            default    => abort(404, 'Unknown email type. Try one of: boss-report, flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
+            // Staff birthdays digest — live local data.
+            'birthdays' => new StaffBirthdaysMailer(
+                birthdays: app(\App\Services\Reports\StaffBirthdaysService::class)->build(now()->toDateString()),
+                dateLabel: now()->format('M j, Y'),
+                recipientName: 'Boss',
+            ),
+
+            default    => abort(404, 'Unknown email type. Try one of: boss-report, birthdays, flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
         };
     });
 }

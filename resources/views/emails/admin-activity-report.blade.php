@@ -268,44 +268,6 @@
                                 </tr>
                                 @endif
 
-                                {{-- ── Birthdays 🎂 — today only when there is one; upcoming = next 30 days.
-                                     Celebration gold, deliberately not red/pink. ── --}}
-                                @if (count($report['birthdays']['today']) > 0)
-                                    <tr>
-                                        <td align="left" valign="top" style="{{ $sectionPad }}">
-                                            <span style="{{ $sectionTitle }}">🎂 Today&rsquo;s Birthdays</span>
-                                            <div style="{{ $listCard }} background:#fffbeb;border-color:#fde68a;">
-                                                @foreach ($report['birthdays']['today'] as $b)
-                                                    <span style="{{ $rowText }}">
-                                                        🎉 <strong style="color:#92400e;">{{ $b['name'] }}</strong>
-                                                    </span>
-                                                @endforeach
-                                            </div>
-                                        </td>
-                                    </tr>
-                                @endif
-
-                                <tr>
-                                    <td align="left" valign="top" style="{{ $sectionPad }}">
-                                        <span style="{{ $sectionTitle }}">Upcoming Birthdays — Next 30 Days</span>
-                                        <div style="{{ $listCard }}">
-                                            @forelse ($report['birthdays']['upcoming'] as $b)
-                                                <span style="{{ $rowText }}">
-                                                    🎈 <strong style="color:#162033;">{{ $b['name'] }}</strong>
-                                                    <span style="color:#98a2b3;">— {{ $b['date'] }}</span>
-                                                </span>
-                                            @empty
-                                                <span style="font-size:14px;font-family:Helvetica,Arial,sans-serif;color:#667085;">No birthdays in the next 30 days.</span>
-                                            @endforelse
-                                            @if ($report['birthdays']['upcoming_total'] > count($report['birthdays']['upcoming']))
-                                                <span style="{{ $muted }} margin-top:6px;">
-                                                    + {{ $report['birthdays']['upcoming_total'] - count($report['birthdays']['upcoming']) }} more within 30 days
-                                                </span>
-                                            @endif
-                                        </div>
-                                    </td>
-                                </tr>
-
                                 <tr>
                                     <td align="center" valign="top" style="padding:28px 32px 32px;">
                                         <span style="font-size:12px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#98a2b3;display:block;border-top:1px solid #e7edf3;padding-top:20px;">
