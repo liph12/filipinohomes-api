@@ -29,6 +29,15 @@ Schedule::command('reports:send-birthdays')
     ->timezone('Asia/Manila')
     ->withoutOverlapping();
 
+// Personal greeting + poster TO each active agent celebrating today. Same
+// 07:00 slot as the admin digest; renders/uploads the poster per agent so
+// it runs in the background.
+Schedule::command('birthdays:send-greetings')
+    ->dailyAt('07:00')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // SEO compute pipeline. Commands + cron times live in SeoCommandRegistry —
 // the SAME source the admin SEO Manage page reads for its trigger whitelist
 // and next-run display, so the two can't drift. Each scheduled run records a

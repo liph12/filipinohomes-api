@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Mail\AdminActivityReportMailer;
 use App\Mail\StaffBirthdaysMailer;
+use App\Mail\AgentBirthdayGreetingMailer;
 use App\Mail\AtsStatusUpdatedMailer;
 use App\Mail\AtsExpiryMailer;
 use App\Mail\ContactUsMailer;
@@ -29,6 +30,17 @@ Route::get('/', function () {
 if (config('app.debug')) {
     Route::get('/preview/email', function () {
         return view('email-preview-index');
+    });
+
+    // Live-rendered birthday poster (photo + name composited with GD). Used by
+    // the birthday-greeting email preview; also handy for eyeballing the layout
+    // with any name/photo: /preview/birthday-poster.jpg?name=Juan+Dela+Cruz&photo=https://...
+    Route::get('/preview/birthday-poster.jpg', function () {
+        $name  = (string) request('name', 'Michael Angelo Joaquin');
+        $photo = request('photo') ?: null;
+        $jpeg  = app(\App\Services\Birthday\BirthdayPosterService::class)->render($name, $photo);
+
+        return response($jpeg, 200, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'no-store']);
     });
 
     Route::get('/preview/email/{type}', function (string $type) {
@@ -255,14 +267,29 @@ if (config('app.debug')) {
                 );
             })(),
 
-            // Staff birthdays digest — live local data.
+            // Personal agent greeting (plain letter; the poster is an attachment
+            // on real sends — eyeball it at /preview/birthday-poster.jpg).
+            'birthday-greeting' => new AgentBirthdayGreetingMailer(
+                firstName: 'Michael Angelo',
+                fullName:  'Michael Angelo Joaquin',
+                posterUrl: url('/preview/birthday-poster.jpg'),
+            ),
+
+            // Staff birthdays digest — live local data. Posters are sampled (no S3
+            // write in preview) so the section is visible even with no celebrant today.
             'birthdays' => new StaffBirthdaysMailer(
                 birthdays: app(\App\Services\Reports\StaffBirthdaysService::class)->build(now()->toDateString()),
                 dateLabel: now()->format('M j, Y'),
                 recipientName: 'Boss',
+                posters: collect(['Michael Angelo Joaquin', 'Ana Cruz', 'Maria Christina Villanueva-Santos'])->map(fn ($n) => [
+                    'name' => $n,
+                    'url' => url('/preview/birthday-poster.jpg?'.http_build_query(['name' => $n])),
+                    'jpeg' => null,
+                    'filename' => \App\Services\Birthday\BirthdayPosterService::downloadFilename($n),
+                ])->all(),
             ),
 
-            default    => abort(404, 'Unknown email type. Try one of: boss-report, birthdays, flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
+            default    => abort(404, 'Unknown email type. Try one of: boss-report, birthdays, birthday-greeting, flagged, verified, ats-approved, ats-pending, ats-expired, ats-rejected, ats-expiring-soon, ats-expiry-expired, inquiry, contact-us, notification, inquiry-admin, inquiry-admin-unassigned, inquiry-team-leader, inquiry-agent, otp, natcon-invite, natcon-invite-no-photo, natcon-reminder, natcon-reminder-last'),
         };
     });
 }

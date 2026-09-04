@@ -20,6 +20,7 @@
     <ul>
         <li><a href="/preview/email/boss-report">📊 Site Activity Report (boss digest)</a> &nbsp; <code>AdminActivityReportMailer</code> &nbsp; <small>(live last-7-days data)</small></li>
         <li><a href="/preview/email/birthdays">🎂 Birthdays (daily digest)</a> &nbsp; <code>StaffBirthdaysMailer</code> &nbsp; <small>(live data)</small></li>
+        <li><a href="/preview/email/birthday-greeting">🎉 Agent Birthday Greeting</a> &nbsp; <code>AgentBirthdayGreetingMailer</code> &nbsp; <small>(letter · <a href="/preview/birthday-poster.jpg" style="padding:2px 8px;font-size:12px;">attached poster</a>)</small></li>
         <li><a href="/preview/email/flagged">⚑ Listing Flagged</a> &nbsp; <code>ListingFlaggedMailer</code></li>
         <li><a href="/preview/email/verified">✓ Listing Verified</a> &nbsp; <code>ListingVerifiedMailer</code></li>
         <li><a href="/preview/email/ats-approved">✓ ATS Updated — Approved</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>

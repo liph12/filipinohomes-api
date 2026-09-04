@@ -62,6 +62,39 @@
                                     </tr>
                                 @endif
 
+                                @if (! empty($posters))
+                                    <tr>
+                                        <td align="left" valign="top" style="{{ $sectionPad }}">
+                                            <span style="{{ $sectionTitle }}">🎁 Today&rsquo;s Birthday Posters</span>
+                                            <span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;margin:-6px 0 12px;">
+                                                Also attached to this email. Click a poster to download it.
+                                            </span>
+                                            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+                                                <tbody>
+                                                    @foreach (array_chunk($posters, 2) as $pair)
+                                                        <tr>
+                                                            @foreach ($pair as $p)
+                                                                <td align="center" valign="top" width="50%" style="padding:0 6px 16px;">
+                                                                    <a href="{{ $p['url'] }}" style="text-decoration:none;display:block;">
+                                                                        <img alt="Happy Birthday, {{ $p['name'] }}!" src="{{ $p['url'] }}" width="270"
+                                                                            style="width:100%;max-width:270px;display:block;border:0;height:auto;border-radius:12px;" />
+                                                                    </a>
+                                                                    <span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#344054;display:block;margin-top:8px;">
+                                                                        {{ $p['name'] }} · <a href="{{ $p['url'] }}" style="color:#245ee0;text-decoration:none;font-weight:600;">Download</a>
+                                                                    </span>
+                                                                </td>
+                                                            @endforeach
+                                                            @if (count($pair) === 1)
+                                                                <td width="50%" style="padding:0 6px;"></td>
+                                                            @endif
+                                                        </tr>
+                                                    @endforeach
+                                                </tbody>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                @endif
+
                                 <tr>
                                     <td align="left" valign="top" style="{{ $sectionPad }}">
                                         <span style="{{ $sectionTitle }}">Upcoming Birthdays — Next 30 Days</span>

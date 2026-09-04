@@ -2,6 +2,7 @@
 
 namespace App\Services\Reports;
 
+use App\Services\Birthday\BirthdayPosterService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -37,7 +38,10 @@ class StaffBirthdaysService
             ->whereNotNull('agents.birthdate')
             ->where('agents.birthdate', '!=', '1970-01-01')
             ->whereIn(DB::raw("DATE_FORMAT(agents.birthdate, '%m-%d')"), $mdKeys)
-            ->get(['users.name', 'agents.birthdate']);
+            ->get([
+                'users.name', 'agents.birthdate', 'agents.id as agent_id', 'agents.first_name', 'agents.last_name',
+                'agents.avatar as agent_avatar', 'users.avatar as user_avatar',
+            ]);
 
         $today = [];
         $upcoming = [];
@@ -53,6 +57,11 @@ class StaffBirthdaysService
                 'offset' => (int) $offset,
             ];
             if ($offset === 0) {
+                // Extra fields so the digest can render/attach today's posters
+                // (same name + avatar rules as the agent's own greeting).
+                $entry['agent_id'] = (int) $row->agent_id;
+                $entry['poster_name'] = trim(BirthdayPosterService::titleCase((string) $row->first_name).' '.BirthdayPosterService::titleCase((string) $row->last_name));
+                $entry['avatar'] = BirthdayPosterService::avatarFor($row->agent_avatar, $row->user_avatar);
                 $today[] = $entry;
             } else {
                 $upcoming[] = $entry;

@@ -4,8 +4,10 @@ namespace App\Console\Commands;
 
 use App\Mail\StaffBirthdaysMailer;
 use App\Models\User;
+use App\Services\Birthday\BirthdayPosterService;
 use App\Services\Reports\StaffBirthdaysService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -17,15 +19,33 @@ use Illuminate\Support\Facades\Mail;
  */
 class SendStaffBirthdays extends Command
 {
-    protected $signature = 'reports:send-birthdays {email? : Send only to this address (test mode)}';
+    protected $signature = 'reports:send-birthdays
+        {email? : Send only to this address (test mode)}
+        {--date= : Y-m-d to treat as "today" (default: today in Asia/Manila) — for tests/backfills}';
 
     protected $description = "Email today's + upcoming staff birthdays to all admins (or one address).";
 
-    public function handle(StaffBirthdaysService $birthdays): int
+    public function handle(StaffBirthdaysService $birthdays, BirthdayPosterService $poster): int
     {
-        $today = now('Asia/Manila')->toDateString();
-        $label = now('Asia/Manila')->format('M j, Y');
+        $ref = $this->option('date')
+            ? Carbon::parse($this->option('date'), 'Asia/Manila')
+            : now('Asia/Manila');
+        $today = $ref->toDateString();
+        $label = $ref->format('M j, Y');
         $data = $birthdays->build($today);
+
+        // Today's posters (rendered once per agent/day, shared with the
+        // agent's own greeting). Attached to the digest so admins can grab them.
+        $posters = [];
+        foreach ($data['today'] as $b) {
+            if (count($posters) >= StaffBirthdaysMailer::MAX_POSTERS) {
+                break;
+            }
+            $p = $poster->forAgent($b['agent_id'], $b['poster_name'], $b['avatar'], $today);
+            if ($p) {
+                $posters[] = $p + ['name' => $b['poster_name']];
+            }
+        }
 
         $recipients = ($only = $this->argument('email'))
             ? collect([(object) ['email' => $only, 'name' => null]])
@@ -39,6 +59,7 @@ class SendStaffBirthdays extends Command
                     birthdays: $data,
                     dateLabel: $label,
                     recipientName: trim((string) $user->name) ?: 'Boss',
+                    posters: $posters,
                 ));
                 $sent++;
             } catch (\Throwable $e) {
