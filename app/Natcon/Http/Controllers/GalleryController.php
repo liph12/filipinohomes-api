@@ -622,7 +622,11 @@ class GalleryController extends Controller
         return response()->json(['message' => 'Album removed.']);
     }
 
-    // ── Album frames (decorative PNG overlays on PUBLIC albums) ──────────────
+    // ── Album frames (decorative PNG overlays on public AND convention albums) ─
+    //
+    // Both scopes share these methods; guardScope() pins each route family to
+    // its own rows. Public visitors read frames by slug (public albums only);
+    // convention frames are used from the admin gallery's frame tool.
 
     /**
      * Product switch: do a parent album's frames apply to photos in its
@@ -645,13 +649,18 @@ class GalleryController extends Controller
         ]);
     }
 
-    /** Admin: the album's OWN live frames (inheritance is presentation only). */
+    /**
+     * Admin: the album's OWN live frames (inheritance is presentation only) —
+     * or, with ?inherit=1, the full set a photo in this album can wear (own +
+     * ancestors'), which is what the admin "Use in a frame" tool needs.
+     */
     public function albumFrames(Request $request, GalleryAlbum $album): JsonResponse
     {
         $this->guardScope($request, $album->event);
-        abort_unless($album->isPublic(), 404, 'Album not found.');
 
-        $rows = $album->frames()->live()->orderBy('sort_order')->orderBy('id')->get();
+        $rows = $request->boolean('inherit')
+            ? $this->framesFor($album)
+            : $album->frames()->live()->orderBy('sort_order')->orderBy('id')->get();
 
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))]);
     }
@@ -659,7 +668,6 @@ class GalleryController extends Controller
     public function storeAlbumFrame(Request $request, GalleryAlbum $album): JsonResponse
     {
         $this->guardScope($request, $album->event);
-        abort_unless($album->isPublic(), 404, 'Album not found.');
 
         $data = $request->validate([
             'frame' => 'required|file|mimes:png|max:'.(int) config('natcon.gallery.max_upload_kb', 15360),
@@ -713,7 +721,7 @@ class GalleryController extends Controller
         $frame->auditSource = $this->auditSource(null);
         $frame->save();
 
-        $this->purge(null, $album);
+        $this->purge($album->event, $album);
 
         return response()->json(['data' => $this->presentFrame($frame)], 201);
     }
@@ -748,7 +756,7 @@ class GalleryController extends Controller
         $frame->auditSource = $this->auditSource(null);
         $frame->fill($data)->save();
 
-        $this->purge(null, $frame->album);
+        $this->purge($frame->album?->event, $frame->album);
 
         return response()->json(['data' => $this->presentFrame($frame->fresh())]);
     }
@@ -763,7 +771,7 @@ class GalleryController extends Controller
         $frame->auditSource = $this->auditSource(null);
         $frame->forceFill(['status' => GalleryAlbumFrame::STATUS_DELETED])->save();
 
-        $this->purge(null, $frame->album);
+        $this->purge($frame->album?->event, $frame->album);
 
         return response()->json(['message' => 'Frame removed.']);
     }

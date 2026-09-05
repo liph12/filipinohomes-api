@@ -604,6 +604,14 @@ Route::middleware('strip.tags')->group(function () {
                     Route::post('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'storeAlbum']);
                     Route::patch('/admin/natcon/gallery/albums/{album}', [NatconGalleryController::class, 'updateAlbum']);
                     Route::delete('/admin/natcon/gallery/albums/{album}', [NatconGalleryController::class, 'destroyAlbum']);
+                    // Frames on convention albums — same controller methods as
+                    // the public-albums set below; guardScope() keeps each route
+                    // family on its own rows.
+                    Route::patch('/admin/natcon/gallery/frames/{frame}', [NatconGalleryController::class, 'updateAlbumFrame']);
+                    Route::delete('/admin/natcon/gallery/frames/{frame}', [NatconGalleryController::class, 'destroyAlbumFrame']);
+                    Route::get('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'albumFrames']);
+                    Route::post('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'storeAlbumFrame'])
+                        ->middleware('throttle:30,1');
                     // Throttled: each hit is a real image encode plus two S3
                     // writes. The natcon-upload limiter is keyed on the guest
                     // token and everyone here is authed without one, so it
