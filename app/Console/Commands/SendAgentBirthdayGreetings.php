@@ -61,7 +61,7 @@ class SendAgentBirthdayGreetings extends Command
                 return self::FAILURE;
             }
             $p = $poster->renderToS3($sample['full_name'], $sample['avatar'], 'birthday-greetings/test');
-            Mail::to($only)->send(new AgentBirthdayGreetingMailer($sample['first_name'], $sample['full_name'], $p['url'] ?? null, $p['jpeg'] ?? null));
+            Mail::to($only)->send(new AgentBirthdayGreetingMailer($sample['first_name'], $sample['full_name'], $p['url'] ?? null));
             $this->info("Sample greeting for {$sample['full_name']} (agent #{$sample['agent_id']}, real email {$sample['email']}) sent to {$only}.".($p ? " Poster: {$p['url']}" : ' (poster failed — see log)'));
 
             return self::SUCCESS;
@@ -112,7 +112,6 @@ class SendAgentBirthdayGreetings extends Command
                     $c['first_name'],
                     $c['full_name'],
                     $p['url'] ?? null,
-                    $p['jpeg'] ?? null,
                     $mode === 'whitelist' ? "[TEST -> {$c['email']}]" : null,
                 );
                 Mail::to($mode === 'whitelist' ? $whitelist : $c['email'])->send($mailable);

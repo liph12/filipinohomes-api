@@ -17,10 +17,9 @@
      *  • Gmail's dark mode inverts INHERITED text colours, so every colour is
      *    set explicitly on the element that shows it.
      *  • IMAGES ARE OFTEN BLOCKED, and the poster is the best thing in here.
-     *    The amber band states the greeting in live type so a client with
-     *    images switched off still delivers the message, and the poster is
-     *    also attached to the message (see the mailable) so it survives even
-     *    when the hosted copy can't be fetched.
+     *    The amber band states the greeting in live type, so a client with
+     *    images switched off still delivers the message and the "Save your
+     *    poster" link still reaches the artwork.
      *
      * Palette is the house celebration set, shared with agent-certificate:
      * FH blue header, amber band, slate body copy.
@@ -99,8 +98,9 @@
                                 </tr>
 
                                 @if (! empty($posterUrl))
-                                    {{-- The poster, shown rather than left as an attachment
-                                         nobody taps. Capped at 420px: the artwork is a 2:3
+                                    {{-- The poster, shown inline rather than attached: as an
+                                         attachment it arrived twice, once here and once under
+                                         Gmail's "One attachment" bar. Capped at 420px: the artwork is a 2:3
                                          portrait, and at full width it pushes the letter
                                          below the fold on a phone. line-height/font-size
                                          zero kills the descender gap under the image. --}}
@@ -122,7 +122,7 @@
                                                 Save your poster
                                             </a>
                                             <span style="display:block;font-size:12px;line-height:20px;font-family:{{ $font }};color:{{ $muted }};padding-top:10px;">
-                                                It&rsquo;s attached to this email too — post it, share it, send it to the group chat.
+                                                Post it, share it, send it to the group chat — it&rsquo;s yours.
                                             </span>
                                         </td>
                                     </tr>
