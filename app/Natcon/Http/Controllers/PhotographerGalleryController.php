@@ -127,15 +127,16 @@ class PhotographerGalleryController extends Controller
             // at 20; hitting that here means corrupt data, and the same 422
             // answers both.
             $maxDepth = (int) config('natcon.gallery.max_album_depth', 6);
-            if ($parent && $this->albumDepth($parent) + 1 > $maxDepth) {
+            if ($parent && $this->albumDepth($parent, $invite) + 1 > $maxDepth) {
                 return response()->json(['message' => "Albums can only nest {$maxDepth} levels deep."], 422);
             }
 
-            // The (event, name) unique is SCOPE-wide, not per-parent — and on
-            // event day "Day 1" from two photographers must not block each
-            // other, so collisions auto-suffix instead of erroring. The
-            // response carries the actual name used.
-            $name = $this->availableName($invite->event, trim($data['name']));
+            // Names are unique among SIBLINGS, so "Day 1" inside one
+            // photographer's album no longer collides with "Day 1" inside
+            // another's. A genuine sibling clash still auto-suffixes rather
+            // than erroring — on event day a rejected album is a stalled
+            // upload queue. The response carries the actual name used.
+            $name = $this->availableName($invite->event, trim($data['name']), $parent?->id);
             if ($name === null) {
                 return response()->json(['message' => 'Too many albums share that name — pick a different one.'], 422);
             }
@@ -157,7 +158,7 @@ class PhotographerGalleryController extends Controller
             } catch (\Illuminate\Database\QueryException) {
                 // The unique index caught a concurrent twin — one retry with a
                 // fresh suffix, then give up honestly.
-                $name = $this->availableName($invite->event, trim($data['name']));
+                $name = $this->availableName($invite->event, trim($data['name']), $parent?->id);
                 if ($name === null) {
                     return response()->json(['message' => 'Too many albums share that name — pick a different one.'], 422);
                 }
@@ -180,18 +181,36 @@ class PhotographerGalleryController extends Controller
         ]);
 
         return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($album, $data) {
+            // TWO questions, not one. "Did you create it" is ownership; "is it
+            // still inside your fence" is authorisation, and they come apart
+            // the moment an admin narrows an invite's root_album_id — the
+            // photographer kept rename rights on albums that had just been
+            // moved out of reach.
             abort_unless($album->upload_invite_id === $invite->id, 404, 'Album not found.');
+            abort_unless(
+                $this->scopeAlbums($invite)->contains(fn (GalleryAlbum $a) => $a->id === $album->id),
+                404,
+                'Album not found.',
+            );
 
             $name = trim($data['name']);
 
-            // A rename is deliberate — silently renaming a rename would
-            // gaslight the photographer, so collisions get a friendly 422.
+            /**
+             * A rename is deliberate — silently renaming a rename would
+             * gaslight the photographer, so collisions get a friendly 422.
+             *
+             * Among SIBLINGS only. Scope-wide, this refused a perfectly good
+             * name because of an album in another photographer's fence, and
+             * the message named it — telling someone about the existence and
+             * title of something they are fenced out of.
+             */
             $duplicate = GalleryAlbum::forEvent($invite->event)
+                ->where('parent_id', $album->parent_id)
                 ->where('name', $name)
                 ->where('id', '!=', $album->id)
                 ->exists();
             if ($duplicate) {
-                return response()->json(['message' => "An album called \"{$name}\" already exists."], 422);
+                return response()->json(['message' => "An album called \"{$name}\" is already here."], 422);
             }
 
             $album->auditSource = 'photographer_invite';
@@ -218,8 +237,10 @@ class PhotographerGalleryController extends Controller
         ]);
 
         return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($request, $data) {
+            // resolveScopedAlbum aborts on a miss and album_id is required, so
+            // there is no null to guard against here. A second abort_unless
+            // read as though the fence were optional; it never was.
             $album = $this->resolveScopedAlbum($invite, $data['album_id']);
-            abort_unless($album, 404, 'Album not found for this convention.');
 
             $hidden = (bool) $invite->review_required;
 
@@ -353,28 +374,64 @@ class PhotographerGalleryController extends Controller
         return $album;
     }
 
-    /** How deep an album sits (top level = 1). The 20-step cap treats corrupt
-     *  self-referencing data as "too deep", which refuses safely. */
-    private function albumDepth(GalleryAlbum $album): int
+    /**
+     * How deep an album sits, counted from the photographer's own top level.
+     *
+     * For a fenced invite that top level is its root album, NOT the gallery's.
+     * Measuring absolutely spent the budget on ancestors the photographer
+     * cannot see or navigate to: an invite rooted four levels down left them
+     * two of the six, refused with a message about a limit that made no sense
+     * from where they were standing. Everyone now gets the same allowance
+     * wherever their album happens to hang.
+     *
+     * The 20-step cap treats corrupt self-referencing data as "too deep",
+     * which refuses safely. Reaching the fence root ends the walk the same
+     * way reaching a null parent does.
+     */
+    private function albumDepth(GalleryAlbum $album, ?GalleryUploadInvite $invite = null): int
     {
+        $rootId = $invite?->root_album_id;
+
+        if ($rootId && $album->id === $rootId) {
+            return 1;
+        }
+
         $depth = 1;
         $node = $album;
         for ($i = 0; $i < 20 && $node->parent; $i++) {
             $node = $node->parent;
             $depth++;
+
+            if ($rootId && $node->id === $rootId) {
+                break;
+            }
         }
 
         return $depth;
     }
 
-    /** First free name: "Name", then "Name (2)" … "(20)", else null. */
-    private function availableName(?NatconEvent $event, string $base): ?string
+    /**
+     * First free name among SIBLINGS: "Name", then "Name (2)" … "(20)".
+     *
+     * Sibling-scoped to match the unique index, which was widened from
+     * (event, name) to (event, parent_id, name). Before that, a fenced
+     * photographer's "Day 1" was silently suffixed because of an album in
+     * somebody else's fence — invisible to them, unexplainable, and their
+     * folder was called "Day 1 (3)" for reasons nobody could reconstruct.
+     *
+     * Null parent is a real value here, not "any parent": top-level albums
+     * are siblings of each other.
+     */
+    private function availableName(?NatconEvent $event, string $base, ?int $parentId): ?string
     {
         $base = trim($base) !== '' ? trim($base) : 'Album';
 
         for ($i = 1; $i <= 20; $i++) {
             $candidate = $i === 1 ? $base : "{$base} ({$i})";
-            $taken = GalleryAlbum::forEvent($event)->where('name', $candidate)->exists();
+            $taken = GalleryAlbum::forEvent($event)
+                ->where('parent_id', $parentId)
+                ->where('name', $candidate)
+                ->exists();
             if (! $taken) {
                 return $candidate;
             }
