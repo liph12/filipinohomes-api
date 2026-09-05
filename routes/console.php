@@ -38,6 +38,15 @@ Schedule::command('birthdays:send-greetings')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Fills agents.birthdate from Leuterio Realty for agents who have never
+// logged in — the login-time backfill is the only other source, so coverage
+// tracks logins rather than headcount and the greeting above would otherwise
+// reach almost nobody. Chunked + paced to stay under LR's 60 req/min; drains
+// over a couple of days, then no-ops cheaply forever.
+Schedule::command('birthdays:backfill-birthdates')
+    ->hourly()
+    ->withoutOverlapping();
+
 // SEO compute pipeline. Commands + cron times live in SeoCommandRegistry —
 // the SAME source the admin SEO Manage page reads for its trigger whitelist
 // and next-run display, so the two can't drift. Each scheduled run records a

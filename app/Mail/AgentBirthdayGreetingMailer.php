@@ -32,6 +32,13 @@ class AgentBirthdayGreetingMailer extends Mailable
         public ?string $posterUrl,
         /** Raw JPEG bytes; attached as a file when present. */
         public ?string $posterJpeg = null,
+        /**
+         * Set in whitelist mode to name the real recipient. A constructor
+         * property rather than a ->subject() call, because Mailable::subject()
+         * is IGNORED whenever the class defines envelope() — setting it there
+         * fails silently.
+         */
+        public ?string $subjectPrefix = null,
     ) {
         $this->tagFhMailerHeader();
     }
@@ -39,8 +46,14 @@ class AgentBirthdayGreetingMailer extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            from: new Address(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'), env('MAIL_FROM_NAME', 'Filipinohomes')),
-            subject: "🎂 Happy Birthday, {$this->firstName}! — from Filipino Homes",
+            // The NAME is Anthony because the letter is signed by him and a
+            // personal note arriving from a system address reads as a mailshot.
+            // The ADDRESS stays info@filipinohomes.com — that is the
+            // authenticated sender, and login OTPs ride the same reputation.
+            from: new Address(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'), 'Anthony Leuterio · Filipino Homes'),
+            subject: $this->subjectPrefix
+                ? "{$this->subjectPrefix} 🎂 Happy Birthday, {$this->firstName}!"
+                : "🎂 Happy Birthday, {$this->firstName}!",
         );
     }
 

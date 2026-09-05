@@ -269,11 +269,26 @@ if (config('app.debug')) {
 
             // Personal agent greeting (plain letter; the poster is an attachment
             // on real sends — eyeball it at /preview/birthday-poster.jpg).
-            'birthday-greeting' => new AgentBirthdayGreetingMailer(
-                firstName: 'Michael Angelo',
-                fullName:  'Michael Angelo Joaquin',
-                posterUrl: url('/preview/birthday-poster.jpg'),
-            ),
+            // Rendered against a REAL celebrant (sampleCelebrant prefers an
+            // agent who has a photo) and the poster URL carries their avatar —
+            // otherwise the preview composites the initials fallback, which
+            // looks like the photo feature is broken when it isn't.
+            'birthday-greeting' => (function () {
+                $sample = app(\App\Services\Birthday\AgentBirthdayGreetingService::class)
+                    ->sampleCelebrant(now('Asia/Manila')->toDateString());
+
+                $name = $sample['full_name'] ?? 'Michael Angelo Joaquin';
+                $first = $sample['first_name'] ?? 'Michael Angelo';
+
+                return new AgentBirthdayGreetingMailer(
+                    firstName: $first,
+                    fullName: $name,
+                    posterUrl: url('/preview/birthday-poster.jpg?'.http_build_query(array_filter([
+                        'name' => $name,
+                        'photo' => $sample['avatar'] ?? null,
+                    ]))),
+                );
+            })(),
 
             // Staff birthdays digest — live local data. Posters are sampled (no S3
             // write in preview) so the section is visible even with no celebrant today.

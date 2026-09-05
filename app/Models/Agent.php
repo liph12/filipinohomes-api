@@ -29,6 +29,10 @@ class Agent extends Model implements Auditable
         'status',
         'lr_email',
         'birthdate',
+        // When we last ASKED Leuterio Realty for this agent's birthday (see
+        // birthdays:backfill-birthdates) — distinct from having one, because
+        // "LR doesn't know" has to stop the next run re-asking forever.
+        'birthdate_checked_at',
         'gender',
         'region',
         'lr_state',
@@ -39,6 +43,7 @@ class Agent extends Model implements Auditable
         'avatar' => 'array',
         'geo_location' => 'array',
         'birthdate' => 'date',
+        'birthdate_checked_at' => 'datetime',
         'response_metrics_updated_at' => 'datetime',
         'within_1h_response_pct' => 'float',
         'unanswered_response_pct' => 'float',
