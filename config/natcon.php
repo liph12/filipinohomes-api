@@ -114,7 +114,10 @@ return [
         'url' => env('NATCON_LR_QUALIFIERS_URL', 'https://leuteriorealty.com/api/natcon-qualifiers-v2'),
         'from' => env('NATCON_LR_QUALIFIERS_FROM', '2025-08-01'),
         'lastdate_x' => env('NATCON_LR_QUALIFIERS_LASTDATE_X', '2026-07-31'),
-        'lastdate_y' => env('NATCON_LR_QUALIFIERS_LASTDATE_Y', '2026-08-05'),
+        // 2026-08-12 is the final qualifying cutoff for NATCON 2026 (moved from
+        // 08-05, which was an earlier cut). Widening it pulls in the awardees
+        // the admin list currently marks "Not on LR list".
+        'lastdate_y' => env('NATCON_LR_QUALIFIERS_LASTDATE_Y', '2026-08-12'),
         'timeout' => (int) env('NATCON_LR_QUALIFIERS_TIMEOUT', 30),
     ],
 
