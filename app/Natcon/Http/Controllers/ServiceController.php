@@ -61,6 +61,10 @@ class ServiceController extends Controller
                 // a second copy of that split.
                 'person_names'  => $r->personNames(),
                 'team'          => $r->team,
+                // LR's team art, straight from the stored qualifier record —
+                // the registration page shows it beside the team name. Empty
+                // string means "no logo"; normalised to null.
+                'team_logo'     => data_get($r->qualifier_payload, 'sales_team_member.sales_team.teamlogo') ?: null,
                 'state'         => $r->state,
             ])
             ->values();
