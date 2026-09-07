@@ -9,6 +9,33 @@ Frontend counterpart: `filipinohomes-final/src/components/natcon/` — see its o
 
 ---
 
+## 0. TWO BACKENDS — the migration situation (read this first)
+
+There is a second NATCON backend: **natcon-api-v2** (sibling repo, DB
+`fh-natcon-v2`). It owns NATCON **registrations** today and is the planned
+future home of EVERY `natcon_*` table in this database. Until that migration
+happens:
+
+- **This repo stays the source of truth** for events, recipients, photo
+  submissions, forms, gallery, sponsors — everything currently here.
+- v2 **reads FH over HTTP**, never the database: event facts via the public
+  `GET /api/natcon/event?year=X`, the awardee roster via
+  `GET /api/service/natcon/awardees?year=X` (behind `verify.service.token`,
+  static `X-FH-Service-Token` — `FH_SERVICE_API_TOKEN` here must match
+  `FH_SERVICE_TOKEN` in v2's .env). See `Http/Controllers/ServiceController`.
+- **Do not add registration tables here.** Registrations, registration people,
+  and their invitation links live in v2.
+- The service roster payload is deliberately PII-lean (no phone / reg_id /
+  lr_payload) — widen it only with the same deliberateness as
+  PublicProfileResource.
+- The admin's "Awardees" section on /natcon/admin is v2's registrations; this
+  module's recipients screen is labelled "Photo Submission" in the UI.
+
+When the table migration eventually happens, the service endpoint and v2's
+`FhClient` are the seams to delete.
+
+---
+
 ## 1. Per-year data goes on `natcon_events`, never in config or code
 
 ```

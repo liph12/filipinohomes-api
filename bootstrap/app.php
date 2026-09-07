@@ -72,6 +72,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'strip.tags'           => \App\Http\Middleware\StripHtmlTags::class,
             'verify.guest.token'   => \App\Http\Middleware\VerifyGuestToken::class,
             'verify.fh.agent.token' => \App\Http\Middleware\VerifyFhAgentToken::class,
+            'verify.service.token' => \App\Http\Middleware\VerifyServiceToken::class,
             'agent.active'         => \App\Http\Middleware\EnsureAgentActive::class,
         ]);
     })

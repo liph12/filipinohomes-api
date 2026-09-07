@@ -33,6 +33,15 @@ class AppServiceProvider extends ServiceProvider
                 return Limit::none();
             }
 
+            // Same standing for our own backends (natcon-api-v2): a request
+            // already carrying the service secret has authenticated as one of
+            // our servers, and throttling server-to-server sync would just
+            // make the sync flaky. VerifyServiceToken does the real gate.
+            $serviceToken = config('app.fh_service_token');
+            if ($serviceToken && hash_equals($serviceToken, (string) $request->header('X-FH-Service-Token', ''))) {
+                return Limit::none();
+            }
+
             return Limit::perMinute(120)->by(
                 $request->user()?->id ?: $request->ip()
             );

@@ -75,6 +75,7 @@ use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReaction
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
+use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
@@ -101,6 +102,15 @@ Route::middleware('strip.tags')->group(function () {
         //   GET  /api/fh-agent/{email}          (header: X-FH-Agent-Token)
         Route::middleware('verify.fh.agent.token')->group(function () {
             Route::get('/fh-agent/{email}', [AgentController::class, 'showByEmail'])->where('email', '.*');
+        });
+
+        // Server-to-server reads for natcon-api-v2 (the registrations backend).
+        // Static shared secret in X-FH-Service-Token — no public mint route,
+        // unlike /fh-agent above; see VerifyServiceToken for why that pattern
+        // was NOT copied for awardee PII. The service-token bypass in the api
+        // limiter keeps roster syncs from tripping the 120/min per-IP ceiling.
+        Route::middleware('verify.service.token')->group(function () {
+            Route::get('/service/natcon/awardees', [NatconServiceController::class, 'awardees']);
         });
 
         Route::post('/inquiry', [UserController::class, 'sendInquiry']);

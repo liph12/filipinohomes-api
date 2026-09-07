@@ -143,6 +143,12 @@ return [
     // routes, and vice versa — so /fh-agent access is independently gated.
     'fh_agent_api_secret' => env('FH_AGENT_API_SECRET'),
 
+    // Static secret for server-to-server calls from our OWN backends
+    // (natcon-api-v2). No public mint route exists on purpose — the caller
+    // holds this in its .env and sends it as X-FH-Service-Token. See
+    // App\Http\Middleware\VerifyServiceToken.
+    'fh_service_token' => env('FH_SERVICE_API_TOKEN'),
+
     'providers' => [
         /*
         * Laravel Framework Service Providers...
