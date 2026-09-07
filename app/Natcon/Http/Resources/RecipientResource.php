@@ -2,6 +2,7 @@
 
 namespace App\Natcon\Http\Resources;
 
+use App\Natcon\Models\FormField;
 use App\Natcon\Models\Recipient;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -118,6 +119,17 @@ class RecipientResource extends JsonResource
             'notes'         => $r->notes,
             'has_token'     => $r->token_nonce !== null,
             'created_at'    => $this->iso($r->created_at, $tz),
+
+            /**
+             * The answers the admin chose to see in the LIST, so shirt sizes
+             * can be read down a column instead of by opening 300 drawers.
+             *
+             * Which questions appear is data, not code: a field opts in with
+             * `config.show_in_list`. Never keyed on 'polo_shirt_size' — §5 of
+             * the module's notes, "the form is admin-defined, never
+             * special-case a field key".
+             */
+            'list_answers' => $this->listAnswers($r),
         ];
 
         if (! $this->detailed) {
@@ -184,5 +196,163 @@ class RecipientResource extends JsonResource
     private function iso($value, string $tz): ?string
     {
         return $value?->copy()->setTimezone($tz)->toIso8601String();
+    }
+
+    /**
+     * Which fields the awardee list shows, per event.
+     *
+     * Static because a 100-row page builds 100 resources and the answer is the
+     * same for all of them — without it this is a fields query per row.
+     * Request-scoped: PHP-FPM discards it, so an admin toggling the flag is one
+     * page refresh away from seeing the change.
+     *
+     * @return array<int, FormField>
+     */
+    private static function listFields(int $eventId): array
+    {
+        static $cache = [];
+
+        if (! array_key_exists($eventId, $cache)) {
+            $cache[$eventId] = FormField::query()
+                ->where('natcon_event_id', $eventId)
+                ->where('is_active', true)
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get()
+                ->filter(fn ($f) => (bool) (($f->config ?? [])['show_in_list'] ?? false))
+                ->values()
+                ->all();
+        }
+
+        return $cache[$eventId];
+    }
+
+    /**
+     * The flagged questions as list columns: one entry per flagged field in
+     * form order, emitted even for an awardee who has not submitted — so every
+     * row on a page carries the same columns and the table can build its grid
+     * from any of them.
+     *
+     * `people` rather than a flat string because 118 of the 2026 awardees are
+     * couples on one login: "Medium" for a pair says nothing about who wears
+     * which. A per_person field stores a positional array aligned to
+     * personNames(), so the two zip together; a single answer yields one entry
+     * with a null name and the UI prints the value alone.
+     *
+     * @return array<int,array{key:string,label:string,people:array<int,array{name:?string,value:string}>}>
+     */
+    private function listAnswers(Recipient $r): array
+    {
+        $fields = self::listFields((int) $r->natcon_event_id);
+
+        if ($fields === []) {
+            return [];
+        }
+
+        $answers = $r->formSubmission?->answerMap() ?? [];
+        $names   = $r->personNames();
+        $out     = [];
+
+        foreach ($fields as $field) {
+            $value = $answers[$field->key] ?? null;
+
+            /*
+             * Read from `answers`, not from the snapshot's display_value: the
+             * snapshot pre-joins a couple into one string ("Ana: Medium · Ben:
+             * Large"), which is precisely what a column of its own has to take
+             * apart again. `answers` keeps a per-person field as a positional
+             * array aligned to personNames(), so the split is exact — and the
+             * choice values get translated back to labels below, or the column
+             * would read "medium".
+             */
+            $labels = [];
+
+            foreach ((array) ($field->choices ?? []) as $choice) {
+                // Retired choices included. Someone already answered with one,
+                // and printing its slug is worse than a stale label.
+                if (is_array($choice) && isset($choice['value'])) {
+                    $labels[(string) $choice['value']] = (string) ($choice['label'] ?? $choice['value']);
+                }
+            }
+
+            $render = function (mixed $one) use ($labels): ?string {
+                // Checkbox answers are arrays at the level of ONE person, so
+                // each element is looked up on its own before joining.
+                if (is_array($one)) {
+                    $parts = [];
+
+                    foreach ($one as $item) {
+                        $text = $this->flattenAnswer($item);
+                        if ($text !== null) {
+                            $parts[] = $labels[$text] ?? $text;
+                        }
+                    }
+
+                    return $parts === [] ? null : implode(', ', $parts);
+                }
+
+                $text = $this->flattenAnswer($one);
+
+                return $text === null ? null : ($labels[$text] ?? $text);
+            };
+
+            $people = [];
+
+            /*
+             * Branch on the FIELD, never on whether the value happens to be an
+             * array: a checkbox field stores an array for one person, and
+             * treating that as per-person answers would print "Ana — Beef,
+             * Ben — Chicken" for one awardee's two dinner choices.
+             */
+            if ((bool) (($field->config ?? [])['per_person'] ?? false) && is_array($value)) {
+                // Named only when there is more than one person to tell apart —
+                // the same rule FormService labels its snapshot by. On a solo
+                // awardee the row already says who they are.
+                $named = count($names) > 1;
+
+                foreach (array_values($value) as $i => $one) {
+                    $text = $render($one);
+                    if ($text !== null) {
+                        $people[] = [
+                            'name'  => $named ? ($names[$i] ?? null) : null,
+                            'value' => $text,
+                        ];
+                    }
+                }
+            } else {
+                $text = $render($value);
+                if ($text !== null) {
+                    $people[] = ['name' => null, 'value' => $text];
+                }
+            }
+
+            $out[] = [
+                'key'    => (string) $field->key,
+                'label'  => (string) ($field->label ?: $field->key),
+                'people' => $people,
+            ];
+        }
+
+        return $out;
+    }
+
+    private function flattenAnswer(mixed $value): ?string
+    {
+        if (is_array($value)) {
+            $parts = array_filter(
+                array_map(fn ($v) => $this->flattenAnswer($v), $value),
+                fn ($v) => $v !== null,
+            );
+
+            return $parts === [] ? null : implode(', ', $parts);
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'Yes' : 'No';
+        }
+
+        $text = trim((string) ($value ?? ''));
+
+        return $text === '' ? null : $text;
     }
 }

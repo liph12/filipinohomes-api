@@ -130,6 +130,14 @@ validates whatever is there. The moment something does
 - **`missingRequiredLabels()` deliberately avoids `isBlank()` for those**: a
   couple with `["large", null]` would pass an `array_filter` check and be marked
   complete with a size missing.
+- **`config.show_in_list` puts a question in the awardee TABLE** as its own
+  column (`RecipientResource::listAnswers()`, ticked per question in the field
+  editor). It exists so "add a Sizes column" did not become
+  `if ($key === 'polo_shirt_size')`. It reads `answers`, not the snapshot's
+  `display_value`, because the snapshot pre-joins a couple into one string —
+  and it translates choice values back to labels itself, or the column prints
+  `medium`. Every flagged field is emitted for EVERY row, answered or not, so
+  the table can build its column set from any row.
 
 ### Couples
 

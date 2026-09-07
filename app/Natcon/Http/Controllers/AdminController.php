@@ -393,7 +393,9 @@ class AdminController extends Controller
     {
         $event = $this->resolveEvent($request);
 
-        $query = Recipient::with('event')
+        // formSubmission is eager-loaded for RecipientResource::listAnswers —
+        // without it the list runs one extra query per row (100 a page).
+        $query = Recipient::with(['event', 'formSubmission'])
             ->where('natcon_event_id', $event->id);
 
         // Every filter lives in one place so the list, the counts, the
