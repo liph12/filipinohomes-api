@@ -4,6 +4,7 @@ namespace App\Natcon\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Natcon\Http\Resources\RecipientResource;
+use App\Natcon\Models\FormField;
 use App\Natcon\Models\FormSubmission;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Outbox;
@@ -446,7 +447,59 @@ class AdminController extends Controller
         $dir = $request->input('dir') === 'asc' ? 'asc' : 'desc';
         $key = (string) $request->input('sort');
 
-        if (isset($sortable[$key])) {
+        /*
+         * The admin-defined answer columns sort too — `sort=answer:<field key>`,
+         * whatever this year's form asks. Unlike the columns above, "missing"
+         * is not noise here: "who still hasn't given a shirt size" is the
+         * question, so blanks lead the ascending order instead of being pushed
+         * out of the way.
+         */
+        $answerField = str_starts_with($key, 'answer:')
+            ? FormField::query()
+                ->where('natcon_event_id', $event->id)
+                ->where('key', substr($key, strlen('answer:')))
+                ->first()
+            : null;
+
+        if ($answerField) {
+            /*
+             * A correlated subquery, deliberately NOT a join. The event filter
+             * above is an unqualified `natcon_event_id`, and
+             * natcon_form_submissions carries a column of the same name —
+             * joining it turns that where into "Column 'natcon_event_id' in
+             * where clause is ambiguous". 297 indexed lookups behind admin auth
+             * is not the kind of subquery that hurts.
+             *
+             * `[0]` reads the first person of a per_person answer; MySQL
+             * returns a scalar unchanged when it is indexed as a one-element
+             * array, so one path covers both shapes.
+             */
+            $answer = '(SELECT JSON_UNQUOTE(JSON_EXTRACT(fs.answers, ?))
+                          FROM natcon_form_submissions fs
+                         WHERE fs.natcon_recipient_id = natcon_recipients.id
+                         LIMIT 1)';
+            $path = ['$."' . $answerField->key . '"[0]'];
+
+            $choices = array_values(array_filter(array_map(
+                fn ($c) => is_array($c) && isset($c['value']) ? (string) $c['value'] : null,
+                (array) ($answerField->choices ?? []),
+            )));
+
+            if ($choices !== []) {
+                // Sorted by the admin's own choice order, because sizes are not
+                // alphabetical — a plain A–Z puts Large above Small and reads
+                // as broken. FIELD() returns 0 for no match, and for no answer
+                // at all, so ascending groups everyone still missing one first.
+                $slots = implode(', ', array_fill(0, count($choices), '?'));
+                $query->orderByRaw("FIELD({$answer}, {$slots}) {$dir}", array_merge($path, $choices));
+            } else {
+                // Free text: MySQL sorts NULL first ascending, which is the
+                // same "missing first" behaviour.
+                $query->orderByRaw("{$answer} {$dir}", $path);
+            }
+
+            $query->orderBy('natcon_recipients.id', 'desc');
+        } elseif (isset($sortable[$key])) {
             // Null last in both directions. A blank team or a missing sales
             // figure floating to the top of an A-Z is not "sorted", it is the
             // empty rows getting in the way of the answer.
