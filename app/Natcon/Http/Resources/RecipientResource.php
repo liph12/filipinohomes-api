@@ -199,7 +199,25 @@ class RecipientResource extends JsonResource
     }
 
     /**
+     * Types that are never a list column, whatever the flag says. A paragraph
+     * of text and a set of uploaded images are not something you scan down a
+     * 150px column — the drawer shows those in full.
+     */
+    private const NEVER_IN_LIST = [
+        FormField::TYPE_SECTION,      // not an input at all
+        FormField::TYPE_LONG_TEXT,
+        FormField::TYPE_IMAGE_UPLOAD,
+    ];
+
+    /**
      * Which fields the awardee list shows, per event.
+     *
+     * ⚠️ `show_in_list` DEFAULTS TO TRUE. An admin who adds a question wants to
+     * see the answers, and the flag existing at all was no help to the two 2026
+     * questions that were saved before it did — their config has no such key,
+     * and opt-in left the table exactly as it was. So it reads as "shown unless
+     * someone turned it off", and the field editor writes the boolean either
+     * way rather than omitting it when false.
      *
      * Static because a 100-row page builds 100 resources and the answer is the
      * same for all of them — without it this is a fields query per row.
@@ -216,10 +234,11 @@ class RecipientResource extends JsonResource
             $cache[$eventId] = FormField::query()
                 ->where('natcon_event_id', $eventId)
                 ->where('is_active', true)
+                ->whereNotIn('type', self::NEVER_IN_LIST)
                 ->orderBy('sort_order')
                 ->orderBy('id')
                 ->get()
-                ->filter(fn ($f) => (bool) (($f->config ?? [])['show_in_list'] ?? false))
+                ->filter(fn ($f) => (bool) (($f->config ?? [])['show_in_list'] ?? true))
                 ->values()
                 ->all();
         }
