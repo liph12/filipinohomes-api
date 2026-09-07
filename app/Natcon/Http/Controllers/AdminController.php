@@ -1312,13 +1312,48 @@ class AdminController extends Controller
     private function applyRecipientFilters($query, Request $request)
     {
         if ($search = trim((string) $request->input('search'))) {
-            $like = '%' . $search . '%';
-            $query->where(fn ($q) => $q
-                ->where('email', 'like', $like)
-                ->orWhere('first_name', 'like', $like)
-                ->orWhere('last_name', 'like', $like)
-                ->orWhere('team', 'like', $like)
-                ->orWhere('reg_id', 'like', $like));
+            /*
+             * ⚠️ display_name is the FIRST column searched, and its absence was
+             *    a real bug: searching "Josue" for "Mary Ann and Marlon
+             *    Castillano Josue" returned nothing, while their email found
+             *    them instantly.
+             *
+             *    Rows imported from the LR roster carry the whole name in
+             *    display_name and leave first_name/last_name NULL — 118 of the
+             *    2026 awardees are couples on one login, so there is no first
+             *    or last name to split into. Searching only the split columns
+             *    therefore missed every couple, and every one-word surname of
+             *    anyone imported rather than typed in by hand.
+             *
+             * Each WORD is matched separately, and every word has to appear
+             * SOMEWHERE — not the whole phrase inside one column. "marlon
+             * josue" has to find a name that reads "Marlon Castillano Josue",
+             * and one %phrase% cannot, because the words are not adjacent.
+             * Tokens are ANDed so extra words narrow the result, which is what
+             * typing more of a name is meant to do.
+             */
+            $columns = [
+                'display_name', 'first_name', 'last_name',
+                'email', 'phone', 'team', 'reg_id', 'seat_number',
+            ];
+
+            // Capped: dropping a 7th word only widens the result, while an
+            // unbounded paste would build one WHERE clause per word.
+            $terms = array_slice(preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [], 0, 6);
+
+            foreach ($terms as $term) {
+                // % and _ escaped: a search for "50%" is a search for the
+                // characters, not a wildcard that matches every row.
+                $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $term) . '%';
+
+                $query->where(function ($q) use ($columns, $like) {
+                    foreach ($columns as $i => $column) {
+                        $i === 0
+                            ? $q->where($column, 'like', $like)
+                            : $q->orWhere($column, 'like', $like);
+                    }
+                });
+            }
         }
 
         // Filters on the qualifier ROSTER, not on how the row was added — see
