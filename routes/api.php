@@ -22,6 +22,7 @@ use App\Http\Controllers\BoundaryController;
 use App\Http\Controllers\BuyerFormController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\CompanyEventController;
 use App\Http\Controllers\CityController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DeviceTokenController;
@@ -679,6 +680,20 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
+
+                // ── Company Events — the dashboard's event manager (title,
+                //    time, place, pictures). Uploads share the gallery's
+                //    120/min ceiling; literal /photos registered before the
+                //    /{event} wildcard, house style.
+                Route::group(['prefix' => '/admin/events'], function () {
+                    Route::get('/', [CompanyEventController::class, 'index']);
+                    Route::post('/', [CompanyEventController::class, 'store']);
+                    Route::post('/photos', [CompanyEventController::class, 'storePhoto'])
+                        ->middleware('throttle:120,1');
+                    Route::delete('/photos/{photo}', [CompanyEventController::class, 'destroyPhoto']);
+                    Route::patch('/{event}', [CompanyEventController::class, 'update']);
+                    Route::delete('/{event}', [CompanyEventController::class, 'destroy']);
+                });
 
                 // Client Demographics — gender + age brackets of registered
                 // clients (admin-only; agents have their own non-gated stat).
