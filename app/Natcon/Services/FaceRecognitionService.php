@@ -122,9 +122,12 @@ final class FaceRecognitionService
      * matches the LARGEST face in the bytes it is given, so a group selfie
      * has to be cut into one crop per face first — this is the cut list.
      *
-     * Tiny faces (under ~0.4% of the frame) and low-confidence detections are
-     * dropped: a face in the background of someone's selfie is not a person
-     * they are searching for, and a crop that small matches nothing anyway.
+     * Low-confidence detections are dropped, and so are tiny faces: under
+     * 0.1% of the frame (≈45px square on the 1500px probe — too small to
+     * match) or under 1/40 of the LARGEST face's area. The relative rule is
+     * what separates "two people in a selfie, one a step behind" (kept) from
+     * "the crowd behind them" (dropped): a face in the background is not a
+     * person they are searching for.
      * Failures (no collection, no face, service error) return [] so the
      * caller falls back to the whole-image search and its own error copy.
      *
@@ -162,7 +165,7 @@ final class FaceRecognitionService
             $b = $face['BoundingBox'] ?? [];
             $w = max(0.0, (float) ($b['Width'] ?? 0));
             $h = max(0.0, (float) ($b['Height'] ?? 0));
-            if ($w * $h < 0.004) {
+            if ($w * $h < 0.001) {
                 continue;
             }
             $boxes[] = [
@@ -173,6 +176,12 @@ final class FaceRecognitionService
             ];
         }
         usort($boxes, fn ($a, $b) => ($b['width'] * $b['height']) <=> ($a['width'] * $a['height']));
+
+        if ($boxes === []) {
+            return [];
+        }
+        $largest = $boxes[0]['width'] * $boxes[0]['height'];
+        $boxes = array_values(array_filter($boxes, fn ($b) => $largest / 40 <= $b['width'] * $b['height']));
 
         return array_slice($boxes, 0, $max);
     }

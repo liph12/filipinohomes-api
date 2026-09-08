@@ -394,7 +394,16 @@ class GalleryController extends Controller
                     if ($x1 - $x0 < 40 || $y1 - $y0 < 40) {
                         continue;
                     }
-                    $crops[] = (string) (clone $image)->crop($x1 - $x0, $y1 - $y0, $x0, $y0)->toJpeg(85);
+                    $crop = (clone $image)->crop($x1 - $x0, $y1 - $y0, $x0, $y0);
+                    // A face a step behind the others can come out as a ~150px
+                    // crop. Rekognition wants at least 80px and matches better
+                    // with more; scale small crops up to 320px on the short side
+                    // (no new detail, but no "image too small" either).
+                    $short = min($crop->width(), $crop->height());
+                    if ($short < 320) {
+                        $crop = $crop->scale(width: (int) round($crop->width() * 320 / $short));
+                    }
+                    $crops[] = (string) $crop->toJpeg(85);
                 }
             }
             if (count($crops) < 2) {
