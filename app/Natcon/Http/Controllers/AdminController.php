@@ -1208,10 +1208,21 @@ class AdminController extends Controller
             'requires_new_photo_by'   => $flagged ? $request->user()?->id : null,
         ])->save();
 
+        /**
+         * Recompute the chase state under the new flag. Flagging a FINISHED
+         * awardee re-opens them (responded_at cleared, status back in
+         * REMINDABLE), so reminder waves reach them again with the "please
+         * send new photos" message — and clearing the flag (or a replacement
+         * arriving) completes them again. Without this the flag changed the
+         * page but never the funnel, and a completed awardee was never
+         * emailed about the re-shoot at all.
+         */
+        app(PhotoService::class)->syncResponseState($recipient);
+
         return response()->json([
             'data'    => RecipientResource::detailed($recipient->fresh()->load('event')),
             'message' => $flagged
-                ? 'This awardee must now send a new photo. Keeping the old one is blocked.'
+                ? 'This awardee must now send a new photo. Keeping the old one is blocked, and they are back in the reminder chase until a new upload arrives.'
                 : 'Cleared. This awardee can keep their existing photo again.',
         ]);
     }

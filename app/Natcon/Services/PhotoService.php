@@ -322,7 +322,22 @@ final class PhotoService
             && $recipient->response === Recipient::RESPONSE_RETAIN
             && $recipient->finalPhotoUrl() !== null;
 
-        $photosDone  = $count >= Recipient::requiredPhotoCount() || $retainedWithoutRow;
+        /**
+         * A reviewer's flag means the photos already on file are NOT an
+         * answer: once requires_new_photo is set, completion additionally
+         * demands at least one upload dated AFTER the flag. Without this,
+         * photos that predate the flag keep `count >= required` satisfied,
+         * the row stays responded, and reminderTargets() never chases the
+         * replacement the reviewer asked for — flagging a finished awardee
+         * changed their page but never re-opened the chase.
+         */
+        $hasReplacementIfRequired = ! $recipient->requires_new_photo
+            || $photos->contains(fn ($p) => $p->source !== PhotoSubmission::SOURCE_LR_RETAINED
+                && $recipient->requires_new_photo_at !== null
+                && $p->created_at?->gt($recipient->requires_new_photo_at));
+
+        $photosDone  = ($count >= Recipient::requiredPhotoCount() || $retainedWithoutRow)
+            && $hasReplacementIfRequired;
         $detailsDone = app(FormService::class)->hasRequiredAnswers($recipient);
         $complete    = $photosDone && $detailsDone;
 
