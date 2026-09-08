@@ -66,6 +66,11 @@ class ServiceController extends Controller
                 // string means "no logo"; normalised to null.
                 'team_logo'     => data_get($r->qualifier_payload, 'sales_team_member.sales_team.teamlogo') ?: null,
                 'state'         => $r->state,
+                // Which group's award they receive (null = an LR agent). v2
+                // turns this into the fixed line on the invitation card, so
+                // the value has to travel with the roster — a classification
+                // like team and state, not personal data.
+                'award_segment' => $r->award_segment,
             ])
             ->values();
 

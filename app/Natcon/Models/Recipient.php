@@ -53,6 +53,19 @@ class Recipient extends Model implements Auditable
     public const STATUS_FAILED           = 'failed';
     public const STATUS_EXCLUDED         = 'excluded';
 
+    /**
+     * Awardees from outside LR's roster, whose award title on the invitation
+     * card differs. NULL — the default, and all but a handful of rows — is an
+     * LR agent. The card wording itself lives in natcon-api-v2 beside the
+     * artwork it has to fit; this only records which group someone is in.
+     */
+    public const SEGMENT_GLOBAL_PARTNER = 'global_partner';
+
+    public const SEGMENT_FHI_GLOBAL = 'fhi_global';
+
+    /** The settable values. NULL is not listed: it is the absence of one. */
+    public const SEGMENTS = [self::SEGMENT_GLOBAL_PARTNER, self::SEGMENT_FHI_GLOBAL];
+
     public const RESPONSE_RETAIN = 'retain';
     public const RESPONSE_CHANGE = 'change';
 
@@ -89,7 +102,7 @@ class Recipient extends Model implements Auditable
         'owner_name', 'seat_number', 'lr_polo_shirt_size', 'lr_approved',
         'lr_photos', 'lr_primary_photo', 'lr_qr_code', 'lr_payload',
         'lr_fetched_at', 'lr_lookup_status', 'lr_last_error',
-        'source', 'imported_batch_id', 'created_by',
+        'source', 'award_segment', 'imported_batch_id', 'created_by',
         'status', 'notes',
         // From LR's qualifiers list. Mass-assignable because the import service
         // merges them straight into Recipient::create().

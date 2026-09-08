@@ -114,6 +114,15 @@ class RecipientResource extends JsonResource
             'is_qualifier' => $r->qualifier_payload !== null,
 
             'source'        => $r->source,
+
+            /**
+             * Which group's award they receive — null for an ordinary LR
+             * agent. On the LIST row, not just the detail: the table marks
+             * the handful of Global Partners / FHI Global people so they can
+             * be spotted among 289 agents without opening each drawer.
+             */
+            'award_segment' => $r->award_segment,
+
             'send_failures' => (int) $r->send_failures,
             'last_error'    => $r->last_error,
             'notes'         => $r->notes,

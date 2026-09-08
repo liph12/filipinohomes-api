@@ -563,6 +563,9 @@ class AdminController extends Controller
             'emails.*' => 'string|max:255',
             'text' => 'required_without:emails|string|max:200000',
             'dry_run' => 'boolean',
+            // Which group's award this batch is receiving. One choice for the
+            // whole paste: the lists arrive one group at a time.
+            'award_segment' => 'nullable|in:'.implode(',', Recipient::SEGMENTS),
         ]);
 
         $event = $this->resolveEvent($request);
@@ -575,6 +578,7 @@ class AdminController extends Controller
             $source,
             $request->user()?->id,
             (bool) ($data['dry_run'] ?? false),
+            awardSegment: $data['award_segment'] ?? null,
         );
 
         return response()->json(['data' => $result]);
@@ -658,6 +662,11 @@ class AdminController extends Controller
         $data = $request->validate([
             'notes' => 'nullable|string|max:1000',
             'status' => 'nullable|in:pending,invited,excluded',
+            'award_segment' => 'nullable|in:'.implode(',', Recipient::SEGMENTS),
+            // Editable because the people who need it will never get a name
+            // from LR: they are not on LR's roster, so a name typed into the
+            // paste dialog is the only one they will ever have.
+            'display_name' => 'nullable|string|max:191',
         ]);
 
         if (array_key_exists('notes', $data)) {
@@ -666,6 +675,16 @@ class AdminController extends Controller
 
         if (! empty($data['status'])) {
             $recipient->status = $data['status'];
+        }
+
+        // array_key_exists, not empty(): null is a real value for both — it
+        // means "an ordinary LR agent" and "fall back to the LR name".
+        if (array_key_exists('award_segment', $data)) {
+            $recipient->award_segment = $data['award_segment'];
+        }
+
+        if (array_key_exists('display_name', $data)) {
+            $recipient->display_name = Recipient::tidyName($data['display_name']);
         }
 
         $recipient->save();

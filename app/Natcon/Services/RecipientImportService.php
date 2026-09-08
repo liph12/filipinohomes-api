@@ -24,6 +24,10 @@ final class RecipientImportService
      *        exist, instead of counting them as skipped. Only meaningful when the
      *        source implements ProvidesRecipientAttributes — a paste of bare
      *        emails has nothing to update WITH.
+     * @param string|null $awardSegment Which group's award this whole batch is
+     *        receiving (Recipient::SEGMENTS), or null for LR agents. Unlike the
+     *        LR-owned fields above, this is stamped on rows that ALREADY exist
+     *        too — see the existing-row branch for why.
      *
      * @return array{
      *   batch_id:string, created:int, updated:int, skipped:int, suppressed:int,
@@ -36,6 +40,7 @@ final class RecipientImportService
         ?int $userId = null,
         bool $dryRun = false,
         bool $updateExisting = false,
+        ?string $awardSegment = null,
     ): array {
         $batchId    = (string) Str::uuid();
         $created    = 0;
@@ -64,6 +69,15 @@ final class RecipientImportService
         $existing = Recipient::withTrashed()
             ->where('natcon_event_id', $event->id)
             ->pluck('id', 'email');
+
+        // Only when a segment is being stamped: what each row currently holds,
+        // so the preview can say what would really change and a re-paste of the
+        // same list reports "skipped" rather than claiming an update.
+        $segments = $awardSegment !== null
+            ? Recipient::withTrashed()
+                ->where('natcon_event_id', $event->id)
+                ->pluck('award_segment', 'email')
+            : collect();
 
         foreach ($source->emails() as $raw) {
             $email = strtolower(trim((string) $raw));
@@ -103,8 +117,26 @@ final class RecipientImportService
 
             if ($existing->has($email)) {
                 $attributes = $enriched?->attributesFor($email) ?? [];
+                $refresh    = $updateExisting && $attributes;
 
-                if (! $updateExisting || ! $attributes) {
+                /**
+                 * The award segment lands on rows that already exist, even
+                 * though nothing else about them may move.
+                 *
+                 * Pasting the Global Partners list has to work when one of
+                 * them is already on the roster as an LR agent — and one of
+                 * them is. Skipping the row would leave that person's
+                 * invitation card reading TOP AGENT, which is the single
+                 * mistake this whole feature exists to prevent, and it would
+                 * do it silently.
+                 *
+                 * ONLY this column moves. Everything the guarantee below
+                 * protects — name, team, photos, status, decisions people
+                 * made — is untouched by a stamp.
+                 */
+                $stamp = $awardSegment !== null && $segments->get($email) !== $awardSegment;
+
+                if (! $refresh && ! $stamp) {
                     $skipped++;
                     continue;
                 }
@@ -129,9 +161,17 @@ final class RecipientImportService
                 //    require-new-photo flag. A re-sync must never undo a decision
                 //    a person made — an awardee who already sent three photos
                 //    must still have them afterwards.
-                $row->auditSource      = 'lr_qualifiers_sync';
-                $row->auditDescription = 'Refreshed from the LR qualifiers list';
-                $row->forceFill($attributes)->save();
+                $changes = $refresh ? $attributes : [];
+
+                if ($stamp) {
+                    $changes['award_segment'] = $awardSegment;
+                }
+
+                $row->auditSource      = $refresh ? 'lr_qualifiers_sync' : 'admin_award_segment';
+                $row->auditDescription = $refresh
+                    ? 'Refreshed from the LR qualifiers list'
+                    : 'Set the award segment from a pasted list';
+                $row->forceFill($changes)->save();
 
                 $updated++;
                 continue;
@@ -150,6 +190,7 @@ final class RecipientImportService
                 'created_by'        => $userId,
                 'status'            => Recipient::STATUS_PENDING,
                 'lr_lookup_status'  => Recipient::LR_PENDING,
+                'award_segment'     => $awardSegment,
             ] + ($enriched?->attributesFor($email) ?? []));
 
             // Value is unused for a row created in this run — nothing later in
