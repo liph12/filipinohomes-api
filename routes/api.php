@@ -76,6 +76,7 @@ use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReaction
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
+use App\Natcon\Http\Controllers\OrganizerController as NatconOrganizerController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
@@ -219,6 +220,8 @@ Route::middleware('strip.tags')->group(function () {
         Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
             ->whereNumber('year');
         Route::get('/natcon/{year}/sponsors', [NatconLandingController::class, 'sponsors'])
+            ->whereNumber('year');
+        Route::get('/natcon/{year}/organizers', [NatconOrganizerController::class, 'index'])
             ->whereNumber('year');
         Route::get('/natcon/{year}/gallery', [NatconGalleryController::class, 'gallery'])
             ->whereNumber('year');
@@ -606,6 +609,15 @@ Route::middleware('strip.tags')->group(function () {
                     Route::post('/admin/natcon/sponsors', [NatconLandingController::class, 'storeSponsor']);
                     Route::patch('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'updateSponsor']);
                     Route::delete('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'destroySponsor']);
+
+                    // Organizers chart — committee cards saved WITH their people.
+                    // Reorder is registered BEFORE /{committee} so "reorder" is
+                    // never bound as a model id.
+                    Route::get('/admin/natcon/organizers', [NatconOrganizerController::class, 'adminIndex']);
+                    Route::post('/admin/natcon/organizers', [NatconOrganizerController::class, 'store']);
+                    Route::post('/admin/natcon/organizers/reorder', [NatconOrganizerController::class, 'reorder']);
+                    Route::patch('/admin/natcon/organizers/{committee}', [NatconOrganizerController::class, 'update']);
+                    Route::delete('/admin/natcon/organizers/{committee}', [NatconOrganizerController::class, 'destroy']);
 
                     // Photographer upload invites: mint/copy/rotate/revoke the
                     // tokenized links the portal above consumes. Registered

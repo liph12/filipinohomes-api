@@ -217,6 +217,19 @@ The sponsors table hit this: the composite index also backed the
 `Schema::table` call BEFORE the old one is dropped. The migration that does it is
 worth reading before you touch any index on these tables.
 
+### Organizers
+
+The org chart on the public Organizers page: `natcon_organizer_committees`
+(event FK, `phase` ∈ `OrganizerCommittee::PHASES`) and
+`natcon_organizer_members` (role head | assistant, nullable portrait URL). A
+committee is written WITH its members — `OrganizerController::syncMembers()`
+makes the card's people exactly the submitted list, so there are no member
+endpoints and no half-saved cards. `members` absent on a PATCH means "leave the
+people alone"; present-but-empty means "remove them all". The purge is
+`LandingCachePurger::purgeOrganizers()` — its own method, because the page lives
+at the year-less `/natcon/organizers` and a name change should not rebuild the
+whole landing page.
+
 `NatconAnnouncement` keeps its module prefix because `App\Models\Announcement`
 already exists and is a completely different thing (a push broadcast). Two
 same-named models one namespace apart is how the wrong one gets imported.

@@ -59,11 +59,13 @@ class LandingCachePurger
             $tags[] = "natcon-announcements-{$year}";
             $tags[] = "natcon-sponsors-{$year}";
             $tags[] = "natcon-gallery-{$year}";
+            $tags[] = "natcon-organizers-{$year}";
         } else {
             // Without a year, widen to the un-suffixed tags rather than guessing.
             $tags[] = 'natcon-announcements';
             $tags[] = 'natcon-sponsors';
             $tags[] = 'natcon-gallery';
+            $tags[] = 'natcon-organizers';
         }
 
         $this->send($year ? "natcon/{$year}" : null, $tags);
@@ -95,6 +97,22 @@ class LandingCachePurger
      * years have pages and purging each, and silently missing any that were
      * added later.
      */
+    /**
+     * The Organizers page (/natcon/organizers) and the chart data behind it.
+     * Its own method rather than purgeYear(): a committee edit should not
+     * rebuild the whole landing page, and the page lives at a year-less path.
+     */
+    public function purgeOrganizers(?int $year): void
+    {
+        $tags = ['natcon-organizers'];
+
+        if ($year) {
+            $tags[] = "natcon-organizers-{$year}";
+        }
+
+        $this->send('natcon/organizers', $tags);
+    }
+
     public function purgeRecaps(): void
     {
         $this->send(null, ['natcon-recaps']);
