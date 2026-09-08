@@ -2,17 +2,17 @@
 
 namespace App\Services\Reports;
 
+use App\Services\Birthday\AgentBirthdayGreetingService;
 use App\Services\Birthday\BirthdayPosterService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
  * Staff birthdays for the daily birthday email: today's plus the next 30
- * days. Source is agents.birthdate (the LR backfill) joined to users — the
- * client role is excluded so only staff appear (agents are staff by
- * definition; the join guards against an agent row whose user was later
- * demoted to client). The 1970-01-01 epoch default is junk data, not a
- * birthday.
+ * days. Everyone but the client role — admins, agents, editors, secretaries.
+ * Birthdate is agents.birthdate (the LR backfill / profile-edit) falling back
+ * to users.birthdate, with the agents row LEFT-joined so an admin without one
+ * still appears. The 1970-01-01 epoch default is junk data, not a birthday.
  *
  * The upcoming list is capped at 10 — unless today + tomorrow alone exceed
  * 10, in which case it shows everything up to tomorrow (and only that far).
@@ -31,21 +31,31 @@ class StaffBirthdaysService
             $mdKeys[] = $ref->copy()->addDays($i)->format('m-d');
         }
 
-        $rows = DB::table('agents')
-            ->join('users', 'users.id', '=', 'agents.user_id')
+        $bd = AgentBirthdayGreetingService::BIRTHDATE;
+        $rows = DB::table('users')
             ->join('roles', 'roles.id', '=', 'users.role_id')
+            ->leftJoin('agents', function ($j) {
+                $j->on('agents.user_id', '=', 'users.id')->whereNull('agents.deleted_at');
+            })
             ->where('roles.name', '!=', 'client')
-            ->whereNotNull('agents.birthdate')
-            ->where('agents.birthdate', '!=', '1970-01-01')
-            ->whereIn(DB::raw("DATE_FORMAT(agents.birthdate, '%m-%d')"), $mdKeys)
+            ->whereRaw("{$bd} IS NOT NULL")
+            ->whereRaw("{$bd} != '1970-01-01'")
+            ->whereIn(DB::raw("DATE_FORMAT({$bd}, '%m-%d')"), $mdKeys)
             ->get([
-                'users.name', 'agents.birthdate', 'agents.id as agent_id', 'agents.first_name', 'agents.last_name',
+                'users.id as user_id', 'users.name', DB::raw("{$bd} as birthdate"), 'agents.id as agent_id',
+                'agents.first_name', 'agents.last_name',
                 'agents.avatar as agent_avatar', 'users.avatar as user_avatar',
             ]);
 
         $today = [];
         $upcoming = [];
+        $seen = [];
         foreach ($rows as $row) {
+            // One line per person even if they own several agents rows.
+            if (isset($seen[$row->user_id])) {
+                continue;
+            }
+            $seen[$row->user_id] = true;
             $md = Carbon::parse($row->birthdate)->format('m-d');
             $offset = array_search($md, $mdKeys, true);
             if ($offset === false) {
@@ -59,8 +69,10 @@ class StaffBirthdaysService
             if ($offset === 0) {
                 // Extra fields so the digest can render/attach today's posters
                 // (same name + avatar rules as the agent's own greeting).
-                $entry['agent_id'] = (int) $row->agent_id;
-                $entry['poster_name'] = trim(BirthdayPosterService::titleCase((string) $row->first_name).' '.BirthdayPosterService::titleCase((string) $row->last_name));
+                [$first, $last] = AgentBirthdayGreetingService::splitName($row->first_name, $row->last_name, $row->name);
+                $entry['agent_id'] = $row->agent_id !== null ? (int) $row->agent_id : null;
+                $entry['poster_key'] = $row->agent_id !== null ? 'agent-'.(int) $row->agent_id : 'user-'.(int) $row->user_id;
+                $entry['poster_name'] = trim("{$first} {$last}");
                 $entry['avatar'] = BirthdayPosterService::avatarFor($row->agent_avatar, $row->user_avatar);
                 $today[] = $entry;
             } else {

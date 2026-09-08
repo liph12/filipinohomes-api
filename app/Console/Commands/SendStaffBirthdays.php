@@ -41,7 +41,7 @@ class SendStaffBirthdays extends Command
             if (count($posters) >= StaffBirthdaysMailer::MAX_POSTERS) {
                 break;
             }
-            $p = $poster->forAgent($b['agent_id'], $b['poster_name'], $b['avatar'], $today);
+            $p = $poster->forAgent($b['poster_key'], $b['poster_name'], $b['avatar'], $today);
             if ($p) {
                 $posters[] = $p + ['name' => $b['poster_name']];
             }

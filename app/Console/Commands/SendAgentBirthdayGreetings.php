@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Mail\AgentBirthdayGreetingMailer;
+use App\Models\Agent;
+use App\Models\User;
 use App\Services\AuditMailService;
 use App\Services\Birthday\AgentBirthdayGreetingService;
 use App\Services\Birthday\BirthdayPosterService;
@@ -38,7 +40,7 @@ class SendAgentBirthdayGreetings extends Command
         {--date= : Treat this Y-m-d as today}
         {--dry-run : Resolve and report, send nothing}';
 
-    protected $description = "Email today's birthday agents their personal greeting + poster (or one sample to an address).";
+    protected $description = "Email today's birthday staff (admins, agents, editors, secretaries) their personal greeting + poster (or one sample to an address).";
 
     public function handle(AgentBirthdayGreetingService $service, BirthdayPosterService $poster, AuditMailService $audit): int
     {
@@ -62,7 +64,7 @@ class SendAgentBirthdayGreetings extends Command
             }
             $p = $poster->renderToS3($sample['full_name'], $sample['avatar'], 'birthday-greetings/test');
             Mail::to($only)->send(new AgentBirthdayGreetingMailer($sample['first_name'], $sample['full_name'], $p['url'] ?? null));
-            $this->info("Sample greeting for {$sample['full_name']} (agent #{$sample['agent_id']}, real email {$sample['email']}) sent to {$only}.".($p ? " Poster: {$p['url']}" : ' (poster failed — see log)'));
+            $this->info("Sample greeting for {$sample['full_name']} ({$sample['poster_key']}, real email {$sample['email']}) sent to {$only}.".($p ? " Poster: {$p['url']}" : ' (poster failed — see log)'));
 
             return self::SUCCESS;
         }
@@ -100,14 +102,14 @@ class SendAgentBirthdayGreetings extends Command
         $skipped = 0;
         $failed = 0;
         foreach ($celebrants as $c) {
-            $marker = "birthday-greeting:{$today}:{$c['agent_id']}";
+            $marker = "birthday-greeting:{$today}:{$c['poster_key']}";
             if (! Cache::add($marker, 1, now()->addDays(2))) {
                 $skipped++;
 
                 continue;
             }
             try {
-                $p = $poster->forAgent($c['agent_id'], $c['full_name'], $c['avatar'], $today);
+                $p = $poster->forAgent($c['poster_key'], $c['full_name'], $c['avatar'], $today);
                 $mailable = new AgentBirthdayGreetingMailer(
                     $c['first_name'],
                     $c['full_name'],
@@ -131,9 +133,11 @@ class SendAgentBirthdayGreetings extends Command
                     class_basename(AgentBirthdayGreetingMailer::class),
                     [$c['email']],
                     "Happy Birthday, {$c['first_name']}!",
-                    ['auditable_type' => \App\Models\Agent::class, 'auditable_id' => $c['agent_id']],
+                    $c['agent_id'] !== null
+                        ? ['auditable_type' => Agent::class, 'auditable_id' => $c['agent_id']]
+                        : ['auditable_type' => User::class, 'auditable_id' => $c['user_id']],
                 );
-                Log::warning('Agent birthday greeting failed', ['agent_id' => $c['agent_id'], 'to' => $c['email'], 'error' => $e->getMessage()]);
+                Log::warning('Agent birthday greeting failed', ['who' => $c['poster_key'], 'to' => $c['email'], 'error' => $e->getMessage()]);
             }
         }
 

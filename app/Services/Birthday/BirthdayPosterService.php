@@ -126,15 +126,19 @@ class BirthdayPosterService
     }
 
     /**
-     * The poster for one agent on one day, at a deterministic S3 key so the
+     * The poster for one person on one day, at a deterministic S3 key so the
      * 07:00 greeting job and the admin digest share a single render/upload:
      * whichever runs first uploads, the other reuses the object.
      *
+     * @param  int|string  $id  agents.id, or a celebrant `poster_key`
+     *                          ("agent-123" / "user-456" for staff without an
+     *                          agents row). Ints keep the historical key.
      * @return array{url:string, jpeg:string, filename:string}|null
      */
-    public function forAgent(int $agentId, string $fullName, ?string $photoUrl, string $date): ?array
+    public function forAgent(int|string $id, string $fullName, ?string $photoUrl, string $date): ?array
     {
-        $key = 'birthday-greetings/'.str_replace('-', '/', $date)."/agent-{$agentId}.jpg";
+        $slug = is_int($id) ? "agent-{$id}" : preg_replace('/[^a-z0-9\-]/i', '', $id);
+        $key = 'birthday-greetings/'.str_replace('-', '/', $date)."/{$slug}.jpg";
         $disk = Storage::disk('s3');
 
         try {
@@ -158,18 +162,44 @@ class BirthdayPosterService
     }
 
     /**
-     * Pick the avatar URL for an agent row: agents.avatar (JSON array, first
-     * entry) then users.avatar, both run through the legacy-URL repair.
+     * Pick the avatar URL for an agent row: agents.avatar, then users.avatar,
+     * both run through the legacy-URL repair.
+     *
+     * agents.avatar is read RAW here (DB::table, no Eloquent cast), and the
+     * column holds three shapes because Agent casts it to `array`: a plain
+     * URL from before the cast, a JSON array (`["https://…"]`), and — for
+     * every row where a string was assigned through the model — a JSON
+     * STRING (`"https:\/\/…"`, quotes and escaped slashes included). That
+     * third shape is a third of active agents, and it used to fall through
+     * undecoded, fail the http check and get the initials disc instead of
+     * their photo. Decode anything that looks like JSON, not just arrays.
      */
     public static function avatarFor(mixed $agentAvatar, ?string $userAvatar): ?string
     {
-        if (is_string($agentAvatar) && Str::startsWith($agentAvatar, '[')) {
-            $agentAvatar = json_decode($agentAvatar, true);
-        }
-        $candidate = is_array($agentAvatar) ? ($agentAvatar[0] ?? null) : $agentAvatar;
-        $url = AvatarUrl::clean($candidate ?: $userAvatar);
+        $candidate = self::firstAvatar($agentAvatar) ?: self::firstAvatar($userAvatar);
+        $url = AvatarUrl::clean($candidate);
 
         return is_string($url) && Str::startsWith($url, ['http://', 'https://']) ? $url : null;
+    }
+
+    /** One raw avatar column value → its first URL string, or null. */
+    private static function firstAvatar(mixed $value): ?string
+    {
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed !== '' && ($trimmed[0] === '[' || $trimmed[0] === '"' || $trimmed[0] === '{')) {
+                $decoded = json_decode($trimmed, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $value = $decoded;
+                }
+            }
+        }
+        if (is_array($value)) {
+            // ["url"] or {"url": …}-style: first scalar wins.
+            $value = collect($value)->flatten()->first(fn ($v) => is_string($v) && trim($v) !== '');
+        }
+
+        return is_string($value) && trim($value) !== '' ? trim($value) : null;
     }
 
     /** Download + decode; null on any failure (then initials are drawn). */
