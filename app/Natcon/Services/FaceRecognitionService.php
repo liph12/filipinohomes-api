@@ -7,6 +7,7 @@ use App\Natcon\Models\NatconEvent;
 use Aws\Rekognition\Exception\RekognitionException;
 use Aws\Rekognition\RekognitionClient;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 /**
@@ -113,6 +114,67 @@ final class FaceRecognitionService
         ])->save();
 
         return count($faceIds);
+    }
+
+    /**
+     * Every face in a probe image, as bounding boxes (fractions of the frame:
+     * left, top, width, height), largest first. searchByImage() only ever
+     * matches the LARGEST face in the bytes it is given, so a group selfie
+     * has to be cut into one crop per face first — this is the cut list.
+     *
+     * Tiny faces (under ~0.4% of the frame) and low-confidence detections are
+     * dropped: a face in the background of someone's selfie is not a person
+     * they are searching for, and a crop that small matches nothing anyway.
+     * Failures (no collection, no face, service error) return [] so the
+     * caller falls back to the whole-image search and its own error copy.
+     *
+     * @return array<int, array{left: float, top: float, width: float, height: float}>
+     */
+    public function detectFaceBoxes(string $imageBytes, int $max = 5): array
+    {
+        try {
+            $result = $this->client->detectFaces([
+                'Image' => ['Bytes' => $imageBytes],
+                'Attributes' => ['DEFAULT'],
+            ]);
+        } catch (RekognitionException $e) {
+            // InvalidParameterException is "no face here" — the caller's
+            // whole-image search will produce the human-readable 422. Anything
+            // else (notably AccessDenied: the IAM user needs
+            // rekognition:DetectFaces on top of the Search/Index actions) is
+            // logged, because the symptom — group selfies quietly searching
+            // one face — looks like a UI bug otherwise.
+            if ($e->getAwsErrorCode() !== 'InvalidParameterException') {
+                Log::warning('Rekognition DetectFaces failed; probe searched as one face', [
+                    'code' => $e->getAwsErrorCode(),
+                    'message' => $e->getAwsErrorMessage(),
+                ]);
+            }
+
+            return [];
+        }
+
+        $boxes = [];
+        foreach ($result['FaceDetails'] ?? [] as $face) {
+            if ((float) ($face['Confidence'] ?? 0) < 90) {
+                continue;
+            }
+            $b = $face['BoundingBox'] ?? [];
+            $w = max(0.0, (float) ($b['Width'] ?? 0));
+            $h = max(0.0, (float) ($b['Height'] ?? 0));
+            if ($w * $h < 0.004) {
+                continue;
+            }
+            $boxes[] = [
+                'left' => max(0.0, (float) ($b['Left'] ?? 0)),
+                'top' => max(0.0, (float) ($b['Top'] ?? 0)),
+                'width' => $w,
+                'height' => $h,
+            ];
+        }
+        usort($boxes, fn ($a, $b) => ($b['width'] * $b['height']) <=> ($a['width'] * $a['height']));
+
+        return array_slice($boxes, 0, $max);
     }
 
     /**

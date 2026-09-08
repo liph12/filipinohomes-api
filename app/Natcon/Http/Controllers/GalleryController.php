@@ -142,11 +142,14 @@ class GalleryController extends Controller
     {
         $event = $this->resolveEvent($request);
 
-        // Hidden rows included — this is the editing surface. Deleted rows are
-        // not: they exist to keep the S3 object findable, not to be relisted.
+        // Hidden rows included for admins — this is the editing surface. Agents
+        // (the /agent/natcon/gallery reader) get live rows only, exactly what
+        // the public page shows. Deleted rows are never listed: they exist to
+        // keep the S3 object findable, not to be relisted.
         $rows = GalleryPhoto::with('album:id,parent_id,name,sort_order')
             ->forEvent($event)
             ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+            ->when(! $this->viewerIsAdmin($request), fn ($q) => $q->where('status', GalleryPhoto::STATUS_ACTIVE))
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -173,6 +176,8 @@ class GalleryController extends Controller
             ->forEvent($event)
             ->whereIn('id', array_keys($matches))
             ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+            // Agents: a hidden photo must not surface through a selfie either.
+            ->when(! $this->viewerIsAdmin($request), fn ($q) => $q->where('status', GalleryPhoto::STATUS_ACTIVE))
             ->get()
             ->keyBy('id');
 
@@ -316,18 +321,24 @@ class GalleryController extends Controller
         return $ids;
     }
 
+    /** Most probe faces per search, across every uploaded photo. */
+    private const MAX_PROBE_FACES = 5;
+
     /**
-     * Selfies in, photo-id => similarity out. One or several faces:
+     * Turn the request's selfies into one Rekognition result set per FACE and
+     * fold them by `mode`. Probes are compared only, never stored. Returns a
+     * ready 422 for a user-fixable problem.
      *
-     *   selfies[] (1-5 files) + mode:
-     *     all — photos where EVERY searched face appears together (default).
-     *     any — photos containing ANY of the faces.
+     * "Face" here is not "uploaded photo": Rekognition's search only ever
+     * looks at the LARGEST face in the bytes it is handed, so a photo of two
+     * people is first cut into one crop per detected face, and each crop is
+     * searched on its own. One group selfie therefore behaves exactly like
+     * two separate selfies — and the either-face / in-one-photo mode applies
+     * to it. A photo where detection finds one face (or nothing it trusts) is
+     * searched whole, as before, so a plain selfie costs one search call.
      *
-     * Rekognition matches one face per probe (the largest), so N faces cost N
-     * SearchFacesByImage calls; combineMatches folds them. Each probe is
-     * re-encoded server-side (1500px q85) before Rekognition — the Image.Bytes
-     * API caps at 5MB and a phone original is routinely bigger. Selfies are
-     * never stored. Returns a ready 422 for a user-fixable problem.
+     * The third element of the tuple is the number of FACES searched — the
+     * frontend shows the mode switch from two up.
      *
      * @return JsonResponse|array{0: array<int, array{similarity: float, face_area: float}>, 1: string, 2: int}
      */
@@ -338,7 +349,7 @@ class GalleryController extends Controller
         validator(
             ['selfies' => $files, 'mode' => $request->input('mode')],
             [
-                'selfies' => 'required|array|min:1|max:5',
+                'selfies' => 'required|array|min:1|max:'.self::MAX_PROBE_FACES,
                 'selfies.*' => 'required|image|mimes:jpeg,jpg,png,webp|max:15360',
                 'mode' => 'sometimes|nullable|in:all,any',
             ],
@@ -349,7 +360,7 @@ class GalleryController extends Controller
 
         $manager = new ImageManager(new Driver);
 
-        /** @var array<int, array<int, float>> $perFace one photoId=>similarity map per probe */
+        /** @var array<int, array<int, array{similarity: float, face_area: float}>> $perFace one photoId=>match map per probe FACE */
         $perFace = [];
         foreach (array_values($files) as $i => $file) {
             $label = $total > 1 ? 'photo '.($i + 1).' of '.$total : 'that photo';
@@ -359,22 +370,61 @@ class GalleryController extends Controller
                 return response()->json(['message' => ucfirst($label).' does not look like a usable photo.'], 422);
             }
 
-            $probe = (string) $manager->read($file->getRealPath())
-                ->scaleDown(width: 1500, height: 1500)
-                ->toJpeg(85);
+            $image = $manager->read($file->getRealPath())->scaleDown(width: 1500, height: 1500);
+            $probe = (string) $image->toJpeg(85);
 
-            try {
-                $perFace[] = $this->faces->searchByImage($event, $probe);
-            } catch (RuntimeException $e) {
-                return response()->json([
-                    'message' => $total > 1
-                        ? 'No face could be detected in '.$label.'. Please use a clear, well-lit photo of that person.'
-                        : $e->getMessage(),
-                ], 422);
+            // Room left under the cap for this photo's faces (always ≥ 1, so
+            // every uploaded photo contributes at least its largest face).
+            $room = max(1, self::MAX_PROBE_FACES - count($perFace));
+            $boxes = $room > 1 ? $this->faces->detectFaceBoxes($probe, $room) : [];
+
+            $crops = [];
+            if (count($boxes) >= 2) {
+                $w = $image->width();
+                $h = $image->height();
+                foreach ($boxes as $b) {
+                    // Pad the box by 60% each side: Rekognition wants the
+                    // whole head plus some context, not a tight face cut.
+                    $bw = $b['width'] * $w;
+                    $bh = $b['height'] * $h;
+                    $x0 = (int) max(0, floor($b['left'] * $w - $bw * 0.6));
+                    $y0 = (int) max(0, floor($b['top'] * $h - $bh * 0.6));
+                    $x1 = (int) min($w, ceil($b['left'] * $w + $bw * 1.6));
+                    $y1 = (int) min($h, ceil($b['top'] * $h + $bh * 1.6));
+                    if ($x1 - $x0 < 40 || $y1 - $y0 < 40) {
+                        continue;
+                    }
+                    $crops[] = (string) (clone $image)->crop($x1 - $x0, $y1 - $y0, $x0, $y0)->toJpeg(85);
+                }
+            }
+            if (count($crops) < 2) {
+                $crops = [$probe];
+            }
+
+            foreach ($crops as $crop) {
+                try {
+                    $perFace[] = $this->faces->searchByImage($event, $crop);
+                } catch (RuntimeException $e) {
+                    // A crop that Rekognition then cannot read is skipped, not
+                    // fatal — detection already vouched for the other faces.
+                    if (count($crops) > 1) {
+                        continue;
+                    }
+
+                    return response()->json([
+                        'message' => $total > 1
+                            ? 'No face could be detected in '.$label.'. Please use a clear, well-lit photo of that person.'
+                            : $e->getMessage(),
+                    ], 422);
+                }
             }
         }
 
-        return [$this->faces->combineMatches($perFace, $mode), $mode, $total];
+        if ($perFace === []) {
+            return response()->json(['message' => 'No face could be detected. Please use a clear, well-lit photo.'], 422);
+        }
+
+        return [$this->faces->combineMatches($perFace, $mode), $mode, count($perFace)];
     }
 
     public function storeGalleryPhoto(Request $request): JsonResponse
@@ -494,7 +544,9 @@ class GalleryController extends Controller
         // Alphabetical — albums always list A→Z, in the admin and on the
         // public page alike.
         $rows = GalleryAlbum::forEvent($event)
-            ->withCount(['photos' => fn ($q) => $q->where('status', '!=', GalleryPhoto::STATUS_DELETED)])
+            ->withCount(['photos' => fn ($q) => $this->viewerIsAdmin($request)
+                ? $q->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+                : $q->where('status', GalleryPhoto::STATUS_ACTIVE), ])
             ->orderBy('name')
             ->get();
 
@@ -1295,6 +1347,16 @@ class GalleryController extends Controller
      * mirrors LandingController::resolveEvent — explicit id, else the live
      * convention.
      */
+    /**
+     * The read routes (gallery list, albums, face search) are open to agents
+     * as well as admins/editors for the agent dashboard's gallery. Only an
+     * admin or editor is on the EDITING surface and may see hidden photos.
+     */
+    private function viewerIsAdmin(Request $request): bool
+    {
+        return in_array($request->user()?->role?->name, ['admin', 'editor'], true);
+    }
+
     private function resolveEvent(Request $request): ?NatconEvent
     {
         if ($this->isPublicScope($request)) {

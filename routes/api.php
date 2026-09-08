@@ -3,9 +3,9 @@
 use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\AdCampaignController;
 use App\Http\Controllers\AdController;
+use App\Http\Controllers\AdminReportController;
 use App\Http\Controllers\AdPlacementController;
 use App\Http\Controllers\AdPreviewController;
-use App\Http\Controllers\AdminReportController;
 use App\Http\Controllers\AdSectionController;
 use App\Http\Controllers\AgentController;
 use App\Http\Controllers\AgentReviewController;
@@ -22,8 +22,8 @@ use App\Http\Controllers\BoundaryController;
 use App\Http\Controllers\BuyerFormController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\ChatController;
-use App\Http\Controllers\CompanyEventController;
 use App\Http\Controllers\CityController;
+use App\Http\Controllers\CompanyEventController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DeviceTokenController;
 use App\Http\Controllers\EmailChangeController;
@@ -76,9 +76,9 @@ use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReaction
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
-use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
+use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
 use Illuminate\Support\Facades\Route;
 
@@ -508,6 +508,23 @@ Route::middleware('strip.tags')->group(function () {
             Route::delete('/buyer-forms/{id}', [BuyerFormController::class, 'destroy']);
             Route::post('/buyer-forms/{slug}/register', [BuyerFormController::class, 'register']);
 
+            // Convention gallery READS + face search — agents too: the FH
+            // agent dashboard (/agent/natcon/gallery) shows the same album
+            // browser and find-my-photos as the admin Gallery tab, minus
+            // every write. Hidden photos stay hidden for non-admins
+            // (GalleryController::viewerIsAdmin). Registered BEFORE the
+            // admin group's /gallery/{photo} routes so "albums" and
+            // "face-search" are never bound as a photo id.
+            Route::middleware(RoleMiddleware::class.':admin,editor,agent')->group(function () {
+                // Convention years, for the gallery's year switcher. Agents get
+                // the trimmed shape (AdminController::events).
+                Route::get('/admin/natcon/events', [NatconAdminController::class, 'events']);
+                Route::get('/admin/natcon/gallery', [NatconGalleryController::class, 'adminGallery']);
+                Route::post('/admin/natcon/gallery/face-search', [NatconGalleryController::class, 'faceSearch']);
+                Route::get('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'albums']);
+                Route::get('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'albumFrames']);
+            });
+
             // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.
             // GET /admin/inquiries          → paginated list with replies
             // GET /admin/inquiries/{id}     → single inquiry with thread
@@ -518,7 +535,6 @@ Route::middleware('strip.tags')->group(function () {
                 //    and returns; natcon:drain-outbox does the sending, paced by
                 //    the scheduler. Sending inline would 524 behind Cloudflare
                 //    partway through and the admin would click Send again.
-                Route::get('/admin/natcon/events', [NatconAdminController::class, 'events']);
                 // Start a new convention year (clones the previous year's questions).
                 Route::post('/admin/natcon/events', [NatconAdminController::class, 'storeEvent']);
                 Route::patch('/admin/natcon/events/{event}', [NatconAdminController::class, 'updateEvent']);
@@ -591,7 +607,6 @@ Route::middleware('strip.tags')->group(function () {
                     Route::patch('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'updateSponsor']);
                     Route::delete('/admin/natcon/sponsors/{sponsor}', [NatconLandingController::class, 'destroySponsor']);
 
-                    Route::get('/admin/natcon/gallery', [NatconGalleryController::class, 'adminGallery']);
                     // Photographer upload invites: mint/copy/rotate/revoke the
                     // tokenized links the portal above consumes. Registered
                     // BEFORE /gallery/{photo} so 'invites' is never bound as a
@@ -610,8 +625,6 @@ Route::middleware('strip.tags')->group(function () {
                     // Face search over the curated gallery (its own Rekognition
                     // collection — see NatconEvent::galleryCollectionId()).
                     // Also registered before /gallery/{photo}.
-                    Route::post('/admin/natcon/gallery/face-search', [NatconGalleryController::class, 'faceSearch']);
-                    Route::get('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'albums']);
                     Route::post('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'storeAlbum']);
                     Route::patch('/admin/natcon/gallery/albums/{album}', [NatconGalleryController::class, 'updateAlbum']);
                     Route::delete('/admin/natcon/gallery/albums/{album}', [NatconGalleryController::class, 'destroyAlbum']);
@@ -620,7 +633,6 @@ Route::middleware('strip.tags')->group(function () {
                     // family on its own rows.
                     Route::patch('/admin/natcon/gallery/frames/{frame}', [NatconGalleryController::class, 'updateAlbumFrame']);
                     Route::delete('/admin/natcon/gallery/frames/{frame}', [NatconGalleryController::class, 'destroyAlbumFrame']);
-                    Route::get('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'albumFrames']);
                     Route::post('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'storeAlbumFrame'])
                         ->middleware('throttle:30,1');
                     // Throttled: each hit is a real image encode plus two S3

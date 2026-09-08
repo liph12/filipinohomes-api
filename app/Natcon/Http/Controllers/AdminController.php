@@ -3,6 +3,7 @@
 namespace App\Natcon\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Natcon\Http\Resources\RecipientResource;
 use App\Natcon\Models\FormField;
 use App\Natcon\Models\FormSubmission;
@@ -10,7 +11,6 @@ use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Outbox;
 use App\Natcon\Models\PhotoSubmission;
 use App\Natcon\Models\Recipient;
-use OwenIt\Auditing\Models\Audit;
 use App\Natcon\Models\Suppression;
 use App\Natcon\Services\AwardeeService;
 use App\Natcon\Services\FormService;
@@ -24,7 +24,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use OwenIt\Auditing\Models\Audit;
 
 /**
  * Admin surface for the NATCON campaign.
@@ -70,18 +72,37 @@ class AdminController extends Controller
      * ⚠️ array_merge, not `+`. The union operator keeps the LEFT operand's keys,
      *    so `$e->toArray() + [...]` would quietly discard every override here.
      */
-    public function events(): JsonResponse
+    public function events(Request $request): JsonResponse
     {
-        $events = NatconEvent::orderByDesc('id')->get()->map(fn (NatconEvent $e) => array_merge(
-            $e->toArray(),
-            [
+        // Agents reach this for the gallery's convention-year switcher only.
+        // They get what the switcher needs — identity, dates, live flag — not
+        // the campaign settings (deadline, reminder offsets, sales breakpoint,
+        // invite URL) that are admin business.
+        $trimmed = ! in_array($request->user()?->role?->name, ['admin', 'editor'], true);
+
+        $events = NatconEvent::orderByDesc('id')->get()->map(fn (NatconEvent $e) => $trimmed
+            ? [
+                'id' => $e->id,
+                'slug' => $e->slug,
+                'year' => $e->year,
+                'name' => $e->name,
+                'short_name' => $e->short_name,
                 'starts_on' => $e->starts_on?->format('Y-m-d'),
-                'ends_on'   => $e->ends_on?->format('Y-m-d'),
-                // Form-ready wall clock. photo_deadline_at stays alongside it as
-                // the true instant, for anything that needs to compare moments.
-                'photo_deadline_local' => $e->deadlineLocal()?->format('Y-m-d\TH:i'),
-            ],
-        ));
+                'ends_on' => $e->ends_on?->format('Y-m-d'),
+                'venue' => $e->venue,
+                'timezone' => $e->timezone,
+                'is_active' => (bool) $e->is_active,
+            ]
+            : array_merge(
+                $e->toArray(),
+                [
+                    'starts_on' => $e->starts_on?->format('Y-m-d'),
+                    'ends_on' => $e->ends_on?->format('Y-m-d'),
+                    // Form-ready wall clock. photo_deadline_at stays alongside it as
+                    // the true instant, for anything that needs to compare moments.
+                    'photo_deadline_local' => $e->deadlineLocal()?->format('Y-m-d\TH:i'),
+                ],
+            ));
 
         return response()->json(['data' => $events]);
     }
@@ -101,50 +122,50 @@ class AdminController extends Controller
     public function storeEvent(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'year'               => 'required|integer|min:2000|max:2100|unique:natcon_events,year',
-            'name'               => 'required|string|max:255',
-            'short_name'         => 'nullable|string|max:64',
-            'starts_on'          => 'required|date',
-            'ends_on'            => 'required|date|after_or_equal:starts_on',
-            'venue'              => 'required|string|max:255',
-            'hashtag'            => 'nullable|string|max:64',
-            'timezone'           => 'nullable|string|max:64|timezone',
-            'photo_deadline_at'  => 'nullable|date',
-            'reminder_offsets'   => 'nullable|array|max:10',
+            'year' => 'required|integer|min:2000|max:2100|unique:natcon_events,year',
+            'name' => 'required|string|max:255',
+            'short_name' => 'nullable|string|max:64',
+            'starts_on' => 'required|date',
+            'ends_on' => 'required|date|after_or_equal:starts_on',
+            'venue' => 'required|string|max:255',
+            'hashtag' => 'nullable|string|max:64',
+            'timezone' => 'nullable|string|max:64|timezone',
+            'photo_deadline_at' => 'nullable|date',
+            'reminder_offsets' => 'nullable|array|max:10',
             'reminder_offsets.*' => 'integer|min:0|max:60',
-            'banner_base'        => 'nullable|string|max:255',
-            'email_banner_url'   => 'nullable|url|max:2048',
-            'thank_you_message'  => 'nullable|string|max:512',
-            'copy_fields_from'   => 'nullable|integer|exists:natcon_events,id',
+            'banner_base' => 'nullable|string|max:255',
+            'email_banner_url' => 'nullable|url|max:2048',
+            'thank_you_message' => 'nullable|string|max:512',
+            'copy_fields_from' => 'nullable|integer|exists:natcon_events,id',
         ]);
 
-        $year     = (int) $data['year'];
-        $tz       = $data['timezone'] ?? 'Asia/Manila';
+        $year = (int) $data['year'];
+        $tz = $data['timezone'] ?? 'Asia/Manila';
         $previous = NatconEvent::orderByDesc('year')->first();
 
-        $event = DB::transaction(function () use ($data, $year, $tz, $previous, $request) {
+        $event = DB::transaction(function () use ($data, $year, $tz, $previous) {
             $event = NatconEvent::create([
-                'slug'               => 'natcon-' . $year,
-                'year'               => $year,
-                'name'               => $data['name'],
-                'short_name'         => $data['short_name'] ?? ('NATCON ' . $year),
-                'starts_on'          => $data['starts_on'],
-                'ends_on'            => $data['ends_on'],
-                'venue'              => $data['venue'],
-                'hashtag'            => $data['hashtag'] ?? ('#LRNATCON' . $year),
-                'timezone'           => $tz,
+                'slug' => 'natcon-'.$year,
+                'year' => $year,
+                'name' => $data['name'],
+                'short_name' => $data['short_name'] ?? ('NATCON '.$year),
+                'starts_on' => $data['starts_on'],
+                'ends_on' => $data['ends_on'],
+                'venue' => $data['venue'],
+                'hashtag' => $data['hashtag'] ?? ('#LRNATCON'.$year),
+                'timezone' => $tz,
                 // Entered as wall-clock time in the event's own timezone, because
                 // a deadline like "the 24th" is a Manila date, not a UTC one.
-                'photo_deadline_at'  => isset($data['photo_deadline_at'])
+                'photo_deadline_at' => isset($data['photo_deadline_at'])
                     ? Carbon::parse($data['photo_deadline_at'], $tz)->utc()
                     : null,
                 'update_profile_url' => $previous?->update_profile_url
                     ?: 'https://filipinohomes.com/natcon/update-profile',
-                'reminder_offsets'   => $data['reminder_offsets'] ?? ($previous?->reminder_offsets ?? [4, 3, 2]),
-                'banner_base'        => $data['banner_base'] ?? "/images/natcon-{$year}/natcon{$year}",
-                'email_banner_url'   => $data['email_banner_url'] ?? null,
-                'thank_you_message'  => $data['thank_you_message'] ?? null,
-                'is_active'          => true,
+                'reminder_offsets' => $data['reminder_offsets'] ?? ($previous?->reminder_offsets ?? [4, 3, 2]),
+                'banner_base' => $data['banner_base'] ?? "/images/natcon-{$year}/natcon{$year}",
+                'email_banner_url' => $data['email_banner_url'] ?? null,
+                'thank_you_message' => $data['thank_you_message'] ?? null,
+                'is_active' => true,
             ]);
 
             $source = isset($data['copy_fields_from'])
@@ -169,7 +190,7 @@ class AdminController extends Controller
             'data' => $event->fresh(),
             'meta' => [
                 'copied_fields_from' => $previous?->year,
-                'note'               => "Upload this year's banner images to public{$event->banner_base} before sending invites.",
+                'note' => "Upload this year's banner images to public{$event->banner_base} before sending invites.",
             ],
         ], 201);
     }
@@ -177,27 +198,27 @@ class AdminController extends Controller
     public function updateEvent(Request $request, NatconEvent $event): JsonResponse
     {
         $data = $request->validate([
-            'name'               => 'sometimes|string|max:255',
-            'short_name'         => 'sometimes|nullable|string|max:64',
-            'starts_on'          => 'sometimes|date',
-            'ends_on'            => 'sometimes|date|after_or_equal:starts_on',
-            'venue'              => 'sometimes|string|max:255',
-            'hashtag'            => 'sometimes|nullable|string|max:64',
-            'timezone'           => 'sometimes|string|max:64|timezone',
+            'name' => 'sometimes|string|max:255',
+            'short_name' => 'sometimes|nullable|string|max:64',
+            'starts_on' => 'sometimes|date',
+            'ends_on' => 'sometimes|date|after_or_equal:starts_on',
+            'venue' => 'sometimes|string|max:255',
+            'hashtag' => 'sometimes|nullable|string|max:64',
+            'timezone' => 'sometimes|string|max:64|timezone',
             'update_profile_url' => 'sometimes|url|max:255',
-            'reminder_offsets'   => 'sometimes|array|max:10',
+            'reminder_offsets' => 'sometimes|array|max:10',
             'reminder_offsets.*' => 'integer|min:0|max:60',
-            'banner_base'        => 'sometimes|nullable|string|max:255',
-            'email_banner_url'   => 'sometimes|nullable|url|max:2048',
+            'banner_base' => 'sometimes|nullable|string|max:255',
+            'email_banner_url' => 'sometimes|nullable|url|max:2048',
             // Landing-page sponsor block display settings (per-tier tile sizes,
             // gaps, backgrounds). Shape is owned by the admin UI; null = defaults.
-            'sponsor_display'    => 'sometimes|nullable|array',
-            'thank_you_message'  => 'sometimes|nullable|string|max:512',
-            'is_active'          => 'sometimes|boolean',
-            'reactions_enabled'  => 'sometimes|boolean',
+            'sponsor_display' => 'sometimes|nullable|array',
+            'thank_you_message' => 'sometimes|nullable|string|max:512',
+            'is_active' => 'sometimes|boolean',
+            'reactions_enabled' => 'sometimes|boolean',
             // Accepted as a wall-clock time in the event's timezone, because
             // "the 24th" is a Manila date. Converted to UTC below.
-            'photo_deadline_at'  => 'sometimes|date',
+            'photo_deadline_at' => 'sometimes|date',
         ]);
 
         if (isset($data['photo_deadline_at'])) {
@@ -256,22 +277,22 @@ class AdminController extends Controller
         $byStatus = (clone $base)->selectRaw('status, COUNT(*) n')->groupBy('status')->pluck('n', 'status');
 
         return response()->json(['data' => [
-            'total'          => (clone $base)->count(),
-            'pending'        => (int) ($byStatus[Recipient::STATUS_PENDING] ?? 0),
-            'invited'        => (clone $base)->whereNotNull('invited_at')->count(),
-            'opened'         => (clone $base)->whereNotNull('first_opened_at')->count(),
-            'responded'      => (clone $base)->whereNotNull('responded_at')->count(),
-            'retained'       => (clone $base)->where('response', Recipient::RESPONSE_RETAIN)->count(),
-            'changed'        => (clone $base)->where('response', Recipient::RESPONSE_CHANGE)->count(),
+            'total' => (clone $base)->count(),
+            'pending' => (int) ($byStatus[Recipient::STATUS_PENDING] ?? 0),
+            'invited' => (clone $base)->whereNotNull('invited_at')->count(),
+            'opened' => (clone $base)->whereNotNull('first_opened_at')->count(),
+            'responded' => (clone $base)->whereNotNull('responded_at')->count(),
+            'retained' => (clone $base)->where('response', Recipient::RESPONSE_RETAIN)->count(),
+            'changed' => (clone $base)->where('response', Recipient::RESPONSE_CHANGE)->count(),
             'photo_uploaded' => (clone $base)->whereNotNull('photo_uploaded_at')->count(),
             'form_submitted' => (clone $base)->whereNotNull('form_submitted_at')->count(),
             // The "needs a human" bucket: LR has no record, or the lookup errored.
-            'no_lr_record'   => (clone $base)->where('lr_lookup_status', Recipient::LR_NOT_FOUND)->count(),
-            'lr_pending'     => (clone $base)->whereIn('lr_lookup_status', [Recipient::LR_PENDING, Recipient::LR_ERROR])->count(),
-            'no_photo'       => (clone $base)->whereNull('lr_primary_photo')
-                                    ->where(fn ($q) => $q->whereNull('lr_photos')->orWhere('lr_photos', '[]'))
-                                    ->whereNull('current_photo_url')->count(),
-            'excluded'       => (int) ($byStatus[Recipient::STATUS_EXCLUDED] ?? 0),
+            'no_lr_record' => (clone $base)->where('lr_lookup_status', Recipient::LR_NOT_FOUND)->count(),
+            'lr_pending' => (clone $base)->whereIn('lr_lookup_status', [Recipient::LR_PENDING, Recipient::LR_ERROR])->count(),
+            'no_photo' => (clone $base)->whereNull('lr_primary_photo')
+                ->where(fn ($q) => $q->whereNull('lr_photos')->orWhere('lr_photos', '[]'))
+                ->whereNull('current_photo_url')->count(),
+            'excluded' => (int) ($byStatus[Recipient::STATUS_EXCLUDED] ?? 0),
             // Started but not finished. The bucket that only exists because the
             // event asks for several photos — these people are NOT responded and
             // are still being reminded, and without a number for them "2 of 6
@@ -281,16 +302,16 @@ class AdminController extends Controller
             // missing a required answer, and counting them here would report a
             // photo problem the events team does not have.
             'photos_partial' => (clone $base)->whereNull('responded_at')
-                                    ->whereHas('activePhotos')
-                                    ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
-                                    ->count(),
+                ->whereHas('activePhotos')
+                ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
+                ->count(),
             'details_pending' => (int) ($byStatus[Recipient::STATUS_DETAILS_PENDING] ?? 0),
             // The mirror bucket — form in, photo missing. Same predicate as the
             // form_only filter, so the chip and the rows it opens agree.
-            'form_only'       => (clone $base)->whereNotNull('form_submitted_at')
-                                    ->whereNull('responded_at')
-                                    ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
-                                    ->count(),
+            'form_only' => (clone $base)->whereNotNull('form_submitted_at')
+                ->whereNull('responded_at')
+                ->where('status', '!=', Recipient::STATUS_DETAILS_PENDING)
+                ->count(),
 
             // The chasing list: asked, nothing back. Not derivable from the other
             // counts, because "invited" here means "has an invited_at" and
@@ -332,22 +353,22 @@ class AdminController extends Controller
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
             // Deliberately $unscoped: this IS the wave selector, and scoping it to
             // the chosen wave would leave every other band reading zero.
-            'sales_tiers'    => $this->salesTiers($request, $event, clone $unscoped),
+            'sales_tiers' => $this->salesTiers($request, $event, clone $unscoped),
             'queued_to_send' => Outbox::where('natcon_event_id', $event->id)
-                                    ->where('status', Outbox::STATUS_QUEUED)->count(),
-            'deadline_at'    => $event->deadlineLocal()?->toIso8601String(),
+                ->where('status', Outbox::STATUS_QUEUED)->count(),
+            'deadline_at' => $event->deadlineLocal()?->toIso8601String(),
             'days_remaining' => max(0, (int) ($event->daysUntilDeadline() ?? 0)),
-            'send_mode'      => (string) config('natcon.send_mode'),
+            'send_mode' => (string) config('natcon.send_mode'),
             // Which convention these numbers belong to. The admin spans years
             // now, so the heading and the export filename read this rather than
             // hardcoding one.
-            'event'          => [
-                'id'         => $event->id,
-                'year'       => $event->year,
-                'slug'       => $event->slug,
-                'name'       => $event->name,
+            'event' => [
+                'id' => $event->id,
+                'year' => $event->year,
+                'slug' => $event->slug,
+                'name' => $event->name,
                 'short_name' => $event->displayShortName(),
-                'is_active'  => (bool) $event->is_active,
+                'is_active' => (bool) $event->is_active,
             ],
         ]]);
     }
@@ -371,8 +392,8 @@ class AdminController extends Controller
             : $event->salesBreakpoint();
 
         $band = fn ($apply) => [
-            'total'   => (int) $apply(clone $base)->count(),
-            'sent'    => (int) $apply(clone $base)->whereNotNull('invited_at')->count(),
+            'total' => (int) $apply(clone $base)->count(),
+            'sent' => (int) $apply(clone $base)->whereNotNull('invited_at')->count(),
             'pending' => (int) $apply(clone $base)->where('status', Recipient::STATUS_PENDING)->count(),
         ];
 
@@ -380,11 +401,11 @@ class AdminController extends Controller
             'breakpoint' => $breakpoint,
             // The real minimum, so the lower band can be LABELLED with it rather
             // than hardcoding LR's current floor into the UI.
-            'floor'      => (float) ((clone $base)->min('total_sales') ?? 0),
-            'all'        => $band(fn ($q) => $q),
-            'high'       => $band(fn ($q) => $q->where('total_sales', '>=', $breakpoint)),
-            'low'        => $band(fn ($q) => $q->whereNotNull('total_sales')->where('total_sales', '<', $breakpoint)),
-            'none'       => $band(fn ($q) => $q->whereNull('total_sales')),
+            'floor' => (float) ((clone $base)->min('total_sales') ?? 0),
+            'all' => $band(fn ($q) => $q),
+            'high' => $band(fn ($q) => $q->where('total_sales', '>=', $breakpoint)),
+            'low' => $band(fn ($q) => $q->whereNotNull('total_sales')->where('total_sales', '<', $breakpoint)),
+            'none' => $band(fn ($q) => $q->whereNull('total_sales')),
         ];
     }
 
@@ -429,19 +450,19 @@ class AdminController extends Controller
          *             is there for a shape the data does not currently take.
          */
         $sortable = [
-            'awardee'      => "COALESCE(NULLIF(display_name, ''), NULLIF(CONCAT_WS(' ', first_name, last_name), ''), email)",
-            'team'         => 'team',
-            'state'        => 'state',
-            'sales'        => 'total_sales',
-            'status'       => 'status',
-            'opens'        => 'open_count',
-            'photos'       => "CASE WHEN JSON_LENGTH(lr_photos) > 0 THEN JSON_LENGTH(lr_photos)
+            'awardee' => "COALESCE(NULLIF(display_name, ''), NULLIF(CONCAT_WS(' ', first_name, last_name), ''), email)",
+            'team' => 'team',
+            'state' => 'state',
+            'sales' => 'total_sales',
+            'status' => 'status',
+            'opens' => 'open_count',
+            'photos' => "CASE WHEN JSON_LENGTH(lr_photos) > 0 THEN JSON_LENGTH(lr_photos)
                                      WHEN lr_primary_photo IS NOT NULL AND lr_primary_photo <> '' THEN 1
                                      ELSE 0 END",
-            'created_at'   => 'created_at',
-            'email'        => 'email',
+            'created_at' => 'created_at',
+            'email' => 'email',
             'responded_at' => 'responded_at',
-            'invited_at'   => 'invited_at',
+            'invited_at' => 'invited_at',
         ];
 
         $dir = $request->input('dir') === 'asc' ? 'asc' : 'desc';
@@ -478,7 +499,7 @@ class AdminController extends Controller
                           FROM natcon_form_submissions fs
                          WHERE fs.natcon_recipient_id = natcon_recipients.id
                          LIMIT 1)';
-            $path = ['$."' . $answerField->key . '"[0]'];
+            $path = ['$."'.$answerField->key.'"[0]'];
 
             $choices = array_values(array_filter(array_map(
                 fn ($c) => is_array($c) && isset($c['value']) ? (string) $c['value'] : null,
@@ -505,8 +526,8 @@ class AdminController extends Controller
             // empty rows getting in the way of the answer.
             $expr = $sortable[$key];
             $query->orderByRaw("CASE WHEN {$expr} IS NULL OR {$expr} = '' THEN 1 ELSE 0 END")
-                  ->orderByRaw("{$expr} {$dir}")
-                  ->orderBy('id', 'desc');
+                ->orderByRaw("{$expr} {$dir}")
+                ->orderBy('id', 'desc');
         } else {
             $query->orderBy('id', $dir);
         }
@@ -517,11 +538,11 @@ class AdminController extends Controller
             'data' => RecipientResource::collection($paginator->items()),
             'meta' => [
                 'current_page' => $paginator->currentPage(),
-                'last_page'    => $paginator->lastPage(),
-                'per_page'     => $paginator->perPage(),
-                'total'        => $paginator->total(),
-                'from'         => $paginator->firstItem(),
-                'to'           => $paginator->lastItem(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'from' => $paginator->firstItem(),
+                'to' => $paginator->lastItem(),
             ],
         ]);
     }
@@ -538,13 +559,13 @@ class AdminController extends Controller
     {
         $data = $request->validate([
             'event_id' => 'nullable|integer|exists:natcon_events,id',
-            'emails'   => 'required_without:text|array|max:2000',
+            'emails' => 'required_without:text|array|max:2000',
             'emails.*' => 'string|max:255',
-            'text'     => 'required_without:emails|string|max:200000',
-            'dry_run'  => 'boolean',
+            'text' => 'required_without:emails|string|max:200000',
+            'dry_run' => 'boolean',
         ]);
 
-        $event  = $this->resolveEvent($request);
+        $event = $this->resolveEvent($request);
         $source = isset($data['text'])
             ? ManualListSource::fromText($data['text'])
             : new ManualListSource($data['emails'], 'manual');
@@ -579,14 +600,14 @@ class AdminController extends Controller
     {
         $data = $request->validate([
             'event_id' => 'nullable|integer|exists:natcon_events,id',
-            'dry_run'  => 'boolean',
+            'dry_run' => 'boolean',
         ]);
 
-        $event  = $this->resolveEvent($request);
+        $event = $this->resolveEvent($request);
         $dryRun = (bool) ($data['dry_run'] ?? false);
 
         try {
-            $source = new LrQualifiersSource();
+            $source = new LrQualifiersSource;
         } catch (\RuntimeException $e) {
             // Their outage is not our 500. The message is written to be shown to
             // an admin as-is.
@@ -605,19 +626,19 @@ class AdminController extends Controller
             // One audit row per sync, in the feed an admin already reads. The
             // import itself writes ~285 rows; this is the record of who asked.
             Audit::create([
-                'event'          => 'natcon',
+                'event' => 'natcon',
                 'auditable_type' => NatconEvent::class,
-                'auditable_id'   => $event->id,
-                'user_type'      => $request->user() ? get_class($request->user()) : null,
-                'user_id'        => $request->user()?->id,
-                'new_values'     => [
-                    'source'     => 'admin_sync_qualifiers',
-                    'fetched'    => $source->count(),
-                    'created'    => $result['created'],
-                    'updated'    => $result['updated'],
-                    'skipped'    => $result['skipped'],
+                'auditable_id' => $event->id,
+                'user_type' => $request->user() ? get_class($request->user()) : null,
+                'user_id' => $request->user()?->id,
+                'new_values' => [
+                    'source' => 'admin_sync_qualifiers',
+                    'fetched' => $source->count(),
+                    'created' => $result['created'],
+                    'updated' => $result['updated'],
+                    'skipped' => $result['skipped'],
                     'suppressed' => $result['suppressed'],
-                    'invalid'    => count($result['invalid']),
+                    'invalid' => count($result['invalid']),
                 ],
             ]);
         }
@@ -627,7 +648,7 @@ class AdminController extends Controller
             'meta' => [
                 'dry_run' => $dryRun,
                 // Photos are the one thing this list cannot supply.
-                'note'    => 'Names and teams are set immediately. Photos arrive as natcon:hydrate-awardees works through the list.',
+                'note' => 'Names and teams are set immediately. Photos arrive as natcon:hydrate-awardees works through the list.',
             ],
         ]);
     }
@@ -635,7 +656,7 @@ class AdminController extends Controller
     public function updateRecipient(Request $request, Recipient $recipient): JsonResponse
     {
         $data = $request->validate([
-            'notes'  => 'nullable|string|max:1000',
+            'notes' => 'nullable|string|max:1000',
             'status' => 'nullable|in:pending,invited,excluded',
         ]);
 
@@ -703,12 +724,12 @@ class AdminController extends Controller
 
         // Audited so there's a record of who generated a working link to somebody
         // else's record.
-        $recipient->auditSource      = 'admin_issue_link';
+        $recipient->auditSource = 'admin_issue_link';
         $recipient->auditDescription = 'Issued a new NATCON invite link';
         $recipient->save();
 
         return response()->json(['data' => [
-            'url'        => $this->invites->buildLink($recipient, $raw),
+            'url' => $this->invites->buildLink($recipient, $raw),
             'expires_at' => $recipient->token_expires_at?->toIso8601String(),
         ]]);
     }
@@ -743,17 +764,17 @@ class AdminController extends Controller
             Outbox::where('natcon_recipient_id', $recipient->id)->delete();
 
             $fields = [
-                'status'             => Recipient::STATUS_PENDING,
-                'invited_at'         => null,
-                'last_reminded_at'   => null,
-                'reminders_sent'     => 0,
-                'first_opened_at'    => null,
-                'open_count'         => 0,
-                'response'           => null,
-                'responded_at'       => null,
+                'status' => Recipient::STATUS_PENDING,
+                'invited_at' => null,
+                'last_reminded_at' => null,
+                'reminders_sent' => 0,
+                'first_opened_at' => null,
+                'open_count' => 0,
+                'response' => null,
+                'responded_at' => null,
                 'retained_photo_url' => null,
-                'send_failures'      => 0,
-                'last_error'         => null,
+                'send_failures' => 0,
+                'last_error' => null,
             ];
 
             if ($clear) {
@@ -774,7 +795,7 @@ class AdminController extends Controller
             // The token is deliberately NOT rotated. Re-sending mints the same
             // derived link, so leaving it alone means a tester can re-open the
             // email they already have instead of waiting for the new one.
-            $recipient->auditSource      = 'admin_reset_recipient';
+            $recipient->auditSource = 'admin_reset_recipient';
             $recipient->auditDescription = $clear
                 ? 'Reset NATCON recipient, including photo and form submissions'
                 : 'Reset NATCON recipient send history and response';
@@ -785,7 +806,7 @@ class AdminController extends Controller
         return response()->json([
             // ::detailed, matching showRecipient — the drawer that calls this
             // renders the full record and would lose half its fields otherwise.
-            'data'    => RecipientResource::detailed($recipient->fresh()->load('event')),
+            'data' => RecipientResource::detailed($recipient->fresh()->load('event')),
             'message' => $clear
                 ? 'Reset. Send history, response, photo and answers cleared.'
                 : 'Reset. Send history and response cleared; photo and answers kept.',
@@ -800,12 +821,12 @@ class AdminController extends Controller
      */
     public function preflight(Request $request): JsonResponse
     {
-        $event  = $this->resolveEvent($request);
-        $kind   = $request->input('kind', Outbox::KIND_INVITE);
+        $event = $this->resolveEvent($request);
+        $kind = $request->input('kind', Outbox::KIND_INVITE);
         $target = $this->targetQuery($request, $event, $kind);
 
         $recipients = (clone $target)->get();
-        $today      = Carbon::now($event->timezone ?: 'Asia/Manila')->toDateString();
+        $today = Carbon::now($event->timezone ?: 'Asia/Manila')->toDateString();
 
         $alreadyClaimed = Outbox::where('natcon_event_id', $event->id)
             ->where('kind', $kind)
@@ -819,8 +840,8 @@ class AdminController extends Controller
 
         foreach ($recipients as $r) {
             $reason = match (true) {
-                isset($suppressed[$r->email])       => 'Suppressed (bounce/complaint/unsubscribe)',
-                $alreadyClaimed->has($r->id)        => 'Already queued or sent today',
+                isset($suppressed[$r->email]) => 'Suppressed (bounce/complaint/unsubscribe)',
+                $alreadyClaimed->has($r->id) => 'Already queued or sent today',
                 $r->status === Recipient::STATUS_EXCLUDED => 'Excluded',
                 $kind === Outbox::KIND_REMINDER && $r->responded_at !== null => 'Already responded',
                 default => null,
@@ -836,17 +857,17 @@ class AdminController extends Controller
         $noPhoto = collect($willSend)->filter(fn ($r) => count($r->displayPhotos()) === 0);
 
         return response()->json(['data' => [
-            'kind'          => $kind,
-            'will_send'     => count($willSend),
-            'skipped'       => $skip,
-            'no_photo'      => $noPhoto->count(),
-            'no_lr_record'  => collect($willSend)->where('lr_lookup_status', Recipient::LR_NOT_FOUND)->count(),
+            'kind' => $kind,
+            'will_send' => count($willSend),
+            'skipped' => $skip,
+            'no_photo' => $noPhoto->count(),
+            'no_lr_record' => collect($willSend)->where('lr_lookup_status', Recipient::LR_NOT_FOUND)->count(),
             'lr_unresolved' => collect($willSend)->whereIn('lr_lookup_status', [Recipient::LR_PENDING, Recipient::LR_ERROR])->count(),
-            'send_mode'     => (string) config('natcon.send_mode'),
-            'sample'        => collect($willSend)->take(10)->map(fn ($r) => [
-                'email'     => $r->email,
-                'name'      => $r->displayName(),
-                'photos'    => count($r->displayPhotos()),
+            'send_mode' => (string) config('natcon.send_mode'),
+            'sample' => collect($willSend)->take(10)->map(fn ($r) => [
+                'email' => $r->email,
+                'name' => $r->displayName(),
+                'photos' => count($r->displayPhotos()),
                 'lr_status' => $r->lr_lookup_status,
             ])->values(),
         ]]);
@@ -863,25 +884,25 @@ class AdminController extends Controller
     public function sendInvites(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'event_id'      => 'nullable|integer|exists:natcon_events,id',
-            'kind'          => 'nullable|in:invite,reminder',
-            'batch_id'      => 'nullable|uuid',
+            'event_id' => 'nullable|integer|exists:natcon_events,id',
+            'kind' => 'nullable|in:invite,reminder',
+            'batch_id' => 'nullable|uuid',
             'recipient_ids' => 'nullable|array|max:2000',
             'recipient_ids.*' => 'integer',
-            'statuses'      => 'nullable|array',
-            'statuses.*'    => 'string|max:24',
+            'statuses' => 'nullable|array',
+            'statuses.*' => 'string|max:24',
             // These narrow who actually receives email (targetQuery), so they
             // are validated rather than trusted: an unvalidated parameter that
             // shrinks a wave is how half a wave silently goes unsent.
-            'state'         => 'nullable|string|max:191',
-            'no_state'      => 'nullable|boolean',
-            'min_sales'     => 'nullable|numeric',
-            'max_sales'     => 'nullable|numeric',
-            'no_sales'      => 'nullable|boolean',
+            'state' => 'nullable|string|max:191',
+            'no_state' => 'nullable|boolean',
+            'min_sales' => 'nullable|numeric',
+            'max_sales' => 'nullable|numeric',
+            'no_sales' => 'nullable|boolean',
         ]);
 
-        $event   = $this->resolveEvent($request);
-        $kind    = $data['kind'] ?? Outbox::KIND_INVITE;
+        $event = $this->resolveEvent($request);
+        $kind = $data['kind'] ?? Outbox::KIND_INVITE;
         $batchId = $data['batch_id'] ?? (string) Str::uuid();
 
         // Idempotency: replaying the same batch_id must not queue a second time.
@@ -889,15 +910,15 @@ class AdminController extends Controller
         // is why that table is never pruned.
         if (Outbox::where('batch_id', $batchId)->exists()) {
             return response()->json([
-                'data'   => ['batch_id' => $batchId] + Outbox::batchProgress($batchId),
+                'data' => ['batch_id' => $batchId] + Outbox::batchProgress($batchId),
                 'replay' => true,
             ]);
         }
 
-        $today      = Carbon::now($event->timezone ?: 'Asia/Manila');
+        $today = Carbon::now($event->timezone ?: 'Asia/Manila');
         $recipients = $this->targetQuery($request, $event, $kind)->get();
         $suppressed = Suppression::lookup($recipients->pluck('email')->all());
-        $userId     = $request->user()?->id;
+        $userId = $request->user()?->id;
 
         $queued = $skipped = 0;
 
@@ -909,6 +930,7 @@ class AdminController extends Controller
                     || $recipient->status === Recipient::STATUS_EXCLUDED
                     || ($kind === Outbox::KIND_REMINDER && $recipient->responded_at)) {
                     $skipped++;
+
                     continue;
                 }
 
@@ -916,6 +938,7 @@ class AdminController extends Controller
                 // exists — the DB-level no-double-send guarantee.
                 if (! $this->invites->claimSend($recipient, $kind, $today, $batchId, null, $userId)) {
                     $skipped++;
+
                     continue;
                 }
 
@@ -939,14 +962,14 @@ class AdminController extends Controller
 
         return response()->json([
             'data' => [
-                'batch_id'  => $batchId,
-                'total'     => $recipients->count(),
-                'queued'    => $queued,
-                'skipped'   => $skipped,
+                'batch_id' => $batchId,
+                'total' => $recipients->count(),
+                'queued' => $queued,
+                'skipped' => $skipped,
                 'send_mode' => (string) config('natcon.send_mode'),
-                'note'      => config('natcon.send_mode') === 'off'
+                'note' => config('natcon.send_mode') === 'off'
                     ? 'NATCON_SEND_MODE is "off" — messages are queued but will not be sent until it is changed.'
-                    : 'Queued. The scheduler drains roughly ' . config('natcon.drain_limit', 40) . ' per minute.',
+                    : 'Queued. The scheduler drains roughly '.config('natcon.drain_limit', 40).' per minute.',
             ],
         ], 202);
     }
@@ -960,7 +983,7 @@ class AdminController extends Controller
 
         return response()->json(['data' => [
             'batch_id' => $batchId,
-            'kind'     => $first->kind,
+            'kind' => $first->kind,
             'queued_at' => $first->queued_at?->toIso8601String(),
         ] + Outbox::batchProgress($batchId)]);
     }
@@ -979,38 +1002,38 @@ class AdminController extends Controller
             $user = $request->user();
 
             Audit::create([
-                'user_id'        => $userId,
-                'user_type'      => $user ? \App\Models\User::class : null,
-                'user_role'      => $user?->role?->name,
-                'user_name'      => $user?->name,
-                'event'          => 'natcon_send_queued',
-                'category'       => 'natcon',
-                'source'         => 'admin_send_invites',
+                'user_id' => $userId,
+                'user_type' => $user ? User::class : null,
+                'user_role' => $user?->role?->name,
+                'user_name' => $user?->name,
+                'event' => 'natcon_send_queued',
+                'category' => 'natcon',
+                'source' => 'admin_send_invites',
                 'auditable_type' => NatconEvent::class,
-                'auditable_id'   => $event->id,
-                'subject_label'  => $event->name,
-                'description'    => "Queued {$queued} {$kind}(s) for {$event->short_name}",
-                'old_values'     => null,
-                'new_values'     => [
+                'auditable_id' => $event->id,
+                'subject_label' => $event->name,
+                'description' => "Queued {$queued} {$kind}(s) for {$event->short_name}",
+                'old_values' => null,
+                'new_values' => [
                     'batch_id' => $batchId,
-                    'kind'     => $kind,
+                    'kind' => $kind,
                     // Everything that narrowed the target, not just statuses:
                     // "who did that send actually go to" has to be answerable
                     // from this row alone months later.
-                    'filters'  => $request->only([
+                    'filters' => $request->only([
                         'statuses', 'recipient_ids', 'kind',
                         'state', 'no_state', 'min_sales', 'max_sales', 'no_sales',
                     ]),
-                    'total'    => $total,
-                    'queued'   => $queued,
-                    'skipped'  => $skipped,
+                    'total' => $total,
+                    'queued' => $queued,
+                    'skipped' => $skipped,
                 ],
             ]);
         } catch (\Throwable $e) {
             // Bookkeeping must never fail the send that already happened.
-            \Illuminate\Support\Facades\Log::warning('NATCON send audit failed', [
+            Log::warning('NATCON send audit failed', [
                 'batch_id' => $batchId,
-                'error'    => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
         }
     }
@@ -1051,7 +1074,7 @@ class AdminController extends Controller
         //    silently dropped its column from the export while the answers were
         //    still sitting in the data — the export looked complete and wasn't.
         $columns = $this->forms->fields($event, activeOnly: false)
-            ->reject(fn ($f) => $f->type === \App\Natcon\Models\FormField::TYPE_SECTION)
+            ->reject(fn ($f) => $f->type === FormField::TYPE_SECTION)
             ->map(fn ($f) => ['key' => $f->key, 'label' => $f->label, 'is_active' => (bool) $f->is_active])
             ->values();
 
@@ -1067,7 +1090,7 @@ class AdminController extends Controller
         return response()->json([
             'data' => $rows->map(function (Recipient $r) use ($answersByRecipient, $tz) {
                 $snapshot = json_decode((string) ($answersByRecipient[$r->id] ?? '[]'), true) ?: [];
-                $answers  = [];
+                $answers = [];
                 foreach ($snapshot as $a) {
                     if (isset($a['key'])) {
                         $answers[$a['key']] = $a['display_value'] ?? $a['value'] ?? null;
@@ -1081,33 +1104,33 @@ class AdminController extends Controller
                 $photoUrls = $r->activePhotos->pluck('photo_url')->filter()->values()->all();
 
                 return [
-                    'id'                 => $r->id,
-                    'email'              => $r->email,
-                    'first_name'         => $r->first_name,
-                    'last_name'          => $r->last_name,
-                    'full_name'          => $r->displayName(),
-                    'team'               => $r->team,
-                    'state'              => $r->state,
+                    'id' => $r->id,
+                    'email' => $r->email,
+                    'first_name' => $r->first_name,
+                    'last_name' => $r->last_name,
+                    'full_name' => $r->displayName(),
+                    'team' => $r->team,
+                    'state' => $r->state,
                     // (float), not the raw attribute: total_sales is
                     // decimal:2, which Eloquent serialises as the STRING
                     // "61000000.00" — same cast RecipientResource makes.
-                    'total_sales'        => $r->total_sales !== null ? (float) $r->total_sales : null,
-                    'reg_id'             => $r->reg_id,
-                    'phone'              => $r->phone,
-                    'seat_number'        => $r->seat_number,
-                    'final_photo_url'    => $r->finalPhotoUrl(),
-                    'photo_source'       => $r->finalPhotoSource(),
-                    'photo_urls'         => $photoUrls,
-                    'photo_count'        => count($photoUrls),
+                    'total_sales' => $r->total_sales !== null ? (float) $r->total_sales : null,
+                    'reg_id' => $r->reg_id,
+                    'phone' => $r->phone,
+                    'seat_number' => $r->seat_number,
+                    'final_photo_url' => $r->finalPhotoUrl(),
+                    'photo_source' => $r->finalPhotoSource(),
+                    'photo_urls' => $photoUrls,
+                    'photo_count' => count($photoUrls),
                     'uploaded_photo_url' => $r->current_photo_url,
                     'retained_photo_url' => $r->retained_photo_url,
-                    'lr_photo_count'     => count($r->displayPhotos()),
-                    'status'             => $r->status,
+                    'lr_photo_count' => count($r->displayPhotos()),
+                    'status' => $r->status,
                     // When they finished — the only field that separates "sent
                     // us everything" from "still owes us a shirt size", and the
                     // CSV had no way to say which.
-                    'responded_at'       => $r->responded_at?->copy()->setTimezone($tz)->toIso8601String(),
-                    'answers'            => $answers,
+                    'responded_at' => $r->responded_at?->copy()->setTimezone($tz)->toIso8601String(),
+                    'answers' => $answers,
                 ];
             })->values(),
             'meta' => [
@@ -1115,8 +1138,8 @@ class AdminController extends Controller
                 // added question appears in the CSV with no export-code change —
                 // and a hidden one keeps its column instead of vanishing.
                 'form_fields' => $columns,
-                'total'       => $rows->count(),
-                'event'       => ['id' => $event->id, 'year' => $event->year, 'name' => $event->name],
+                'total' => $rows->count(),
+                'event' => ['id' => $event->id, 'year' => $event->year, 'name' => $event->name],
             ],
         ]);
     }
@@ -1134,7 +1157,7 @@ class AdminController extends Controller
     {
         $data = $request->validate([
             'review_status' => 'required|in:pending,approved,rejected',
-            'review_note'   => 'nullable|string|max:512',
+            'review_note' => 'nullable|string|max:512',
         ]);
 
         $recipient = $submission->recipient;
@@ -1146,8 +1169,8 @@ class AdminController extends Controller
                     ->where('review_status', PhotoSubmission::REVIEW_APPROVED)
                     ->update([
                         'review_status' => PhotoSubmission::REVIEW_PENDING,
-                        'reviewed_by'   => $request->user()?->id,
-                        'reviewed_at'   => Carbon::now(),
+                        'reviewed_by' => $request->user()?->id,
+                        'reviewed_at' => Carbon::now(),
                     ]);
             }
 
@@ -1191,21 +1214,21 @@ class AdminController extends Controller
         $data = $request->validate([
             'requires_new_photo' => 'required|boolean',
             // Shown to the awardee, so it has to be a reason and not a code.
-            'note'               => 'nullable|string|max:255',
+            'note' => 'nullable|string|max:255',
         ]);
 
         $flagged = (bool) $data['requires_new_photo'];
 
-        $recipient->auditSource      = 'admin_photo_policy';
+        $recipient->auditSource = 'admin_photo_policy';
         $recipient->auditDescription = $flagged
             ? 'Required a new NATCON photo (existing photo ruled unusable)'
             : 'Cleared the require-new-photo flag';
 
         $recipient->forceFill([
-            'requires_new_photo'      => $flagged,
+            'requires_new_photo' => $flagged,
             'requires_new_photo_note' => $flagged ? ($data['note'] ?: null) : null,
-            'requires_new_photo_at'   => $flagged ? Carbon::now() : null,
-            'requires_new_photo_by'   => $flagged ? $request->user()?->id : null,
+            'requires_new_photo_at' => $flagged ? Carbon::now() : null,
+            'requires_new_photo_by' => $flagged ? $request->user()?->id : null,
         ])->save();
 
         /**
@@ -1220,7 +1243,7 @@ class AdminController extends Controller
         app(PhotoService::class)->syncResponseState($recipient);
 
         return response()->json([
-            'data'    => RecipientResource::detailed($recipient->fresh()->load('event')),
+            'data' => RecipientResource::detailed($recipient->fresh()->load('event')),
             'message' => $flagged
                 ? 'This awardee must now send a new photo. Keeping the old one is blocked, and they are back in the reminder chase until a new upload arrives.'
                 : 'Cleared. This awardee can keep their existing photo again.',
@@ -1237,7 +1260,7 @@ class AdminController extends Controller
     public function suppress(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'email'  => 'required|email|max:191',
+            'email' => 'required|email|max:191',
             'reason' => 'required|in:bounce,complaint,unsubscribe,manual,invalid_domain',
             'detail' => 'nullable|string|max:512',
         ]);
@@ -1355,7 +1378,7 @@ class AdminController extends Controller
             foreach ($terms as $term) {
                 // % and _ escaped: a search for "50%" is a search for the
                 // characters, not a wildcard that matches every row.
-                $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $term) . '%';
+                $like = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $term).'%';
 
                 $query->where(function ($q) use ($columns, $like) {
                     foreach ($columns as $i => $column) {
