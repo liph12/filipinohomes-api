@@ -21,7 +21,8 @@ class SendStaffBirthdays extends Command
 {
     protected $signature = 'reports:send-birthdays
         {email? : Send only to this address (test mode)}
-        {--date= : Y-m-d to treat as "today" (default: today in Asia/Manila) — for tests/backfills}';
+        {--date= : Y-m-d to treat as "today" (default: today in Asia/Manila) — for tests/backfills}
+        {--fresh : Re-render today\'s posters instead of reusing the ones already on S3 (after an avatar/name change)}';
 
     protected $description = "Email today's + upcoming staff birthdays to all admins (or one address).";
 
@@ -41,7 +42,7 @@ class SendStaffBirthdays extends Command
             if (count($posters) >= StaffBirthdaysMailer::MAX_POSTERS) {
                 break;
             }
-            $p = $poster->forAgent($b['poster_key'], $b['poster_name'], $b['avatar'], $today);
+            $p = $poster->forAgent($b['poster_key'], $b['poster_name'], $b['avatar'], $today, (bool) $this->option('fresh'));
             if ($p) {
                 $posters[] = $p + ['name' => $b['poster_name']];
             }
@@ -50,6 +51,11 @@ class SendStaffBirthdays extends Command
         $recipients = ($only = $this->argument('email'))
             ? collect([(object) ['email' => $only, 'name' => null]])
             : User::where('role_id', 1)->whereNotNull('email')->get(['id', 'name', 'email']);
+
+        // Test sends of the same day repeat the subject, so Gmail threads them
+        // and collapses the body behind its "…" trimmed-content button. Stamp
+        // the send time on test subjects so each one stands alone.
+        $subjectSuffix = $only ? ' · test '.now('Asia/Manila')->format('H:i') : null;
 
         $sent = 0;
         $failed = 0;
@@ -60,6 +66,7 @@ class SendStaffBirthdays extends Command
                     dateLabel: $label,
                     recipientName: trim((string) $user->name) ?: 'Boss',
                     posters: $posters,
+                    subjectSuffix: $subjectSuffix,
                 ));
                 $sent++;
             } catch (\Throwable $e) {

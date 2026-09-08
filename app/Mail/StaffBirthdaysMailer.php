@@ -32,6 +32,8 @@ class StaffBirthdaysMailer extends Mailable
         public string $recipientName = 'Boss',
         /** @var array<int, array{name:string, url:string, jpeg:?string, filename:string}> */
         public array $posters = [],
+        /** Appended to the subject (test sends only) so repeats don't thread in Gmail. */
+        public ?string $subjectSuffix = null,
     ) {
         $this->tagFhMailerHeader();
     }
@@ -44,7 +46,7 @@ class StaffBirthdaysMailer extends Mailable
             from: new Address(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'), env('MAIL_FROM_NAME', 'Filipinohomes')),
             subject: ($todayCount > 0
                 ? "🎂 {$todayCount} Birthday".($todayCount === 1 ? '' : 's').' Today — '
-                : 'Birthdays — ').$this->dateLabel,
+                : 'Birthdays — ').$this->dateLabel.($this->subjectSuffix ?? ''),
         );
     }
 

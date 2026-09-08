@@ -114,7 +114,7 @@ class BirthdayPosterService
             }
 
             return [
-                'url' => rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key,
+                'url' => self::publicUrl($key, $jpeg),
                 'jpeg' => $jpeg,
                 'filename' => $filename,
             ];
@@ -133,18 +133,20 @@ class BirthdayPosterService
      * @param  int|string  $id  agents.id, or a celebrant `poster_key`
      *                          ("agent-123" / "user-456" for staff without an
      *                          agents row). Ints keep the historical key.
+     *                          `$fresh` skips the cached object and re-renders over it — for when the
+     *                          avatar or name changed after the day's poster was first made.
      * @return array{url:string, jpeg:string, filename:string}|null
      */
-    public function forAgent(int|string $id, string $fullName, ?string $photoUrl, string $date): ?array
+    public function forAgent(int|string $id, string $fullName, ?string $photoUrl, string $date, bool $fresh = false): ?array
     {
         $slug = is_int($id) ? "agent-{$id}" : preg_replace('/[^a-z0-9\-]/i', '', $id);
         $key = 'birthday-greetings/'.str_replace('-', '/', $date)."/{$slug}.jpg";
         $disk = Storage::disk('s3');
 
         try {
-            if ($disk->exists($key) && ($jpeg = $disk->get($key)) !== null) {
+            if (! $fresh && $disk->exists($key) && ($jpeg = $disk->get($key)) !== null) {
                 return [
-                    'url' => rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key,
+                    'url' => self::publicUrl($key, $jpeg),
                     'jpeg' => $jpeg,
                     'filename' => self::downloadFilename($fullName),
                 ];
@@ -154,6 +156,18 @@ class BirthdayPosterService
         }
 
         return $this->renderToS3($fullName, $photoUrl, dirname($key), basename($key));
+    }
+
+    /**
+     * Public URL for a stored poster, versioned by its CONTENT (`?v=<hash>`).
+     * Gmail (and most clients) fetch inline images through a caching proxy
+     * keyed on the URL, so a poster re-rendered at the same S3 key — after an
+     * avatar change — kept showing the old picture while the attachment was
+     * already new. A different hash is a different URL; S3 ignores the query.
+     */
+    public static function publicUrl(string $key, string $jpeg): string
+    {
+        return rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key.'?v='.substr(md5($jpeg), 0, 10);
     }
 
     public static function downloadFilename(string $fullName): string
