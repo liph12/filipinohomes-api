@@ -57,6 +57,9 @@ class AgentResource extends JsonResource
             'socials' => $this->socials,
             'bio' => $this->bio,
             'geo_location' => $this->geo_location,
+            // Last save through the profile form; null = never. The dashboard's
+            // profile reminder reads this (not updated_at, which other jobs bump).
+            'profile_updated_at' => $this->profile_updated_at?->toISOString(),
             'member_since' => $this->member_since,
             // Fallback for member_since when the LR import left it blank.
             'created_at' => $this->created_at,

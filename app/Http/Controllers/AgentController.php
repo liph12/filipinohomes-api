@@ -969,6 +969,9 @@ class AgentController extends Controller
         // Remove user_id from validated so it doesn't get saved into agent fields
         unset($validated['user_id']);
 
+        // The human "I reviewed my profile" moment, for the dashboard reminder.
+        $validated['profile_updated_at'] = now();
+
         $agent = Agent::updateOrCreate(
             ['user_id' => $targetId],
             $validated

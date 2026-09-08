@@ -24,6 +24,9 @@ class Agent extends Model implements Auditable
         "bio",
         'avatar',
         'geo_location',
+        // Last save through the profile-edit form (not updated_at — see the
+        // 2026_09_09 migration). Drives the dashboard's profile reminder.
+        'profile_updated_at',
         'member_since',
         'user_id',
         'status',
@@ -42,6 +45,7 @@ class Agent extends Model implements Auditable
         'socials' => 'array',
         'avatar' => 'array',
         'geo_location' => 'array',
+        'profile_updated_at' => 'datetime',
         'birthdate' => 'date',
         'birthdate_checked_at' => 'datetime',
         'response_metrics_updated_at' => 'datetime',
