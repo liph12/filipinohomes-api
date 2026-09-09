@@ -30,6 +30,14 @@ class UserResource extends JsonResource
         $data = [
             'id'        => $this->id,
             'name'      => $this->name,
+            // The person's actual name. `name` above is the LOGIN name
+            // ("johnrobertmaizo2"), which is no use in a byline — the real
+            // one lives on the agent profile. Same collect()->filter()->join
+            // shape as TeamAgentResource, falling back to the login name for
+            // users with no agent profile.
+            'full_name' => collect([
+                $this->agent?->first_name, $this->agent?->middle_name, $this->agent?->last_name,
+            ])->filter()->join(' ') ?: $this->name,
             'email'     => $this->email,
             'mobile_no' => $this->agent->mobile_no ?? $this->mobile_no ?? "",
             // WhatsApp lives only on the agent profile (no users column), so a
