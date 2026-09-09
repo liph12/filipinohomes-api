@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Storage;
 use App\Http\Resources\MagazineResourceCollection;
 use App\Http\Resources\MagazineResource;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 class MagazineController extends Controller
 {
     public function years()
@@ -168,7 +169,7 @@ class MagazineController extends Controller
         if ($disk->exists($cachePath)
             && $disk->lastModified($cachePath) >= $magazine->updated_at->timestamp
         ) {
-            return $disk->response($cachePath, "{$magazine->slug}.pdf", $headers);
+            return $this->pdfFileResponse($disk->path($cachePath), $magazine, $headers);
         }
 
         // ──────────────── Cache miss ────────────────
@@ -230,7 +231,35 @@ class MagazineController extends Controller
 
         $disk->move($tempPath, $cachePath);
 
-        return $disk->response($cachePath, "{$magazine->slug}.pdf", $headers);
+        return $this->pdfFileResponse($disk->path($cachePath), $magazine, $headers);
+    }
+
+    /**
+     * Serve the cached PDF with BYTE-RANGE support.
+     *
+     * Storage::response() is a StreamedResponse: it ignores a Range header and
+     * always sends the whole file. pdf.js probes for `Accept-Ranges: bytes` and,
+     * finding none, downloads the entire PDF before it can draw page one — for
+     * a 98MB print-resolution issue that was 5–9 seconds of blank reader on a
+     * fast connection and far longer on mobile data. Symfony's
+     * BinaryFileResponse answers Range requests with 206 partial content
+     * (prepare() does it), so the reader fetches the few MB page one needs and
+     * streams the rest behind it. Both the site's MagazineViewer and the NATCON
+     * reader read through this route.
+     *
+     * The three headers are exposed for CORS: the frontend is on another
+     * origin, and pdf.js decides whether ranges are usable by READING them —
+     * without Access-Control-Expose-Headers the browser hides them and pdf.js
+     * silently falls back to the full download.
+     */
+    private function pdfFileResponse(string $path, Magazine $magazine, array $headers): BinaryFileResponse
+    {
+        $response = new BinaryFileResponse($path, 200, $headers, true);
+        $response->setContentDisposition('inline', "{$magazine->slug}.pdf");
+        $response->headers->set('Accept-Ranges', 'bytes');
+        $response->headers->set('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range');
+
+        return $response;
     }
 
     public function destroy($id)
