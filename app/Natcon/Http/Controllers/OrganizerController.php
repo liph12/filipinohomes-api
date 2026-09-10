@@ -44,8 +44,9 @@ class OrganizerController extends Controller
             ->with('members')
             ->live()
             ->get();
+        $photos = $this->photosByName($event->id);
 
-        return response()->json(['data' => $rows->map(fn (OrganizerCommittee $c) => $this->present($c))]);
+        return response()->json(['data' => $rows->map(fn (OrganizerCommittee $c) => $this->present($c, photos: $photos))]);
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────
@@ -58,8 +59,9 @@ class OrganizerController extends Controller
             ->with('members')
             ->orderBy('phase')->orderBy('sort_order')->orderBy('id')
             ->get();
+        $photos = $this->photosByName($event->id);
 
-        return response()->json(['data' => $rows->map(fn (OrganizerCommittee $c) => $this->present($c, detailed: true))]);
+        return response()->json(['data' => $rows->map(fn (OrganizerCommittee $c) => $this->present($c, detailed: true, photos: $photos))]);
     }
 
     public function store(Request $request): JsonResponse
@@ -89,7 +91,7 @@ class OrganizerController extends Controller
 
         $this->purge($event->year);
 
-        return response()->json(['data' => $this->present($row->fresh('members'), detailed: true)], 201);
+        return response()->json(['data' => $this->present($row->fresh('members'), detailed: true, photos: $this->photosByName($event->id))], 201);
     }
 
     public function update(Request $request, OrganizerCommittee $committee): JsonResponse
@@ -111,7 +113,7 @@ class OrganizerController extends Controller
 
         $this->purge($committee->event?->year);
 
-        return response()->json(['data' => $this->present($committee->fresh('members'), detailed: true)]);
+        return response()->json(['data' => $this->present($committee->fresh('members'), detailed: true, photos: $this->photosByName($committee->natcon_event_id))]);
     }
 
     public function destroy(OrganizerCommittee $committee): JsonResponse
@@ -217,25 +219,75 @@ class OrganizerController extends Controller
         });
     }
 
-    private function present(OrganizerCommittee $c, bool $detailed = false): array
+    /**
+     * One person, one photo. The same staff member sits on several committee
+     * cards, and asking the admin to upload the same face on each is how half
+     * the chart ends up as silhouettes. So a member with no photo of their own
+     * borrows the photo of anyone on the year's chart with the same name
+     * (see photosByName). An explicit photo on the row always wins.
+     *
+     * @param  array<string, string>  $photos  normalised name => photo_url
+     */
+    private function present(OrganizerCommittee $c, bool $detailed = false, array $photos = []): array
     {
         $base = [
             'id' => $c->id,
             'phase' => $c->phase,
             'title' => $c->title,
             'note' => $c->note,
-            'members' => $c->members->map(fn (OrganizerMember $m) => [
-                'id' => $m->id,
-                'role' => $m->role,
-                'name' => $m->name,
-                'description' => $m->description,
-                'photo_url' => $m->photo_url,
-            ])->values(),
+            'members' => $c->members->map(function (OrganizerMember $m) use ($detailed, $photos) {
+                $shared = $m->photo_url ? null : ($photos[self::nameKey($m->name)] ?? null);
+
+                $row = [
+                    'id' => $m->id,
+                    'role' => $m->role,
+                    'name' => $m->name,
+                    'description' => $m->description,
+                    'photo_url' => $m->photo_url ?? $shared,
+                ];
+
+                // The editor needs to know which photos are borrowed, so it
+                // does not write a borrowed URL back onto the row on save.
+                return $detailed ? $row + ['photo_inherited' => $shared !== null] : $row;
+            })->values(),
         ];
 
         return $detailed
             ? $base + ['sort_order' => $c->sort_order]
             : $base;
+    }
+
+    /**
+     * Every photo on the year's chart, keyed by the normalised name of the
+     * person it belongs to. The first one found wins (cards in page order),
+     * so the photo an admin sees first is the one that propagates.
+     *
+     * @return array<string, string>
+     */
+    private function photosByName(int $eventId): array
+    {
+        $rows = OrganizerMember::query()
+            ->select('natcon_organizer_members.name', 'natcon_organizer_members.photo_url')
+            ->join('natcon_organizer_committees', 'natcon_organizer_committees.id', '=', 'natcon_organizer_members.committee_id')
+            ->where('natcon_organizer_committees.natcon_event_id', $eventId)
+            ->whereNotNull('natcon_organizer_members.photo_url')
+            ->orderBy('natcon_organizer_committees.phase')
+            ->orderBy('natcon_organizer_committees.sort_order')
+            ->orderBy('natcon_organizer_members.sort_order')
+            ->get();
+
+        $photos = [];
+        foreach ($rows as $r) {
+            $photos[self::nameKey($r->name)] ??= $r->photo_url;
+        }
+
+        return $photos;
+    }
+
+    /** "Ladyly  Ladrera " and "ladyly ladrera" are the same person. */
+    private static function nameKey(string $name): string
+    {
+        return mb_strtolower(preg_replace('/\s+/u', ' ', trim($name)) ?? '');
     }
 
     /** Mirrors LandingController::resolveEvent — explicit id, else the live event. */

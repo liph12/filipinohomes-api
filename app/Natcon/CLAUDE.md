@@ -226,7 +226,11 @@ nullable `description` — the assignment printed under the name, "Entrance"). A
 committee is written WITH its members — `OrganizerController::syncMembers()`
 makes the card's people exactly the submitted list, so there are no member
 endpoints and no half-saved cards. `members` absent on a PATCH means "leave the
-people alone"; present-but-empty means "remove them all". The purge is
+people alone"; present-but-empty means "remove them all". **One person, one
+photo**: a member with no photo borrows the photo of anyone on the year's chart
+with the same name (`photosByName()`, normalised), an own photo always wins, and
+the admin payload flags borrowed ones as `photo_inherited` so the editor never
+writes a borrowed URL back onto the row. The purge is
 `LandingCachePurger::purgeOrganizers()` — its own method, because the page lives
 at the year-less `/natcon/organizers` and a name change should not rebuild the
 whole landing page.
