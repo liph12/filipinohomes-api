@@ -753,6 +753,44 @@ class AdminController extends Controller
         return response()->json(['message' => 'Recipient removed.']);
     }
 
+    /**
+     * Correct an awardee's form answers — in practice their shirt size.
+     *
+     * The awardee's own page is read-only once they have finished, so this
+     * is the ONLY way a wrong answer gets fixed. It exists for that reason
+     * and ships with the lock, not after it.
+     *
+     * ⚠️ Goes through FormService::submit(), never near the JSON columns.
+     *    That method owns four things this must not get wrong: `answers` and
+     *    `answers_snapshot` written together (the list reads one, the drawer
+     *    and the export read the other), the positional per-person array
+     *    aligned to personNames(), the empty-key omission that the
+     *    JSON_CONTAINS_PATH "is this field still in use" check depends on,
+     *    and the call to syncResponseState() — because clearing a required
+     *    answer has to put someone back in the reminder chase, and filling
+     *    one has to take them out of it.
+     *
+     * ⚠️ It rebuilds from the WHOLE active field set, so the payload has to
+     *    carry every answer, not only the changed one. The drawer sends a
+     *    full draft for exactly this reason; a partial patch would silently
+     *    drop whatever it left out.
+     */
+    public function updateAnswers(Request $request, Recipient $recipient): JsonResponse
+    {
+        $data = $request->validate(['answers' => 'required|array']);
+
+        // Null ip/ua deliberately: this is staff, not the awardee, and
+        // FormService keeps whatever the awardee's own submission recorded.
+        $recipient->auditSource = 'admin_edit_answers';
+        $recipient->auditDescription = 'Corrected NATCON form answers';
+
+        $this->forms->submit($recipient, $data['answers'], null, null);
+
+        return response()->json([
+            'data' => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
+        ]);
+    }
+
     public function refreshLr(Recipient $recipient): JsonResponse
     {
         $this->awardees->hydrate($recipient, true);

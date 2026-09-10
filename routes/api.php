@@ -563,6 +563,10 @@ Route::middleware('strip.tags')->group(function () {
                 Route::post('/admin/natcon/recipients/{recipient}/reset', [NatconAdminController::class, 'resetRecipient'])
                     ->middleware('throttle:20,1');
                 // Rules the photo on file unusable, forcing a fresh submission.
+                // The only way a finished awardee's answers can change:
+                // their own page is read-only once they are done.
+                Route::patch('/admin/natcon/recipients/{recipient}/answers', [NatconAdminController::class, 'updateAnswers'])
+                    ->middleware('throttle:30,1');
                 Route::post('/admin/natcon/recipients/{recipient}/photo-policy', [NatconAdminController::class, 'setPhotoPolicy'])
                     ->middleware('throttle:30,1');
 

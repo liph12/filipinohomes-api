@@ -210,6 +210,19 @@ class RecipientResource extends JsonResource
             // "natcon polo shirt size". The label is frozen in the snapshot at
             // submit time, so it survives the question later being renamed.
             'form_answers' => $r->formSubmission()->first()?->labelledRows() ?? [],
+            /**
+             * The MACHINE answers, keyed by field key — what an editor binds
+             * to. `form_answers` above is the frozen snapshot: labels and a
+             * pre-joined display string, right for reading and useless for
+             * editing, because writing "Medium" back would fail the choice
+             * check that expects "medium".
+             *
+             * `person_names` rides along because a per_person answer is a
+             * positional array aligned to it, and an editor has to render one
+             * input per seat in exactly that order.
+             */
+            'form_answers_raw' => $r->formSubmission()->first()?->answerMap() ?? (object) [],
+            'person_names'     => $r->personNames(),
         ];
     }
 

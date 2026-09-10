@@ -235,6 +235,10 @@ class PublicController extends Controller
                 ], 422);
             }
 
+            if ($this->photosLocked($recipient)) {
+                return $this->lockedResponse('photo');
+            }
+
             try {
                 $this->photos->store(
                     $recipient,
@@ -298,6 +302,10 @@ class PublicController extends Controller
                 ], 422);
             }
 
+            if ($this->photosLocked($recipient)) {
+                return $this->lockedResponse('photo');
+            }
+
             // Same enforcement as respond(): a reviewer's rejection of the photos
             // on file cannot be worked around by keeping them through this route.
             if ($recipient->requires_new_photo && $data['urls']) {
@@ -340,6 +348,10 @@ class PublicController extends Controller
                 ], 422);
             }
 
+            if ($this->photosLocked($recipient)) {
+                return $this->lockedResponse('photo');
+            }
+
             // Scoped to THIS recipient, so an id from someone else's record is a
             // 404 rather than a cross-account delete. The token identifies the
             // recipient; the body must not be able to widen that.
@@ -362,6 +374,33 @@ class PublicController extends Controller
         });
     }
 
+    /**
+     * Is this awardee's submission still theirs to change?
+     *
+     * ⚠️ Keyed on responded_at, NOT on photo_uploaded_at or a count, because
+     *    responded_at is the same field PhotoService::syncResponseState()
+     *    CLEARS when an admin flags requires_new_photo. That makes the flag
+     *    reopen the page for free — no second rule to keep in step with it.
+     *
+     * The flag is checked as well anyway, belt and braces: a flag set on
+     * someone whose photos predate it leaves them incomplete by design, and
+     * this must never be the thing that stops them replacing it.
+     */
+    private function photosLocked(Recipient $recipient): bool
+    {
+        return $recipient->responded_at !== null && ! $recipient->requires_new_photo;
+    }
+
+    /** The 422 an awardee gets for trying to change a finished submission. */
+    private function lockedResponse(string $what)
+    {
+        return response()->json([
+            'message' => "Your {$what} is already saved and can no longer be changed here. "
+                .'Please contact the NATCON team if something needs correcting.',
+            'code'    => 'already_submitted',
+        ], 422);
+    }
+
     /** Custom form answers. Separate commit from the photo decision, on purpose. */
     public function form(Request $request)
     {
@@ -371,6 +410,20 @@ class PublicController extends Controller
         ]);
 
         return $this->withRecipient($data['t'], function (Recipient $recipient) use ($data, $request) {
+            /**
+             * ⚠️ Locked on hasRequiredAnswers(), NOT on form_submitted_at.
+             *
+             * FormService::submit() stamps that timestamp on every save, even
+             * a partial one that leaves a required answer empty — so locking
+             * on the timestamp would trap anyone who saved half the form:
+             * required answers still missing, no way to finish, and
+             * reminderTargets() chasing them for something they can no
+             * longer do. Completeness is the honest test.
+             */
+            if ($this->forms->hasRequiredAnswers($recipient)) {
+                return $this->lockedResponse('information');
+            }
+
             $this->forms->submit(
                 $recipient,
                 $data['answers'],

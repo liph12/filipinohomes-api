@@ -298,11 +298,9 @@ final class FormService
                     'natcon_recipient_id' => $recipient->id,
                 ],
                 [
-                    'answers'              => $stored,
-                    'answers_snapshot'     => $snapshot,
-                    'submitted_ip'         => $ip,
-                    'submitted_user_agent' => $userAgent ? mb_substr($userAgent, 0, 255) : null,
-                ],
+                    'answers'          => $stored,
+                    'answers_snapshot' => $snapshot,
+                ] + $this->provenance($event, $recipient, $ip, $userAgent),
             );
 
             $recipient->forceFill(['form_submitted_at' => Carbon::now()])->save();
@@ -323,6 +321,37 @@ final class FormService
     }
 
     /** Does this question get asked once per person on the account? */
+    /**
+     * Who sent this, when it is the awardee — and untouched when it is not.
+     *
+     * An admin correcting a shirt size goes through this same method, and
+     * their IP is not the answer to "where did this awardee submit from".
+     * Passing null for both keeps whatever the awardee's own submission
+     * recorded, so a staff edit cannot quietly rewrite that provenance; a
+     * genuine first save by an admin simply leaves the columns empty, which
+     * is the honest answer.
+     *
+     * @return array<string, string|null>
+     */
+    private function provenance(NatconEvent $event, Recipient $recipient, ?string $ip, ?string $userAgent): array
+    {
+        if ($ip === null && $userAgent === null) {
+            $existing = FormSubmission::where('natcon_event_id', $event->id)
+                ->where('natcon_recipient_id', $recipient->id)
+                ->first(['submitted_ip', 'submitted_user_agent']);
+
+            return [
+                'submitted_ip'         => $existing?->submitted_ip,
+                'submitted_user_agent' => $existing?->submitted_user_agent,
+            ];
+        }
+
+        return [
+            'submitted_ip'         => $ip,
+            'submitted_user_agent' => $userAgent ? mb_substr($userAgent, 0, 255) : null,
+        ];
+    }
+
     private function isPerPerson(FormField $field): bool
     {
         return $field->isInput() && (bool) $field->config('per_person', false);
