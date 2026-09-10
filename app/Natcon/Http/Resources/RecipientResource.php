@@ -102,6 +102,9 @@ class RecipientResource extends JsonResource
             // "2 of 3" and a needs-new-photo chip without opening every drawer.
             'active_photo_count' => $r->activePhotos()->count(),
             'photos_required'    => Recipient::requiredPhotoCount(),
+            // The ceiling, so the admin's "Add a photo" can be disabled at the
+            // cap rather than offering an upload the API will refuse.
+            'photos_max'         => Recipient::maxPhotoCount(),
             'requires_new_photo' => (bool) $r->requires_new_photo,
 
             // From LR's qualifiers list. On the LIST row, not just the detail

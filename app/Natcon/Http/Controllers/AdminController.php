@@ -46,6 +46,7 @@ class AdminController extends Controller
         private AwardeeService $awardees,
         private RecipientImportService $importer,
         private FormService $forms,
+        private PhotoService $photos,
     ) {}
 
     // ── Event ────────────────────────────────────────────────────────────────
@@ -1342,14 +1343,7 @@ class AdminController extends Controller
 
         DB::transaction(function () use ($submission, $data, $request, $recipient) {
             if ($data['review_status'] === PhotoSubmission::REVIEW_APPROVED && $recipient) {
-                PhotoSubmission::where('natcon_recipient_id', $recipient->id)
-                    ->where('id', '!=', $submission->id)
-                    ->where('review_status', PhotoSubmission::REVIEW_APPROVED)
-                    ->update([
-                        'review_status' => PhotoSubmission::REVIEW_PENDING,
-                        'reviewed_by' => $request->user()?->id,
-                        'reviewed_at' => Carbon::now(),
-                    ]);
+                $this->demoteOtherApprovals($recipient->id, $submission->id, $request->user()?->id);
             }
 
             $submission->forceFill($data + [
@@ -1369,6 +1363,151 @@ class AdminController extends Controller
             'meta' => [
                 'final_photo_url' => $recipient?->fresh()->finalPhotoUrl(),
             ],
+        ]);
+    }
+
+    /**
+     * Exactly one photo per awardee may be approved, because exactly one goes
+     * on the materials. Shared by reviewPhoto and by an admin upload, which
+     * lands approved — two approved rows would leave "which one did we pick?"
+     * answered twice, and syncResponseState() would settle it by array order,
+     * which is not a decision anybody made.
+     */
+    private function demoteOtherApprovals(int $recipientId, int $exceptId, ?int $userId): void
+    {
+        PhotoSubmission::where('natcon_recipient_id', $recipientId)
+            ->where('id', '!=', $exceptId)
+            ->where('review_status', PhotoSubmission::REVIEW_APPROVED)
+            ->update([
+                'review_status' => PhotoSubmission::REVIEW_PENDING,
+                'reviewed_by'   => $userId,
+                'reviewed_at'   => Carbon::now(),
+            ]);
+    }
+
+    /**
+     * Add a photo to an awardee, or replace one of theirs, from the admin.
+     *
+     * ─── Why an admin needs this at all ─────────────────────────────────────
+     * Half of the awardees who owe a photo end up sending it on Viber, to a
+     * team member, in whatever crop their phone produced. Until now the only
+     * way in was the awardee's own page, so the events team's options were to
+     * talk somebody through a link or to go without — and after the deadline,
+     * not even that. There is deliberately NO deadline check here: fixing a
+     * photo late is the entire point.
+     *
+     * `replace_submission_id` retires that photo and stores the new one in ONE
+     * transaction, in that order. Order matters twice: it frees a slot so a
+     * replacement works even at the photo cap, and because the old row is only
+     * marked `deleted` inside the transaction, a rejected image or a failed S3
+     * put rolls back and leaves the original standing rather than leaving the
+     * awardee with nothing.
+     *
+     * The row is written with source `admin_upload`, not `uploaded`: the
+     * awardee did not send this, and the record should not say they did. It
+     * lands approved and attributed, because an admin choosing the file IS the
+     * review — waiting for someone to approve their own upload is theatre.
+     */
+    public function storePhoto(Request $request, Recipient $recipient): JsonResponse
+    {
+        $data = $request->validate([
+            // Same rules as the awardee's own upload. mimetypes: is checked
+            // against the DECODED type, so a renamed .exe cannot walk through.
+            'file' => 'required|file|mimetypes:image/jpeg,image/png,image/webp,image/heic,image/heif|max:'
+                . (int) config('natcon.photo.max_upload_kb', 15360),
+            'replace_submission_id' => 'nullable|integer',
+        ]);
+
+        $replacing = null;
+
+        if (! empty($data['replace_submission_id'])) {
+            // Scoped to this awardee, so an id from another record cannot be
+            // retired through this route.
+            $replacing = PhotoSubmission::where('natcon_recipient_id', $recipient->id)
+                ->where('status', PhotoSubmission::STATUS_ACTIVE)
+                ->find((int) $data['replace_submission_id']);
+
+            if (! $replacing) {
+                return response()->json([
+                    'message' => 'That photo is no longer on this awardee. Reload the awardee and try again.',
+                ], 422);
+            }
+        }
+
+        $max = Recipient::maxPhotoCount();
+
+        // Checked here rather than letting the service throw, because the
+        // service's message is written for the awardee ("You've already sent
+        // 3 photos") and names an action the admin does not have to take.
+        if (! $replacing && $recipient->activePhotos()->count() >= $max) {
+            return response()->json([
+                'message' => "This awardee already has {$max} photo" . ($max === 1 ? '' : 's')
+                    . '. Replace one of them, or remove one first.',
+            ], 422);
+        }
+
+        try {
+            DB::transaction(function () use ($request, $recipient, $replacing) {
+                if ($replacing) {
+                    $replacing->auditSource = 'admin_photo_replace';
+                    $replacing->auditDescription = 'Replaced a NATCON photo from the admin';
+
+                    $this->photos->remove($recipient, $replacing);
+                }
+
+                $stored = $this->photos->store(
+                    $recipient,
+                    $request->file('file'),
+                    $request->ip(),
+                    $request->userAgent(),
+                    PhotoSubmission::SOURCE_ADMIN_UPLOAD,
+                    $request->user()?->id,
+                );
+
+                $this->demoteOtherApprovals($recipient->id, $stored->id, $request->user()?->id);
+
+                // Republishes current_photo_url from the new choice — the
+                // approval above changed which photo is the chosen one.
+                $this->photos->syncResponseState($recipient);
+            });
+        } catch (\RuntimeException $e) {
+            // A decode failure or a rejected image, already carrying a readable
+            // reason — same mapping as the awardee's own upload route.
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'data'    => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
+            'message' => $replacing ? 'Photo replaced.' : 'Photo added.',
+        ]);
+    }
+
+    /**
+     * Remove one of an awardee's photos from the admin.
+     *
+     * Marked `deleted` rather than erased, and the S3 object stays — see
+     * PhotoService::remove(). "We removed the good one by mistake" is then a
+     * recoverable conversation instead of a lost file.
+     *
+     * Dropping below the required count re-opens them for reminders, because
+     * syncResponseState derives completion from the photos standing. That is
+     * the honest outcome: removing a photo means they owe one again.
+     */
+    public function destroyPhoto(Request $request, Recipient $recipient, PhotoSubmission $submission): JsonResponse
+    {
+        abort_if($submission->natcon_recipient_id !== $recipient->id, 404);
+
+        // Idempotent: a double-click, or a stale drawer, should not 500.
+        if ($submission->status === PhotoSubmission::STATUS_ACTIVE) {
+            $submission->auditSource = 'admin_photo_remove';
+            $submission->auditDescription = 'Removed a NATCON photo from the admin';
+
+            $this->photos->remove($recipient, $submission);
+        }
+
+        return response()->json([
+            'data'    => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
+            'message' => 'Photo removed.',
         ]);
     }
 

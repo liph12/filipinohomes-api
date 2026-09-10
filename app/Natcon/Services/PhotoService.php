@@ -94,6 +94,17 @@ final class PhotoService
         UploadedFile $file,
         ?string $ip = null,
         ?string $userAgent = null,
+        /**
+         * Who put the file here. The admin path passes SOURCE_ADMIN_UPLOAD so
+         * the row does not claim the awardee sent something they never sent.
+         */
+        string $source = PhotoSubmission::SOURCE_UPLOADED,
+        /**
+         * Set on the admin path: an admin choosing the file IS the review, so
+         * the row lands approved and becomes the printable photo immediately
+         * rather than waiting for someone to approve their own upload.
+         */
+        ?int $reviewedBy = null,
     ): PhotoSubmission {
         // Before decoding anything: no point spending a 40-megapixel decode and
         // an S3 round trip on a file that has nowhere to go.
@@ -139,11 +150,11 @@ final class PhotoService
 
         $url = rtrim((string) config('filesystems.disks.s3.url'), '/') . '/' . $key;
 
-        return DB::transaction(function () use ($recipient, $key, $url, $encoded, $file, $image, $ip, $userAgent) {
+        return DB::transaction(function () use ($recipient, $key, $url, $encoded, $file, $image, $ip, $userAgent, $source, $reviewedBy) {
             $submission = PhotoSubmission::create([
                 'natcon_recipient_id' => $recipient->id,
                 'natcon_event_id'     => $recipient->natcon_event_id,
-                'source'              => PhotoSubmission::SOURCE_UPLOADED,
+                'source'              => $source,
                 'photo_url'           => $url,
                 's3_key'              => $key,
                 'original_filename'   => mb_substr((string) $file->getClientOriginalName(), 0, 255),
@@ -152,7 +163,11 @@ final class PhotoService
                 'width'               => $image->width(),
                 'height'              => $image->height(),
                 'status'              => PhotoSubmission::STATUS_ACTIVE,
-                'review_status'       => PhotoSubmission::REVIEW_PENDING,
+                'review_status'       => $reviewedBy
+                    ? PhotoSubmission::REVIEW_APPROVED
+                    : PhotoSubmission::REVIEW_PENDING,
+                'reviewed_by'         => $reviewedBy,
+                'reviewed_at'         => $reviewedBy ? Carbon::now() : null,
                 'uploaded_ip'         => $ip,
                 'uploaded_user_agent' => $userAgent ? mb_substr($userAgent, 0, 255) : null,
             ]);

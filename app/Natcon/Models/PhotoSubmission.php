@@ -33,6 +33,18 @@ class PhotoSubmission extends Model implements Auditable
     public const SOURCE_UPLOADED    = 'uploaded';
     public const SOURCE_LR_RETAINED = 'lr_retained';
 
+    /**
+     * Put here by an admin on the awardee's behalf — a photo handed over on
+     * Viber, or a crop the events team fixed themselves.
+     *
+     * Deliberately a THIRD value rather than reusing `uploaded`: the awardee did
+     * not send this, and the record should not say they did. Everything that
+     * asks "is this an upload?" asks `source !== SOURCE_LR_RETAINED`, so an
+     * admin upload already counts as one everywhere — including the
+     * requires_new_photo replacement check.
+     */
+    public const SOURCE_ADMIN_UPLOAD = 'admin_upload';
+
     public const REVIEW_PENDING  = 'pending';
     public const REVIEW_APPROVED = 'approved';
     public const REVIEW_REJECTED = 'rejected';

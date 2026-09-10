@@ -574,6 +574,15 @@ Route::middleware('strip.tags')->group(function () {
                 Route::post('/admin/natcon/recipients/{recipient}/photo-policy', [NatconAdminController::class, 'setPhotoPolicy'])
                     ->middleware('throttle:30,1');
 
+                // Add / replace / remove an awardee's photo from the admin, for
+                // the half of them who send it on Viber instead. No deadline
+                // check — fixing a photo late is the point. Admin-only by
+                // virtue of this group; the awardee's own routes are separate.
+                Route::post('/admin/natcon/recipients/{recipient}/photos', [NatconAdminController::class, 'storePhoto'])
+                    ->middleware('throttle:60,1');
+                Route::delete('/admin/natcon/recipients/{recipient}/photos/{submission}', [NatconAdminController::class, 'destroyPhoto'])
+                    ->middleware('throttle:60,1');
+
                 Route::post('/admin/natcon/preflight', [NatconAdminController::class, 'preflight']);
                 Route::post('/admin/natcon/send-invites', [NatconAdminController::class, 'sendInvites'])
                     ->middleware('throttle:6,1');
