@@ -730,6 +730,16 @@ class GalleryController extends Controller
     {
         $this->guardScope($request, $album->event);
 
+        return $this->saveFrame($request, $album, null);
+    }
+
+    /**
+     * Validate + store one frame PNG for either owner: an album (public
+     * albums, per-album frames) or a whole convention (the NATCON root's
+     * "{year} Frames"). Exactly one of the two is set.
+     */
+    private function saveFrame(Request $request, ?GalleryAlbum $album, ?NatconEvent $event): JsonResponse
+    {
         $data = $request->validate([
             'frame' => 'required|file|mimes:png|max:'.(int) config('natcon.gallery.max_upload_kb', 15360),
             'name' => 'required|string|max:120',
@@ -764,7 +774,8 @@ class GalleryController extends Controller
         Storage::disk('s3')->put($key, file_get_contents($request->file('frame')->getRealPath()), 'public');
 
         $frame = new GalleryAlbumFrame([
-            'album_id' => $album->id,
+            'album_id' => $album?->id,
+            'natcon_event_id' => $event?->id,
             'name' => trim($data['name']),
             'image_url' => rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key,
             's3_key' => $key,
@@ -782,14 +793,14 @@ class GalleryController extends Controller
         $frame->auditSource = $this->auditSource(null);
         $frame->save();
 
-        $this->purge($album->event, $album);
+        $this->purge($event ?? $album?->event, $album);
 
         return response()->json(['data' => $this->presentFrame($frame)], 201);
     }
 
     public function updateAlbumFrame(Request $request, GalleryAlbumFrame $frame): JsonResponse
     {
-        $this->guardScope($request, $frame->album?->event);
+        $this->guardScope($request, $frame->ownerEvent());
         // Implicit binding happily resolves deleted rows — refuse them, or a
         // PATCH could resurrect a removed frame's visibility.
         abort_if($frame->status === GalleryAlbumFrame::STATUS_DELETED, 404, 'Frame not found.');
@@ -817,14 +828,14 @@ class GalleryController extends Controller
         $frame->auditSource = $this->auditSource(null);
         $frame->fill($data)->save();
 
-        $this->purge($frame->album?->event, $frame->album);
+        $this->purge($frame->ownerEvent(), $frame->album);
 
         return response()->json(['data' => $this->presentFrame($frame->fresh())]);
     }
 
     public function destroyAlbumFrame(Request $request, GalleryAlbumFrame $frame): JsonResponse
     {
-        $this->guardScope($request, $frame->album?->event);
+        $this->guardScope($request, $frame->ownerEvent());
         abort_if($frame->status === GalleryAlbumFrame::STATUS_DELETED, 404, 'Frame not found.');
 
         // A status flip, not delete() — the row is the only pointer to the
@@ -832,7 +843,7 @@ class GalleryController extends Controller
         $frame->auditSource = $this->auditSource(null);
         $frame->forceFill(['status' => GalleryAlbumFrame::STATUS_DELETED])->save();
 
-        $this->purge($frame->album?->event, $frame->album);
+        $this->purge($frame->ownerEvent(), $frame->album);
 
         return response()->json(['message' => 'Frame removed.']);
     }
@@ -855,13 +866,47 @@ class GalleryController extends Controller
 
         $rank = array_flip($ids);
 
-        return GalleryAlbumFrame::whereIn('album_id', $ids)
+        // Convention albums also get the CONVENTION's frames (the ones the
+        // admin manages at the "NATCON {year}" root) — after the album chain.
+        $eventId = $album->natcon_event_id;
+
+        return GalleryAlbumFrame::query()
+            ->where(function ($q) use ($ids, $eventId) {
+                $q->whereIn('album_id', $ids);
+                if ($eventId !== null) {
+                    $q->orWhere('natcon_event_id', $eventId);
+                }
+            })
             ->live()
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
-            ->sortBy(fn (GalleryAlbumFrame $f) => $rank[$f->album_id] ?? 99)
+            ->sortBy(fn (GalleryAlbumFrame $f) => $f->album_id !== null ? ($rank[$f->album_id] ?? 98) : 99)
             ->values();
+    }
+
+    /** A convention's own live frames, for the root-level "{year} Frames" dialog. */
+    public function eventFrames(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+        abort_if($event === null, 404, 'No NATCON event found.');
+
+        $rows = GalleryAlbumFrame::where('natcon_event_id', $event->id)
+            ->live()
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))]);
+    }
+
+    /** Upload a frame that every photo of the convention can wear. */
+    public function storeEventFrame(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+        abort_if($event === null, 404, 'No NATCON event found.');
+
+        return $this->saveFrame($request, null, $event);
     }
 
     /**
@@ -916,6 +961,8 @@ class GalleryController extends Controller
         return [
             'id' => $f->id,
             'album_id' => $f->album_id,
+            // Set instead of album_id for convention-level frames.
+            'natcon_event_id' => $f->natcon_event_id,
             'name' => $f->name,
             'image_url' => $f->image_url,
             'width' => $f->width,

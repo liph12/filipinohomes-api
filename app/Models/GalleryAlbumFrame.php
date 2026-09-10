@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Auditing\LogsActivity;
+use App\Natcon\Models\NatconEvent;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -32,7 +33,7 @@ class GalleryAlbumFrame extends Model implements Auditable
     protected array $auditLabelAttributes = ['name'];
 
     protected $fillable = [
-        'album_id', 'name', 'image_url', 's3_key', 'width', 'height',
+        'album_id', 'natcon_event_id', 'name', 'image_url', 's3_key', 'width', 'height',
         'byte_size', 'window_x', 'window_y', 'window_w', 'window_h',
         'sort_order', 'status', 'created_by',
     ];
@@ -50,9 +51,22 @@ class GalleryAlbumFrame extends Model implements Auditable
         'sort_order' => 'integer',
     ];
 
+    /** Album-level frame (public albums, or a legacy convention album frame). */
     public function album(): BelongsTo
     {
         return $this->belongsTo(GalleryAlbum::class, 'album_id');
+    }
+
+    /** Convention-level frame: offered on every photo of that year. */
+    public function event(): BelongsTo
+    {
+        return $this->belongsTo(NatconEvent::class, 'natcon_event_id');
+    }
+
+    /** The convention this frame belongs to, whichever way it is attached. */
+    public function ownerEvent(): ?NatconEvent
+    {
+        return $this->natcon_event_id ? $this->event : $this->album?->event;
     }
 
     public function scopeLive(Builder $query): Builder

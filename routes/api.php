@@ -643,6 +643,11 @@ Route::middleware('strip.tags')->group(function () {
                     // Frames on convention albums — same controller methods as
                     // the public-albums set below; guardScope() keeps each route
                     // family on its own rows.
+                    // Convention-level frames — managed once at the "NATCON {year}"
+                    // root, offered on every photo of that year (framesFor()).
+                    Route::get('/admin/natcon/gallery/frames', [NatconGalleryController::class, 'eventFrames']);
+                    Route::post('/admin/natcon/gallery/frames', [NatconGalleryController::class, 'storeEventFrame'])
+                        ->middleware('throttle:30,1');
                     Route::patch('/admin/natcon/gallery/frames/{frame}', [NatconGalleryController::class, 'updateAlbumFrame']);
                     Route::delete('/admin/natcon/gallery/frames/{frame}', [NatconGalleryController::class, 'destroyAlbumFrame']);
                     Route::post('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'storeAlbumFrame'])
