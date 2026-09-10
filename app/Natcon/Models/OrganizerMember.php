@@ -25,7 +25,7 @@ class OrganizerMember extends Model implements Auditable
     protected array $auditLabelAttributes = ['name', 'role'];
 
     protected $fillable = [
-        'committee_id', 'role', 'name', 'photo_url', 'sort_order',
+        'committee_id', 'role', 'name', 'description', 'photo_url', 'sort_order',
     ];
 
     protected $casts = [

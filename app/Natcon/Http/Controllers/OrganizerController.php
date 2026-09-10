@@ -170,6 +170,8 @@ class OrganizerController extends Controller
             'members.*.id' => 'sometimes|nullable|integer',
             'members.*.role' => 'required|string|in:'.implode(',', OrganizerMember::ROLES),
             'members.*.name' => 'required|string|max:191',
+            // Their assignment within the committee — "Entrance" — under the name.
+            'members.*.description' => 'sometimes|nullable|string|max:120',
             'members.*.photo_url' => 'sometimes|nullable|url|max:2048',
         ]);
     }
@@ -189,6 +191,7 @@ class OrganizerController extends Controller
             $attrs = [
                 'role' => $m['role'],
                 'name' => trim($m['name']),
+                'description' => isset($m['description']) ? (trim($m['description']) ?: null) : null,
                 'photo_url' => $m['photo_url'] ?? null,
                 'sort_order' => ($index + 1) * 10,
             ];
@@ -225,6 +228,7 @@ class OrganizerController extends Controller
                 'id' => $m->id,
                 'role' => $m->role,
                 'name' => $m->name,
+                'description' => $m->description,
                 'photo_url' => $m->photo_url,
             ])->values(),
         ];

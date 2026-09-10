@@ -221,7 +221,8 @@ worth reading before you touch any index on these tables.
 
 The org chart on the public Organizers page: `natcon_organizer_committees`
 (event FK, `phase` ∈ `OrganizerCommittee::PHASES`) and
-`natcon_organizer_members` (role head | assistant, nullable portrait URL). A
+`natcon_organizer_members` (role head | assistant, nullable portrait URL, and a
+nullable `description` — the assignment printed under the name, "Entrance"). A
 committee is written WITH its members — `OrganizerController::syncMembers()`
 makes the card's people exactly the submitted list, so there are no member
 endpoints and no half-saved cards. `members` absent on a PATCH means "leave the
