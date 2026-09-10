@@ -56,6 +56,17 @@ class RecipientResource extends JsonResource
             'first_name'   => $r->first_name,
             'last_name'    => $r->last_name,
             'display_name' => $r->displayName(),
+            /**
+             * The COLUMN, null when nobody has set one — `display_name`
+             * above is the computed chain that ends at the email address.
+             *
+             * The admin needs both: the computed one to know what the card
+             * will print, and the raw one to know whether that is a name
+             * somebody chose or only the fallback. Without this the edit box
+             * was pre-filled with the email, so clearing it and reloading
+             * put the email straight back.
+             */
+            'display_name_raw' => $r->display_name,
             'phone'        => $r->phone,
             'team'         => $r->team,
             // LR's province, under LR's name. The admin labels it "Province".

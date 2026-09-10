@@ -663,17 +663,36 @@ class AdminController extends Controller
             'notes' => 'nullable|string|max:1000',
             'status' => 'nullable|in:pending,invited,excluded',
             'award_segment' => 'nullable|in:'.implode(',', Recipient::SEGMENTS),
-            // Editable because the people who need it will never get a name
-            // from LR: they are not on LR's roster, so a name typed into the
-            // paste dialog is the only one they will ever have.
+            /**
+             * Editable because the people who need it will never get any of
+             * this from LR: Global Partners and FHI Global agents are not on
+             * LR's roster, so hydrate() never fires for them and whatever an
+             * admin types here is the only value they will ever have.
+             *
+             * For a row that IS on LR's list these are a snapshot LR owns —
+             * a per-row Refresh overwrites name/team/phone/seat, and the bulk
+             * qualifiers sync overwrites name/team/province. The drawer says
+             * so under the fields; the API does not refuse the write, because
+             * correcting a wrong LR value until the next refresh is a
+             * legitimate thing to want.
+             *
+             * Lengths match the columns: team/state 191, phone 32, seat 32.
+             */
             'display_name' => 'nullable|string|max:191',
+            'team'         => 'nullable|string|max:191',
+            'phone'        => 'nullable|string|max:32',
+            'state'        => 'nullable|string|max:191',
+            'seat_number'  => 'nullable|string|max:32',
         ]);
 
         if (array_key_exists('notes', $data)) {
             $recipient->notes = $data['notes'];
         }
 
-        if (! empty($data['status'])) {
+        // array_key_exists, not empty(): `! empty()` silently ignored a null
+        // or "" instead of rejecting it, so a caller could believe it had
+        // changed the stage. The in: rule above is what refuses a bad value.
+        if (array_key_exists('status', $data) && $data['status'] !== null) {
             $recipient->status = $data['status'];
         }
 
@@ -685,6 +704,14 @@ class AdminController extends Controller
 
         if (array_key_exists('display_name', $data)) {
             $recipient->display_name = Recipient::tidyName($data['display_name']);
+        }
+
+        // Blank means blank: an empty box clears the column, so displayName()
+        // and the table fall back honestly instead of storing "".
+        foreach (['team', 'phone', 'state', 'seat_number'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $recipient->{$field} = trim((string) $data[$field]) ?: null;
+            }
         }
 
         $recipient->save();
