@@ -280,6 +280,33 @@ all seven at once.
   pulled announcement keeps its reactions and a restore brings them back; only a
   `forceDelete` reaps them. That is the wanted behaviour, not an oversight.
 
+## 8b. The public awardee roster is a whitelist, not a filtered resource
+
+`GET /api/natcon/awardees` is the only natcon endpoint that hands a LIST OF
+PEOPLE to anyone who asks. It is built as a whitelist of what the printed
+materials already say — name, people (a couple split), team, team logo,
+province, award — and `PublicAwardeeController`'s docblock is the decision
+record for everything left out.
+
+⚠️ **Never add to it without asking.** Not email or phone (309 agents' contact
+details, and info@ carries this company's login OTPs), not `total_sales` (an
+agent's production is commercial information about them), not the registration
+answers (shirt sizes, birthdays — and those live in v2 anyway), and not
+attendance: "is this person going?" is a movement question about a named
+individual.
+
+The photo is opt-in via `include=photo`, off by default. It is the same image
+the public materials carry, so it belongs in a public roster — but 309 headshots
+keyed to names in one call is a different exposure from a poster, and that is
+somebody's explicit choice, not a side effect.
+
+Excluded recipients are omitted, so the admin's "not this person" reaches the
+public list. Results are cached 300s per distinct query and the response carries
+a matching `Cache-Control`: api2 is prefork with a hard worker ceiling, and an
+uncached public list endpoint is the cheapest way to exhaust it.
+
+---
+
 ## 9. Running things on api2
 
 **Every artisan command must run as `www-data`:**

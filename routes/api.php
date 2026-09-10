@@ -78,6 +78,7 @@ use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
 use App\Natcon\Http\Controllers\OrganizerController as NatconOrganizerController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
+use App\Natcon\Http\Controllers\PublicAwardeeController as NatconPublicAwardeeController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
 use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
@@ -217,6 +218,23 @@ Route::middleware('strip.tags')->group(function () {
         // `recaps` is declared before `{year}` so the literal segment is never
         // bound as a year.
         Route::get('/natcon/recaps', [NatconLandingController::class, 'recaps']);
+
+        /*
+         * The published awardee roster — open, paginated, filterable.
+         *
+         * A whitelist of what the printed materials already say: name, team,
+         * province, award. No email, no phone, no sales figure, no registration
+         * answers, no attendance — see the controller's docblock, which is the
+         * decision record for that. `include=photo` adds the photo, off by
+         * default on purpose.
+         *
+         * Declared before /natcon/{year} so "awardees" is never bound as a year.
+         * Throttled: it is the only endpoint here that returns a list of people,
+         * and the cache in the controller is what keeps a scripted caller off
+         * api2's worker pool.
+         */
+        Route::get('/natcon/awardees', [NatconPublicAwardeeController::class, 'index'])
+            ->middleware('throttle:60,1');
         Route::get('/natcon/{year}/announcements', [NatconLandingController::class, 'announcements'])
             ->whereNumber('year');
         Route::get('/natcon/{year}/sponsors', [NatconLandingController::class, 'sponsors'])
