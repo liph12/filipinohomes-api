@@ -228,13 +228,58 @@ class AdminController extends Controller
 
         $event->fill($data)->save();
 
+        /**
+         * ⚠️ Moving the deadline MUST move the expiry of every link already
+         *    emailed, or extending the deadline silently does the opposite of
+         *    what it says.
+         *
+         *    mintToken() stamps token_expires_at as deadline + grace_days, and
+         *    nothing ever re-stamped it. So when the 2026 deadline moved from
+         *    Aug 24 to Sep 11, every token already in an awardee's inbox kept
+         *    its old expiry of Sep 7 — and from Sep 8 onward every awardee who
+         *    clicked the link in their email got "Your link has expired" while
+         *    the admin showed three days still to run. The uploads were open;
+         *    the only door to them was shut.
+         *
+         * Applied in both directions on purpose: the rule is "deadline +
+         * grace", so a deadline pulled EARLIER should not leave working links
+         * alive for a fortnight past it either.
+         *
+         * Nothing is rotated — the tokens themselves are untouched, so the link
+         * in every delivered email keeps working. A bulk update rather than
+         * per-row saves: this is one field on up to a few hundred rows, and the
+         * deadline change is already audited on the event itself.
+         */
+        $linksExtended = 0;
+
+        if ($event->wasChanged('photo_deadline_at')) {
+            $expiry = $event->photo_deadline_at
+                ?->copy()
+                ->addDays((int) config('natcon.token_grace_days', 14));
+
+            $linksExtended = Recipient::where('natcon_event_id', $event->id)
+                ->whereNotNull('token_nonce')
+                ->update(['token_expires_at' => $expiry]);
+
+            Log::info('natcon.deadline_moved', [
+                'event'           => $event->slug,
+                'deadline_at'     => $event->photo_deadline_at?->toIso8601String(),
+                'links_extended'  => $linksExtended,
+                'token_expires_at' => $expiry?->toIso8601String(),
+                'by'              => $request->user()?->id,
+            ]);
+        }
+
         // The landing page renders the name, dates, venue and banner from this
         // row, so an edit here is invisible until the ISR cache turns over.
         // Same reasoning as the announcement and sponsor writes — see
         // LandingCachePurger.
         app(LandingCachePurger::class)->purgeYear($event->year);
 
-        return response()->json(['data' => $event->fresh()]);
+        return response()->json([
+            'data' => $event->fresh(),
+            'meta' => ['links_extended' => $linksExtended],
+        ]);
     }
 
     public function stats(Request $request): JsonResponse
@@ -796,6 +841,55 @@ class AdminController extends Controller
         $this->awardees->hydrate($recipient, true);
 
         return response()->json(['data' => new RecipientResource($recipient->fresh('event'))]);
+    }
+
+    /**
+     * The awardee's EXISTING link — nothing is rotated.
+     *
+     * This is what the support call actually needs. Rotate-and-copy was the only
+     * way to get a link out of here, so every "I never got the email" was paid
+     * for with the link that was already sitting in their inbox: if the email
+     * turned up later, or a colleague forwarded it, the URL in it was dead.
+     *
+     * ensureToken() reproduces the exact token the invite and every reminder
+     * carried — the same call the send paths use — and mints one only for an
+     * awardee who has never had a link at all. `minted` says which happened, so
+     * the UI can be honest about it.
+     */
+    public function currentLink(Recipient $recipient): JsonResponse
+    {
+        $recipient->load('event');
+
+        $hadToken = $recipient->token_nonce !== null && $recipient->token_issued_at !== null;
+        $raw      = $this->invites->ensureToken($recipient);
+
+        /**
+         * Audited even though nothing rotated: this hands whoever asked a
+         * working link into somebody else's record, which is worth a record of
+         * its own.
+         *
+         * Audit::create rather than the model's auditSource trait — that path
+         * rides on a save(), and a save with no changed attributes writes no
+         * audit row, so a plain copy would leave no trace at all.
+         */
+        Audit::create([
+            'event'          => 'natcon',
+            'auditable_type' => Recipient::class,
+            'auditable_id'   => $recipient->id,
+            'user_type'      => request()->user() ? get_class(request()->user()) : null,
+            'user_id'        => request()->user()?->id,
+            'new_values'     => [
+                'source' => 'admin_copy_link',
+                'email'  => $recipient->email,
+                'minted' => ! $hadToken,
+            ],
+        ]);
+
+        return response()->json(['data' => [
+            'url'        => $this->invites->buildLink($recipient, $raw),
+            'expires_at' => $recipient->token_expires_at?->toIso8601String(),
+            'minted'     => ! $hadToken,
+        ]]);
     }
 
     /**

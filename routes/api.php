@@ -554,6 +554,10 @@ Route::middleware('strip.tags')->group(function () {
                 Route::delete('/admin/natcon/recipients/{recipient}', [NatconAdminController::class, 'destroyRecipient']);
                 Route::post('/admin/natcon/recipients/{recipient}/refresh-lr', [NatconAdminController::class, 'refreshLr'])
                     ->middleware('throttle:30,1');
+                // Reads the link the awardee was already emailed. Rotates
+                // NOTHING, which is what a support call needs.
+                Route::post('/admin/natcon/recipients/{recipient}/current-link', [NatconAdminController::class, 'currentLink'])
+                    ->middleware('throttle:30,1');
                 // Rotates the token — any previously emailed link stops working.
                 Route::post('/admin/natcon/recipients/{recipient}/issue-link', [NatconAdminController::class, 'issueLink'])
                     ->middleware('throttle:20,1');
