@@ -63,8 +63,26 @@ class Recipient extends Model implements Auditable
 
     public const SEGMENT_FHI_GLOBAL = 'fhi_global';
 
+    /**
+     * The Rent.ph manager awards. Two of them, because the second is a double
+     * award and prints as one line: "TOP RENT MANAGER & RM PRO".
+     *
+     * ⚠️ Values omit "top" on purpose — the same convention as
+     *    global_partner → "TOP GLOBAL PARTNER". The column is varchar(24), so
+     *    a `top_` prefix here would leave three characters of headroom on
+     *    rent_manager_rm_pro; the title carries the word instead.
+     */
+    public const SEGMENT_RENT_MANAGER = 'rent_manager';
+
+    public const SEGMENT_RENT_MANAGER_RM_PRO = 'rent_manager_rm_pro';
+
     /** The settable values. NULL is not listed: it is the absence of one. */
-    public const SEGMENTS = [self::SEGMENT_GLOBAL_PARTNER, self::SEGMENT_FHI_GLOBAL];
+    public const SEGMENTS = [
+        self::SEGMENT_GLOBAL_PARTNER,
+        self::SEGMENT_FHI_GLOBAL,
+        self::SEGMENT_RENT_MANAGER,
+        self::SEGMENT_RENT_MANAGER_RM_PRO,
+    ];
 
     public const RESPONSE_RETAIN = 'retain';
     public const RESPONSE_CHANGE = 'change';

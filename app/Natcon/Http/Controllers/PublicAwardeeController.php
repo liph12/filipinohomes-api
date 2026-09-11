@@ -62,7 +62,9 @@ class PublicAwardeeController extends Controller
             'q'        => 'nullable|string|max:120',
             'province' => 'nullable|string|max:120',
             'team'     => 'nullable|string|max:120',
-            'award'    => 'nullable|string|in:top_agent,global_partner,fhi_global',
+            // top_agent is the default and is stored as NULL, so it is listed
+            // here but filtered as "no segment" below.
+            'award'    => 'nullable|string|in:top_agent,' . implode(',', Recipient::SEGMENTS),
             'sort'     => 'nullable|string|in:name,-name,team,-team,province,-province',
             'page'     => 'nullable|integer|min:1|max:1000',
             'per_page' => 'nullable|integer|min:1|max:' . self::MAX_PER_PAGE,
@@ -243,7 +245,7 @@ class PublicAwardeeController extends Controller
                     ->distinct()->orderBy('state')->pluck('state')->values(),
                 'teams' => $base()->whereNotNull('team')->where('team', '!=', '')
                     ->distinct()->orderBy('team')->pluck('team')->values(),
-                'awards' => ['top_agent', 'global_partner', 'fhi_global'],
+                'awards' => array_merge(['top_agent'], Recipient::SEGMENTS),
             ];
         }
 
@@ -253,9 +255,11 @@ class PublicAwardeeController extends Controller
     private function awardTitle(?string $segment): string
     {
         return match ($segment) {
-            Recipient::SEGMENT_GLOBAL_PARTNER => 'TOP GLOBAL PARTNER',
-            Recipient::SEGMENT_FHI_GLOBAL     => 'TOP FHI GLOBAL AGENT',
-            default                           => 'TOP AGENT',
+            Recipient::SEGMENT_GLOBAL_PARTNER       => 'TOP GLOBAL PARTNER',
+            Recipient::SEGMENT_FHI_GLOBAL           => 'TOP FHI GLOBAL AGENT',
+            Recipient::SEGMENT_RENT_MANAGER         => 'TOP RENT MANAGER',
+            Recipient::SEGMENT_RENT_MANAGER_RM_PRO  => 'TOP RENT MANAGER & RM PRO',
+            default                                 => 'TOP AGENT',
         };
     }
 }
