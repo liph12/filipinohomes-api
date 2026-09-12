@@ -335,6 +335,10 @@ class GalleryController extends Controller
             $data[] = $this->present($photo) + [
                 'similarity' => round($m['similarity'], 1),
                 'face_area' => round($m['face_area'], 4),
+                // How many faces the photo holds, for the results' "fewest
+                // faces first" order (solo shots lead, group photos trail) —
+                // a count only, nothing about whose faces they are.
+                'face_count' => $photo->face_count,
             ];
         }
 
