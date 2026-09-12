@@ -303,6 +303,13 @@ owner's explicit request after being withheld; guests' NAMES are still behind
 unreachable the roster still serves and a registration filter returns nothing —
 an unfilterable filter must not look like an answer.
 
+⚠️ `include=tickets` is the one KEYED include: it returns the QR code the door
+scans, so it needs `X-NATCON-Ticket-Key` (config `natcon.ticket_key`) and is
+refused outright while that is unset. The flag is part of the cache key, or a
+keyed response would be served back to a caller who never presented one. Never
+fold it into the open payload, and never gate it on `app.fh_service_token` —
+that secret opens the FH ⟷ v2 service endpoints, and this key gets handed out.
+
 The photo is opt-in via `include=photo`, off by default. It is the same image
 the public materials carry, so it belongs in a public roster — but 309 headshots
 keyed to names in one call is a different exposure from a poster, and that is

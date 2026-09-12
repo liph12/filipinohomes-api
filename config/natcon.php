@@ -18,6 +18,27 @@ return [
         'timeout'  => (int) env('NATCON_REG_TIMEOUT', 10),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Ticket codes on the public awardee API
+    |--------------------------------------------------------------------------
+    |
+    | `include=tickets` returns the QR code every awardee and guest presents at
+    | the door, so it is NOT public: the caller must send the key below as
+    | X-NATCON-Ticket-Key. A leaked list of codes is a list of ways to walk in
+    | as somebody else, and to burn their scan before they arrive.
+    |
+    | ⚠️ Deliberately NOT app.fh_service_token. That secret opens the
+    |    server-to-server endpoints between this API and natcon-api-v2; handing
+    |    it to whoever wants a ticket export would hand them those too. This one
+    |    can be given away, and rotated, on its own.
+    |
+    | Unset means the include is refused outright — a missing key must never
+    | mean "no gate".
+    |
+    */
+    'ticket_key' => env('NATCON_TICKET_API_KEY', ''),
+
 
     /*
     |--------------------------------------------------------------------------

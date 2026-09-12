@@ -36,9 +36,14 @@ class NatconRegClient
      *
      * @return array<string, array<string, mixed>>|null  null when v2 could not be reached
      */
-    public function byEmail(int $year): ?array
+    public function byEmail(int $year, bool $withCodes = false): ?array
     {
-        $cacheKey = "natcon:reg-status:{$year}";
+        /*
+         * Its own cache entry. Sharing one with the code-less call would serve
+         * ticket codes to a caller who never presented the key — the cache is
+         * exactly where that kind of leak hides.
+         */
+        $cacheKey = $withCodes ? "natcon:reg-status-codes:{$year}" : "natcon:reg-status:{$year}";
 
         // A failure is NOT cached: v2 coming back up should show through on the
         // next request, not five minutes later.
@@ -61,7 +66,10 @@ class NatconRegClient
             $response = Http::timeout((int) config('natcon.reg.timeout', 10))
                 ->acceptJson()
                 ->withHeaders(['X-FH-Service-Token' => $token])
-                ->get($base.'/service/registrants', ['year' => $year]);
+                ->get($base.'/service/registrants', array_filter([
+                    'year' => $year,
+                    'with_codes' => $withCodes ? 1 : null,
+                ]));
 
             if (! $response->successful()) {
                 Log::warning('natcon.reg_client.http_error', [

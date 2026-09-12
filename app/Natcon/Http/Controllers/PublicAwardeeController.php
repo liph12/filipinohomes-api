@@ -126,6 +126,32 @@ class PublicAwardeeController extends Controller
         $withFacets = in_array('facets', $include, true);
         $withGuestNames = in_array('guests', $include, true);
 
+        /**
+         * ─── include=tickets is KEYED, and everything else here is not ──────
+         *
+         * A ticket code is the credential the door scans. Published openly it
+         * is a list of ways to walk in as somebody else — and to burn their
+         * scan before they arrive, which is worse, because the real person is
+         * then the one turned away.
+         *
+         * So this one include asks for a header. An unset key refuses it
+         * outright rather than waving it through: a missing gate must never
+         * read as "no gate needed".
+         */
+        $withTickets = in_array('tickets', $include, true);
+
+        if ($withTickets) {
+            $expected = (string) config('natcon.ticket_key', '');
+            $given    = (string) $request->header('X-NATCON-Ticket-Key', '');
+
+            if ($expected === '' || $given === '' || ! hash_equals($expected, $given)) {
+                return response()->json([
+                    'message' => 'include=tickets needs the X-NATCON-Ticket-Key header. '
+                        .'Ticket codes are what the door scans, so they are not part of the open roster.',
+                ], 403);
+            }
+        }
+
         /*
          * Filtering on a registration fact needs the layer whether or not the
          * caller asked to SEE it — "who has registered" is a question about
@@ -139,6 +165,7 @@ class PublicAwardeeController extends Controller
 
         $withRegistration = in_array('registration', $include, true)
             || $withGuestNames
+            || $withTickets
             || $filtersRegistration;
 
         $page    = (int) ($data['page'] ?? 1);
@@ -159,6 +186,9 @@ class PublicAwardeeController extends Controller
             $withFacets,
             $withRegistration,
             $withGuestNames,
+            // ⚠️ In the key, so a response carrying codes can never be handed
+            //    back to a caller who did not present the header.
+            $withTickets,
             $request->filled('registered') ? $request->boolean('registered') : null,
             $request->filled('confirmed') ? $request->boolean('confirmed') : null,
             $request->filled('vvip') ? $request->boolean('vvip') : null,
@@ -176,6 +206,7 @@ class PublicAwardeeController extends Controller
             $withFacets,
             $withRegistration,
             $withGuestNames,
+            $withTickets,
         ));
 
         return response()
@@ -197,6 +228,7 @@ class PublicAwardeeController extends Controller
         bool $withFacets,
         bool $withRegistration,
         bool $withGuestNames,
+        bool $withTickets = false,
     ): array {
         /*
          * The registration layer, fetched once for the whole year and joined by
@@ -207,7 +239,9 @@ class PublicAwardeeController extends Controller
          * that 500s because another service is down fails the people who came
          * for the list of awardees, which this service holds by itself.
          */
-        $registration = $withRegistration ? app(NatconRegClient::class)->byEmail((int) $event->year) : null;
+        $registration = $withRegistration
+            ? app(NatconRegClient::class)->byEmail((int) $event->year, $withTickets)
+            : null;
         $query = Recipient::query()
             ->where('natcon_event_id', $event->id)
             // An excluded recipient is an admin saying "not this person". That
@@ -315,6 +349,7 @@ class PublicAwardeeController extends Controller
             $withPhoto,
             $withRegistration,
             $withGuestNames,
+            $withTickets,
             $registration,
         ) {
             $row = [
@@ -333,7 +368,7 @@ class PublicAwardeeController extends Controller
             ];
 
             if ($withRegistration) {
-                $row['registration'] = $this->registrationFor($r, $registration, $withGuestNames);
+                $row['registration'] = $this->registrationFor($r, $registration, $withGuestNames, $withTickets);
             }
 
             if ($withPhoto) {
@@ -400,7 +435,12 @@ class PublicAwardeeController extends Controller
      * @param  array<string, array<string, mixed>>|null  $registration
      * @return array<string, mixed>
      */
-    private function registrationFor(Recipient $r, ?array $registration, bool $withGuestNames): array
+    private function registrationFor(
+        Recipient $r,
+        ?array $registration,
+        bool $withGuestNames,
+        bool $withTickets = false,
+    ): array
     {
         if ($registration === null) {
             return ['available' => false];
@@ -440,12 +480,26 @@ class PublicAwardeeController extends Controller
             ],
         ];
 
-        if ($withGuestNames) {
-            $block['guests'] = array_values(array_map(fn (array $g) => [
-                'name'          => $g['name'] ?? null,
-                'registered'    => (bool) ($g['registered'] ?? false),
-                'ticket_issued' => (bool) ($g['ticket_issued'] ?? false),
-            ], $guests));
+        if ($withTickets) {
+            // One entry per PERSON: a couple is two tickets, and whoever is
+            // holding the list needs to know whose is whose.
+            $block['ticket_people'] = array_values($row['ticket_people'] ?? []);
+        }
+
+        if ($withGuestNames || $withTickets) {
+            $block['guests'] = array_values(array_map(function (array $g) use ($withTickets) {
+                $entry = [
+                    'name'          => $g['name'] ?? null,
+                    'registered'    => (bool) ($g['registered'] ?? false),
+                    'ticket_issued' => (bool) ($g['ticket_issued'] ?? false),
+                ];
+
+                if ($withTickets) {
+                    $entry['ticket_people'] = array_values($g['ticket_people'] ?? []);
+                }
+
+                return $entry;
+            }, $guests));
         }
 
         return $block;
