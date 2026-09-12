@@ -96,6 +96,7 @@ class PublicAwardeeController extends Controller
              * unreachable.
              */
             'registered' => 'nullable|boolean',
+            'confirmed'  => 'nullable|boolean',
             'vvip'       => 'nullable|boolean',
             'elite'      => 'nullable|boolean',
             'guests'     => 'nullable|boolean',
@@ -131,6 +132,7 @@ class PublicAwardeeController extends Controller
          * data this service does not hold.
          */
         $filtersRegistration = $request->filled('registered')
+            || $request->filled('confirmed')
             || $request->filled('vvip')
             || $request->filled('elite')
             || $request->filled('guests');
@@ -158,6 +160,7 @@ class PublicAwardeeController extends Controller
             $withRegistration,
             $withGuestNames,
             $request->filled('registered') ? $request->boolean('registered') : null,
+            $request->filled('confirmed') ? $request->boolean('confirmed') : null,
             $request->filled('vvip') ? $request->boolean('vvip') : null,
             $request->filled('elite') ? $request->boolean('elite') : null,
             $request->filled('guests') ? $request->boolean('guests') : null,
@@ -261,6 +264,7 @@ class PublicAwardeeController extends Controller
 
         $predicates = array_filter([
             $wants('registered', fn (array $r) => (bool) ($r['registered'] ?? false)),
+            $wants('confirmed', fn (array $r) => (bool) ($r['confirmed'] ?? false)),
             $wants('vvip', fn (array $r) => (bool) ($r['is_vvip'] ?? false)),
             $wants('elite', fn (array $r) => (bool) ($r['is_elite'] ?? false)),
             $wants('guests', fn (array $r) => count($r['guests'] ?? []) > 0),
@@ -424,12 +428,23 @@ class PublicAwardeeController extends Controller
             // — a couple where one attends is 1, not 2.
             'attending'  => (int) ($row['attending'] ?? 0),
             'guest_count' => count($guests),
+            /**
+             * ⚠️ Counts, never codes. A ticket code is what the door scans —
+             *    a public list of them is a list of ways to walk in as
+             *    somebody else. `issued` answers "has their QR gone out yet",
+             *    which is the question worth asking in public.
+             */
+            'tickets' => [
+                'eligible' => (int) data_get($row, 'tickets.eligible', 0),
+                'issued'   => (int) data_get($row, 'tickets.issued', 0),
+            ],
         ];
 
         if ($withGuestNames) {
             $block['guests'] = array_values(array_map(fn (array $g) => [
-                'name'       => $g['name'] ?? null,
-                'registered' => (bool) ($g['registered'] ?? false),
+                'name'          => $g['name'] ?? null,
+                'registered'    => (bool) ($g['registered'] ?? false),
+                'ticket_issued' => (bool) ($g['ticket_issued'] ?? false),
             ], $guests));
         }
 
