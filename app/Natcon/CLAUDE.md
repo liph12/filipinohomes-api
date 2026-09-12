@@ -307,6 +307,17 @@ uncached public list endpoint is the cheapest way to exhaust it.
 
 ---
 
+## 8b. Face search has three doors, one probe
+
+`GalleryController::probeFaces()` is the only place selfies meet Rekognition.
+Three routes call it: the admin/agent `/admin/natcon/gallery/face-search`
+(hidden photos included for admins), the public `/albums/face-search` (the
+public collection, live photos) and the public
+`/natcon/{year}/gallery/face-search` (ONE convention's collection, live photos).
+The two public doors sit outside `verify.guest.token`'s admin gates but behind
+the guest token and `throttle:10,1` — each hit is up to five Rekognition calls.
+Never let a public door return a non-active photo.
+
 ## 9. Running things on api2
 
 **Every artisan command must run as `www-data`:**

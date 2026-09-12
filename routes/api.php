@@ -300,6 +300,13 @@ Route::middleware('strip.tags')->group(function () {
             Route::post('/albums/face-search', [NatconGalleryController::class, 'publicFaceSearch'])
                 ->middleware('throttle:10,1');
 
+            // "Find my photos" on /natcon/gallery — the same probe over ONE
+            // convention's collection, live photos only. Same cost profile as
+            // the albums search above, so the same throttle.
+            Route::post('/natcon/{year}/gallery/face-search', [NatconGalleryController::class, 'publicNatconFaceSearch'])
+                ->whereNumber('year')
+                ->middleware('throttle:10,1');
+
             // ── Photographer upload invites ─────────────────────────────────
             // Hired photographers upload event photos through a tokenized
             // link (t) minted from the admin Gallery tab — no account. Same

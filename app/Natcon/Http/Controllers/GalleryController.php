@@ -294,6 +294,63 @@ class GalleryController extends Controller
     }
 
     /**
+     * The visitor-facing "find my photos" on /natcon/gallery: the admin
+     * search's probe over ONE convention's collection, returning that year's
+     * LIVE photos only — a hidden photo must never surface through a selfie.
+     * Behind the guest token + a throttle, like the /albums search: every hit
+     * is up to five Rekognition calls.
+     *
+     * Keyed by year, like every public NATCON read, so the page never has to
+     * resolve an event id first. A year with no event is a 404 here rather
+     * than an empty list: the selfies were uploaded for nothing, and the page
+     * should say so instead of "no matches".
+     */
+    public function publicNatconFaceSearch(Request $request, int $year): JsonResponse
+    {
+        $event = NatconEvent::forYear($year);
+        if (! $event) {
+            return response()->json(['message' => 'No NATCON gallery for that year.'], 404);
+        }
+
+        $result = $this->probeFaces($request, $event);
+        if ($result instanceof JsonResponse) {
+            return $result;
+        }
+        [$matches, $mode, $total] = $result;
+
+        // whereIn loses the similarity ordering; reassemble in match order.
+        $photos = GalleryPhoto::with('album:id,parent_id,name,sort_order')
+            ->forEvent($event)
+            ->whereIn('id', array_keys($matches))
+            ->where('status', GalleryPhoto::STATUS_ACTIVE)
+            ->get()
+            ->keyBy('id');
+
+        $data = [];
+        foreach ($matches as $photoId => $m) {
+            $photo = $photos->get($photoId);
+            if (! $photo) {
+                continue;
+            }
+            $data[] = $this->present($photo) + [
+                'similarity' => round($m['similarity'], 1),
+                'face_area' => round($m['face_area'], 4),
+            ];
+        }
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'matched' => count($data),
+                'threshold' => (float) config('natcon.gallery.match_threshold', 90),
+                'mode' => $mode,
+                'faces_searched' => $total,
+                'year' => $event->year,
+            ],
+        ]);
+    }
+
+    /**
      * The album's id plus every descendant's, from one query over the scope's
      * albums — public albums are tens of rows, and walking parent_id in PHP
      * beats a recursive CTE for that size.
