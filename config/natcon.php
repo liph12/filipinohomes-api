@@ -4,6 +4,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | natcon-api-v2
+    |--------------------------------------------------------------------------
+    |
+    | The other backend, which owns registrations. Read server-to-server for
+    | the registration layer of the public awardee API — see NatconRegClient.
+    | Authenticated with the SAME shared secret as the v2 → here direction
+    | (app.fh_service_token), so no environment needs a second value.
+    |
+    */
+    'reg' => [
+        'base_url' => env('NATCON_REG_API_URL', 'https://api.leuteriorealty.com/natcon/v2/public/api'),
+        'timeout'  => (int) env('NATCON_REG_TIMEOUT', 10),
+    ],
+
+
+    /*
+    |--------------------------------------------------------------------------
     | Invite link secret
     |--------------------------------------------------------------------------
     |

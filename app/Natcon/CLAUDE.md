@@ -295,6 +295,14 @@ answers (shirt sizes, birthdays — and those live in v2 anyway), and not
 attendance: "is this person going?" is a movement question about a named
 individual.
 
+`include=registration` joins natcon-api-v2's registration layer (registered /
+VVIP / Elite / attending / guest count) over the service token, keyed by email,
+and `registered`, `vvip`, `elite`, `guests` filter on it. Shipped at the event
+owner's explicit request after being withheld; guests' NAMES are still behind
+`include=guests`, because a guest never entered a competition. If v2 is
+unreachable the roster still serves and a registration filter returns nothing —
+an unfilterable filter must not look like an answer.
+
 The photo is opt-in via `include=photo`, off by default. It is the same image
 the public materials carry, so it belongs in a public roster — but 309 headshots
 keyed to names in one call is a different exposure from a poster, and that is

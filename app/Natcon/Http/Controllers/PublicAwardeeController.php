@@ -5,9 +5,11 @@ namespace App\Natcon\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Recipient;
+use App\Natcon\Services\NatconRegClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The published NATCON awardee roster — open, unauthenticated, read-only.
@@ -36,6 +38,27 @@ use Illuminate\Support\Facades\Cache;
  * public roster — but 309 headshots keyed to names, downloadable in one call,
  * is a different exposure from a poster, and that should be somebody's explicit
  * choice rather than a side effect of adding pagination.
+ *
+ * ─── The registration layer ──────────────────────────────────────────────────
+ *
+ * `include=registration` adds who has registered, who is VVIP or Elite, how
+ * many of the awardee's own party are attending, and how many guests they are
+ * bringing; `registered`, `vvip`, `elite` and `guests` filter on it. That data
+ * belongs to natcon-api-v2, so it is fetched server-to-server (NatconRegClient)
+ * and joined by email — the only identifier the two services share.
+ *
+ * This was originally withheld, on the grounds that "is this person going?" is
+ * a movement question about a named individual. It ships at the event owner's
+ * explicit request: it is their convention, their awardees, and the roster of
+ * who won is already public. What has NOT moved is everything in the list
+ * above — no contact details, no sales figures, no form answers — and guests'
+ * NAMES stay behind their own `include=guests`, because a guest never entered
+ * a competition. Their count is a fact about the awardee and the seating;
+ * their name is not.
+ *
+ * If v2 cannot be reached the roster still serves, `meta.registration.available`
+ * says false, and a registration FILTER returns nothing rather than quietly
+ * returning everyone — an unfilterable filter must not look like an answer.
  *
  * ─── Load ────────────────────────────────────────────────────────────────────
  *
@@ -66,10 +89,22 @@ class PublicAwardeeController extends Controller
             // here but filtered as "no segment" below.
             'award'    => 'nullable|string|in:top_agent,' . implode(',', Recipient::SEGMENTS),
             'sort'     => 'nullable|string|in:name,-name,team,-team,province,-province',
+            /*
+             * The registration filters. Every one of them is answered by
+             * natcon-api-v2, so asking for any of them fetches that layer —
+             * see registrationFor() and the note on what it does when v2 is
+             * unreachable.
+             */
+            'registered' => 'nullable|boolean',
+            'vvip'       => 'nullable|boolean',
+            'elite'      => 'nullable|boolean',
+            'guests'     => 'nullable|boolean',
             'page'     => 'nullable|integer|min:1|max:1000',
             'per_page' => 'nullable|integer|min:1|max:' . self::MAX_PER_PAGE,
-            // `photo` adds photo_url; `facets` adds the province and team lists
-            // so a caller can build filter dropdowns without a second endpoint.
+            // `photo` adds photo_url; `facets` adds the province and team
+            // lists so a caller can build filter dropdowns without a second
+            // endpoint; `registration` adds the v2 status block; `guests` adds
+            // the guests' names inside it.
             'include'  => 'nullable|string|max:64',
         ]);
 
@@ -88,6 +123,21 @@ class PublicAwardeeController extends Controller
         $include  = array_filter(array_map('trim', explode(',', (string) ($data['include'] ?? ''))));
         $withPhoto = in_array('photo', $include, true);
         $withFacets = in_array('facets', $include, true);
+        $withGuestNames = in_array('guests', $include, true);
+
+        /*
+         * Filtering on a registration fact needs the layer whether or not the
+         * caller asked to SEE it — "who has registered" is a question about
+         * data this service does not hold.
+         */
+        $filtersRegistration = $request->filled('registered')
+            || $request->filled('vvip')
+            || $request->filled('elite')
+            || $request->filled('guests');
+
+        $withRegistration = in_array('registration', $include, true)
+            || $withGuestNames
+            || $filtersRegistration;
 
         $page    = (int) ($data['page'] ?? 1);
         $perPage = (int) ($data['per_page'] ?? self::PER_PAGE);
@@ -105,15 +155,24 @@ class PublicAwardeeController extends Controller
             $perPage,
             $withPhoto,
             $withFacets,
+            $withRegistration,
+            $withGuestNames,
+            $request->filled('registered') ? $request->boolean('registered') : null,
+            $request->filled('vvip') ? $request->boolean('vvip') : null,
+            $request->filled('elite') ? $request->boolean('elite') : null,
+            $request->filled('guests') ? $request->boolean('guests') : null,
         ]));
 
         $payload = Cache::remember($cacheKey, self::TTL, fn () => $this->build(
             $event,
+            $request,
             $data,
             $page,
             $perPage,
             $withPhoto,
             $withFacets,
+            $withRegistration,
+            $withGuestNames,
         ));
 
         return response()
@@ -127,12 +186,25 @@ class PublicAwardeeController extends Controller
      */
     private function build(
         NatconEvent $event,
+        Request $request,
         array $data,
         int $page,
         int $perPage,
         bool $withPhoto,
         bool $withFacets,
+        bool $withRegistration,
+        bool $withGuestNames,
     ): array {
+        /*
+         * The registration layer, fetched once for the whole year and joined by
+         * email — the only identifier this service and v2 share.
+         *
+         * null means v2 could not be answered. The roster still ships, the
+         * registration block is omitted, and meta says so: a public endpoint
+         * that 500s because another service is down fails the people who came
+         * for the list of awardees, which this service holds by itself.
+         */
+        $registration = $withRegistration ? app(NatconRegClient::class)->byEmail((int) $event->year) : null;
         $query = Recipient::query()
             ->where('natcon_event_id', $event->id)
             // An excluded recipient is an admin saying "not this person". That
@@ -176,6 +248,47 @@ class PublicAwardeeController extends Controller
                 : $query->where('award_segment', $award);
         }
 
+        /*
+         * A registration filter is applied as a whereIn on EMAIL rather than in
+         * PHP after the fact, so pagination still counts the right total. The
+         * email set comes from v2's answer; if v2 is unreachable the filter
+         * cannot be honoured, and returning the unfiltered roster would be a
+         * lie — so it yields an empty page and meta explains why.
+         */
+        $wants = fn (string $key, callable $test) => $request->filled($key)
+            ? [$request->boolean($key), $test]
+            : null;
+
+        $predicates = array_filter([
+            $wants('registered', fn (array $r) => (bool) ($r['registered'] ?? false)),
+            $wants('vvip', fn (array $r) => (bool) ($r['is_vvip'] ?? false)),
+            $wants('elite', fn (array $r) => (bool) ($r['is_elite'] ?? false)),
+            $wants('guests', fn (array $r) => count($r['guests'] ?? []) > 0),
+        ]);
+
+        if ($predicates !== []) {
+            $emails = [];
+
+            foreach (($registration ?? []) as $email => $row) {
+                $keep = true;
+
+                foreach ($predicates as [$expected, $test]) {
+                    if ($test($row) !== $expected) {
+                        $keep = false;
+                        break;
+                    }
+                }
+
+                if ($keep) {
+                    $emails[] = $email;
+                }
+            }
+
+            // whereRaw LOWER(): the roster stores the address as typed, and v2
+            // keys on the lowercased form.
+            $query->whereIn(DB::raw('LOWER(email)'), $emails ?: ['\x00-no-match']);
+        }
+
         [$column, $direction] = match ($data['sort'] ?? 'name') {
             '-name'     => ['display_name', 'desc'],
             'team'      => ['team', 'asc'],
@@ -194,7 +307,12 @@ class PublicAwardeeController extends Controller
             ->orderBy('id')
             ->paginate($perPage, ['*'], 'page', $page);
 
-        $rows = collect($paginator->items())->map(function (Recipient $r) use ($withPhoto) {
+        $rows = collect($paginator->items())->map(function (Recipient $r) use (
+            $withPhoto,
+            $withRegistration,
+            $withGuestNames,
+            $registration,
+        ) {
             $row = [
                 'id'        => $r->id,
                 'name'      => $r->displayName(),
@@ -209,6 +327,10 @@ class PublicAwardeeController extends Controller
                     'title'   => $this->awardTitle($r->award_segment),
                 ],
             ];
+
+            if ($withRegistration) {
+                $row['registration'] = $this->registrationFor($r, $registration, $withGuestNames);
+            }
 
             if ($withPhoto) {
                 // finalPhotoUrl(), not the raw upload: it is null while a
@@ -236,6 +358,15 @@ class PublicAwardeeController extends Controller
             'to'        => $paginator->lastItem(),
         ];
 
+        if ($withRegistration) {
+            // Said plainly rather than left to be inferred from nulls: a caller
+            // filtering on "registered" needs to know whether the answer is
+            // "nobody matched" or "we could not ask".
+            $meta['registration'] = $registration === null
+                ? ['available' => false, 'note' => 'Registration data could not be reached; the roster is unfiltered by it.']
+                : ['available' => true, 'known' => count($registration)];
+        }
+
         if ($withFacets) {
             $base = fn () => Recipient::where('natcon_event_id', $event->id)
                 ->where('status', '!=', Recipient::STATUS_EXCLUDED);
@@ -250,6 +381,59 @@ class PublicAwardeeController extends Controller
         }
 
         return ['data' => $rows, 'meta' => $meta];
+    }
+
+    /**
+     * One awardee's registration facts, or nulls when v2 has never heard of
+     * them (added to the roster after the last sync, say).
+     *
+     * ⚠️ Guests' NAMES are behind `include=guests`; the count is not. A guest
+     *    is a private individual who never entered a competition — the awardee
+     *    did — so naming them publicly is a deliberate request, while "this
+     *    awardee is bringing two people" is a fact about the awardee and the
+     *    seating.
+     *
+     * @param  array<string, array<string, mixed>>|null  $registration
+     * @return array<string, mixed>
+     */
+    private function registrationFor(Recipient $r, ?array $registration, bool $withGuestNames): array
+    {
+        if ($registration === null) {
+            return ['available' => false];
+        }
+
+        $row = $registration[mb_strtolower(trim((string) $r->email))] ?? null;
+
+        if ($row === null) {
+            // Known to the roster, unknown to registrations — not the same as
+            // "has not registered", and worth saying so.
+            return ['available' => true, 'known' => false];
+        }
+
+        $guests = is_array($row['guests'] ?? null) ? $row['guests'] : [];
+
+        $block = [
+            'available'  => true,
+            'known'      => true,
+            'status'     => $row['status'] ?? null,
+            'registered' => (bool) ($row['registered'] ?? false),
+            'confirmed'  => (bool) ($row['confirmed'] ?? false),
+            'is_vvip'    => (bool) ($row['is_vvip'] ?? false),
+            'is_elite'   => (bool) ($row['is_elite'] ?? false),
+            // Heads on the awardee's own registration who said they are coming
+            // — a couple where one attends is 1, not 2.
+            'attending'  => (int) ($row['attending'] ?? 0),
+            'guest_count' => count($guests),
+        ];
+
+        if ($withGuestNames) {
+            $block['guests'] = array_values(array_map(fn (array $g) => [
+                'name'       => $g['name'] ?? null,
+                'registered' => (bool) ($g['registered'] ?? false),
+            ], $guests));
+        }
+
+        return $block;
     }
 
     private function awardTitle(?string $segment): string
