@@ -559,6 +559,9 @@ Route::middleware('strip.tags')->group(function () {
                 // Start a new convention year (clones the previous year's questions).
                 Route::post('/admin/natcon/events', [NatconAdminController::class, 'storeEvent']);
                 Route::patch('/admin/natcon/events/{event}', [NatconAdminController::class, 'updateEvent']);
+                // Refuses while the year holds awardees, photos, albums,
+                // announcements, sponsors or committees — see destroyEvent.
+                Route::delete('/admin/natcon/events/{event}', [NatconAdminController::class, 'destroyEvent']);
                 Route::get('/admin/natcon/stats', [NatconAdminController::class, 'stats']);
 
                 Route::get('/admin/natcon/recipients', [NatconAdminController::class, 'recipients']);

@@ -3,14 +3,19 @@
 namespace App\Natcon\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\GalleryAlbum;
+use App\Models\GalleryPhoto;
 use App\Models\User;
 use App\Natcon\Http\Resources\RecipientResource;
 use App\Natcon\Models\FormField;
 use App\Natcon\Models\FormSubmission;
+use App\Natcon\Models\NatconAnnouncement;
 use App\Natcon\Models\NatconEvent;
+use App\Natcon\Models\OrganizerCommittee;
 use App\Natcon\Models\Outbox;
 use App\Natcon\Models\PhotoSubmission;
 use App\Natcon\Models\Recipient;
+use App\Natcon\Models\Sponsor;
 use App\Natcon\Models\Suppression;
 use App\Natcon\Services\AwardeeService;
 use App\Natcon\Services\FormService;
@@ -126,9 +131,17 @@ class AdminController extends Controller
             'year' => 'required|integer|min:2000|max:2100|unique:natcon_events,year',
             'name' => 'required|string|max:255',
             'short_name' => 'nullable|string|max:64',
-            'starts_on' => 'required|date',
-            'ends_on' => 'required|date|after_or_equal:starts_on',
-            'venue' => 'required|string|max:255',
+            /*
+             * Optional, because a PAST convention is a legitimate thing to
+             * create: an archive year exists so its gallery has somewhere to
+             * live, and nobody should have to look up the 2024 venue and dates
+             * before they can upload the photos. dateLabel() already returns
+             * '' for a null starts_on, and the landing page falls back to its
+             * own copy.
+             */
+            'starts_on' => 'nullable|date',
+            'ends_on' => 'nullable|date|after_or_equal:starts_on',
+            'venue' => 'nullable|string|max:255',
             'hashtag' => 'nullable|string|max:64',
             'timezone' => 'nullable|string|max:64|timezone',
             'photo_deadline_at' => 'nullable|date',
@@ -138,21 +151,39 @@ class AdminController extends Controller
             'email_banner_url' => 'nullable|url|max:2048',
             'thank_you_message' => 'nullable|string|max:512',
             'copy_fields_from' => 'nullable|integer|exists:natcon_events,id',
+            /**
+             * ⚠️ Defaults to FALSE, and the caller has to ask for live.
+             *
+             * This used to create every event as `is_active`, which is fine
+             * for "start next year" and quietly catastrophic for "add 2024 for
+             * the gallery": NatconEvent::active() is what the public site,
+             * every email and the send guard read, and adding an archive year
+             * would have handed it to them.
+             */
+            'is_active' => 'nullable|boolean',
+            /**
+             * Copying last year's questions is right when planning the NEXT
+             * convention and noise on an archive year, so it is asked for
+             * rather than assumed.
+             */
+            'copy_questions' => 'nullable|boolean',
         ]);
 
         $year = (int) $data['year'];
+        $live = (bool) ($data['is_active'] ?? false);
         $tz = $data['timezone'] ?? 'Asia/Manila';
         $previous = NatconEvent::orderByDesc('year')->first();
 
-        $event = DB::transaction(function () use ($data, $year, $tz, $previous) {
+        $event = DB::transaction(function () use ($data, $year, $tz, $previous, $live) {
             $event = NatconEvent::create([
                 'slug' => 'natcon-'.$year,
                 'year' => $year,
                 'name' => $data['name'],
                 'short_name' => $data['short_name'] ?? ('NATCON '.$year),
-                'starts_on' => $data['starts_on'],
-                'ends_on' => $data['ends_on'],
-                'venue' => $data['venue'],
+                // Null on an archive year — see the 2026_09_12 migration.
+                'starts_on' => $data['starts_on'] ?? null,
+                'ends_on' => $data['ends_on'] ?? null,
+                'venue' => $data['venue'] ?? null,
                 'hashtag' => $data['hashtag'] ?? ('#LRNATCON'.$year),
                 'timezone' => $tz,
                 // Entered as wall-clock time in the event's own timezone, because
@@ -166,12 +197,23 @@ class AdminController extends Controller
                 'banner_base' => $data['banner_base'] ?? "/images/natcon-{$year}/natcon{$year}",
                 'email_banner_url' => $data['email_banner_url'] ?? null,
                 'thank_you_message' => $data['thank_you_message'] ?? null,
-                'is_active' => true,
+                'is_active' => $live,
             ]);
 
-            $source = isset($data['copy_fields_from'])
-                ? NatconEvent::find($data['copy_fields_from'])
-                : $previous;
+            // One live convention, enforced here rather than hoped for.
+            // active() breaks a tie by starts_on and would otherwise pick a
+            // winner nobody chose.
+            if ($live) {
+                NatconEvent::where('id', '!=', $event->id)
+                    ->where('is_active', true)
+                    ->update(['is_active' => false]);
+            }
+
+            $source = ($data['copy_questions'] ?? false)
+                ? (isset($data['copy_fields_from'])
+                    ? NatconEvent::find($data['copy_fields_from'])
+                    : $previous)
+                : null;
 
             if ($source) {
                 foreach ($this->forms->fields($source, activeOnly: false) as $field) {
@@ -190,8 +232,11 @@ class AdminController extends Controller
         return response()->json([
             'data' => $event->fresh(),
             'meta' => [
-                'copied_fields_from' => $previous?->year,
-                'note' => "Upload this year's banner images to public{$event->banner_base} before sending invites.",
+                'copied_fields_from' => ($data['copy_questions'] ?? false) ? $previous?->year : null,
+                'is_live' => $live,
+                'note' => $live
+                    ? "Upload this year's banner images to public{$event->banner_base} before sending invites."
+                    : 'Added as an archive year. Pick it in the Convention year rail to upload its gallery.',
             ],
         ], 201);
     }
@@ -228,6 +273,14 @@ class AdminController extends Controller
         }
 
         $event->fill($data)->save();
+
+        // Same rule as creating one: exactly one convention is live, and
+        // active() must never have to break a tie nobody meant to create.
+        if ($event->wasChanged('is_active') && $event->is_active) {
+            NatconEvent::where('id', '!=', $event->id)
+                ->where('is_active', true)
+                ->update(['is_active' => false]);
+        }
 
         /**
          * ⚠️ Moving the deadline MUST move the expiry of every link already
@@ -281,6 +334,74 @@ class AdminController extends Controller
             'data' => $event->fresh(),
             'meta' => ['links_extended' => $linksExtended],
         ]);
+    }
+
+    /**
+     * Delete a convention year.
+     *
+     * ─── What this is for ───────────────────────────────────────────────────
+     * A year created by mistake — a typo in the year field leaves a "NATCON 1"
+     * sitting in the rail forever — and nothing else. Every table that hangs
+     * off an event cascades on delete, so this could silently take a whole
+     * convention's awardees, photos and answers with it. It therefore REFUSES
+     * while anything real is attached and names what it found, rather than
+     * offering a force flag: a populated year is not something to remove on a
+     * hunch at 5pm.
+     *
+     * Form fields are not "content" for this purpose. A year created from the
+     * dialog can carry a copied question set nobody ever answered, and that
+     * must not be what makes the mistake permanent — they go with the event.
+     */
+    public function destroyEvent(NatconEvent $event): JsonResponse
+    {
+        // The live convention is what the public site, every email and the
+        // send guard resolve to. Nothing gets to delete that in one click.
+        if ($event->is_active) {
+            return response()->json([
+                'message' => 'This is the live convention. Make another year live first, then delete this one.',
+            ], 422);
+        }
+
+        /*
+         * Counted through the MODELS, not table names typed out here. The
+         * gallery lives in `gallery_photos` / `gallery_albums` — no natcon_
+         * prefix, because those are shared app-level models — and a guard that
+         * hard-codes a table name it guessed wrong does not fail loudly, it
+         * counts zero and deletes the year.
+         *
+         * Recipient brings its own SoftDeletes scope with it, so an awardee
+         * already in the bin does not keep a dead year alive.
+         */
+        $counts = [
+            'awardee'       => Recipient::where('natcon_event_id', $event->id)->count(),
+            'gallery photo' => GalleryPhoto::where('natcon_event_id', $event->id)->count(),
+            'album'         => GalleryAlbum::where('natcon_event_id', $event->id)->count(),
+            'announcement'  => NatconAnnouncement::where('natcon_event_id', $event->id)->count(),
+            'sponsor'       => Sponsor::where('natcon_event_id', $event->id)->count(),
+            'committee'     => OrganizerCommittee::where('natcon_event_id', $event->id)->count(),
+        ];
+
+        $held = collect($counts)
+            ->filter(fn (int $n) => $n > 0)
+            ->map(fn (int $n, string $noun) => $n.' '.$noun.($n === 1 ? '' : 's'))
+            ->values();
+
+        if ($held->isNotEmpty()) {
+            return response()->json([
+                'message' => "{$event->short_name} still holds ".$held->join(', ', ' and ')
+                    .'. Move or remove those first — deleting the year would take them with it.',
+                'holds'   => $counts,
+            ], 422);
+        }
+
+        $label = $event->short_name ?: $event->name;
+        $year  = $event->year;
+
+        $event->delete();
+
+        Log::info('natcon.event_deleted', ['year' => $year, 'name' => $label]);
+
+        return response()->json(['message' => "{$label} deleted."]);
     }
 
     public function stats(Request $request): JsonResponse
