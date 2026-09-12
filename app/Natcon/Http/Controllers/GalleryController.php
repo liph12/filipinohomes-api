@@ -768,6 +768,29 @@ class GalleryController extends Controller
     }
 
     /**
+     * Public: frames offered for one CONVENTION album's photos — own,
+     * inherited and the convention's "{year} Frames", the same framesFor()
+     * set the admin "Use in a frame" tool gets. Token-less, never 401: the
+     * public /natcon/gallery opens a photo into the frame studio. The album
+     * must belong to the year's convention, so a public album's frames are
+     * never reachable here (and a convention album's never through
+     * /albums/{slug}/frames). Unknown year or album → 404.
+     */
+    public function publicNatconAlbumFrames(int $year, int $album): JsonResponse
+    {
+        $event = NatconEvent::forYear($year);
+        $row = $event ? GalleryAlbum::forEvent($event)->whereKey($album)->first() : null;
+
+        if (! $row) {
+            return response()->json(['message' => 'Album not found.'], 404);
+        }
+
+        return response()->json([
+            'data' => $this->framesFor($row)->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values(),
+        ]);
+    }
+
+    /**
      * Admin: the album's OWN live frames (inheritance is presentation only) —
      * or, with ?inherit=1, the full set a photo in this album can wear (own +
      * ancestors'), which is what the admin "Use in a frame" tool needs.

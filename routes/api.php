@@ -243,6 +243,12 @@ Route::middleware('strip.tags')->group(function () {
             ->whereNumber('year');
         Route::get('/natcon/{year}/gallery', [NatconGalleryController::class, 'gallery'])
             ->whereNumber('year');
+        // Frames a photo in one convention album can wear — the public
+        // /natcon/gallery opens a photo straight into the poster / frame /
+        // reel studio, so this is token-less like the gallery read itself.
+        Route::get('/natcon/{year}/gallery/albums/{album}/frames', [NatconGalleryController::class, 'publicNatconAlbumFrames'])
+            ->whereNumber('year')
+            ->whereNumber('album');
         // PUBLIC photo albums (/albums, /albums/{slug} on the site) — gallery
         // rows with no convention. Same token-less reasoning as the NATCON
         // reads above: SSR and Googlebot are the consumers.
