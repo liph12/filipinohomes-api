@@ -372,9 +372,23 @@ class AdminController extends Controller
          * Recipient brings its own SoftDeletes scope with it, so an awardee
          * already in the bin does not keep a dead year alive.
          */
+        /*
+         * ⚠️ A gallery photo is deleted by flipping `status`, NOT by removing
+         *    the row — the row is the only thing that remembers the S3 key, so
+         *    support can restore one. Counting rows therefore counted the
+         *    tombstones too, and a year whose albums had all been deleted
+         *    refused to go with "still holds 391 gallery photos" while the
+         *    gallery showed nothing. Every other read in GalleryController
+         *    excludes deleted; so does this one.
+         *
+         * Albums are the opposite — destroyAlbum() really deletes the row,
+         * because an album owns no S3 object — so those need no such filter.
+         */
         $counts = [
             'awardee'       => Recipient::where('natcon_event_id', $event->id)->count(),
-            'gallery photo' => GalleryPhoto::where('natcon_event_id', $event->id)->count(),
+            'gallery photo' => GalleryPhoto::where('natcon_event_id', $event->id)
+                ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+                ->count(),
             'album'         => GalleryAlbum::where('natcon_event_id', $event->id)->count(),
             'announcement'  => NatconAnnouncement::where('natcon_event_id', $event->id)->count(),
             'sponsor'       => Sponsor::where('natcon_event_id', $event->id)->count(),
@@ -397,11 +411,26 @@ class AdminController extends Controller
         $label = $event->short_name ?: $event->name;
         $year  = $event->year;
 
+        // Said out loud rather than discovered later: these rows are what make
+        // a deleted photo restorable, and the year's FK cascade takes them.
+        $tombstones = GalleryPhoto::where('natcon_event_id', $event->id)
+            ->where('status', GalleryPhoto::STATUS_DELETED)
+            ->count();
+
         $event->delete();
 
-        Log::info('natcon.event_deleted', ['year' => $year, 'name' => $label]);
+        Log::info('natcon.event_deleted', [
+            'year'             => $year,
+            'name'             => $label,
+            'deleted_photo_rows' => $tombstones,
+        ]);
 
-        return response()->json(['message' => "{$label} deleted."]);
+        return response()->json([
+            'message' => $tombstones > 0
+                ? "{$label} deleted, along with {$tombstones} already-deleted photo record"
+                    .($tombstones === 1 ? '' : 's').'.'
+                : "{$label} deleted.",
+        ]);
     }
 
     public function stats(Request $request): JsonResponse

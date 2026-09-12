@@ -257,7 +257,7 @@ class PublicAwardeeController extends Controller
         return match ($segment) {
             Recipient::SEGMENT_GLOBAL_PARTNER       => 'TOP GLOBAL PARTNER',
             Recipient::SEGMENT_FHI_GLOBAL           => 'TOP FHI GLOBAL AGENT',
-            Recipient::SEGMENT_RENT_MANAGER         => 'TOP RENT MANAGER',
+            Recipient::SEGMENT_RENT_MANAGER         => 'TOP RENT MANAGER PRO',
             Recipient::SEGMENT_RENT_MANAGER_RM_PRO  => 'TOP RENT MANAGER & RM PRO',
             default                                 => 'TOP AGENT',
         };
