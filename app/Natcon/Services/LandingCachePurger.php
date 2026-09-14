@@ -83,10 +83,23 @@ class LandingCachePurger
      * Only the album's own path, not its ancestors': every card under
      * /natcon/gallery reads through the same tag, so the counts refresh
      * without anyone working out which parents changed.
+     *
+     * ⚠️ The un-suffixed `natcon-gallery` tag goes EVERY time, not just when
+     *    the year is unknown. An album page is addressed by slug alone and
+     *    only learns its year from the response, so its fetch cannot carry a
+     *    per-year tag — purging only `natcon-gallery-{year}` would clear the
+     *    rendered page while leaving the Data Cache entry it re-reads
+     *    untouched, which is the exact trap this class's docblock describes.
      */
     public function purgeNatconGallery(?int $year, ?string $slug = null): void
     {
-        $this->send('natcon/gallery', $year ? ["natcon-gallery-{$year}"] : ['natcon-gallery']);
+        $tags = ['natcon-gallery'];
+
+        if ($year) {
+            $tags[] = "natcon-gallery-{$year}";
+        }
+
+        $this->send('natcon/gallery', $tags);
 
         if ($slug) {
             $this->send("natcon/gallery/{$slug}", []);
