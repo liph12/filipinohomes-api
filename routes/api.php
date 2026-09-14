@@ -249,6 +249,18 @@ Route::middleware('strip.tags')->group(function () {
         Route::get('/natcon/{year}/gallery/albums/{album}/frames', [NatconGalleryController::class, 'publicNatconAlbumFrames'])
             ->whereNumber('year')
             ->whereNumber('album');
+        // The convention gallery's album tree: the year's top-level albums
+        // (empty ones included — an event day exists before its photos land)
+        // and then one album by slug, for /natcon/gallery/{slug}/{sub-slug}.
+        Route::get('/natcon/{year}/gallery/albums', [NatconGalleryController::class, 'natconAlbums'])
+            ->whereNumber('year');
+        // ⚠️ No {year} here, on purpose — see natconAlbum(): a slug already
+        //    names exactly one album, and keying by year would break every
+        //    shared link the day the active convention rolls over. The literal
+        //    "gallery" can never be mistaken for the year segment above
+        //    because that one is whereNumber()'d.
+        Route::get('/natcon/gallery/albums/{slug}', [NatconGalleryController::class, 'natconAlbum'])
+            ->where('slug', '[a-z0-9-]+');
         // PUBLIC photo albums (/albums, /albums/{slug} on the site) — gallery
         // rows with no convention. Same token-less reasoning as the NATCON
         // reads above: SSR and Googlebot are the consumers.

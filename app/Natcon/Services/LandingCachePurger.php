@@ -72,6 +72,28 @@ class LandingCachePurger
     }
 
     /**
+     * The convention gallery (/natcon/gallery and every album page under it).
+     *
+     * purgeYear() already sends the `natcon-gallery-{year}` tag, and the album
+     * pages fetch with that same tag, so their DATA is covered. This adds the
+     * rendered PATHS — the gallery index and, when the write named one album,
+     * that album's own page. Same belt-and-braces as purgeAlbums(): the tag
+     * clears the fetch entries, the path clears the rendered output.
+     *
+     * Only the album's own path, not its ancestors': every card under
+     * /natcon/gallery reads through the same tag, so the counts refresh
+     * without anyone working out which parents changed.
+     */
+    public function purgeNatconGallery(?int $year, ?string $slug = null): void
+    {
+        $this->send('natcon/gallery', $year ? ["natcon-gallery-{$year}"] : ['natcon-gallery']);
+
+        if ($slug) {
+            $this->send("natcon/gallery/{$slug}", []);
+        }
+    }
+
+    /**
      * The PUBLIC albums gallery (/albums and every /albums/{slug}).
      *
      * One tag, not per-album: every public-album fetch on the frontend carries

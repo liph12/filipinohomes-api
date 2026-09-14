@@ -144,9 +144,9 @@ class PhotographerGalleryController extends Controller
             $album = new GalleryAlbum([
                 'natcon_event_id' => $invite->natcon_event_id,
                 'parent_id' => $parent?->id,
-                // Convention albums carry no slug; a public-scope invite's
-                // albums are URL-addressable like any public album.
-                'slug' => $invite->natcon_event_id ? null : GalleryAlbum::uniqueSlug($name),
+                // Every album is URL-addressable, whichever scope the invite
+                // belongs to — /natcon/gallery/{slug} or /albums/{slug}.
+                'slug' => GalleryAlbum::uniqueSlug($name),
                 'name' => $name,
                 'created_by' => null,
                 'upload_invite_id' => $invite->id,
@@ -163,6 +163,10 @@ class PhotographerGalleryController extends Controller
                     return response()->json(['message' => 'Too many albums share that name — pick a different one.'], 422);
                 }
                 $album->name = $name;
+                // The slug has its own unique index, and it may be the one
+                // that fired — retrying with the same slug would land on the
+                // identical 500 this catch exists to prevent.
+                $album->slug = GalleryAlbum::uniqueSlug($name);
                 $album->save();
             }
 
@@ -478,6 +482,9 @@ class PhotographerGalleryController extends Controller
 
         if ($invite->event) {
             $purger->purgeYear($invite->event->year);
+            // The album pages the photographer is filling live under
+            // /natcon/gallery; the year tag they share refreshes all of them.
+            $purger->purgeNatconGallery($invite->event->year);
 
             return;
         }

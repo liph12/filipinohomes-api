@@ -15,9 +15,19 @@ use OwenIt\Auditing\Contracts\Auditable;
  * An album (folder) in a photo gallery.
  *
  * Two kinds share the table, told apart by natcon_event_id:
- *   - NULL  → a PUBLIC album, served at /albums/{slug}. Carries a slug.
- *   - set   → a convention album inside that year's /natcon/{year}/gallery.
- *             No slug — the convention page is the only doorway.
+ *   - NULL  → a PUBLIC album, served at /albums/{slug}.
+ *   - set   → a convention album, served at /natcon/gallery/{slug}.
+ *
+ * BOTH carry a slug, and slugs are unique across the whole table, so the last
+ * segment of either URL identifies the album on its own. (Convention albums
+ * were slug-less until 2026-09-14, when the convention gallery stopped being
+ * one page with the tree in React state — see that migration.)
+ *
+ * `section` applies to convention albums only: `event` is the convention
+ * itself, `prep` the run-up to it (coordination meetings, packing), and the
+ * public gallery shows them as two separate, differently weighted rows.
+ * `album_date` is the day an event album covers, for the card's date line and
+ * its "happening today" state.
  *
  * Albums nest freely via parent_id (NULL = top level) within the same scope,
  * so a photographer's album can hold its own sub-albums and so on. Photos
@@ -35,13 +45,22 @@ class GalleryAlbum extends Model implements Auditable
 
     protected array $auditLabelAttributes = ['name'];
 
+    /** The convention itself. */
+    public const SECTION_EVENT = 'event';
+
+    /** The run-up to it — coordination meetings, staff meetings, packing. */
+    public const SECTION_PREP = 'prep';
+
+    public const SECTIONS = [self::SECTION_EVENT, self::SECTION_PREP];
+
     protected $fillable = [
-        'natcon_event_id', 'parent_id', 'slug', 'name', 'sort_order', 'created_by',
-        'upload_invite_id',
+        'natcon_event_id', 'parent_id', 'slug', 'name', 'section', 'album_date',
+        'sort_order', 'created_by', 'upload_invite_id',
     ];
 
     protected $casts = [
         'sort_order' => 'integer',
+        'album_date' => 'date',
     ];
 
     public function event(): BelongsTo
@@ -123,10 +142,15 @@ class GalleryAlbum extends Model implements Auditable
     }
 
     /**
-     * A site-wide unique slug for a PUBLIC album's URL. "Awards Night" →
+     * A site-wide unique slug for an album's URL. "Awards Night" →
      * awards-night, then awards-night-2, -3 … on collision. Set once at
      * creation and never regenerated on rename — the URL is what search
      * engines and shared links hold on to.
+     *
+     * Uniqueness is deliberately across the WHOLE table, public and
+     * convention alike, so both URL families can resolve an album from their
+     * last path segment alone. Two conventions holding a "Day 1" is the
+     * normal case, and the second one taking `day-1-2` is the cost of that.
      */
     public static function uniqueSlug(string $name, ?int $ignoreId = null): string
     {

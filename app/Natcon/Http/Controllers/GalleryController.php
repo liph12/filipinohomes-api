@@ -66,13 +66,106 @@ class GalleryController extends Controller
             return response()->json(['data' => []]);
         }
 
-        $rows = GalleryPhoto::with('album:id,parent_id,name,sort_order')
+        $rows = GalleryPhoto::with('album:id,parent_id,slug,name,sort_order')
             ->forEvent($event)
             ->live()
             ->limit(100)
             ->get();
 
         return response()->json(['data' => $rows->map(fn (GalleryPhoto $p) => $this->present($p))]);
+    }
+
+    /**
+     * Top-level albums of one convention, for /natcon/gallery.
+     *
+     * The page used to rebuild its album tree from the flat photo list above,
+     * which had two consequences worth remembering: it inherited that read's
+     * 100-photo ceiling, and an album holding no photos YET could not be
+     * reconstructed at all — "Day 1" and "Day 2" existed in the admin and were
+     * invisible to the public right up until the first photo landed.
+     *
+     * So this lists albums as albums, empty ones included, exactly as
+     * publicAlbums() does for /albums. Unknown year → empty list, never a 404:
+     * SSR is the consumer.
+     */
+    public function natconAlbums(int $year): JsonResponse
+    {
+        $event = NatconEvent::forYear($year);
+
+        if (! $event) {
+            return response()->json(['data' => []]);
+        }
+
+        $albums = GalleryAlbum::forEvent($event)->orderBy('sort_order')->orderBy('name')->get();
+        $stats = $this->albumStats($albums);
+
+        $data = $albums
+            ->filter(fn (GalleryAlbum $a) => $a->parent_id === null)
+            ->values()
+            ->map(fn (GalleryAlbum $a) => $this->presentPublicAlbum($a, $albums, $stats));
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * One convention album: breadcrumb, sub-albums, its own live photos,
+     * frames — the same shape publicAlbum() serves, for /natcon/gallery/{slug}.
+     *
+     * ⚠️ Deliberately NOT keyed by year, unlike every other public NATCON read.
+     *    Slugs are unique across the whole table, so the slug alone resolves
+     *    the album AND tells us its convention. Keying by year would mean a
+     *    link shared during NATCON 2026 breaking the moment 2027 goes live —
+     *    and these URLs are pasted into Messenger threads that outlive the
+     *    event by years. The year rides back in `event` for the page's chrome.
+     *
+     * No limit() on the photos: this endpoint exists partly to lift the
+     * gallery read's 100-photo ceiling, and an album IS the unit of paging
+     * here.
+     */
+    public function natconAlbum(string $slug): JsonResponse
+    {
+        $album = GalleryAlbum::with('event')
+            ->whereNotNull('natcon_event_id')
+            ->where('slug', $slug)
+            ->first();
+
+        // A public album's slug must not resolve here either — /albums is its
+        // own doorway, with its own chrome.
+        if (! $album || ! $album->event) {
+            return response()->json(['message' => 'Album not found.'], 404);
+        }
+
+        $albums = GalleryAlbum::forEvent($album->event)->orderBy('sort_order')->orderBy('name')->get();
+        $stats = $this->albumStats($albums);
+
+        $children = $albums
+            ->filter(fn (GalleryAlbum $a) => $a->parent_id === $album->id)
+            ->values()
+            ->map(fn (GalleryAlbum $a) => $this->presentPublicAlbum($a, $albums, $stats));
+
+        $photos = GalleryPhoto::where('album_id', $album->id)->live()->get();
+
+        return response()->json([
+            'data' => $this->presentPublicAlbum($album, $albums, $stats) + [
+                'ancestors' => array_map(
+                    fn (GalleryAlbum $a) => ['id' => $a->id, 'slug' => $a->slug, 'name' => $a->name],
+                    $album->ancestors(),
+                ),
+                'children' => $children,
+                'photos' => $photos->map(fn (GalleryPhoto $p) => $this->present($p)),
+                // Own + inherited + the convention's "{year} Frames", so the
+                // photo studio needs no second request. Same as publicAlbum().
+                'frames' => $this->framesFor($album)->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values(),
+                // Which convention this album belongs to — the page titles
+                // itself with it and scopes "Find my photos" by its year.
+                'event' => [
+                    'year' => $album->event->year,
+                    // displayShortName(), not the raw column: short_name is
+                    // nullable and the page prints this verbatim.
+                    'short_name' => $album->event->displayShortName(),
+                ],
+            ],
+        ]);
     }
 
     // ── Public: /albums ──────────────────────────────────────────────────────
@@ -146,7 +239,7 @@ class GalleryController extends Controller
         // (the /agent/natcon/gallery reader) get live rows only, exactly what
         // the public page shows. Deleted rows are never listed: they exist to
         // keep the S3 object findable, not to be relisted.
-        $rows = GalleryPhoto::with('album:id,parent_id,name,sort_order')
+        $rows = GalleryPhoto::with('album:id,parent_id,slug,name,sort_order')
             ->forEvent($event)
             ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
             ->when(! $this->viewerIsAdmin($request), fn ($q) => $q->where('status', GalleryPhoto::STATUS_ACTIVE))
@@ -172,7 +265,7 @@ class GalleryController extends Controller
         // ones show — this is the editing surface, and finding a hidden photo
         // by face is precisely how it gets un-hidden. forEvent() is a
         // backstop: the collection is per scope already.
-        $photos = GalleryPhoto::with('album:id,parent_id,name,sort_order')
+        $photos = GalleryPhoto::with('album:id,parent_id,slug,name,sort_order')
             ->forEvent($event)
             ->whereIn('id', array_keys($matches))
             ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
@@ -319,7 +412,7 @@ class GalleryController extends Controller
         [$matches, $mode, $total] = $result;
 
         // whereIn loses the similarity ordering; reassemble in match order.
-        $photos = GalleryPhoto::with('album:id,parent_id,name,sort_order')
+        $photos = GalleryPhoto::with('album:id,parent_id,slug,name,sort_order')
             ->forEvent($event)
             ->whereIn('id', array_keys($matches))
             ->where('status', GalleryPhoto::STATUS_ACTIVE)
@@ -630,6 +723,10 @@ class GalleryController extends Controller
             // NULL/absent = top level; an id must be an album of the SAME
             // scope, so nesting can never cross years or scopes.
             'parent_id' => 'sometimes|nullable|integer',
+            // Convention albums only: which half of the public gallery this
+            // belongs to. Public albums carry the default and ignore it.
+            'section' => 'sometimes|in:'.implode(',', GalleryAlbum::SECTIONS),
+            'album_date' => 'sometimes|nullable|date',
         ]);
 
         $event = $this->resolveEvent($request);
@@ -646,10 +743,12 @@ class GalleryController extends Controller
         $album = new GalleryAlbum([
             'natcon_event_id' => $event?->id,
             'parent_id' => $parent?->id,
-            // Public albums are URL-addressable (/albums/{slug}); convention
-            // albums are only ever reached through their year's page.
-            'slug' => $event ? null : GalleryAlbum::uniqueSlug($name),
+            // Every album is URL-addressable: /albums/{slug} for the public
+            // ones, /natcon/gallery/{slug} for a convention's.
+            'slug' => GalleryAlbum::uniqueSlug($name),
             'name' => $name,
+            'section' => $data['section'] ?? GalleryAlbum::SECTION_EVENT,
+            'album_date' => $data['album_date'] ?? null,
             'created_by' => $request->user()?->id,
         ]);
         $album->auditSource = $this->auditSource($event);
@@ -667,6 +766,8 @@ class GalleryController extends Controller
         $data = $request->validate([
             'name' => 'sometimes|string|max:120',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
+            'section' => 'sometimes|in:'.implode(',', GalleryAlbum::SECTIONS),
+            'album_date' => 'sometimes|nullable|date',
         ]);
 
         if (isset($data['name'])) {
@@ -681,9 +782,9 @@ class GalleryController extends Controller
         }
 
         // The slug is NOT regenerated on rename — the URL is what shared links
-        // and search engines hold. A public album created before slugs
-        // existed gets one lazily here.
-        if ($album->isPublic() && ! $album->slug) {
+        // and search engines hold. An album created before its scope had
+        // slugs gets one lazily here; the migration backfilled the rest.
+        if (! $album->slug) {
             $data['slug'] = GalleryAlbum::uniqueSlug($data['name'] ?? $album->name, $album->id);
         }
 
@@ -1292,6 +1393,8 @@ class GalleryController extends Controller
 
         if ($event) {
             $purger->purgeYear($event->year);
+            // The gallery is its own page now, not a section of /natcon/{year}.
+            $purger->purgeNatconGallery($event->year, $album?->slug);
 
             return;
         }
@@ -1330,6 +1433,8 @@ class GalleryController extends Controller
             'parent_id' => $a->parent_id,
             'slug' => $a->slug,
             'name' => $a->name,
+            'section' => $a->section,
+            'album_date' => $a->album_date?->toDateString(),
             'path' => $a->path(),
             'sort_order' => $a->sort_order,
             'photo_count' => $photoCount ?? (int) ($a->photos_count ?? 0),
@@ -1410,6 +1515,11 @@ class GalleryController extends Controller
             'slug' => $a->slug,
             'name' => $a->name,
             'parent_id' => $a->parent_id,
+            // Convention albums only: `event` (the convention) vs `prep` (the
+            // run-up to it), and the day an event album covers. The public
+            // gallery renders those as two separate rows; /albums ignores both.
+            'section' => $a->section,
+            'album_date' => $a->album_date?->toDateString(),
             'photo_count' => (int) ($stats[$a->id]['count'] ?? 0),
             'album_count' => $albums->where('parent_id', $a->id)->count(),
             'cover' => $cover ? [
@@ -1452,6 +1562,10 @@ class GalleryController extends Controller
             'album' => $p->album ? [
                 'id' => $p->album->id,
                 'parent_id' => $p->album->parent_id,
+                // The album's URL segment, in both scopes — /albums/{slug}
+                // and /natcon/gallery/{slug}. Null only for a row written
+                // before slugs existed and never edited since.
+                'slug' => $p->album->slug,
                 'name' => $p->album->name,
                 'path' => $p->album->path(),
                 'sort_order' => $p->album->sort_order,
