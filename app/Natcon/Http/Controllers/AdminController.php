@@ -25,6 +25,7 @@ use App\Natcon\Services\PhotoService;
 use App\Natcon\Services\RecipientImportService;
 use App\Natcon\Services\Sources\LrQualifiersSource;
 use App\Natcon\Services\Sources\ManualListSource;
+use App\Support\OfficeRegionMap;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -46,6 +47,17 @@ use OwenIt\Auditing\Models\Audit;
  */
 class AdminController extends Controller
 {
+    /**
+     * statesForRegion() results, keyed "{event}|{region}".
+     *
+     * Per-instance rather than static: a controller is resolved once per
+     * request, so this expires with the request even under a worker that keeps
+     * the process alive.
+     *
+     * @var array<string, string[]>
+     */
+    private array $regionStates = [];
+
     public function __construct(
         private InviteService $invites,
         private AwardeeService $awardees,
@@ -456,19 +468,25 @@ class AdminController extends Controller
         $bandOnly = $this->applySalesBand(Recipient::where('natcon_event_id', $event->id), $request);
 
         /**
-         * ⚠️ Three bases, each blind to its OWN axis — a facet scoped by the
-         *    filter it offers shows you the one option you already picked and
-         *    hides the nine you might switch to:
+         * ⚠️ A CASCADE of bases, each blind to its OWN axis — a facet scoped by
+         *    the filter it offers shows you the one option you already picked
+         *    and hides the nine you might switch to:
          *
-         *      $unscoped  event only          -> sales_tiers (the wave selector)
-         *      $bandOnly  + band              -> states[] / no_state
-         *      $base      + band + province   -> every status count, teams[]
+         *      $unscoped   event only            -> sales_tiers (wave selector)
+         *      $bandOnly   + band                -> states[] / regions[] / no_state
+         *      $withPlace  + region + province   -> segments[] / no_segment
+         *      $base       + award segment       -> every status count, teams[]
          *
-         * teams[] IS province-scoped on purpose: the team dropdown filters
-         * WITHIN the province you have chosen, so "Red Diamonds (33)" listing
-         * 19 rows would be the same lie the status chips used to tell.
+         * Each rung narrows the next, so a facet filters WITHIN everything
+         * chosen above it: teams[] is province- AND award-scoped on purpose,
+         * because "Red Diamonds (33)" listing 19 rows is the same lie the
+         * status chips used to tell.
          */
-        $base = $this->applyProvince(clone $bandOnly, $request);
+        $withPlace = $this->applyOfficeRegion(
+            $this->applyProvince(clone $bandOnly, $request),
+            $request,
+        );
+        $base = $this->applyAwardSegment(clone $withPlace, $request);
 
         $byStatus = (clone $base)->selectRaw('status, COUNT(*) n')->groupBy('status')->pluck('n', 'status');
 
@@ -544,6 +562,25 @@ class AdminController extends Controller
                 ->map(fn ($r) => ['name' => $r->state, 'count' => (int) $r->n])
                 ->values(),
             'no_state' => (clone $bandOnly)->where(fn ($q) => $q->whereNull('state')->orWhere('state', ''))->count(),
+            // The province facet again, grouped the way the events team works:
+            // by REGIONAL OFFICE. Same base as states[] — blind to its own axis
+            // — and it carries its member provinces so one payload drives both
+            // the dropdown and the breakdown panel under it. Grouped here
+            // rather than in the browser so the taxonomy stays in the one file
+            // that owns it (App\Support\OfficeRegionMap) instead of gaining a
+            // TypeScript twin to drift from.
+            'regions' => $this->regionFacet(clone $bandOnly),
+            // Award segments. NULL is the ordinary Leuterio Realty agent and is
+            // all but a handful of the roster, so it is its own count rather
+            // than a member of the list — the same shape as no_state.
+            'segments' => collect(Recipient::SEGMENTS)
+                ->map(fn ($segment) => [
+                    'value' => $segment,
+                    'count' => (clone $withPlace)->where('award_segment', $segment)->count(),
+                ])
+                ->filter(fn ($row) => $row['count'] > 0)
+                ->values(),
+            'no_segment' => (clone $withPlace)->whereNull('award_segment')->count(),
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
@@ -1225,6 +1262,9 @@ class AdminController extends Controller
             // shrinks a wave is how half a wave silently goes unsent.
             'state' => 'nullable|string|max:191',
             'no_state' => 'nullable|boolean',
+            'region' => 'nullable|string|max:32',
+            'award_segment' => 'nullable|in:'.implode(',', Recipient::SEGMENTS),
+            'no_segment' => 'nullable|boolean',
             'min_sales' => 'nullable|numeric',
             'max_sales' => 'nullable|numeric',
             'no_sales' => 'nullable|boolean',
@@ -1351,7 +1391,9 @@ class AdminController extends Controller
                     // from this row alone months later.
                     'filters' => $request->only([
                         'statuses', 'recipient_ids', 'kind',
-                        'state', 'no_state', 'min_sales', 'max_sales', 'no_sales',
+                        'state', 'no_state', 'region',
+                        'award_segment', 'no_segment',
+                        'min_sales', 'max_sales', 'no_sales',
                     ]),
                     'total' => $total,
                     'queued' => $queued,
@@ -1787,13 +1829,21 @@ class AdminController extends Controller
                 : $query->where('status', Recipient::STATUS_PENDING);
         }
 
-        // Band AND province, in that order and both AFTER the status guard
-        // above: the admin filters the table down to a province and presses
-        // Send, so the send must mean the same thing the screen does. Note
-        // this is deliberately NOT applyRecipientFilters() — a stray status=
-        // or search= on a send request must never silently shrink a wave.
-        return $this->applyProvince(
+        // Band, province/region AND award segment, in that order and all
+        // AFTER the status guard above: the admin filters the table down and
+        // presses Send, so the send must mean the same thing the screen does.
+        // A filter that reached the table and not this method would be
+        // decorative, and the cost of decorative here is measured in emails.
+        // Note this is deliberately NOT applyRecipientFilters() — a stray
+        // status= or search= on a send request must never silently shrink a
+        // wave.
+        $query = $this->applyProvince(
             $this->applySalesBand($query, $request),
+            $request,
+        );
+
+        return $this->applyAwardSegment(
+            $this->applyOfficeRegion($query, $request),
             $request,
         );
     }
@@ -1875,8 +1925,11 @@ class AdminController extends Controller
         $this->applySalesBand($query, $request);
 
         // Same for the province — see applyProvince for why "no province" is
-        // its own case rather than an empty match.
+        // its own case rather than an empty match — and for the regional
+        // office above it, which the province dropdown now offers instead.
         $this->applyProvince($query, $request);
+        $this->applyOfficeRegion($query, $request);
+        $this->applyAwardSegment($query, $request);
 
         if ($request->filled('requires_new_photo')) {
             $query->where('requires_new_photo', $request->boolean('requires_new_photo'));
@@ -1982,6 +2035,148 @@ class AdminController extends Controller
 
         if ($request->filled('state')) {
             $query->where('state', $request->input('state'));
+        }
+
+        return $query;
+    }
+
+    /**
+     * The province counts, folded into LR's regional offices.
+     *
+     * One GROUP BY over the states, classified in PHP — not thirteen COUNTs.
+     * Each entry carries its member provinces so the dropdown and the
+     * breakdown panel beneath it are fed by a single payload and cannot
+     * disagree about what "Cagayan · 47" is made of.
+     *
+     * Provinces the office map has never heard of collect under `other`,
+     * labelled "Other provinces". They are NOT dropped: a province with no
+     * office is still somebody's awardee, and a row that appears in no view is
+     * a row nobody chases. Same reasoning as `no_state`.
+     *
+     * Biggest region first, and biggest province first within each — the
+     * ordering the province facet already uses, so the two read alike.
+     *
+     * @return array<int, array{key: string, label: string, count: int, states: array<int, array{name: string, count: int}>}>
+     */
+    private function regionFacet($query): array
+    {
+        $rows = $query
+            ->selectRaw('state, COUNT(*) AS n')
+            ->whereNotNull('state')->where('state', '!=', '')
+            ->groupBy('state')
+            ->get();
+
+        $regions = [];
+
+        foreach ($rows as $row) {
+            $key = OfficeRegionMap::regionOf($row->state) ?? 'other';
+
+            $regions[$key]['count'] = ($regions[$key]['count'] ?? 0) + (int) $row->n;
+            $regions[$key]['states'][] = ['name' => $row->state, 'count' => (int) $row->n];
+        }
+
+        return collect($regions)
+            ->map(fn ($region, $key) => [
+                'key' => $key,
+                'label' => $key === 'other' ? 'Other provinces' : OfficeRegionMap::label($key),
+                'count' => $region['count'],
+                'states' => collect($region['states'])
+                    ->sortByDesc('count')->values()->all(),
+            ])
+            ->sortByDesc('count')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Narrow a recipient query to one LR REGIONAL OFFICE.
+     *
+     * The events team works by office, not by province: "Agusan del Norte",
+     * "Agusan del Sur", "Bukidnon" and "Misamis Oriental" are all the Cagayan
+     * de Oro office, and asking "how is Cagayan doing?" through the province
+     * filter meant picking four provinces one at a time.
+     *
+     * ⚠️ Resolved against the DATA, never by string equality. LR spells the
+     *    same province several ways — "Agusan Del Sur" and "Agusan del Sur"
+     *    are both live in this table — so a whereIn against the taxonomy's own
+     *    spellings would silently drop rows. statesForRegion() reads the
+     *    event's distinct states and classifies each one instead, which cannot
+     *    drift with the data.
+     *
+     * `other` is a real region key here: provinces the office map has never
+     * heard of still have to be reachable, for the same reason `no_state`
+     * exists — an awardee who vanishes from every view is one nobody chases.
+     *
+     * Composes with applyProvince rather than replacing it: the dropdown offers
+     * regions now, but a bookmarked ?province=Cebu link must keep working, and
+     * the breakdown panel narrows to a single province through it.
+     */
+    private function applyOfficeRegion($query, Request $request)
+    {
+        if (! $request->filled('region')) {
+            return $query;
+        }
+
+        $states = $this->statesForRegion(
+            $this->resolveEvent($request),
+            (string) $request->input('region'),
+        );
+
+        // An empty set must match nothing, not everything: whereIn([]) is what
+        // gives that, and it is the honest answer for a region with no awardees.
+        return $query->whereIn('state', $states);
+    }
+
+    /**
+     * Every `state` spelling in this event that belongs to one office region.
+     *
+     * Memoised per request because stats() asks for it once per facet and the
+     * list asks again — and it is the same handful of rows every time.
+     *
+     * @return string[]
+     */
+    private function statesForRegion(NatconEvent $event, string $region): array
+    {
+        $key = $event->id.'|'.$region;
+
+        if (isset($this->regionStates[$key])) {
+            return $this->regionStates[$key];
+        }
+
+        $states = Recipient::where('natcon_event_id', $event->id)
+            ->whereNotNull('state')->where('state', '!=', '')
+            ->distinct()->pluck('state');
+
+        return $this->regionStates[$key] = $states
+            ->filter(fn ($state) => (OfficeRegionMap::regionOf($state) ?? 'other') === $region)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Narrow a recipient query to one award segment.
+     *
+     * `no_segment` is its own case, not an empty match: a NULL award_segment
+     * IS the answer for an ordinary Leuterio Realty agent — all but a handful
+     * of the roster — so "show me the LR agents" is a question the filter has
+     * to be able to ask, and it cannot be phrased as a value.
+     *
+     * An unrecognised value is IGNORED here rather than matched, because these
+     * params are URL-editable: a typo should show the unfiltered table, not an
+     * empty one that reads as "this award has no awardees". The send path is
+     * the opposite — sendInvites() validates the same key with `in:` and 422s,
+     * because there the lenient direction is the one that widens a blast.
+     */
+    private function applyAwardSegment($query, Request $request)
+    {
+        if ($request->boolean('no_segment')) {
+            return $query->whereNull('award_segment');
+        }
+
+        $segment = (string) $request->input('award_segment');
+
+        if ($segment !== '' && in_array($segment, Recipient::SEGMENTS, true)) {
+            $query->where('award_segment', $segment);
         }
 
         return $query;

@@ -18,6 +18,13 @@ namespace App\Support;
  * Name matching reuses {@see IslandMap::normalize()} (lowercase, strip parens /
  * "province of" / non-alpha, collapse whitespace) so the three "Lapu-lapu"
  * spellings, "Cotabato City", etc. all collapse to a single key.
+ *
+ * ⚠️ THIS CLASS IS MIRRORED in natcon-api-v2 as App\Support\OfficeRegionMap.
+ *    The NATCON admin groups its province filter by office on BOTH screens, and
+ *    Awardees is served by that second backend — which owns the natcon tables
+ *    and must not take a network dependency on this app for a static table. A
+ *    change to LOCATIONS_LATEST is a TWO-FILE edit; the copy carries the same
+ *    warning pointing back here.
  */
 class OfficeRegionMap
 {

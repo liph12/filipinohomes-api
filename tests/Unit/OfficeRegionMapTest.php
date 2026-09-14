@@ -55,6 +55,60 @@ test('the three Lapu-lapu spellings all collapse to cebu', function () {
     }
 });
 
+/**
+ * The NATCON admin resolves a region by classifying the event's OWN distinct
+ * `state` values, precisely because LR's casing is not consistent — both of
+ * these are live in natcon_recipients today. Matching the taxonomy's spelling
+ * instead would find one and silently lose the other.
+ */
+test('LR casing drift does not change which office a province belongs to', function () {
+    foreach (['Agusan del Sur', 'Agusan Del Sur', 'AGUSAN DEL SUR', 'agusan del sur'] as $variant) {
+        expect([$variant, OfficeRegionMap::regionOf($variant)])->toBe([$variant, 'cagayan']);
+    }
+
+    foreach (['Agusan del Norte', 'Agusan Del Norte'] as $variant) {
+        expect([$variant, OfficeRegionMap::regionOf($variant)])->toBe([$variant, 'cagayan']);
+    }
+
+    foreach (['Surigao del Norte', 'Surigao Del Norte', 'Lanao del Sur', 'Lanao Del Sur'] as $variant) {
+        expect([$variant, OfficeRegionMap::regionOf($variant)])->toBe([$variant, 'cagayan']);
+    }
+});
+
+/**
+ * ⚠️ This class is MIRRORED into natcon-api-v2, which serves the Awardees
+ *    screen and cannot call this app for a static province table. The two
+ *    copies drifting would reroute provinces between offices on one screen and
+ *    not the other, which is the kind of bug nobody reports as a bug — they
+ *    just quietly stop trusting the numbers.
+ *
+ * Best-effort: the sibling checkout is not guaranteed to be present (CI clones
+ * one repo), so this SKIPS rather than fails when it is missing. It still
+ * catches the drift on the machine where the edit is being made, which is
+ * where it can still be cheap to fix.
+ */
+test('the natcon-api-v2 mirror carries the identical taxonomy', function () {
+    $root = dirname(__DIR__, 2);
+    $mirror = $root.'/../natcon-api-v2/app/Support/OfficeRegionMap.php';
+
+    if (! is_file($mirror)) {
+        test()->markTestSkipped('natcon-api-v2 is not checked out beside this repo.');
+    }
+
+    // Everything from REGIONS through the end of GROUPS — the data, not the
+    // docblocks, which differ on purpose (each points at the other).
+    $taxonomy = function (string $path): string {
+        preg_match('/public const REGIONS.*?\];\s*\n\s*\/\*\* Lazily-built/s', file_get_contents($path), $m);
+
+        return $m[0] ?? '';
+    };
+
+    $ours = $taxonomy($root.'/app/Support/OfficeRegionMap.php');
+
+    expect($ours)->not->toBe('')
+        ->and($taxonomy($mirror))->toBe($ours);
+});
+
 test('overlap precedence: a standalone region name wins over a grouped membership', function () {
     // "Pampanga" appears inside metro-manila's data AND is its own standalone
     // region — the standalone region must win.
