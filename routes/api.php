@@ -190,6 +190,14 @@ Route::middleware('strip.tags')->group(function () {
         // Buyer Form (Open House): public fetch by share slug for the client registration page
         Route::get('/buyer-forms/{slug}', [BuyerFormController::class, 'show']);
 
+        // Company events' PUBLIC pages (/events, /events/{slug} on the site):
+        // facts, photos and the seat count — never the sign-ups. Token-less
+        // like buyer-forms/{slug}, for the same two consumers: SSR and
+        // Googlebot. The form's POST is in the guest-token group below.
+        Route::get('/events', [CompanyEventController::class, 'publicIndex']);
+        Route::get('/events/{slug}', [CompanyEventController::class, 'publicShow'])
+            ->where('slug', '[a-z0-9-]+');
+
         // ── NATCON 2026 awardee photo confirmation ──────────────────────────
         // Reached from a link in the invite email. Identity comes from the
         // per-recipient signed token in `t`, NOT from the ?email= in the URL
@@ -327,6 +335,13 @@ Route::middleware('strip.tags')->group(function () {
             // the albums search above, so the same throttle.
             Route::post('/natcon/{year}/gallery/face-search', [NatconGalleryController::class, 'publicNatconFaceSearch'])
                 ->whereNumber('year')
+                ->middleware('throttle:10,1');
+
+            // Sign up on a company event's public page — name, mobile, email,
+            // address, a note. One seat per mobile number; refusals are 422
+            // sentences the form shows as-is. Tight per-IP throttle: it writes.
+            Route::post('/events/{slug}/register', [CompanyEventController::class, 'register'])
+                ->where('slug', '[a-z0-9-]+')
                 ->middleware('throttle:10,1');
 
             // ── Photographer upload invites ─────────────────────────────────
@@ -789,6 +804,9 @@ Route::middleware('strip.tags')->group(function () {
                     Route::delete('/photos/{photo}', [CompanyEventController::class, 'destroyPhoto']);
                     Route::patch('/{event}', [CompanyEventController::class, 'update']);
                     Route::delete('/{event}', [CompanyEventController::class, 'destroy']);
+                    // The public page's sign-ups: read them, drop one.
+                    Route::get('/{event}/registrations', [CompanyEventController::class, 'registrations']);
+                    Route::delete('/{event}/registrations/{registration}', [CompanyEventController::class, 'destroyRegistration']);
                 });
 
                 // Client Demographics — gender + age brackets of registered

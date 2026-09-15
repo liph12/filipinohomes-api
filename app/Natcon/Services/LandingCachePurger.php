@@ -165,6 +165,22 @@ class LandingCachePurger
     }
 
     /**
+     * Company events (the dashboard's Events section) — not NATCON, but the
+     * same two caches behind /events and /events/{slug}. The list page and
+     * the detail page each carry `company-events`; the detail adds its own
+     * slug tag, so one event's save refreshes both without touching others.
+     */
+    public function purgeCompanyEvents(?string $slug): void
+    {
+        $tags = ['company-events'];
+        if ($slug) {
+            $tags[] = "company-event-{$slug}";
+        }
+
+        $this->send($slug ? "events/{$slug}" : 'events', $tags);
+    }
+
+    /**
      * @param  array<string>  $tags
      */
     private function send(?string $slug, array $tags): void
