@@ -60,6 +60,17 @@ class LandingCachePurger
             $tags[] = "natcon-sponsors-{$year}";
             $tags[] = "natcon-gallery-{$year}";
             $tags[] = "natcon-organizers-{$year}";
+            /*
+             * ⚠️ The un-suffixed gallery tag goes too, even with a year in hand.
+             *
+             * The year switcher reads /natcon/gallery/years, which is a list of
+             * YEARS and so cannot carry a per-year tag. The first photo of a new
+             * convention is exactly the write that should make its tab appear,
+             * and a purge that only sent natcon-gallery-{year} would leave that
+             * list stale until its own window expired — the year's photos live,
+             * and no way to reach them.
+             */
+            $tags[] = 'natcon-gallery';
         } else {
             // Without a year, widen to the un-suffixed tags rather than guessing.
             $tags[] = 'natcon-announcements';

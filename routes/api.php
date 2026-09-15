@@ -254,6 +254,10 @@ Route::middleware('strip.tags')->group(function () {
         // and then one album by slug, for /natcon/gallery/{slug}/{sub-slug}.
         Route::get('/natcon/{year}/gallery/albums', [NatconGalleryController::class, 'natconAlbums'])
             ->whereNumber('year');
+        // Which conventions have a public gallery, for the year switcher. No
+        // {year} — it IS the list of years, and it must answer before the page
+        // knows which one it is showing.
+        Route::get('/natcon/gallery/years', [NatconGalleryController::class, 'natconGalleryYears']);
         // ⚠️ No {year} here, on purpose — see natconAlbum(): a slug already
         //    names exactly one album, and keying by year would break every
         //    shared link the day the active convention rolls over. The literal

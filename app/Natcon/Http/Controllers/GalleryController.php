@@ -76,6 +76,62 @@ class GalleryController extends Controller
     }
 
     /**
+     * Which conventions have a public gallery — the year switcher's whole
+     * source of truth, and the answer to "can I still see the 2025 photos?"
+     *
+     * Every year lives at its own indexable /natcon/{year}/gallery now, the
+     * same way every year has its own /natcon/{year}. Before this, the public
+     * gallery served the ACTIVE convention and nothing else: a finished year's
+     * albums stayed online and permanently reachable by direct link, but
+     * nothing on the site pointed at them, so the only people who could find
+     * 2025's photos were the ones who already had the URL.
+     *
+     * ⚠️ A year qualifies on LIVE PHOTOS, not on albums. "Day 1" and "Day 2"
+     *    exist in the admin before a single photo lands — natconAlbums() serves
+     *    empty albums deliberately — so listing by album would offer a tab that
+     *    opens on an empty room.
+     *
+     * The ACTIVE year is always listed, even with nothing in it: the current
+     * convention has to be a tab from the day it opens, and its empty state
+     * ("The collection is being curated") is the right thing for a visitor to
+     * see rather than the year simply not existing.
+     *
+     * Token-less like every other public gallery read — SSR is the consumer.
+     */
+    public function natconGalleryYears(): JsonResponse
+    {
+        $active = NatconEvent::active();
+
+        // One grouped count over the photos, rather than a query per event:
+        // this is read on every gallery page render.
+        $photoCounts = GalleryPhoto::query()
+            ->whereNotNull('natcon_event_id')
+            ->where('status', GalleryPhoto::STATUS_ACTIVE)
+            ->selectRaw('natcon_event_id, COUNT(*) AS n')
+            ->groupBy('natcon_event_id')
+            ->pluck('n', 'natcon_event_id');
+
+        $albumCounts = GalleryAlbum::query()
+            ->whereNotNull('natcon_event_id')
+            ->selectRaw('natcon_event_id, COUNT(*) AS n')
+            ->groupBy('natcon_event_id')
+            ->pluck('n', 'natcon_event_id');
+
+        $years = NatconEvent::orderByDesc('year')->get()
+            ->filter(fn (NatconEvent $e) => ($photoCounts[$e->id] ?? 0) > 0 || $e->id === $active?->id)
+            ->map(fn (NatconEvent $e) => [
+                'year' => (int) $e->year,
+                'short_name' => $e->short_name ?: "NATCON {$e->year}",
+                'photo_count' => (int) ($photoCounts[$e->id] ?? 0),
+                'album_count' => (int) ($albumCounts[$e->id] ?? 0),
+                'is_active' => $e->id === $active?->id,
+            ])
+            ->values();
+
+        return response()->json(['data' => $years]);
+    }
+
+    /**
      * Top-level albums of one convention, for /natcon/gallery.
      *
      * The page used to rebuild its album tree from the flat photo list above,
