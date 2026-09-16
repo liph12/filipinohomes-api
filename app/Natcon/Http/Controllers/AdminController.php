@@ -1438,7 +1438,56 @@ class AdminController extends Controller
 
         // with('activePhotos'): the export lists every photo an awardee sent, and
         // resolving that per row turned one export into ~300 extra queries.
-        $rows = $query->with('activePhotos')->orderBy('id')->get();
+        // `event` rides along only when links are wanted — buildLink() reads
+        // update_profile_url off it, which would otherwise be one query per row.
+        $wantsLinks = $request->boolean('with_links');
+        $rows = $query->with($wantsLinks ? ['activePhotos', 'event'] : ['activePhotos'])
+            ->orderBy('id')->get();
+
+        /**
+         * Their own private link, one per awardee — opt-in, never in the
+         * default export.
+         *
+         * The events team chases the people who have not submitted by hand, so
+         * the sheet has to carry the link they will paste into a DM. It is NOT
+         * a convenience column: this URL IS the credential. Anyone holding it
+         * can open that awardee's profile, change their shirt size and replace
+         * their photo — a sheet with this column is a sheet of keys, and is
+         * only as safe as wherever it ends up.
+         *
+         * ⚠️ ensureToken() MINTS for anyone who has none, so asking for this
+         *    writes to the roster. That is the right behaviour — an awardee
+         *    with no token has no link to be sent — but it is why the request
+         *    has to ask rather than the export always carrying it.
+         *
+         * Audited ONCE for the whole export, not per row: copying a single link
+         * from the drawer is a per-recipient event worth its own line, and 300
+         * of those would bury it.
+         */
+        $links = [];
+
+        if ($wantsLinks) {
+            foreach ($rows as $r) {
+                $links[$r->id] = $this->invites->buildLink($r, $this->invites->ensureToken($r));
+            }
+
+            Audit::create([
+                'event' => 'natcon',
+                'auditable_type' => NatconEvent::class,
+                'auditable_id' => $event->id,
+                'user_type' => $request->user() ? get_class($request->user()) : null,
+                'user_id' => $request->user()?->id,
+                'new_values' => [
+                    'source' => 'admin_export_with_links',
+                    'count' => count($links),
+                    'scope' => $request->only([
+                        'status', 'state', 'no_state', 'region', 'team',
+                        'award_segment', 'no_segment', 'search',
+                        'min_sales', 'max_sales', 'no_sales',
+                    ]),
+                ],
+            ]);
+        }
 
         // ⚠️ ALL fields, not just active ones. Building the column list from the
         //    public schema (which filters is_active) meant hiding a question
@@ -1459,7 +1508,7 @@ class AdminController extends Controller
         $tz = $event->timezone ?: 'Asia/Manila';
 
         return response()->json([
-            'data' => $rows->map(function (Recipient $r) use ($answersByRecipient, $tz) {
+            'data' => $rows->map(function (Recipient $r) use ($answersByRecipient, $tz, $links) {
                 $snapshot = json_decode((string) ($answersByRecipient[$r->id] ?? '[]'), true) ?: [];
                 $answers = [];
                 foreach ($snapshot as $a) {
@@ -1501,6 +1550,8 @@ class AdminController extends Controller
                     // us everything" from "still owes us a shirt size", and the
                     // CSV had no way to say which.
                     'responded_at' => $r->responded_at?->copy()->setTimezone($tz)->toIso8601String(),
+                    // Absent unless with_links was asked for — see above.
+                    'personal_link' => $links[$r->id] ?? null,
                     'answers' => $answers,
                 ];
             })->values(),
