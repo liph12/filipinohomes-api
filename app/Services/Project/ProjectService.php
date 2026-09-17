@@ -102,6 +102,7 @@ class ProjectService
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->leftJoin('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
             ->leftJoin('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->leftJoin('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
             ->leftJoin('furnishings', 'furnishings.id', '=', 'properties.furnishing_id')
             ->where('properties.is_project', true)
             ->whereIn('properties.project_id', $projectIds)
@@ -119,6 +120,7 @@ class ProjectService
                  MAX(property_attributes.garage_count) as garage_max,
                  MIN(CASE WHEN property_attributes.floor_area >= 10 THEN property_attributes.floor_area END) as floor_area_min,
                  MAX(CASE WHEN property_attributes.floor_area >= 10 THEN property_attributes.floor_area END) as floor_area_max,
+                 GROUP_CONCAT(DISTINCT property_types.name) as type_names,
                  GROUP_CONCAT(DISTINCT property_subtypes.name) as subtype_names,
                  GROUP_CONCAT(DISTINCT furnishings.name) as furnishing_names"
             )
@@ -126,6 +128,13 @@ class ProjectService
             ->toBase()
             ->get()
             ->keyBy('project_id');
+    }
+
+    public function unitStatsFor(Project $project): array
+    {
+        $stats = $this->unitStatsForProjects([$project->id]);
+
+        return $this->attachUnitStats($project, $stats->get($project->id))->unit_stats;
     }
 
     private function attachUnitStats(Project $project, ?object $s): Project
@@ -153,6 +162,7 @@ class ProjectService
             'bathrooms' => $range($s?->bathroom_min, $s?->bathroom_max, true),
             'parking' => $range($s?->garage_min, $s?->garage_max, true),
             'floor_area' => $range($s?->floor_area_min, $s?->floor_area_max, false),
+            'types' => $names($s?->type_names),
             'subtypes' => $names($s?->subtype_names),
             'furnishings' => $names($s?->furnishing_names),
         ]);

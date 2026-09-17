@@ -38,6 +38,7 @@ class ProjectResource extends JsonResource
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'geo_coordinates' => $geoCoordinates,
+            'unit_stats' => $this->whenNotNull($this->unit_stats),
             'views' => $this->views,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

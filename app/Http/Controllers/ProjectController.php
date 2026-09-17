@@ -388,7 +388,7 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function show(Request $request, string $slug): JsonResponse
+    public function show(Request $request, string $slug, ProjectService $service): JsonResponse
     {
         $project = Project::query()
             ->withCount([
@@ -474,6 +474,7 @@ class ProjectController extends Controller
 
         $projectData = ProjectResource::make($project);
         $projectData['geo_coordinates'] = $geo;
+        $projectData['unit_stats'] = $service->unitStatsFor($project);
 
         return response()->json([
             'message' => 'Project fetched successfully',
