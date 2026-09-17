@@ -41,7 +41,11 @@ class AgentResource extends JsonResource
                 ->join(' ')
                              ?: $user?->name
                              ?: 'Guest User',
-            'avatar' => AvatarUrl::clean($this->avatar ?? $user?->avatar),
+            // Agent avatar first, the user's when that is blank. `avatar` is an
+            // array cast, so `??` alone let `[]` / `[""]` through and the
+            // frontend never reached the user fallback (blank tiles on the
+            // admin audit page).
+            'avatar' => AvatarUrl::clean(self::firstNonBlank($this->avatar) ?? $user?->avatar),
             'email' => $user?->email,
             'lr_email' => $this->lr_email,
             'birthdate' => $this->birthdate,
@@ -137,5 +141,21 @@ class AgentResource extends JsonResource
                 }
             ),
         ];
+    }
+
+    /**
+     * The stored avatar (array cast — or a bare string on legacy rows) with
+     * blank entries dropped; null when nothing usable is left, so callers can
+     * `??` to the user's avatar. Keeps the array shape the frontend expects.
+     */
+    private static function firstNonBlank(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $kept = array_values(array_filter($value, static fn ($v) => is_string($v) && trim($v) !== ''));
+
+            return $kept === [] ? null : $kept;
+        }
+
+        return is_string($value) && trim($value) !== '' ? $value : null;
     }
 }
