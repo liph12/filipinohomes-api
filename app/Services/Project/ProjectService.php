@@ -86,11 +86,78 @@ class ProjectService
             ->whereNotNull('properties.project_id')
             ->selectRaw(
                 "properties.project_id as project_id,
+                 COUNT(*) as public_listings_count,
                  SUM(categories.name = 'For Sale') as sale_count,
                  SUM(categories.name = 'For Rent') as rent_count,
                  SUM(categories.name = 'Foreclosure') as foreclosure_count"
             )
             ->groupBy('properties.project_id');
+    }
+
+    private function unitStatsForProjects(array $projectIds)
+    {
+        return Listing::query()
+            ->publiclyListed()
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->leftJoin('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+            ->leftJoin('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->leftJoin('furnishings', 'furnishings.id', '=', 'properties.furnishing_id')
+            ->where('properties.is_project', true)
+            ->whereIn('properties.project_id', $projectIds)
+            ->selectRaw(
+                "properties.project_id as project_id,
+                 MIN(CASE WHEN categories.name = 'For Sale' AND listings.price >= 1000 THEN listings.price END) as sale_min_price,
+                 MAX(CASE WHEN categories.name = 'For Sale' AND listings.price >= 1000 THEN listings.price END) as sale_max_price,
+                 MIN(CASE WHEN categories.name = 'For Rent' AND listings.price >= 1000 THEN listings.price END) as rent_min_price,
+                 MAX(CASE WHEN categories.name = 'For Rent' AND listings.price >= 1000 THEN listings.price END) as rent_max_price,
+                 MIN(property_attributes.bedroom_count) as bedroom_min,
+                 MAX(property_attributes.bedroom_count) as bedroom_max,
+                 MIN(property_attributes.bathroom_count) as bathroom_min,
+                 MAX(property_attributes.bathroom_count) as bathroom_max,
+                 MIN(property_attributes.garage_count) as garage_min,
+                 MAX(property_attributes.garage_count) as garage_max,
+                 MIN(CASE WHEN property_attributes.floor_area >= 10 THEN property_attributes.floor_area END) as floor_area_min,
+                 MAX(CASE WHEN property_attributes.floor_area >= 10 THEN property_attributes.floor_area END) as floor_area_max,
+                 GROUP_CONCAT(DISTINCT property_subtypes.name) as subtype_names,
+                 GROUP_CONCAT(DISTINCT furnishings.name) as furnishing_names"
+            )
+            ->groupBy('properties.project_id')
+            ->toBase()
+            ->get()
+            ->keyBy('project_id');
+    }
+
+    private function attachUnitStats(Project $project, ?object $s): Project
+    {
+        $range = static fn ($min, $max, bool $int) => $min === null && $max === null
+            ? null
+            : [
+                'min' => $int ? (int) $min : (float) $min,
+                'max' => $int ? (int) $max : (float) $max,
+            ];
+        $names = static fn ($csv) => collect(explode(',', (string) $csv))
+            ->map(fn ($n) => trim($n))
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        $project->setAttribute('unit_stats', [
+            'price_range' => [
+                'sale' => $range($s?->sale_min_price, $s?->sale_max_price, false),
+                'rent' => $range($s?->rent_min_price, $s?->rent_max_price, false),
+            ],
+            'bedrooms' => $range($s?->bedroom_min, $s?->bedroom_max, true),
+            'bathrooms' => $range($s?->bathroom_min, $s?->bathroom_max, true),
+            'parking' => $range($s?->garage_min, $s?->garage_max, true),
+            'floor_area' => $range($s?->floor_area_min, $s?->floor_area_max, false),
+            'subtypes' => $names($s?->subtype_names),
+            'furnishings' => $names($s?->furnishing_names),
+        ]);
+
+        return $project;
     }
 
     private function baseProjectListQuery(bool $withListingsOnly = false)
@@ -102,6 +169,7 @@ class ProjectService
             ->select([
                 ...self::PROJECT_LIST_COLUMNS,
                 DB::raw('COALESCE(project_property_counts.properties_count, 0) as properties_count'),
+                DB::raw('COALESCE(project_category_counts.public_listings_count, 0) as public_listings_count'),
                 DB::raw('COALESCE(project_category_counts.sale_count, 0) as sale_count'),
                 DB::raw('COALESCE(project_category_counts.rent_count, 0) as rent_count'),
                 DB::raw('COALESCE(project_category_counts.foreclosure_count, 0) as foreclosure_count'),
@@ -422,6 +490,13 @@ class ProjectService
             $this->applyProjectSearch($query, $search),
             $sortBy
         )->paginate($perPage);
+
+        $projects = $paginator->getCollection();
+        $stats = $projects->isEmpty()
+            ? collect()
+            : $this->unitStatsForProjects($projects->pluck('id')->all());
+
+        $projects->transform(fn (Project $p) => $this->attachUnitStats($p, $stats->get($p->id)));
 
         return $paginator;
     }
