@@ -29,6 +29,15 @@ Schedule::command('reports:send-birthdays')
     ->timezone('Asia/Manila')
     ->withoutOverlapping();
 
+// Daily Website Analytics (GA4) email — recipients + send time are admin-
+// configured (settings KV, Website Analytics dashboard); sendTime() falls
+// back to 07:30 and never throws, since this file runs on every artisan
+// invocation. The command itself no-ops when disabled/unconfigured.
+Schedule::command('reports:send-website-analytics')
+    ->dailyAt(\App\Services\Reports\WebsiteAnalyticsReportService::sendTime())
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping();
+
 // Personal greeting + poster TO each active agent celebrating today. Same
 // 07:00 slot as the admin digest; renders/uploads the poster per agent so
 // it runs in the background.

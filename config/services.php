@@ -50,6 +50,23 @@ return [
 
     'openai' => [
         'key' => env('OPENAI_API_KEY'),
+        // Chat model for the analytics assistant + daily-report summary.
+        'chat_model' => env('OPENAI_CHAT_MODEL', 'gpt-5.4-mini'),
+    ],
+
+    /*
+    | Google Analytics Data API (admin Website Analytics dashboard) + Search
+    | Console. GA_SA_KEY_BASE64 = the service-account JSON key file, base64-
+    | encoded (survives multiline-PEM .env mangling); the account must be a
+    | Viewer on the GA4 property and a Restricted user on the GSC property.
+    */
+    'ga4' => [
+        'property_id' => env('GA4_PROPERTY_ID'),
+        'sa_key_base64' => env('GA_SA_KEY_BASE64'),
+    ],
+
+    'gsc' => [
+        'site' => env('GSC_SITE', 'sc-domain:filipinohomes.com'),
     ],
 
     /*

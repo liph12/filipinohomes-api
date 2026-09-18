@@ -8,6 +8,7 @@ use App\Http\Controllers\AdPlacementController;
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\AdSectionController;
 use App\Http\Controllers\AgentController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\AgentReviewController;
 use App\Http\Controllers\AmenityController;
 use App\Http\Controllers\AnnouncementController;
@@ -894,6 +895,20 @@ Route::middleware('strip.tags')->group(function () {
                     ->middleware('throttle:6,1');
                 Route::get('/admin/seo/runs', [SeoCommandController::class, 'runs']);
                 Route::get('/admin/seo/runs/{run}', [SeoCommandController::class, 'showRun']);
+
+                // ── Website Analytics (GA4) dashboard ───────────────────
+                // Server-cached GA Data API reports (10 min; realtime 45 s).
+                Route::get('/admin/analytics/status', [AnalyticsController::class, 'status']);
+                Route::get('/admin/analytics/website', [AnalyticsController::class, 'website']);
+                Route::get('/admin/analytics/website/realtime', [AnalyticsController::class, 'realtime']);
+                // Daily-report config (settings KV) + a send-test-to-me path.
+                Route::get('/admin/analytics/report-settings', [AnalyticsController::class, 'reportSettings']);
+                Route::put('/admin/analytics/report-settings', [AnalyticsController::class, 'updateReportSettings']);
+                Route::post('/admin/analytics/report-test', [AnalyticsController::class, 'sendTestReport'])
+                    ->middleware('throttle:3,1'); // GA + OpenAI + SMTP per click
+                // FH Analytics Assistant (OpenAI tool loop over GA/GSC).
+                Route::post('/admin/analytics/chat', [AnalyticsController::class, 'chat'])
+                    ->middleware('throttle:20,1');
             });
 
             // Magazine, Office & Ad management (admin + editor only)

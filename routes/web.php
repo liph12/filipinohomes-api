@@ -256,6 +256,12 @@ if (config('app.debug')) {
                 );
             })(),
 
+            // Daily Website Analytics email — live GA data (requires the
+            // GA4 service-account env; otherwise sections render empty).
+            'website-analytics' => new \App\Mail\WebsiteAnalyticsReportMailer(
+                report: app(\App\Services\Reports\WebsiteAnalyticsReportService::class)->build(),
+            ),
+
             // Boss activity digest — TODAY's live data only, nothing sampled.
             'boss-report' => (function () {
                 $today = now()->toDateString();
