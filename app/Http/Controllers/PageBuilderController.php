@@ -79,17 +79,20 @@ class PageBuilderController extends Controller
         $sortBy = (string) $request->input('sort_by', '');
         $sortDir = strtolower((string) $request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
 
+        // Every branch ends with an `id` tie-break: without it, rows that share
+        // a sort value (e.g. equal clicks) have no stable order between queries,
+        // so one row can appear on two pages while another is skipped.
         switch ($sortBy) {
             case 'title':
-                $query->orderBy('title', $sortDir);
+                $query->orderBy('title', $sortDir)->orderBy('page_builder.id');
 
                 return true;
             case 'views':
-                $query->orderBy('clicks', $sortDir);
+                $query->orderBy('clicks', $sortDir)->orderBy('page_builder.id');
 
                 return true;
             case 'created':
-                $query->orderBy('created_at', $sortDir);
+                $query->orderBy('created_at', $sortDir)->orderBy('page_builder.id');
 
                 return true;
             case 'agent':
@@ -97,7 +100,8 @@ class PageBuilderController extends Controller
                 // so pagination + select(*) stay intact (no join duplication).
                 $query
                     ->orderBy(Agent::select('first_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir)
-                    ->orderBy(Agent::select('last_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir);
+                    ->orderBy(Agent::select('last_name')->whereColumn('agents.id', 'page_builder.agent_id'), $sortDir)
+                    ->orderBy('page_builder.id');
 
                 return true;
             default:
