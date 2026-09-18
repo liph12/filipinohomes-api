@@ -76,12 +76,16 @@ class Recipient extends Model implements Auditable
 
     public const SEGMENT_RENT_MANAGER_RM_PRO = 'rent_manager_rm_pro';
 
+    /** Prints as "TOP ELITE TEAM LEADER" — the value omits "top" like the rest. */
+    public const SEGMENT_ELITE_TEAM_LEADER = 'elite_team_leader';
+
     /** The settable values. NULL is not listed: it is the absence of one. */
     public const SEGMENTS = [
         self::SEGMENT_GLOBAL_PARTNER,
         self::SEGMENT_FHI_GLOBAL,
         self::SEGMENT_RENT_MANAGER,
         self::SEGMENT_RENT_MANAGER_RM_PRO,
+        self::SEGMENT_ELITE_TEAM_LEADER,
     ];
 
     public const RESPONSE_RETAIN = 'retain';
