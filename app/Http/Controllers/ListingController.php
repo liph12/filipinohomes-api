@@ -337,6 +337,12 @@ class ListingController extends Controller
         $indexResponse = $this->index($request)->response()->getData(true);
         $indexMeta = $indexResponse['meta'] ?? [];
 
+        // Parent-project card on the unit page: same unit_stats + public-unit
+        // counts as the /projects directory card, instead of the bare model.
+        if ($listing?->property?->project) {
+            app(\App\Services\Project\ProjectService::class)->hydrateCardStats($listing->property->project);
+        }
+
         return [
             'property' => $listing === null ? null : new ListingResource($listing),
             'reason' => $reason,

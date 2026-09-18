@@ -213,6 +213,31 @@ class ProjectService
             ->groupBy('project_id');
     }
 
+    /**
+     * Attach everything the directory ProjectCard needs to a single project
+     * loaded elsewhere (e.g. `property.project` on a listing detail): the
+     * `unit_stats` roll-up (price ranges, bed/bath, types, combos) and the
+     * public-unit counts (`public_listings_count`, `sale_count`, `rent_count`,
+     * `foreclosure_count`). Same subqueries as the directory list, so the
+     * card on a unit page shows exactly what /projects shows.
+     */
+    public function hydrateCardStats(Project $project): Project
+    {
+        $stats = $this->unitStatsForProjects([$project->id]);
+        $combos = $this->unitCombosForProjects([$project->id]);
+        $this->attachUnitStats($project, $stats->get($project->id), $combos->get($project->id));
+
+        $counts = $this->projectCategoryCountsSubquery()
+            ->where('properties.project_id', $project->id)
+            ->first();
+        $project->setAttribute('public_listings_count', (int) ($counts?->public_listings_count ?? 0));
+        $project->setAttribute('sale_count', (int) ($counts?->sale_count ?? 0));
+        $project->setAttribute('rent_count', (int) ($counts?->rent_count ?? 0));
+        $project->setAttribute('foreclosure_count', (int) ($counts?->foreclosure_count ?? 0));
+
+        return $project;
+    }
+
     public function unitStatsFor(Project $project): array
     {
         $stats = $this->unitStatsForProjects([$project->id]);

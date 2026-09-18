@@ -51,6 +51,12 @@ class ProjectResource extends JsonResource
         if (isset($this->properties_count)) {
             $data['properties_count'] = (int) $this->properties_count;
         }
+        // Public-unit counts (directory list query / ProjectService::hydrateCardStats).
+        foreach (['public_listings_count', 'sale_count', 'rent_count', 'foreclosure_count'] as $count) {
+            if (isset($this->{$count})) {
+                $data[$count] = (int) $this->{$count};
+            }
+        }
 
         return $data;
     }
