@@ -109,7 +109,9 @@ class RunSeoCommand implements ShouldQueue
             ]);
 
             $out = new BufferedOutput();
-            $exitCode = Artisan::call($command, [], $out);
+            // Registry-supplied args (e.g. the OSM scan's --budget-seconds)
+            // keep long sweeps under this job's $timeout by design.
+            $exitCode = Artisan::call($command, SeoCommandRegistry::argsFor($command), $out);
 
             $this->finish(
                 $run,

@@ -64,8 +64,12 @@ class SeoCommandRegistry
         'facilities:scan-candidates' => [
             'cron'        => null, // on-demand only (review-queue workflow)
             'label'       => 'Scan facility candidates (OSM)',
-            'description' => 'Discovers named malls/universities/hospitals on OpenStreetMap in every city with listings, scores each against the ≥10-listings floor, and fills the Candidates review queue. Resumable — repeat runs continue where the last stopped.',
+            'description' => 'Discovers named malls/universities/hospitals on OpenStreetMap in every city with listings, scores each against the ≥10-listings floor, and fills the Candidates review queue. Runs in ~13-minute chunks (the queue ceiling is 15) — re-run until it reports 0 remaining; completed cities skip instantly for 7 days.',
             'table'       => 'facility_candidates',
+            // Queued runs only (Artisan::call args) — keeps the scan under
+            // RunSeoCommand::$timeout=900 by exiting SUCCESS at 13 min with
+            // a "N remaining" summary instead of dying at the worker kill.
+            'args'        => ['--budget-seconds' => 780],
         ],
     ];
 
@@ -85,6 +89,12 @@ class SeoCommandRegistry
     public static function isRunnable(string $command): bool
     {
         return array_key_exists($command, self::COMMANDS);
+    }
+
+    /** Extra Artisan::call arguments for QUEUED runs of a command ([] default). */
+    public static function argsFor(string $command): array
+    {
+        return self::COMMANDS[$command]['args'] ?? [];
     }
 
     public static function meta(string $command): ?array

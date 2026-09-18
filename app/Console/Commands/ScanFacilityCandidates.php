@@ -7,6 +7,7 @@ use App\Models\FacilityCandidate;
 use App\Services\Seo\FacilityCountService;
 use App\Services\Seo\OverpassClient;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -21,18 +22,22 @@ use Illuminate\Support\Str;
  * facility_candidates review queue (SEO Manage → Candidates). Candidates are
  * never auto-added to the registry — an admin approves or dismisses each.
  *
- * Resumable by design: cities are processed biggest-inventory-first,
- * candidates scored within the last 7 days are skipped (unless --rescore),
- * and upserts are idempotent — a queue-timeout mid-run truncates harmlessly
- * and the next run continues. Rescans NEVER touch `status`, so dismissed
- * candidates stay dismissed. Run the full first pass from the CLI
- * (`sudo -u www-data php artisan facilities:scan-candidates`) if it outgrows
- * the queued-job ceiling.
+ * Resumable by design: cities are processed biggest-inventory-first, each
+ * COMPLETED city is checkpointed (cache, FRESH_DAYS TTL) and skipped on the
+ * next run (unless --rescore), candidates scored within the last 7 days are
+ * skipped per-POI, and upserts are idempotent. Queued runs pass
+ * --budget-seconds so the scan exits SUCCESS with a "N remaining" summary
+ * before the 15-min RunSeoCommand ceiling can kill it (the 2026-09-18
+ * nationwide first pass died exactly that way at 15m01s) — the admin
+ * re-runs until 0 remain, each pass skipping checkpointed cities in
+ * milliseconds instead of re-spending Overpass time on them. Rescans NEVER
+ * touch `status`, so dismissed candidates stay dismissed.
  */
 class ScanFacilityCandidates extends Command
 {
     protected $signature = 'facilities:scan-candidates
         {--limit= : Max cities to scan this run}
+        {--budget-seconds= : Stop gracefully once this much wall-clock has elapsed (queued runs pass this so the 15-min job ceiling is never hit; re-run to continue)}
         {--sleep=2500 : Delay in milliseconds between Overpass queries (public-instance etiquette)}
         {--rescore : Re-score candidates even if scanned within the last 7 days}
         {--dry-run : Query + score but write nothing}';
@@ -77,6 +82,9 @@ class ScanFacilityCandidates extends Command
     {
         $sleepMs = max(0, (int) $this->option('sleep'));
         $limit = $this->option('limit') !== null ? max(1, (int) $this->option('limit')) : null;
+        $budgetSeconds = $this->option('budget-seconds') !== null ? max(1, (int) $this->option('budget-seconds')) : null;
+        $startedAt = microtime(true);
+        $budgetHit = false;
         $dryRun = (bool) $this->option('dry-run');
         $rescore = (bool) $this->option('rescore');
 
@@ -86,9 +94,25 @@ class ScanFacilityCandidates extends Command
         // Existing registry snapshot for proximity/slug dedupe (small table).
         $registry = Facility::query()->get(['id', 'slug', 'category', 'lat', 'lng'])->all();
 
-        $stats = ['cities' => 0, 'pois' => 0, 'new' => 0, 'updated' => 0, 'fresh_skipped' => 0, 'matched' => 0, 'clears' => 0, 'failed_cities' => 0];
+        $stats = ['cities' => 0, 'cities_skipped' => 0, 'pois' => 0, 'new' => 0, 'updated' => 0, 'fresh_skipped' => 0, 'matched' => 0, 'clears' => 0, 'failed_cities' => 0];
 
         foreach ($cities as $i => $area) {
+            // Wall-clock budget (queued runs): stop BEFORE starting another
+            // city so the queue worker never has to kill us mid-write.
+            if ($budgetSeconds !== null && (microtime(true) - $startedAt) >= $budgetSeconds) {
+                $budgetHit = true;
+                break;
+            }
+
+            // City checkpoint: a city fully scanned within FRESH_DAYS is
+            // skipped outright — no Overpass query, no etiquette sleep — so
+            // resume runs reach unscanned ground in milliseconds.
+            $checkpointKey = self::cityCheckpointKey($area);
+            if (! $rescore && ! $dryRun && Cache::has($checkpointKey)) {
+                $stats['cities_skipped']++;
+                continue;
+            }
+
             if ($i > 0 && $sleepMs > 0) {
                 usleep($sleepMs * 1000);
             }
@@ -184,13 +208,20 @@ class ScanFacilityCandidates extends Command
             $stats['new'] += $cityNew;
             $stats['updated'] += $cityUpdated;
             $this->line(sprintf('  %s, %s: %d POI(s), %d new, %d updated', $area->city, $area->province, count($pois), $cityNew, $cityUpdated));
+
+            // Only a COMPLETED city checkpoints (failed/degenerate ones hit
+            // `continue` above and stay eligible for the next run).
+            if (! $dryRun) {
+                Cache::put($checkpointKey, now()->toDateTimeString(), now()->addDays(self::FRESH_DAYS));
+            }
         }
 
         $this->info(sprintf(
-            '%sScanned %d/%d cities (%d failed): %d POIs seen, %d new + %d updated candidates, %d fresh-skipped, %d matched existing, %d clear the ≥%d floor.',
+            '%sScanned %d/%d cities (%d checkpoint-skipped, %d failed): %d POIs seen, %d new + %d updated candidates, %d fresh-skipped, %d matched existing, %d clear the ≥%d floor.',
             $dryRun ? '[DRY RUN] ' : '',
             $stats['cities'],
             $cities->count(),
+            $stats['cities_skipped'],
             $stats['failed_cities'],
             $stats['pois'],
             $stats['new'],
@@ -201,7 +232,29 @@ class ScanFacilityCandidates extends Command
             ComputeFacilityCounts::MIN_LISTINGS,
         ));
 
+        if ($budgetHit) {
+            $remaining = $cities->count() - $stats['cities'] - $stats['cities_skipped'] - $stats['failed_cities'];
+            $this->info(sprintf(
+                'Time budget (%ds) reached — %d city/ies remaining. Re-run to continue; completed cities are checkpointed for %d days and skip instantly.',
+                $budgetSeconds,
+                max(0, $remaining),
+                self::FRESH_DAYS,
+            ));
+        }
+
         return self::SUCCESS;
+    }
+
+    /**
+     * Cache key marking a city as fully scanned this FRESH_DAYS window.
+     * Relational id when the registry knows the city; slug fallback keeps
+     * text-only cities checkpointable too.
+     */
+    private static function cityCheckpointKey(object $area): string
+    {
+        $key = $area->city_id ?: Str::slug(($area->city ?? '') . '-' . ($area->province ?? ''));
+
+        return "seo:facility-scan:city:{$key}";
     }
 
     /**
