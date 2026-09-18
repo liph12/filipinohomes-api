@@ -131,6 +131,7 @@ Route::middleware('strip.tags')->group(function () {
         Route::get('/projects/unassociated', [ProjectController::class, 'unassociatedProjects']);
         Route::get('/project/{slug}', [ProjectController::class, 'show'])->where('slug', '.*');
         Route::get('/project-list-with-listings', [ProjectController::class, 'projectsWithListings']);
+        Route::get('/project-list-provinces', [ProjectController::class, 'projectProvinces']);
         Route::post('/project/{slug}/view', [ProjectController::class, 'trackView']);
 
         // Guest-token-protected public routes

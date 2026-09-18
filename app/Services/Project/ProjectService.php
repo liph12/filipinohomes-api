@@ -65,6 +65,39 @@ class ProjectService
     }
 
     /**
+     * One row per province that has at least one project with public units:
+     * [{id, name, sale_projects, rent_projects, projects}], most projects
+     * first. Single grouped query over the same category-counts subquery the
+     * directory uses, so the numbers match the cards.
+     */
+    public function provincesWithProjects(): array
+    {
+        return Project::query()
+            ->joinSub($this->projectCategoryCountsSubquery(), 'c', fn ($join) => $join->on('c.project_id', '=', 'projects.id'))
+            ->join('provinces', 'provinces.id', '=', 'projects.prov_id')
+            ->selectRaw(
+                'provinces.id as id,
+                 provinces.name as name,
+                 COUNT(*) as projects,
+                 SUM(c.sale_count > 0) as sale_projects,
+                 SUM(c.rent_count > 0) as rent_projects'
+            )
+            ->groupBy('provinces.id', 'provinces.name')
+            ->orderByDesc('projects')
+            ->orderBy('provinces.name')
+            ->toBase()
+            ->get()
+            ->map(fn ($r) => [
+                'id' => (int) $r->id,
+                'name' => (string) $r->name,
+                'projects' => (int) $r->projects,
+                'sale_projects' => (int) $r->sale_projects,
+                'rent_projects' => (int) $r->rent_projects,
+            ])
+            ->all();
+    }
+
+    /**
      * Selling-price window for the directory: a project stays in the list when
      * at least one of its public For Sale units is priced within [min, max].
      * Sale only — the picker's presets are sale-tier amounts, and mixing in
@@ -548,10 +581,17 @@ class ProjectService
         string $search = "",
         string $sortBy = self::DEFAULT_SORT,
         ?float $priceMin = null,
-        ?float $priceMax = null
+        ?float $priceMax = null,
+        ?int $provinceId = null,
+        ?string $category = null
     )
     {
-        $query = $this->applyProjectPriceRange($this->baseProjectListQuery(true), $priceMin, $priceMax);
+        $query = $this->applyProjectPriceRange($this->baseProjectListQuery(true), $priceMin, $priceMax)
+            ->when($provinceId !== null, fn ($q) => $q->where('projects.prov_id', $provinceId))
+            // sale_count / rent_count come from the joined category-counts
+            // subquery, so "has a unit in this category" is a plain column test.
+            ->when($category === 'sale', fn ($q) => $q->where('project_category_counts.sale_count', '>', 0))
+            ->when($category === 'rent', fn ($q) => $q->where('project_category_counts.rent_count', '>', 0));
 
         $paginator = $this->applyProjectSort(
             $this->applyProjectSearch($query, $search),

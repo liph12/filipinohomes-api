@@ -355,8 +355,14 @@ class ProjectController extends Controller
         $price = static fn (string $key): ?float => is_numeric($v = $request->query($key)) && (float) $v > 0 ? (float) $v : null;
         $priceMin = $price('price_min');
         $priceMax = $price('price_max');
+        // Province-tier pages (/projects/for-sale/in-{province}): restrict to
+        // one province and to projects with ≥1 public unit in that category.
+        $provinceId = is_numeric($v = $request->query('province_id')) && (int) $v > 0 ? (int) $v : null;
+        $category = in_array($c = (string) $request->query('category', ''), ['sale', 'rent'], true) ? $c : null;
 
-        $projects = $service->fetchProjectsWithListingsPaginated(12, $search, $sortBy, $priceMin, $priceMax);
+        $projects = $service->fetchProjectsWithListingsPaginated(
+            12, $search, $sortBy, $priceMin, $priceMax, $provinceId, $category
+        );
 
         return response()->json([
             'message' => 'Projects with listings fetched successfully',
@@ -367,6 +373,19 @@ class ProjectController extends Controller
                 'per_page' => $projects->perPage(),
                 'total' => $projects->total(),
             ],
+        ]);
+    }
+
+    /**
+     * Provinces that have projects with public units, with how many projects
+     * have ≥1 For Sale / For Rent unit. Feeds the homepage "Popular Projects"
+     * link block and the project sitemap's province-tier URLs.
+     */
+    public function projectProvinces(ProjectService $service): JsonResponse
+    {
+        return response()->json([
+            'message' => 'Project provinces fetched successfully',
+            'data' => $service->provincesWithProjects(),
         ]);
     }
 
