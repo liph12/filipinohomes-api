@@ -223,6 +223,9 @@ class ListingController extends Controller
                 // withCount/withMax feed AgentResource's last_login_at + login_count
                 // without an N+1 per listing's agent.
                 'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
+                // AgentResource emits page_slug from pageBuilder — eager-load it so
+                // the card's agent link doesn't lazy-load one row per listing.
+                'agent.pageBuilder',
             ])
             ->filter($request)
             ->orderByDesc('updated_at')
@@ -252,6 +255,9 @@ class ListingController extends Controller
                     $q->withCount('listings');
                 },
                 'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
+                // AgentResource emits page_slug from pageBuilder — eager-load it so
+                // the card's agent link doesn't lazy-load one row per listing.
+                'agent.pageBuilder',
             ];
 
             $found = Listing::whereRaw('LOWER(slug) = ?', [strtolower($slug)])
