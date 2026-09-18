@@ -7,11 +7,14 @@ use App\Services\Project\ProjectByProvinceService;
 use App\Services\Project\ProjectByNameService;
 use App\Models\Project;
 use App\Models\Listing;
+use App\Models\PropertySubtype;
+use App\Models\Furnishing;
 use App\Http\Resources\ListingResourceCollection;
 use App\Http\Resources\ProjectResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class ProjectController extends Controller
 {
@@ -419,12 +422,79 @@ class ProjectController extends Controller
             default => 'featured',
         };
 
-        $baseListingsQuery = Listing::query()
+        $activeSubtype = null;
+        $subtypeSlug = (string) $request->query('active_subtype', '');
+        if ($subtypeSlug !== '') {
+            $activeSubtype = PropertySubtype::query()
+                ->get(['id', 'name'])
+                ->first(fn ($s) => Str::slug($s->name) === $subtypeSlug);
+
+            if (!$activeSubtype) {
+                return response()->json(['message' => 'Unit type not found'], 404);
+            }
+        }
+
+        $activeFurnishing = null;
+        $furnishingSlug = (string) $request->query('active_furnishing', '');
+        if ($furnishingSlug !== '') {
+            $activeFurnishing = Furnishing::query()
+                ->get(['id', 'name'])
+                ->first(fn ($f) => Str::slug($f->name) === $furnishingSlug);
+
+            if (!$activeFurnishing) {
+                return response()->json(['message' => 'Furnishing not found'], 404);
+            }
+        }
+
+        $activeUnitType = (string) $request->query('active_unit_type', 'all');
+        $categoryName = match ($activeUnitType) {
+            'sale' => 'For Sale',
+            'rent' => 'For Rent',
+            'foreclosure' => 'Foreclosure',
+            default => null,
+        };
+
+        $scopeQuery = Listing::query()
             ->publiclyListed()
             ->whereHas('property', fn ($q) =>
                 $q->where('is_project', true)
                   ->where('project_id', $project->id)
             )
+            ->when($categoryName, fn ($q) =>
+                $q->whereHas('category', fn ($c) => $c->where('name', $categoryName))
+            );
+
+        $subtypeConstraint = fn ($q) => $q->whereHas('property.propertyAttribute', fn ($a) =>
+            $a->where('property_subtype_id', $activeSubtype->id)
+        );
+        $furnishingConstraint = fn ($q) => $q->whereHas('property', fn ($p) =>
+            $p->where('furnishing_id', $activeFurnishing->id)
+        );
+
+        $facetSubtypes = (clone $scopeQuery)
+            ->when($activeFurnishing, $furnishingConstraint)
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+            ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->distinct()
+            ->pluck('property_subtypes.name')
+            ->filter()
+            ->sort()
+            ->values();
+
+        $facetFurnishings = (clone $scopeQuery)
+            ->when($activeSubtype, $subtypeConstraint)
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('furnishings', 'furnishings.id', '=', 'properties.furnishing_id')
+            ->distinct()
+            ->pluck('furnishings.name')
+            ->filter()
+            ->sort()
+            ->values();
+
+        $baseListingsQuery = (clone $scopeQuery)
+            ->when($activeSubtype, $subtypeConstraint)
+            ->when($activeFurnishing, $furnishingConstraint)
             ->with([
                 'property.propertyAttribute.subtype',
                 'property.nearbyFacility',
@@ -459,15 +529,6 @@ class ProjectController extends Controller
             'foreclosure' => (int) ($breakdown->foreclosure ?? 0),
         ];
 
-        $activeUnitType = (string) $request->query('active_unit_type', 'all');
-        if ($activeUnitType === 'sale') {
-            $filteredListingsQuery->whereHas('category', fn ($query) => $query->where('name', 'For Sale'));
-        } elseif ($activeUnitType === 'rent') {
-            $filteredListingsQuery->whereHas('category', fn ($query) => $query->where('name', 'For Rent'));
-        } elseif ($activeUnitType === 'foreclosure') {
-            $filteredListingsQuery->whereHas('category', fn ($query) => $query->where('name', 'Foreclosure'));
-        }
-
         $listings = $filteredListingsQuery
             ->sorted($sortBy)
             ->paginate(12);
@@ -487,6 +548,16 @@ class ProjectController extends Controller
                 'total' => $listings->total(),
             ],
             'listings_breakdown' => $listingsBreakdown,
+            'active_subtype' => $activeSubtype
+                ? ['id' => $activeSubtype->id, 'name' => $activeSubtype->name, 'slug' => $subtypeSlug]
+                : null,
+            'active_furnishing' => $activeFurnishing
+                ? ['id' => $activeFurnishing->id, 'name' => $activeFurnishing->name, 'slug' => $furnishingSlug]
+                : null,
+            'facets' => [
+                'subtypes' => $facetSubtypes,
+                'furnishings' => $facetFurnishings,
+            ],
         ]);
     }
 }

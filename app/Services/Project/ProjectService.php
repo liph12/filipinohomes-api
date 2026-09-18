@@ -130,14 +130,32 @@ class ProjectService
             ->keyBy('project_id');
     }
 
+    private function unitCombosForProjects(array $projectIds)
+    {
+        return Listing::query()
+            ->publiclyListed()
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->leftJoin('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+            ->leftJoin('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+            ->leftJoin('furnishings', 'furnishings.id', '=', 'properties.furnishing_id')
+            ->where('properties.is_project', true)
+            ->whereIn('properties.project_id', $projectIds)
+            ->selectRaw('DISTINCT properties.project_id as project_id, categories.name as category, property_subtypes.name as subtype, furnishings.name as furnishing')
+            ->toBase()
+            ->get()
+            ->groupBy('project_id');
+    }
+
     public function unitStatsFor(Project $project): array
     {
         $stats = $this->unitStatsForProjects([$project->id]);
+        $combos = $this->unitCombosForProjects([$project->id]);
 
-        return $this->attachUnitStats($project, $stats->get($project->id))->unit_stats;
+        return $this->attachUnitStats($project, $stats->get($project->id), $combos->get($project->id))->unit_stats;
     }
 
-    private function attachUnitStats(Project $project, ?object $s): Project
+    private function attachUnitStats(Project $project, ?object $s, $combos = null): Project
     {
         $range = static fn ($min, $max, bool $int) => $min === null && $max === null
             ? null
@@ -165,6 +183,10 @@ class ProjectService
             'types' => $names($s?->type_names),
             'subtypes' => $names($s?->subtype_names),
             'furnishings' => $names($s?->furnishing_names),
+            'combos' => collect($combos ?? [])
+                ->map(fn ($c) => ['category' => $c->category, 'subtype' => $c->subtype, 'furnishing' => $c->furnishing])
+                ->values()
+                ->all(),
         ]);
 
         return $project;
@@ -502,11 +524,11 @@ class ProjectService
         )->paginate($perPage);
 
         $projects = $paginator->getCollection();
-        $stats = $projects->isEmpty()
-            ? collect()
-            : $this->unitStatsForProjects($projects->pluck('id')->all());
+        $ids = $projects->pluck('id')->all();
+        $stats = $projects->isEmpty() ? collect() : $this->unitStatsForProjects($ids);
+        $combos = $projects->isEmpty() ? collect() : $this->unitCombosForProjects($ids);
 
-        $projects->transform(fn (Project $p) => $this->attachUnitStats($p, $stats->get($p->id)));
+        $projects->transform(fn (Project $p) => $this->attachUnitStats($p, $stats->get($p->id), $combos->get($p->id)));
 
         return $paginator;
     }
