@@ -350,8 +350,13 @@ class ProjectController extends Controller
         $page = (int) $request->query('page', 1);
         $search = (string) $request->query('search', '');
         $sortBy = (string) $request->query('sort_by', 'properties');
+        // Optional selling-price window: keep only projects with at least one
+        // public For Sale unit priced inside it. Non-numeric / negative → ignored.
+        $price = static fn (string $key): ?float => is_numeric($v = $request->query($key)) && (float) $v > 0 ? (float) $v : null;
+        $priceMin = $price('price_min');
+        $priceMax = $price('price_max');
 
-        $projects = $service->fetchProjectsWithListingsPaginated(12, $search, $sortBy);
+        $projects = $service->fetchProjectsWithListingsPaginated(12, $search, $sortBy, $priceMin, $priceMax);
 
         return response()->json([
             'message' => 'Projects with listings fetched successfully',

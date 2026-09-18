@@ -64,6 +64,39 @@ class ProjectService
         };
     }
 
+    /**
+     * Selling-price window for the directory: a project stays in the list when
+     * at least one of its public For Sale units is priced within [min, max].
+     * Sale only — the picker's presets are sale-tier amounts, and mixing in
+     * monthly rents would match every rental project on "Under ₱1M".
+     * EXISTS on the indexed properties(is_project, project_id) → listings
+     * (property_id) path, so it costs one correlated index probe per project.
+     */
+    private function applyProjectPriceRange($query, ?float $priceMin, ?float $priceMax)
+    {
+        if ($priceMin === null && $priceMax === null) {
+            return $query;
+        }
+
+        $units = Listing::query()
+            ->publiclyListed()
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->join('categories', 'categories.id', '=', 'listings.category_id')
+            ->where('properties.is_project', true)
+            ->whereColumn('properties.project_id', 'projects.id')
+            ->where('categories.name', 'For Sale')
+            // Same floor as unit_stats.price_range: ₱1 / ₱0 placeholders are not prices.
+            ->where('listings.price', '>=', 1000)
+            ->when($priceMin !== null, fn ($q) => $q->where('listings.price', '>=', $priceMin))
+            ->when($priceMax !== null, fn ($q) => $q->where('listings.price', '<=', $priceMax))
+            ->selectRaw('1')
+            // toBase(), not getQuery(): applies the SoftDeletes global scope so
+            // trashed listings can't satisfy the EXISTS.
+            ->toBase();
+
+        return $query->whereExists($units);
+    }
+
     private function projectCountsSubquery()
     {
         return Property::query()
@@ -513,11 +546,13 @@ class ProjectService
     public function fetchProjectsWithListingsPaginated(
         int $perPage = 12,
         string $search = "",
-        string $sortBy = self::DEFAULT_SORT
+        string $sortBy = self::DEFAULT_SORT,
+        ?float $priceMin = null,
+        ?float $priceMax = null
     )
     {
-        $query = $this->baseProjectListQuery(true);
-  
+        $query = $this->applyProjectPriceRange($this->baseProjectListQuery(true), $priceMin, $priceMax);
+
         $paginator = $this->applyProjectSort(
             $this->applyProjectSearch($query, $search),
             $sortBy
