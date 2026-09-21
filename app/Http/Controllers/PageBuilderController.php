@@ -5,12 +5,15 @@ namespace App\Http\Controllers;
 use App\Http\Resources\PageBuilderResource;
 use App\Models\Agent;
 use App\Models\PageBuilder;
+use App\Services\PageBuilder\PageBuilderCachePurger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
 class PageBuilderController extends Controller
 {
+    public function __construct(private PageBuilderCachePurger $purger) {}
+
     private function trackingIdentifier(Request $request): string
     {
         if ($request->user()) {
@@ -222,6 +225,7 @@ class PageBuilderController extends Controller
         $data['agent_id'] = $agent->id;
 
         $page = PageBuilder::create($data);
+        $this->purger->purge($page);
 
         return new PageBuilderResource($page);
     }
@@ -260,7 +264,11 @@ class PageBuilderController extends Controller
             'video_url' => 'nullable|array',
         ]);
 
+        $previousSlug = $pageBuilder->slug;
         $pageBuilder->update($data);
+        // The public /website/{slug} is ISR-cached; drop it now so what the
+        // agent just saw in the builder preview is what visitors see.
+        $this->purger->purge($pageBuilder, $previousSlug);
 
         return new PageBuilderResource($pageBuilder);
     }
@@ -271,6 +279,7 @@ class PageBuilderController extends Controller
         $this->authorize('delete', $pageBuilder);
 
         $pageBuilder->delete();
+        $this->purger->purge($pageBuilder);
 
         return response()->json([
             'success' => true,
@@ -283,6 +292,7 @@ class PageBuilderController extends Controller
         $pageBuilder = PageBuilder::withTrashed()->findOrFail($id);
         $this->authorize('delete', $pageBuilder);
         $pageBuilder->restore();
+        $this->purger->purge($pageBuilder);
 
         return response()->json([
             'success' => true,
