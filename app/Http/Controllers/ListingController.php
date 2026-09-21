@@ -190,51 +190,7 @@ class ListingController extends Controller
         return response()->json($cities);
     }
 
-    // public function index(Request $request): ListingResourceCollection
-    // {
-    //     // Public page size is a fixed 12 — the browse grid, homepage search,
-    //     // and programmatic typed pages all depend on that fixed layout, so the
-    //     // default path is left untouched. The listing-detail recommendation
-    //     // rails (Similar / More-by-Type / Related) opt into a wider candidate
-    //     // pool via `pool`, because they filter the result client-side (by type,
-    //     // image presence, active status) and a 12-row pool can starve a rail.
-    //     // Clamped to 60 so a crafted value can't blow up the query.
-    //     $perPage = $request->filled('pool')
-    //         ? max(1, min((int) $request->input('pool'), 60))
-    //         : 12;
-
-    //     $listings = Listing::publiclyListed()
-    //         ->with([
-    //             // Eager-load every relation the Resource touches so a page
-    //             // hydrates in a fixed number of queries instead of N+1 per listing:
-    //             // PropertyResource reads barangay→city→province + furnishing;
-    //             // PropertySubtypeResource reads ->type; AgentResource reads ->user.
-    //             'property.propertyAttribute.subtype.type',
-    //             // nearbyFacility is whenLoaded() in PropertyResource and the browse
-    //             // grid card never renders it — so it's loaded only on the detail
-    //             // page (resolveByKeywordsAndSlug), not here. Saves one query + the
-    //             // hasMany facility rows on every browse page.
-    //             'property.barangay.city.province',
-    //             'property.furnishing',
-    //             'category',
-    //             'agent' => function ($q) {
-    //                 $q->withCount('listings');
-    //             },
-    //             // withCount/withMax feed AgentResource's last_login_at + login_count
-    //             // without an N+1 per listing's agent.
-    //             'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
-    //             // AgentResource emits page_slug from pageBuilder — eager-load it so
-    //             // the card's agent link doesn't lazy-load one row per listing.
-    //             'agent.pageBuilder',
-    //         ])
-    //         ->filter($request)
-    //         ->orderByDesc('updated_at')
-    //         ->paginate($perPage);
-
-    //     return new ListingResourceCollection($listings);
-    // }
-
-    public function index(Request $request)
+    public function index(Request $request): ListingResourceCollection
     {
         // Public page size is a fixed 12 — the browse grid, homepage search,
         // and programmatic typed pages all depend on that fixed layout, so the
@@ -275,9 +231,7 @@ class ListingController extends Controller
             ->orderByDesc('updated_at')
             ->paginate($perPage);
 
-        // return new ListingResourceCollection($listings);
-
-        return response()->json(["test" => "test"]);
+        return new ListingResourceCollection($listings);
     }
 
     public function resolveByKeywordsAndSlug(Request $request)
