@@ -367,7 +367,22 @@ class ListingController extends Controller
     {
         $user = $request->user();
 
-        $query = Listing::where('agent_id', $user->agent->id);
+        // "My" listings = the caller's own. A signed-in user with no agents row
+        // (OTP-signup client, editor, region-less secretary) owns none.
+        //
+        // ⚠️ NOT `where('agent_id', $user->agent?->id)`: Builder::where($col,
+        //    null) is rewritten to `WHERE $col IS NULL`, which matches
+        //    orphaned rows rather than nothing.
+        //
+        // ⚠️ And NOT `?? 0` either, even though 0 can never be an
+        //    auto-increment agents.id today. That is the schema being
+        //    load-bearing for a security property — the same reasoning
+        //    dashboard() below explicitly refuses. `1 = 0` owes the schema
+        //    nothing: it cannot match a row whatever agent_id ever becomes.
+        $agentId = $user->agent?->id;
+        $query = $agentId
+            ? Listing::where('agent_id', $agentId)
+            : Listing::whereRaw('1 = 0');
 
         // Soft-deleted view: when `trashed=1`, return ONLY soft-deleted
         // listings. A soft-deleted listing's property/attribute are trashed
@@ -1400,6 +1415,12 @@ class ListingController extends Controller
     {
         $user = $request->user();
         $isAdmin = $user->role->name === 'admin';
+        // Null for any signed-in user with no agents row: OTP-signup clients
+        // (role_id 3, no agent), editors, and agents whose profile was never
+        // created. They all reach this route through the shared auth:sanctum
+        // group — agent.active only blocks agents with a BLOCKED status, never
+        // an absent agent row.
+        $agentId = $user->agent?->id;
         $start = date('2020-01-01');
         $end = date('Y-m-d');
         $statistics = [
@@ -1428,7 +1449,24 @@ class ListingController extends Controller
             ];
         }
 
-        $baseQuery = Listing::withCount('inQuiries')->where('agent_id', $user->agent->id);
+        // No agent profile → no listings of their own. Same shape the agent
+        // branch below returns, zeroed.
+        //
+        // ⚠️ An explicit return, NOT `where('agent_id', $agentId)` with a null.
+        //    Builder::where($col, null) is rewritten to `WHERE $col IS NULL`,
+        //    which matches orphaned rows instead of nothing. listings.agent_id
+        //    is NOT NULL today, so that would work by accident — and break
+        //    silently the day it is made nullable.
+        if (! $agentId) {
+            return response()->json(array_merge($statistics, [
+                'leased' => 0,
+                'private_listings' => 0,
+                'agent' => 0,
+                'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosure' => 0],
+            ]));
+        }
+
+        $baseQuery = Listing::withCount('inQuiries')->where('agent_id', $agentId);
         $statistics['active'] = (clone $baseQuery)->active()->count();
         $statistics['total'] = (clone $baseQuery)->count();
         $statistics['views'] = (int) (clone $baseQuery)->sum('clicks');
@@ -1446,7 +1484,7 @@ class ListingController extends Controller
 
         // Category breakdown (For Sale / For Rent / Foreclosure) for the
         // dashboard Category card — scoped to this agent's own listings.
-        $categoryCountsRaw = Listing::where('agent_id', $user->agent->id)
+        $categoryCountsRaw = Listing::where('agent_id', $agentId)
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->selectRaw('categories.name as name, COUNT(*) as count')
             ->groupBy('categories.name')
