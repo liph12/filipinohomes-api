@@ -6,6 +6,7 @@ use App\Http\Requests\StoreListingRequest;
 use App\Http\Requests\UpdateListingRequest;
 use App\Mail\AtsStatusUpdatedMailer;
 use App\Models\Listing;
+use App\Services\Agent\AgentCachePurger;
 use App\Services\Listing\ListingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
@@ -242,6 +243,11 @@ class FullListingController extends Controller
                     're_submitted_at'     => now(),
                 ]);
                 $updated->refresh();
+
+                // updateQuietly() bypasses Listing's 'updated' hook — the
+                // resubmission can also change specs/photos already applied
+                // by the service-layer save above, so purge here too.
+                app(AgentCachePurger::class)->purgeAgent((int) $updated->agent_id);
 
                 // Custom audit event for the resubmission so it surfaces
                 // under category=listings_audit, separate from the regular

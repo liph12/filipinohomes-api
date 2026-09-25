@@ -15,6 +15,7 @@ use App\Models\ListingInquiry;
 use App\Models\Property;
 use App\Models\PropertySubtype;
 use App\Models\User;
+use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\ExpoPushService;
 use App\Services\Listing\ListingByCityService;
@@ -2254,6 +2255,11 @@ class ListingController extends Controller
             'audited_at' => now(),
         ]);
 
+        // updateQuietly() bypasses the Listing model's 'updated' hook, so the
+        // AgentCard verification badge needs its own purge here. Directory
+        // affected too — /agents can filter/sort by verification status.
+        app(AgentCachePurger::class)->purgeAgent((int) $listing->agent_id, true);
+
         $listing->auditEvent = 'audited';
         $listing->isCustomEvent = true;
         $listing->auditCategoryOverride = 'listings_audit';
@@ -2680,6 +2686,10 @@ class ListingController extends Controller
                 }
             }
         });
+
+        // Both saves above are ->saveQuietly() — neither model's 'updated'
+        // hook fires, so the AgentCard cover photo needs an explicit purge.
+        app(AgentCachePurger::class)->purgeAgent((int) $listing->agent_id);
 
         $listing->load(['property' => fn ($q) => $q->withTrashed()]);
 
