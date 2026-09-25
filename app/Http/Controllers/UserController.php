@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\DB;
 use App\Models\UserInfo;
 use App\Models\Inquiry;
 use App\Services\LeuterioreRealty\TeamSyncService;
+use App\Services\Agent\AgentCachePurger;
 
 class UserController extends Controller
 {
@@ -562,6 +563,20 @@ class UserController extends Controller
         }
 
         $user->update($validated);
+
+        // The agent profile/directory cards render this user's name and
+        // avatar — purge just those two fields, never on every field this
+        // endpoint can touch (in particular sessionPing()/authenticate()
+        // write last_online_at/active_at via a query builder update, not
+        // through here, so they were never at risk — this guard is belt
+        // and braces against a future field being added to $validated
+        // above that shouldn't trigger a purge either).
+        if ($user->wasChanged(['name', 'avatar'])) {
+            $agentId = (int) $user->agent()->value('id');
+            if ($agentId > 0) {
+                app(AgentCachePurger::class)->purgeAgent($agentId, true);
+            }
+        }
 
         // A manual switch to agent must also guarantee an agents profile —
         // the LR create-branches do this on signup, but a user who was

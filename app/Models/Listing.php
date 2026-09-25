@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Auditing\LogsActivity;
 use App\Jobs\PingIndexNow;
+use App\Services\Agent\AgentCachePurger;
 use App\Services\IndexNowService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -70,6 +71,19 @@ class Listing extends Model implements Auditable
      * MySQL has no such column.
      */
     public ?bool $was_actually_updated = null;
+
+    /**
+     * Columns that, when changed, affect what an agent's public profile
+     * card / listing count shows — see AgentCachePurger's `updated` hook
+     * below. Not every fillable column is here: e.g. `clicks`,
+     * `impressions`, `seo_tags`, `audit_notes` never render on an agent
+     * page, and purging on every click-counter bump would be wasteful.
+     */
+    private const AGENT_CARD_COLUMNS = [
+        'name', 'slug', 'price', 'featured_photo', 'is_featured',
+        'visibility', 'category_id', 'agent_id', 'property_id',
+        'verification_status',
+    ];
 
     protected $fillable = [
         'code', 'visibility', 'name', 'slug', 'price',
@@ -195,6 +209,16 @@ class Listing extends Model implements Auditable
             // ping here explicitly. `saved` further down skips the
             // tmp-* slug for the same reason.
             self::dispatchIndexNowFor($listing->fresh() ?? $listing);
+
+            // A new listing changes this agent's listings_count, which
+            // gates their membership in the public /agents directory
+            // (min_listings=1) — always purge the directory tag too.
+            if ($listing->agent_id) {
+                app(AgentCachePurger::class)->purgeAgent(
+                    (int) $listing->agent_id,
+                    $listing->visibility === 'public',
+                );
+            }
         });
 
         static::creating(function ($model) {
@@ -224,9 +248,43 @@ class Listing extends Model implements Auditable
         // window. The `created` hook above already dispatches once
         // the canonical slug is in place; here we cover `updated`,
         // `deleted`, and `restored`.
-        static::updated(fn (Listing $listing) => self::dispatchIndexNowFor($listing));
-        static::deleted(fn (Listing $listing) => self::dispatchIndexNowFor($listing));
-        static::restored(fn (Listing $listing) => self::dispatchIndexNowFor($listing));
+        static::updated(function (Listing $listing) {
+            self::dispatchIndexNowFor($listing);
+
+            if (! $listing->wasChanged(self::AGENT_CARD_COLUMNS)) {
+                return;
+            }
+
+            $purger = app(AgentCachePurger::class);
+            // visibility/agent_id/verification_status can all move a
+            // listing in or out of the min_listings=1 directory gate —
+            // anything else on the allowlist (price, photo, featured
+            // flag, name/slug) only affects the profile's own listing
+            // grid, not directory membership.
+            $purger->purgeAgent(
+                (int) $listing->agent_id,
+                $listing->wasChanged(['visibility', 'agent_id', 'verification_status']),
+            );
+
+            // Reassigning a listing to a different agent must also
+            // refresh the PREVIOUS agent's profile/count — getOriginal()
+            // reads the pre-save value straight off the model, no query.
+            if ($listing->wasChanged('agent_id')) {
+                $purger->purgeAgent((int) $listing->getOriginal('agent_id'), true);
+            }
+        });
+        static::deleted(function (Listing $listing) {
+            self::dispatchIndexNowFor($listing);
+            if ($listing->agent_id) {
+                app(AgentCachePurger::class)->purgeAgent((int) $listing->agent_id, true);
+            }
+        });
+        static::restored(function (Listing $listing) {
+            self::dispatchIndexNowFor($listing);
+            if ($listing->agent_id) {
+                app(AgentCachePurger::class)->purgeAgent((int) $listing->agent_id, true);
+            }
+        });
     }
 
     /**

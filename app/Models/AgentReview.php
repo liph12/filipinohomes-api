@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Auditing\LogsActivity;
+use App\Services\Agent\AgentCachePurger;
 use App\Services\AgentRatingRollupService;
 use Illuminate\Database\Eloquent\Model;
 use OwenIt\Auditing\Contracts\Auditable;
@@ -75,11 +76,23 @@ class AgentReview extends Model implements Auditable
      */
     protected static function booted(): void
     {
-        static::saved(function (self $review) {
-            app(AgentRatingRollupService::class)->recomputeFor((int) $review->agent_user_id);
-        });
-        static::deleted(function (self $review) {
-            app(AgentRatingRollupService::class)->recomputeFor((int) $review->agent_user_id);
-        });
+        static::saved(fn (self $review) => self::syncAgent($review));
+        static::deleted(fn (self $review) => self::syncAgent($review));
+    }
+
+    /**
+     * Recomputes the rollup, then purges the agent's cached profile/card so
+     * avg_rating/total_reviews (both rendered on AgentCard) show the new
+     * numbers immediately. agent_user_id is users.id, NOT the agents.id the
+     * frontend's cache tag is keyed on — resolve it via the relation.
+     */
+    private static function syncAgent(self $review): void
+    {
+        app(AgentRatingRollupService::class)->recomputeFor((int) $review->agent_user_id);
+
+        $agentId = (int) Agent::where('user_id', $review->agent_user_id)->value('id');
+        if ($agentId > 0) {
+            app(AgentCachePurger::class)->purgeAgent($agentId, true);
+        }
     }
 }

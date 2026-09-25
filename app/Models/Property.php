@@ -5,6 +5,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
 use App\Auditing\LogsActivity;
+use App\Services\Agent\AgentCachePurger;
 use OwenIt\Auditing\Contracts\Auditable;
 class Property extends Model implements Auditable
 {
@@ -130,6 +131,21 @@ class Property extends Model implements Auditable
             if ($usesSoftDeletes && Auth::check()) {
                 $model->deleted_by = Auth::id();
                 $model->save();
+            }
+        });
+
+        // AgentCard shows the property's status/photo indirectly through its
+        // listings (a listing's own `updated` hook only fires on the Listing
+        // row itself, not when the underlying Property changes) — a status
+        // flip (e.g. sold/rented via ListingController@updateStatus, which
+        // writes `properties` not `listings`) or a photo change needs an
+        // explicit purge here for every listing built on this property.
+        static::updated(function ($model) {
+            if ($model->wasChanged(['status', 'photos'])) {
+                $agentIds = $model->listings()->withTrashed()->pluck('agent_id');
+                foreach ($agentIds->unique()->filter() as $agentId) {
+                    app(AgentCachePurger::class)->purgeAgent((int) $agentId);
+                }
             }
         });
     }

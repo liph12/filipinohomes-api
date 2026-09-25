@@ -13,6 +13,7 @@ use App\Models\Conversation;
 use App\Models\LoginLog;
 use App\Models\TeamAgent;
 use App\Models\User;
+use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\IndexNowService;
 use Carbon\Carbon;
@@ -982,6 +983,14 @@ class AgentController extends Controller
             $agent->user->update(['avatar' => $avatarUrl]);
         }
 
+        // Directory-changed: true unconditionally is simplest and safe —
+        // updateOrCreate's wasRecentlyCreated only tells us this SPECIFIC
+        // agent is new, but a name/bio/avatar edit also changes what the
+        // /agents card shows, and that page's own ISR window (10 min) means
+        // an extra purge here costs one more fetch on a page that's rarely
+        // hit twice within the same window anyway.
+        app(AgentCachePurger::class)->purgeAgent((int) $agent->id, true);
+
         return new AgentResource($agent);
     }
 
@@ -1022,12 +1031,22 @@ class AgentController extends Controller
         $agent->auditSource = 'admin_status_dropdown';
         $agent->update(['status' => $validated['status']]);
 
+        $statusChanged = $old !== $validated['status'];
+
+        // A status flip changes whether this agent's profile/listings are
+        // publicly visible at all (see show()) and whether they appear in
+        // the /agents directory — purge regardless of the IndexNow setting
+        // below, which is a separate, opt-in concern.
+        if ($statusChanged) {
+            app(AgentCachePurger::class)->purgeAgent((int) $agent->id, true);
+        }
+
         // Nudge search engines to recrawl this agent's listing URLs so the
         // now-hidden (blocked) or newly-restored (active) pages leave/return to
         // the index faster than the sitemap revalidate window. Fires only on a
         // real change. Uses raw visibility (NOT publiclyListed(), which would now
         // exclude a blocked agent's listings entirely).
-        if ($old !== $validated['status'] && config('services.indexnow.enabled')) {
+        if ($statusChanged && config('services.indexnow.enabled')) {
             $svc = app(IndexNowService::class);
             $urls = $agent->listings()
                 ->where('visibility', 'public')
@@ -1053,6 +1072,7 @@ class AgentController extends Controller
 
         $agent = Agent::findOrFail($id);
         $agent->delete();
+        app(AgentCachePurger::class)->purgeAgent((int) $agent->id, true);
 
         return response()->json(['message' => 'Agent removed.']);
     }
@@ -1066,6 +1086,7 @@ class AgentController extends Controller
 
         $agent = Agent::onlyTrashed()->findOrFail($id);
         $agent->restore();
+        app(AgentCachePurger::class)->purgeAgent((int) $agent->id, true);
 
         return response()->json(['data' => new AgentResource($agent)]);
     }

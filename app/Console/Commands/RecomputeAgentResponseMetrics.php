@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Agent;
+use App\Services\Agent\AgentCachePurger;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -34,6 +35,12 @@ class RecomputeAgentResponseMetrics extends Command
                 $processed++;
             }
         });
+
+        // response_speed feeds the /agents directory sort order — one
+        // directory-wide purge after the run, not a purge per agent (this
+        // touches every agent hourly; per-agent purges here is exactly the
+        // thundering-herd Agent::saved was deliberately NOT hooked to avoid).
+        app(AgentCachePurger::class)->purgeDirectory();
 
         $this->info("Recomputed response metrics for {$processed} agent(s).");
         return self::SUCCESS;

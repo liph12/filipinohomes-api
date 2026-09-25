@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\TeamLeadershipService;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -17,6 +18,11 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton(TeamLeadershipService::class);
         $this->app->singleton(AuditMailService::class);
+        // Singleton so the per-request id/tag accumulation in
+        // AgentCachePurger actually spans every call made during the
+        // request — a plain `app(AgentCachePurger::class)` resolution
+        // would otherwise hand back a fresh, empty instance every time.
+        $this->app->singleton(AgentCachePurger::class);
     }
 
     public function boot(): void
