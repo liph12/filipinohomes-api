@@ -78,6 +78,7 @@ use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
 use App\Natcon\Http\Controllers\OrganizerController as NatconOrganizerController;
+use App\Natcon\Http\Controllers\RaffleController as NatconRaffleController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicAwardeeController as NatconPublicAwardeeController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
@@ -702,6 +703,15 @@ Route::middleware('strip.tags')->group(function () {
                     Route::post('/admin/natcon/organizers/reorder', [NatconOrganizerController::class, 'reorder']);
                     Route::patch('/admin/natcon/organizers/{committee}', [NatconOrganizerController::class, 'update']);
                     Route::delete('/admin/natcon/organizers/{committee}', [NatconOrganizerController::class, 'destroy']);
+
+                    // Live raffle winners per convention — kept so next year's
+                    // admin can still see this year's. 'years' and 'clear' are
+                    // registered BEFORE /winners/{winner} so neither is bound as an id.
+                    Route::get('/admin/natcon/raffle/years', [NatconRaffleController::class, 'years']);
+                    Route::get('/admin/natcon/raffle/winners', [NatconRaffleController::class, 'winners']);
+                    Route::post('/admin/natcon/raffle/winners', [NatconRaffleController::class, 'storeWinner']);
+                    Route::post('/admin/natcon/raffle/winners/clear', [NatconRaffleController::class, 'clearWinners']);
+                    Route::delete('/admin/natcon/raffle/winners/{winner}', [NatconRaffleController::class, 'destroyWinner']);
 
                     // Photographer upload invites: mint/copy/rotate/revoke the
                     // tokenized links the portal above consumes. Registered

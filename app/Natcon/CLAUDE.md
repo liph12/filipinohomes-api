@@ -235,6 +235,29 @@ writes a borrowed URL back onto the row. The purge is
 at the year-less `/natcon/organizers` and a name change should not rebuild the
 whole landing page.
 
+### Raffle
+
+The live raffle on /natcon/admin draws in the BROWSER (the stage picks the
+winner; nothing here decides who wins) and reports each draw to
+`RaffleController`: `natcon_raffle_winners` is one row per draw — the
+RAFFLE's title (REQUIRED), NAME, CONTACT (nullable), PRIZE and when — tied
+to the event, and `(event, raffle, name)` is UNIQUE: a person wins once PER
+RAFFLE, enforced here (`storeWinner` answers 422 in words before the index
+would throw), not only on the stage. It is tied to the event so next year's admin
+still sees this year's, and deliberately nothing more: the owner wants the
+same columns whichever drum the name came from, so there is no source, no
+roster id, no team, and NO table for the custom list (the sheet is the
+host's working list and stays in the browser). `client_key` is the browser's
+own key for the draw and `(event, client_key)` is UNIQUE — `storeWinner` is
+firstOrNew on it, so a retried POST cannot crown a draw twice.
+Rows are SOFT-DELETED: removing a winner or clearing a raffle hides the
+row and stamps `deleted_by` (`RaffleWinner::removeBy()`), nothing is thrown
+away — and because the unique index counts hidden
+rows too, a name drawn again in the same raffle RESTORES its hidden row
+(`storeWinner` looks in `onlyTrashed()` first) instead of tripping it.
+`/raffle/years` lists only conventions that have draws. Tests:
+`tests/Feature/NatconRaffleTest.php`.
+
 `NatconAnnouncement` keeps its module prefix because `App\Models\Announcement`
 already exists and is a completely different thing (a push broadcast). Two
 same-named models one namespace apart is how the wrong one gets imported.
