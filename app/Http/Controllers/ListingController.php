@@ -26,6 +26,7 @@ use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
 use App\Services\Listing\ListingSummaryService;
 use App\Services\Listing\ListingTopCreatorsService;
+use App\Services\Project\ProjectService;
 use App\Services\TeamLeadershipService;
 use App\Support\IslandMap;
 use App\Support\RegionMap;
@@ -204,7 +205,17 @@ class ListingController extends Controller
             ? max(1, min((int) $request->input('pool'), 60))
             : 12;
 
-        $listings = Listing::publiclyListed()
+        // The agent-website /properties page (frontend: [slug]/properties/
+        // page.tsx + agent-properties.tsx) is the only caller that scopes
+        // this endpoint to one agent via `agent_id` — every other caller
+        // (the general public browse, homepage search, programmatic typed
+        // pages) omits it. That page shows an agent's own public listings
+        // regardless of moderation flag, so it skips publiclyListed()'s
+        // verification_status exclusion; the general search-engine-visible
+        // browse below keeps excluding flagged listings as before.
+        $isAgentScoped = (int) $request->input('agent_id') > 0;
+
+        $listings = ($isAgentScoped ? Listing::visibleOnAgentPage() : Listing::publiclyListed())
             ->with([
                 // Eager-load every relation the Resource touches so a page
                 // hydrates in a fixed number of queries instead of N+1 per listing:
@@ -347,7 +358,7 @@ class ListingController extends Controller
         // Parent-project card on the unit page: same unit_stats + public-unit
         // counts as the /projects directory card, instead of the bare model.
         if ($listing?->property?->project) {
-            app(\App\Services\Project\ProjectService::class)->hydrateCardStats($listing->property->project);
+            app(ProjectService::class)->hydrateCardStats($listing->property->project);
         }
 
         return [
@@ -980,6 +991,7 @@ class ListingController extends Controller
             if ($region === null) {
                 abort(403);
             }
+
             return [false, [], $region];
         }
 
@@ -1007,6 +1019,7 @@ class ListingController extends Controller
             if ($region === null || optional($listing->loadMissing('agent')->agent)->region !== $region) {
                 abort(403);
             }
+
             return;
         }
 
@@ -2074,24 +2087,24 @@ class ListingController extends Controller
                 'max:512',
                 'starts_with:https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/',
             ],
-            'og_card_options'         => ['sometimes', 'nullable', 'array'],
-            'og_card_options.photo'   => [
+            'og_card_options' => ['sometimes', 'nullable', 'array'],
+            'og_card_options.photo' => [
                 'nullable',
                 'url',
                 'max:512',
                 'starts_with:https://filipinohomes123.s3.ap-southeast-1.amazonaws.com/',
             ],
-            'og_card_options.theme'   => ['nullable', 'in:navy,red,emerald,charcoal'],
-            'og_card_options.flip'    => ['nullable', 'boolean'],
-            'og_card_options.hide'    => ['nullable', 'array'],
-            'og_card_options.hide.*'  => ['in:price,specs,location'],
-            'og_card_options.agent'   => ['nullable', 'boolean'],
+            'og_card_options.theme' => ['nullable', 'in:navy,red,emerald,charcoal'],
+            'og_card_options.flip' => ['nullable', 'boolean'],
+            'og_card_options.hide' => ['nullable', 'array'],
+            'og_card_options.hide.*' => ['in:price,specs,location'],
+            'og_card_options.agent' => ['nullable', 'boolean'],
             // Price-line suffix ("per month" etc.) — listings have no rent-
             // period field, so this is the agent's explicit choice.
-            'og_card_options.period'  => ['nullable', 'in:month,day,year'],
+            'og_card_options.period' => ['nullable', 'in:month,day,year'],
             // Keep the "For Sale:"-style intent prefix on the card title
             // (stripped by default — redundant with the card's category line).
-            'og_card_options.prefix'  => ['nullable', 'boolean'],
+            'og_card_options.prefix' => ['nullable', 'boolean'],
             // Price accent color on the card (default gold).
             'og_card_options.priceColor' => ['nullable', 'in:gold,white,red,green,blue'],
             // Category badge style: colored by category (default) or clear.
@@ -2115,7 +2128,7 @@ class ListingController extends Controller
             }
             $updates['og_card_options'] = $opts ?: null;
         }
-        if (!$updates) {
+        if (! $updates) {
             return response()->json(['message' => 'Nothing to update.'], 422);
         }
 
@@ -2131,7 +2144,7 @@ class ListingController extends Controller
 
         return response()->json([
             'share_thumbnail_url' => $listing->share_thumbnail_url,
-            'og_card_options'     => $listing->og_card_options,
+            'og_card_options' => $listing->og_card_options,
         ]);
     }
 
@@ -3032,7 +3045,7 @@ class ListingController extends Controller
     private function ownAgentScope(Request $request): array
     {
         $ownAgentId = Agent::where('user_id', $request->user()->id)->value('id');
-        if (!$ownAgentId) {
+        if (! $ownAgentId) {
             abort(403);
         }
 
