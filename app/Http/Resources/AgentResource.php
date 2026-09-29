@@ -73,6 +73,9 @@ class AgentResource extends JsonResource
             'sold_count' => $this->sold_count ?? 0,
             'rented_count' => $this->rented_count ?? 0,
             'leased_count' => $this->leased_count ?? 0,
+            // Total price of every SOLD listing, public and private — the
+            // agent-website "Sales Volume" stat (see AgentController::show).
+            'sold_value' => (float) ($this->sold_value ?? 0),
             'ongoing_inquiries_count' => $this->ongoing_inquiries_count ?? 0,
             'closed_inquiries_count' => $this->closed_inquiries_count ?? 0,
             // Every conversation ever aimed at the agent (any status) — the

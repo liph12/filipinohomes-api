@@ -761,8 +761,16 @@ class AgentController extends Controller
             // Same flat COUNT subqueries as index() — without them the single
             // agent payload reports sold/inquiry counts as 0 (AgentResource's
             // `?? 0`), which the public agent-website stats read as real data.
+            // rented_count/leased_count mirror sold_count so the site's
+            // "Transactions" stat (sold + rented + leased) isn't stuck at 0.
+            // sold_value has NO visibility filter (unlike the listings_count
+            // withCount above) — the site's "Sales Volume" stat is the total
+            // price of every sold listing, public AND private.
             ->addSelect([
                 DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'sold') as sold_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'rented') as rented_count"),
+                DB::raw("(SELECT COUNT(*) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'leased') as leased_count"),
+                DB::raw("(SELECT COALESCE(SUM(listings.price), 0) FROM listings INNER JOIN properties ON properties.id = listings.property_id WHERE listings.agent_id = agents.id AND listings.deleted_at IS NULL AND properties.status = 'sold') as sold_value"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'accepted') as ongoing_inquiries_count"),
                 DB::raw("(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id AND conversations.status = 'closed') as closed_inquiries_count"),
                 DB::raw('(SELECT COUNT(*) FROM conversations WHERE conversations.agent_user_id = agents.user_id) as total_inquiries_count'),
