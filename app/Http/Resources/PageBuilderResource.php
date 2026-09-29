@@ -19,6 +19,10 @@ class PageBuilderResource extends JsonResource
             'description' => $this->description,
             'about_me' => $this->about_me,
             'about_photo' => $this->about_photo,
+            // Overrides for two About-section credential tiles — null means
+            // "use the site default" (see buildWebsiteData in the frontend).
+            'brokerage' => $this->brokerage,
+            'office' => $this->office,
             'heading' => $this->heading,
             'theme' => $this->theme,
             'banner_settings' => $this->banner_settings,

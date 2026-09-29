@@ -29,6 +29,8 @@ class PageBuilder extends Model implements Auditable
         'description',
         'about_me',
         'about_photo',
+        'brokerage',
+        'office',
         'heading',
         'theme',
         'banner_settings',
