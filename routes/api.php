@@ -714,12 +714,13 @@ Route::middleware('strip.tags')->group(function () {
                     Route::delete('/admin/natcon/raffle/winners/{winner}', [NatconRaffleController::class, 'destroyWinner']);
 
                     // Photographer upload invites: mint/copy/rotate/revoke the
-                    // tokenized links the portal above consumes. Registered
-                    // BEFORE /gallery/{photo} so 'invites' is never bound as a
-                    // photo id.
+                    // tokenized links the portal above consumes, plus edit and
+                    // delete. Registered BEFORE /gallery/{photo} so 'invites'
+                    // is never bound as a photo id.
                     Route::get('/admin/natcon/gallery/invites', [NatconGalleryController::class, 'invites']);
                     Route::post('/admin/natcon/gallery/invites', [NatconGalleryController::class, 'storeInvite']);
                     Route::patch('/admin/natcon/gallery/invites/{invite}', [NatconGalleryController::class, 'updateInvite']);
+                    Route::delete('/admin/natcon/gallery/invites/{invite}', [NatconGalleryController::class, 'destroyInvite']);
                     Route::post('/admin/natcon/gallery/invites/{invite}/link', [NatconGalleryController::class, 'inviteLink']);
                     Route::post('/admin/natcon/gallery/invites/{invite}/reissue', [NatconGalleryController::class, 'reissueInvite']);
                     Route::post('/admin/natcon/gallery/invites/{invite}/revoke', [NatconGalleryController::class, 'revokeInvite']);

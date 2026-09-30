@@ -14,8 +14,9 @@ use Illuminate\Support\Facades\Schema;
  * upload_invite_id lands on BOTH gallery tables: it is the attribution that
  * lets the admin list count a photographer's uploads AND the ownership
  * predicate that lets a photographer delete/re-caption only what THEY
- * uploaded. nullOnDelete is a safety net only — invites are status-flipped
- * to 'revoked', never hard-deleted, precisely so attribution survives.
+ * uploaded. Revoking status-flips to 'revoked' precisely so that attribution
+ * survives; nullOnDelete is what makes the admin's harder "delete this invite"
+ * safe — the photos and albums stay, they just stop being credited.
  */
 return new class extends Migration
 {

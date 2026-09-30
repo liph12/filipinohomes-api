@@ -1370,6 +1370,34 @@ class GalleryController extends Controller
         return response()->json(['data' => $this->presentInvite($invite->fresh(['rootAlbum']))]);
     }
 
+    /**
+     * Remove the invite row itself — for a link minted by mistake, a
+     * photographer who never turned up, or one the admin simply wants off the
+     * list. Revoke stays the right answer for anyone who actually shot: both
+     * kill the link, but the upload_invite_id FKs are nullOnDelete, so a
+     * delete ALSO drops the attribution that says whose uploads those were
+     * (and with it the ownership predicate that let them re-caption their own
+     * work). Their photos and albums survive either way — the counts ride back
+     * so the admin can be told exactly what the delete cost.
+     */
+    public function destroyInvite(Request $request, GalleryUploadInvite $invite): JsonResponse
+    {
+        $this->guardInvite($request, $invite);
+
+        $photos = $invite->photos()
+            ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+            ->count();
+        $albums = $invite->albums()->count();
+
+        $invite->auditSource = 'admin_gallery_invite';
+        $invite->delete();
+
+        return response()->json(['data' => [
+            'photos_kept' => $photos,
+            'albums_kept' => $albums,
+        ]]);
+    }
+
     /** An invite reached by id must belong to the scope being administered. */
     private function guardInvite(Request $request, GalleryUploadInvite $invite): void
     {
