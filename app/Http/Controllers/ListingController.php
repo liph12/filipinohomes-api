@@ -18,12 +18,14 @@ use App\Models\User;
 use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\ExpoPushService;
+use App\Services\Listing\HeatmapBoundaryService;
 use App\Services\Listing\ListingByCityService;
 use App\Services\Listing\ListingByProvinceService;
 use App\Services\Listing\ListingByStatusService;
 use App\Services\Listing\ListingByTypeService;
 use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
+use App\Services\Listing\ListingHeatmapService;
 use App\Services\Listing\ListingSummaryService;
 use App\Services\Listing\ListingTopCreatorsService;
 use App\Services\Project\ProjectService;
@@ -32,6 +34,7 @@ use App\Support\IslandMap;
 use App\Support\RegionMap;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -2938,6 +2941,159 @@ class ListingController extends Controller
         }
 
         return response()->json($insights->configure($filters, $agentIds)->clusters());
+    }
+
+    /**
+     * Listings Heatmap — one row per province (or per city) with the counts the
+     * choropleth shades by. Same access rule as the other insights endpoints:
+     * admin unscoped, team leader scoped to their team, everyone else 403.
+     *
+     * The page polls this every 60 s, so the answer is served from a 55 s
+     * `Cache::flexible` window with a 300 s stale tail: a poll that lands just
+     * after expiry gets the slightly-old payload immediately and the refresh
+     * happens behind it, instead of several admins all triggering the same
+     * grouped scan at once. `generated_at` lives INSIDE the cached payload, so
+     * the UI's "updated Ns ago" reports the age of the data rather than the age
+     * of the HTTP response.
+     */
+    public function insightsHeatmap(Request $request, ListingHeatmapService $heatmap): JsonResponse
+    {
+        $agentIds = $this->resolveInsightsAgentScope($request);
+
+        $validated = $request->validate([
+            'level' => 'nullable|in:province,city',
+            'province_id' => 'nullable|integer|exists:provinces,id',
+        ]);
+
+        $level = ($validated['level'] ?? 'province') === 'city' ? 'city' : 'province';
+        $requestedProvinceId = isset($validated['province_id']) ? (int) $validated['province_id'] : null;
+
+        // Canonicalise BEFORE the key is built, or 82 and 83 (the same Samar)
+        // each compute and cache their own copy of an identical answer.
+        $provinceId = $heatmap->canonicalProvinceId($requestedProvinceId);
+
+        $scopeKey = 'admin';
+        if ($agentIds !== null) {
+            $sorted = array_values(array_unique(array_map('intval', $agentIds)));
+            sort($sorted);
+            $scopeKey = 'team:'.md5(implode(',', $sorted));
+        }
+
+        // The payload carries boundaries_version and the has_boundary flags, so a
+        // re-import or re-link has to invalidate the counts too — otherwise a
+        // post-deploy check reads the pre-link numbers for the whole stale window
+        // and the client never sees the version change that triggers its geometry
+        // refetch.
+        $cacheKey = sprintf(
+            'heatmap:counts:v1:%d:%s:%s:%s',
+            $heatmap->boundariesVersion(),
+            $level,
+            $provinceId !== null ? (string) $provinceId : 'all',
+            $scopeKey
+        );
+
+        $computed = false;
+
+        $payload = Cache::flexible(
+            $cacheKey,
+            [ListingHeatmapService::TTL, 300],
+            function () use ($heatmap, $level, $provinceId, $agentIds, $cacheKey, &$computed) {
+                $computed = true;
+                $result = $heatmap->heatmap($level, $provinceId, $agentIds);
+
+                // The plan's budget is ~120 ms locally. A sustained breach is
+                // the signal to precompute this into a table (plan section F),
+                // so it has to be visible in the log before anyone guesses.
+                if ((int) ($result['meta']['compute_ms'] ?? 0) > 750) {
+                    Log::warning('Listings heatmap slow compute', [
+                        'key' => $cacheKey,
+                        'compute_ms' => $result['meta']['compute_ms'],
+                        'areas' => $result['totals']['areas'] ?? null,
+                    ]);
+                }
+
+                return $result;
+            }
+        );
+
+        // "stale" = served from the flexible tail rather than the fresh window.
+        // Derived from the payload's own timestamp because Cache::flexible does
+        // not report which branch answered.
+        $age = time() - strtotime((string) ($payload['generated_at'] ?? 'now'));
+        $payload['meta']['cached'] = ! $computed;
+        $payload['meta']['stale'] = ! $computed && $age > ListingHeatmapService::TTL;
+
+        return response()->json($payload)
+            ->header('X-Heatmap-Cache', $computed ? 'miss' : 'hit');
+    }
+
+    /**
+     * Listings Heatmap — the polygons the counts are painted onto, as a GeoJSON
+     * FeatureCollection.
+     *
+     * Split from the counts endpoint because the two have opposite lifetimes:
+     * counts change every minute, geometry changes only when someone re-imports
+     * boundaries. The body is therefore cached for a day, carries an ETag, and
+     * answers 304 to a conditional request — the live poll re-reads counts
+     * while the ~1 MB of coordinates is fetched once per boundaries version.
+     */
+    public function insightsHeatmapBoundaries(Request $request, HeatmapBoundaryService $boundaries): Response
+    {
+        // Same gate as the counts endpoint; the return value is unused because
+        // geometry is identical for every caller allowed to see it.
+        $this->resolveInsightsAgentScope($request);
+
+        $validated = $request->validate([
+            'level' => 'nullable|in:province,city',
+            'province_id' => 'nullable|integer|exists:provinces,id',
+        ]);
+
+        $level = ($validated['level'] ?? 'province') === 'city' ? 'city' : 'province';
+        $provinceId = isset($validated['province_id']) ? (int) $validated['province_id'] : null;
+
+        $payload = $boundaries->payload($level, $provinceId);
+
+        $headers = [
+            'Content-Type' => 'application/json',
+            // private: this is admin-only data, so no shared proxy may keep it.
+            'Cache-Control' => 'private, max-age=86400',
+            'ETag' => $payload['etag'],
+        ];
+
+        if ($this->matchesEtag($request->header('If-None-Match'), $payload['etag'])) {
+            return response('', 304, $headers);
+        }
+
+        return response($payload['json'], 200, $headers);
+    }
+
+    /**
+     * Does an If-None-Match header claim the tag we are about to send?
+     *
+     * Handles the two shapes browsers actually send: a comma-separated list,
+     * and a weak `W/"…"` prefix added by a compressing proxy. `*` matches
+     * anything, per RFC 9110.
+     */
+    private function matchesEtag(?string $header, string $etag): bool
+    {
+        if ($header === null || trim($header) === '') {
+            return false;
+        }
+
+        foreach (explode(',', $header) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*') {
+                return true;
+            }
+            if (str_starts_with($candidate, 'W/')) {
+                $candidate = trim(substr($candidate, 2));
+            }
+            if ($candidate === $etag) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

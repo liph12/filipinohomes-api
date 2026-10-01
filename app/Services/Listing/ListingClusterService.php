@@ -19,29 +19,10 @@ use Illuminate\Support\Facades\DB;
  */
 class ListingClusterService extends ListingInsightsService
 {
-    // Location resolution expressions (project path, else property → barangay →
-    // city → province). Mirrors ListingByProvinceService — NO geo-first join, so
-    // it stays consistent with the By Province tab's counts.
-    private function provinceIdExpr(): string
-    {
-        return 'COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)';
-    }
-
-    private function provinceNameExpr(): string
-    {
-        return 'COALESCE(project_provinces.name, property_provinces.name)';
-    }
-
-    private function cityIdExpr(): string
-    {
-        return 'COALESCE(projects.city_id, property_cities.id)';
-    }
-
-    private function cityNameExpr(): string
-    {
-        return 'COALESCE(project_cities.name, property_cities.name)';
-    }
-
+    // The province/city id + name expressions and categorySelects() moved up to
+    // ListingInsightsService so the Listings Heatmap reuses the identical
+    // COALESCE chain instead of keeping a second copy that could drift.
+    // Barangay and the count-weighted centroid stay here — they are bubble-only.
     private function barangayIdExpr(): string
     {
         return 'properties.address_id';
@@ -118,15 +99,6 @@ class ListingClusterService extends ListingInsightsService
         }
 
         return true;
-    }
-
-    private function categorySelects(): array
-    {
-        return [
-            DB::raw("SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
-            DB::raw("SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
-            DB::raw("SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
-        ];
     }
 
     /**

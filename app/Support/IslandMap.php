@@ -10,6 +10,12 @@ namespace App\Support;
  * src/components/dashboard/admin/listing-insights/ListingsByProvince.tsx
  * (PROVINCE_ISLAND + normalize) so backend and frontend grouping agree exactly.
  * Keep the two in sync if province names ever change.
+ *
+ * This map deliberately knows nothing about duplicate or missing province ROWS
+ * — it lists alternate spellings only so every one of them still lands in the
+ * right island. Folding ADM2 boundary names and duplicate `provinces` rows onto
+ * one canonical province (NCR districts, Southern Samar, Davao Occidental,
+ * Dinagat Islands, …) lives in {@see ProvinceCanonicalizer}.
  */
 class IslandMap
 {

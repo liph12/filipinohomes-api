@@ -151,6 +151,52 @@ abstract class ListingInsightsService
         return $query;
     }
 
+    /**
+     * Location resolution expressions — project path first, else property →
+     * barangay → city → province. Deliberately NO geo-first join, so every
+     * service that aggregates by area produces the same numbers as the
+     * "By Province" / "By City" tabs.
+     *
+     * These live on the base class (rather than on whichever subclass needed
+     * them first) because the Geographic Map bubbles and the Listings Heatmap
+     * choropleth MUST agree to the listing: two copies of a COALESCE chain is
+     * two numbers the admin has to reconcile by hand the day one of them is
+     * edited.
+     */
+    protected function provinceIdExpr(): string
+    {
+        return 'COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)';
+    }
+
+    protected function provinceNameExpr(): string
+    {
+        return 'COALESCE(project_provinces.name, property_provinces.name)';
+    }
+
+    protected function cityIdExpr(): string
+    {
+        return 'COALESCE(projects.city_id, property_cities.id)';
+    }
+
+    protected function cityNameExpr(): string
+    {
+        return 'COALESCE(project_cities.name, property_cities.name)';
+    }
+
+    /**
+     * Per-category listing counts for a grouped query. Same three standard
+     * categories as STANDARD_CATEGORIES, in the response key order the
+     * frontend expects (for_sale / for_rent / foreclosure).
+     */
+    protected function categorySelects(): array
+    {
+        return [
+            DB::raw("SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
+            DB::raw("SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
+            DB::raw("SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
+        ];
+    }
+
     /** [province_id => name] from the provinces table (cached, ~82 rows). */
     protected function provinceNames(): array
     {

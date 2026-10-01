@@ -526,6 +526,11 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);
             Route::get('/listings/insights/summary', [ListingController::class, 'insightsSummary']);
             Route::get('/listings/insights/clusters', [ListingController::class, 'insightsClusters']);
+            // Listings Heatmap page: shaded counts per area, and the polygons
+            // they are painted onto. Split because counts refresh every minute
+            // while the geometry only changes on a boundary re-import.
+            Route::get('/listings/insights/heatmap', [ListingController::class, 'insightsHeatmap']);
+            Route::get('/listings/insights/heatmap/boundaries', [ListingController::class, 'insightsHeatmapBoundaries']);
             // Admin "Top Listing Creators" tile (admin-gated in the controller).
             Route::get('/listings/insights/top-creators', [ListingController::class, 'insightsTopCreators']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])
