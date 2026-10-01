@@ -257,6 +257,10 @@ Route::middleware('strip.tags')->group(function () {
         // Frames a photo in one convention album can wear — the public
         // /natcon/gallery opens a photo straight into the poster / frame /
         // reel studio, so this is token-less like the gallery read itself.
+        // The convention's own frames (no album) — the public /natcon/frame
+        // page offers them as a picker.
+        Route::get('/natcon/{year}/gallery/frames', [NatconGalleryController::class, 'publicEventFrames'])
+            ->whereNumber('year');
         Route::get('/natcon/{year}/gallery/albums/{album}/frames', [NatconGalleryController::class, 'publicNatconAlbumFrames'])
             ->whereNumber('year')
             ->whereNumber('album');

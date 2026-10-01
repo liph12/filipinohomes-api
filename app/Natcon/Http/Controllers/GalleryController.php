@@ -1141,6 +1141,24 @@ class GalleryController extends Controller
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))]);
     }
 
+    /** Public read of a convention's own live frames, by year. */
+    public function publicEventFrames(int $year): JsonResponse
+    {
+        $event = NatconEvent::forYear($year);
+
+        if (! $event) {
+            return response()->json(['message' => 'Event not found.'], 404);
+        }
+
+        $rows = GalleryAlbumFrame::where('natcon_event_id', $event->id)
+            ->live()
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
+    }
+
     /** Upload a frame that every photo of the convention can wear. */
     public function storeEventFrame(Request $request): JsonResponse
     {
