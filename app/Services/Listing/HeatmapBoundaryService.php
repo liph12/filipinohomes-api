@@ -5,10 +5,12 @@ namespace App\Services\Listing;
 use App\Support\ProvinceCanonicalizer;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /**
  * Geometry side of the Listings Heatmap: one GeoJSON FeatureCollection per
- * (level, province scope), cached for a day as an ALREADY-ENCODED string.
+ * (level, scope), cached for a day as an ALREADY-ENCODED string. The scope is
+ * a province group at city level and a city group at barangay level.
  *
  * Caching the string rather than the array is the whole point. The nationwide
  * city layer is ~940 KB of coordinates; decoding it into PHP arrays on every
@@ -17,46 +19,77 @@ use Illuminate\Support\Facades\DB;
  * response verbatim and never parsed.
  *
  * Invalidation rides on `heatmap:boundaries:ver`, bumped by
- * `boundaries:import` and `boundaries:relink-cities`. The cache key embeds that
- * version instead of being flushed, because the production cache driver is the
- * file store, which has no tags — and because an old generation expiring on its
- * own is harmless while a failed flush is not.
+ * `boundaries:import`, `boundaries:relink-cities` and
+ * `boundaries:relink-barangays`. The cache key embeds that version instead of
+ * being flushed, because the production cache driver is the file store, which
+ * has no tags — and because an old generation expiring on its own is harmless
+ * while a failed flush is not.
+ *
+ * The city group is resolved through {@see ListingHeatmapService} rather than
+ * recomputed here: the barangay polygons of a town and the barangay COUNTS of
+ * that town have to agree on which `cities` rows are the same place, or the
+ * map would shade a group the table never totals.
  */
 class HeatmapBoundaryService
 {
     private const TTL = 86400;
 
-    public function __construct(private BoundaryGeoJsonRepository $repository) {}
+    public function __construct(
+        private BoundaryGeoJsonRepository $repository,
+        private ListingHeatmapService $heatmap,
+    ) {}
 
     /**
-     * @param  'province'|'city'  $level
+     * @param  'province'|'city'|'barangay'  $level
      * @param  int|null  $provinceId  canonical or not; only meaningful at city level
-     * @return array{json: string, etag: string, version: int, level: string, province_id: int|null}
+     * @param  int|null  $cityId  any id of the city group; REQUIRED at barangay level, ignored elsewhere
+     * @return array{json: string, etag: string, version: int, level: string, province_id: int|null, city_id: int|null}
      */
-    public function payload(string $level, ?int $provinceId = null): array
+    public function payload(string $level, ?int $provinceId = null, ?int $cityId = null): array
     {
-        $level = $level === 'city' ? 'city' : 'province';
+        $level = in_array($level, ListingHeatmapService::LEVELS, true) ? $level : 'province';
 
-        $provinceNames = DB::table('provinces')->pluck('name', 'id')->all();
-        $canonicalProvinceId = $provinceId !== null
-            ? (ProvinceCanonicalizer::idMap($provinceNames)[$provinceId] ?? $provinceId)
-            : null;
-
-        // The province layer is always the whole country — a "province scope"
-        // there would cache the same 80 polygons under 80 different keys.
-        $scopedToProvince = $level === 'city' && $canonicalProvinceId !== null;
-
-        $groupIds = $scopedToProvince
-            ? ProvinceCanonicalizer::groupIds($provinceNames, $provinceId)
-            : [];
+        if ($level === 'barangay' && $cityId === null) {
+            throw new InvalidArgumentException('The barangay layer needs a city_id.');
+        }
 
         $version = (int) Cache::get('heatmap:boundaries:ver', 1);
-        $scopeKey = $scopedToProvince ? (string) $canonicalProvinceId : 'all';
+
+        if ($level === 'barangay') {
+            // The WHOLE group: a polygon can only point at one of a town's
+            // duplicate `cities` rows, so scoping to the requested id alone
+            // would drop half of a twin town's barangays off the map.
+            $cityIds = $this->heatmap->cityGroupIds($cityId);
+            $canonicalCityId = $this->heatmap->canonicalCityId($cityId);
+
+            // Prefixed with 'c' so a city id can never collide with the
+            // province id the city layer caches under.
+            $scopeKey = 'c'.$canonicalCityId;
+            $provinceIds = [];
+            $canonicalProvinceId = null;
+        } else {
+            $provinceNames = DB::table('provinces')->pluck('name', 'id')->all();
+            $canonicalProvinceId = $provinceId !== null
+                ? (ProvinceCanonicalizer::idMap($provinceNames)[$provinceId] ?? $provinceId)
+                : null;
+
+            // The province layer is always the whole country — a "province scope"
+            // there would cache the same 80 polygons under 80 different keys.
+            $scopedToProvince = $level === 'city' && $canonicalProvinceId !== null;
+
+            $provinceIds = $scopedToProvince
+                ? ProvinceCanonicalizer::groupIds($provinceNames, $provinceId)
+                : [];
+
+            $scopeKey = $scopedToProvince ? (string) $canonicalProvinceId : 'all';
+            $cityIds = [];
+            $canonicalCityId = null;
+        }
 
         $json = Cache::remember(
             "heatmap:boundaries:v{$version}:{$level}:{$scopeKey}",
             self::TTL,
-            fn () => $this->build($level, $groupIds)
+            fn () => $this->build($level, $provinceIds, $cityIds)
         );
 
         return [
@@ -67,6 +100,7 @@ class HeatmapBoundaryService
             'version' => $version,
             'level' => $level,
             'province_id' => $canonicalProvinceId,
+            'city_id' => $canonicalCityId,
         ];
     }
 
@@ -79,11 +113,11 @@ class HeatmapBoundaryService
      * rather than emitted with a null geometry — deck.gl treats a null geometry
      * as a parse error for the whole collection.
      */
-    private function build(string $level, array $provinceIds): string
+    private function build(string $level, array $provinceIds, array $cityIds): string
     {
         $features = [];
 
-        foreach ($this->repository->features($level, $provinceIds) as $row) {
+        foreach ($this->repository->features($level, $provinceIds, $cityIds) as $row) {
             $geometry = $row['geojson'] ?? null;
             if (! is_string($geometry) || $geometry === '') {
                 continue;

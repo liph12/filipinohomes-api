@@ -8,20 +8,38 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Imports administrative boundary polygons (geoBoundaries GeoJSON) into the
- * `boundaries` table for the admin maps. Geometry is stored as SRID 0 so it
- * matches the listing polygon filter and works with ST_Simplify.
+ * Imports administrative boundary polygons (GeoJSON) into the `boundaries`
+ * table for the admin maps. Geometry is stored as SRID 0 so it matches the
+ * listing polygon filter and works with ST_Simplify.
  *
  *   php artisan boundaries:import database/data/geo/geoBoundaries-PHL-ADM2_simplified.geojson --level=province
  *   php artisan boundaries:import storage/app/geoBoundaries-PHL-ADM3_simplified.geojson --level=city
- *   php artisan boundaries:import storage/app/geoBoundaries-PHL-ADM4_simplified.geojson --level=barangay
+ *   php artisan boundaries:import storage/app/psa-namria-PHL-ADM4_2023_simplified.ndjson --level=barangay
  *
  * The ADM2 (province) file is committed under database/data/geo/ with its
  * licence note; the larger ADM3/ADM4 files are not in version control, so copy
  * them to storage/app/ before importing those levels. See
  * database/data/geo/ATTRIBUTION.md.
  *
- * ── This command does NOT link city polygons to `cities` rows ───────────────
+ * ── Two input shapes ────────────────────────────────────────────────────────
+ * A FeatureCollection is read whole, as before. A file whose first non-blank
+ * line is a bare `{"type":"Feature", …}` is NDJSON (one Feature per line, the
+ * shape mapshaper writes with `format=geojson ndjson`) and is STREAMED: one
+ * line is decoded at a time and the file is only ever read twice, once to
+ * count lines for the progress bar and once to import. json_decode() of this
+ * geometry measured at 7.2× the file size in PHP arrays, so the ~100 MB
+ * barangay file through the whole-file path would need ~720 MB just to hold
+ * the parsed features; streaming keeps that at one feature.
+ *
+ * ── PSGC codes ──────────────────────────────────────────────────────────────
+ * When the source carries them (the PSA/NAMRIA files do, geoBoundaries does
+ * not) the row stores its own code and its parent's: ADM4_PCODE / ADM3_PCODE
+ * on a barangay row, ADM3_PCODE / ADM2_PCODE on a city row, and ADM2_EN as
+ * `grandparent_name` on a barangay row so the relink command can scope its
+ * city candidates to the right province by name. Codes are what the barangay
+ * relink groups by — a town name repeats across the country, its code does not.
+ *
+ * ── This command does NOT link polygons to `cities` / `barangays` rows ──────
  * It used to, by normalised name with first-id-wins on a tie. That quietly
  * wrecked the data: Philippine town names repeat constantly, so ONE cities.id
  * ended up owning up to ten polygons scattered across the country (San Jose /
@@ -30,18 +48,25 @@ use Illuminate\Support\Facades\DB;
  * simply not enough information — the province the polygon sits in is, and only
  * geometry knows that.
  *
- * So the city import now leaves `city_id` NULL on purpose and
- * `boundaries:relink-cities` does the linking afterwards, geometry first. Do
- * not reintroduce name matching here: a re-import would silently regress every
- * link the relink command earned.
+ * So the city import leaves `city_id` NULL on purpose and
+ * `boundaries:relink-cities` does the linking afterwards, geometry first; the
+ * barangay import likewise leaves `city_id` / `barangay_id` NULL for
+ * `boundaries:relink-barangays`. Do not reintroduce name matching here: a
+ * re-import would silently regress every link the relink commands earned.
  */
 class ImportBoundaries extends Command
 {
     protected $signature = 'boundaries:import
-        {file : Path to a geoBoundaries GeoJSON FeatureCollection}
+        {file : Path to a GeoJSON FeatureCollection, or an NDJSON file with one Feature per line}
         {--level=city : Boundary level — city|barangay|province}';
 
-    protected $description = 'Import geoBoundaries polygons (province/city/barangay) for the admin maps';
+    protected $description = 'Import boundary polygons (province/city/barangay) for the admin maps';
+
+    /** Rows per multi-row INSERT; ~200 simplified polygons stay well under max_allowed_packet. */
+    private const BATCH_SIZE = 200;
+
+    /** Longest PSGC code the columns hold; the real ones are 9 (town) and 12 (barangay) characters. */
+    private const PSGC_MAX_LENGTH = 16;
 
     public function handle(): int
     {
@@ -59,22 +84,50 @@ class ImportBoundaries extends Command
             return self::FAILURE;
         }
 
-        // ADM4 (barangay) can be large; a one-time CLI import can afford the memory.
+        // A one-time CLI import can afford the memory the whole-file path
+        // needs for the ADM3 file; the NDJSON path never gets near this.
         ini_set('memory_limit', '2G');
 
-        $this->info("Reading {$file} …");
-        $json = json_decode((string) file_get_contents($file), true);
-        $features = $json['features'] ?? null;
-        if (! is_array($features)) {
-            $this->error('Invalid GeoJSON: no "features" array.');
-
-            return self::FAILURE;
-        }
+        $ndjson = $this->looksLikeNdjson($file);
 
         if ($level === 'province') {
+            // The committed ADM2 file is small and dissolve() needs every
+            // feature of a province in hand, so this level is always whole-file.
+            $features = $ndjson
+                ? iterator_to_array($this->ndjsonFeatures($file), false)
+                : $this->wholeFileFeatures($file);
+
+            if ($features === null) {
+                return self::FAILURE;
+            }
+
             return $this->importProvinces($features);
         }
 
+        if ($ndjson) {
+            $this->info("Reading {$file} as NDJSON (one Feature per line)…");
+            $total = $this->countLines($file);
+            $features = $this->ndjsonFeatures($file);
+        } else {
+            $this->info("Reading {$file} …");
+            $features = $this->wholeFileFeatures($file);
+            if ($features === null) {
+                return self::FAILURE;
+            }
+            $total = count($features);
+        }
+
+        return $this->importLevel($level, $features, $total);
+    }
+
+    /**
+     * City / barangay level: one row per feature, links left NULL.
+     *
+     * @param  iterable<int, array<string, mixed>>  $features  decoded Feature objects, from either input shape
+     * @param  int  $total  for the progress bar only (line count or feature count)
+     */
+    private function importLevel(string $level, iterable $features, int $total): int
+    {
         // Name/parent property keys differ by source: geoBoundaries uses
         // shapeName; PSA/HDX COD-AB use ADM3_EN/ADM4_EN/NAME_3/NAME_4. Try the
         // level-appropriate ones first, then generic fallbacks.
@@ -84,16 +137,21 @@ class ImportBoundaries extends Command
         $parentKeys = $level === 'barangay'
             ? ['ADM3_EN', 'NAME_3', 'parentName']
             : ['ADM2_EN', 'NAME_2', 'parentName'];
+        // PSGC codes: the row's own, then its parent's. Only the PSA/NAMRIA
+        // files carry these; a geoBoundaries shapeID is NOT a PSGC code and is
+        // deliberately not read into these columns.
+        $codeKey = $level === 'barangay' ? 'ADM4_PCODE' : 'ADM3_PCODE';
+        $parentCodeKey = $level === 'barangay' ? 'ADM3_PCODE' : 'ADM2_PCODE';
 
         // Idempotent: replace this level. FKs block TRUNCATE, so delete by level.
         DB::table('boundaries')->where('level', $level)->delete();
 
-        $total = count($features);
         $this->info("Importing {$total} {$level} feature(s)…");
         $bar = $this->output->createProgressBar($total);
 
         $skipped = 0;
         $imported = 0;
+        $withoutParentCode = 0;
         $batch = [];
         $flush = function () use (&$batch, &$imported, &$skipped) {
             if (empty($batch)) {
@@ -148,18 +206,29 @@ class ImportBoundaries extends Command
                 }
             }
 
+            $parentCode = $this->psgc($props[$parentCodeKey] ?? null);
+            if ($parentCode === null) {
+                $withoutParentCode++;
+            }
+
             $batch[] = [
                 'level' => $level,
                 'name' => $name,
                 'parent_name' => $parent ? (string) $parent : null,
-                // Linking is boundaries:relink-cities' job — see the class docblock.
+                // The province the source files a barangay's town under; the
+                // relink command's name path scopes its city candidates by it.
+                'grandparent_name' => $level === 'barangay' ? $this->text($props['ADM2_EN'] ?? null) : null,
+                // Linking is the relink commands' job — see the class docblock.
                 'city_id' => null,
                 'province_id' => null,
                 'barangay_id' => null,
+                'psgc_code' => $this->psgc($props[$codeKey] ?? null),
+                'parent_psgc' => $parentCode,
+                'link_how' => null,
                 'geom' => json_encode($geometry),
             ];
 
-            if (count($batch) >= 200) {
+            if (count($batch) >= self::BATCH_SIZE) {
                 $flush();
             }
         }
@@ -169,6 +238,8 @@ class ImportBoundaries extends Command
         $this->newLine(2);
         $this->info("Done. Imported {$imported}, skipped {$skipped}.");
 
+        $this->reportGeometryHealth($level);
+
         $this->bumpBoundariesVersion();
 
         if ($level === 'city') {
@@ -177,7 +248,138 @@ class ImportBoundaries extends Command
             $this->warn('Next: php artisan boundaries:relink-cities --dry-run   (then without --dry-run)');
         }
 
+        if ($level === 'barangay') {
+            $this->newLine();
+            $this->warn('city_id and barangay_id are NULL on every row just imported — nothing is linked yet.');
+            if ($withoutParentCode > 0) {
+                $this->error("{$withoutParentCode} row(s) carry no ADM3_PCODE (parent_psgc is NULL). boundaries:relink-barangays groups polygons by that code and will refuse to run; import a source that has it.");
+            }
+            $this->warn('Next: php artisan boundaries:relink-barangays --dry-run   (then without --dry-run)');
+        }
+
         return self::SUCCESS;
+    }
+
+    /**
+     * Is this file NDJSON (one Feature per line) rather than a FeatureCollection?
+     *
+     * Decided from the first non-blank line alone: a FeatureCollection opens
+     * with `{"type":"FeatureCollection"` or `{"features":` and spans the whole
+     * file, while mapshaper's ndjson output puts a complete `{"type":"Feature"`
+     * object on every line. Whitespace inside the opening is tolerated.
+     */
+    private function looksLikeNdjson(string $file): bool
+    {
+        $fh = fopen($file, 'rb');
+        if ($fh === false) {
+            return false;
+        }
+
+        try {
+            while (($line = fgets($fh)) !== false) {
+                if (trim($line) === '') {
+                    continue;
+                }
+
+                return preg_match('/^\s*\{\s*"type"\s*:\s*"Feature"\s*[,}]/', $line) === 1;
+            }
+        } finally {
+            fclose($fh);
+        }
+
+        return false;
+    }
+
+    /**
+     * Whole-file path: decode a FeatureCollection into its features array.
+     *
+     * @return array<int, array<string, mixed>>|null null (after printing why) when the file is not a FeatureCollection
+     */
+    private function wholeFileFeatures(string $file): ?array
+    {
+        $json = json_decode((string) file_get_contents($file), true);
+        $features = $json['features'] ?? null;
+        if (! is_array($features)) {
+            $this->error('Invalid GeoJSON: no "features" array. (NDJSON input must start with {"type":"Feature" on its first line.)');
+
+            return null;
+        }
+
+        return $features;
+    }
+
+    /**
+     * Streaming path: yield one decoded Feature per line.
+     *
+     * Blank lines are skipped silently (a trailing newline is normal). A line
+     * that does not decode to an object is yielded as an empty array so the
+     * caller counts it as skipped and the progress bar still advances once per
+     * line — the total it was given is the line count.
+     *
+     * @return \Generator<int, array<string, mixed>>
+     */
+    private function ndjsonFeatures(string $file): \Generator
+    {
+        $fh = fopen($file, 'rb');
+        if ($fh === false) {
+            throw new \RuntimeException("Could not open {$file} for reading.");
+        }
+
+        try {
+            while (($line = fgets($fh)) !== false) {
+                if (trim($line) === '') {
+                    continue;
+                }
+
+                $feature = json_decode($line, true);
+
+                yield is_array($feature) ? $feature : [];
+            }
+        } finally {
+            fclose($fh);
+        }
+    }
+
+    /** Non-blank lines in the file, for the progress bar's total. */
+    private function countLines(string $file): int
+    {
+        $fh = fopen($file, 'rb');
+        if ($fh === false) {
+            return 0;
+        }
+
+        $count = 0;
+        try {
+            while (($line = fgets($fh)) !== false) {
+                if (trim($line) !== '') {
+                    $count++;
+                }
+            }
+        } finally {
+            fclose($fh);
+        }
+
+        return $count;
+    }
+
+    /** A PSGC code as the columns store it, or null when the property is absent or blank. */
+    private function psgc(mixed $value): ?string
+    {
+        $code = $this->text($value);
+
+        return $code === null ? null : mb_substr($code, 0, self::PSGC_MAX_LENGTH);
+    }
+
+    /** A trimmed string property, or null when absent or blank. */
+    private function text(mixed $value): ?string
+    {
+        if ($value === null || is_array($value)) {
+            return null;
+        }
+
+        $s = trim((string) $value);
+
+        return $s === '' ? null : $s;
     }
 
     /**
@@ -195,6 +397,9 @@ class ImportBoundaries extends Command
      *
      * The original file spellings are kept in `parent_name`, joined by ' | ', so
      * the dissolve is auditable from SQL alone without re-reading the file.
+     * `psgc_code` is the features' ADM2_PCODE when the dissolved group carried
+     * exactly one, and NULL when it carried several or none — a column of 16
+     * characters cannot hold Metro Manila's four district codes honestly.
      *
      * @param  array<int, array<string, mixed>>  $features
      */
@@ -223,7 +428,7 @@ class ImportBoundaries extends Command
             $keyToId[$key] = isset($keyToId[$key]) ? min($keyToId[$key], $canonical) : $canonical;
         }
 
-        /** @var array<int, array{names: string[], geoms: array<int, array<string, mixed>>}> $groups */
+        /** @var array<int, array{names: string[], codes: array<int, ?string>, geoms: array<int, array<string, mixed>>}> $groups */
         $groups = [];
         $unmatched = [];
         $skipped = 0;
@@ -258,6 +463,7 @@ class ImportBoundaries extends Command
             }
 
             $groups[$provinceId]['names'][] = $name;
+            $groups[$provinceId]['codes'][] = $this->psgc($props['ADM2_PCODE'] ?? null);
             $groups[$provinceId]['geoms'][] = $geometry;
         }
 
@@ -288,14 +494,20 @@ class ImportBoundaries extends Command
                 $dissolveFallbacks[] = $idToName[$provinceId];
             }
 
+            $codes = array_values(array_unique(array_filter($group['codes'], fn ($c) => $c !== null)));
+
             $row = [
                 'level' => 'province',
                 // The DB's own spelling, so the map label and the count label agree.
                 'name' => $idToName[$provinceId],
                 'parent_name' => implode(' | ', $group['names']),
+                'grandparent_name' => null,
                 'city_id' => null,
                 'province_id' => $provinceId,
                 'barangay_id' => null,
+                'psgc_code' => count($codes) === 1 ? $codes[0] : null,
+                'parent_psgc' => null,
+                'link_how' => null,
                 'geom' => $geomJson,
             ];
 
@@ -318,7 +530,7 @@ class ImportBoundaries extends Command
             $this->error('Insert failed — '.$f);
         }
 
-        $this->reportGeometryHealth();
+        $this->reportGeometryHealth('province');
 
         $this->info("Done. Imported {$imported} province row(s) from ".count($features).' feature(s)'
             .($skipped > 0 ? ", skipped {$skipped} non-polygon feature(s)" : '').'.');
@@ -404,18 +616,21 @@ class ImportBoundaries extends Command
     }
 
     /**
-     * Report province rows MySQL considers invalid, by name.
+     * Report rows of the imported level that MySQL considers invalid, by name.
      *
      * Invalid geometry is not fatal here — ST_Simplify and ST_AsGeoJSON still
-     * render it — but ST_Contains and ST_Intersection (which the relink command
-     * leans on) can throw on it, so the operator gets the names up front rather
-     * than a stack trace one command later.
+     * render it — but ST_Contains, ST_Centroid and ST_Intersection (which the
+     * relink commands lean on) can throw on it, so the operator gets the names
+     * up front rather than a stack trace one command later. At barangay level
+     * the list can be long; the first 20 are named with their town and the
+     * rest are counted.
      */
-    private function reportGeometryHealth(): void
+    private function reportGeometryHealth(string $level): void
     {
         try {
             $invalid = DB::select(
-                "SELECT name FROM boundaries WHERE level = 'province' AND ST_IsValid(geom) = 0 ORDER BY name"
+                'SELECT name, parent_name FROM boundaries WHERE level = ? AND ST_IsValid(geom) = 0 ORDER BY name',
+                [$level]
             );
         } catch (\Throwable $e) {
             $this->warn('Could not run ST_IsValid on the imported rows: '.$e->getMessage());
@@ -424,14 +639,20 @@ class ImportBoundaries extends Command
         }
 
         if ($invalid === []) {
-            $this->info('ST_IsValid: all province polygons valid.');
+            $this->info("ST_IsValid: all {$level} polygons valid.");
 
             return;
         }
 
-        $this->warn('ST_IsValid: '.count($invalid).' invalid province polygon(s) — '
-            .implode(', ', array_map(static fn ($r) => $r->name, $invalid)));
-        $this->warn('boundaries:relink-cities guards every spatial call, so it will still run; expect more rows to fall through to its later passes.');
+        $names = array_map(
+            static fn ($r) => $r->name.($level !== 'province' && $r->parent_name ? " ({$r->parent_name})" : ''),
+            array_slice($invalid, 0, 20)
+        );
+        $this->warn('ST_IsValid: '.count($invalid)." invalid {$level} polygon(s) — ".implode(', ', $names)
+            .(count($invalid) > 20 ? ', … '.(count($invalid) - 20).' more' : ''));
+
+        $relink = $level === 'barangay' ? 'boundaries:relink-barangays' : 'boundaries:relink-cities';
+        $this->warn("{$relink} guards every spatial call, so it will still run; expect more rows to fall through to its later passes.");
     }
 
     /**
@@ -461,21 +682,25 @@ class ImportBoundaries extends Command
         $placeholders = [];
         $bindings = [];
         foreach ($rows as $r) {
-            $placeholders[] = '(?, ?, ?, ?, ?, ?, ST_GeomFromGeoJSON(?, 1, 0), NOW(), NOW())';
+            $placeholders[] = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromGeoJSON(?, 1, 0), NOW(), NOW())';
             array_push(
                 $bindings,
                 $r['level'],
                 $r['name'],
                 $r['parent_name'],
+                $r['grandparent_name'] ?? null,
                 $r['city_id'],
                 $r['province_id'] ?? null,
                 $r['barangay_id'],
+                $r['psgc_code'] ?? null,
+                $r['parent_psgc'] ?? null,
+                $r['link_how'] ?? null,
                 $r['geom']
             );
         }
 
         DB::statement(
-            'INSERT INTO boundaries (level, name, parent_name, city_id, province_id, barangay_id, geom, created_at, updated_at) VALUES '
+            'INSERT INTO boundaries (level, name, parent_name, grandparent_name, city_id, province_id, barangay_id, psgc_code, parent_psgc, link_how, geom, created_at, updated_at) VALUES '
                 .implode(', ', $placeholders),
             $bindings
         );

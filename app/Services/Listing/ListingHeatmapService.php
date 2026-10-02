@@ -2,19 +2,37 @@
 
 namespace App\Services\Listing;
 
-use App\Support\CityNameMatcher;
+use App\Support\BarangayNameMatcher;
+use App\Support\CityGroup;
 use App\Support\ProvinceCanonicalizer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /**
- * Listings Heatmap — one shaded row per province (or per city) for the admin
- * choropleth page. Counterpart to {@see ListingClusterService}: same listing
- * definition, same COALESCE location chain (both inherited from
+ * Listings Heatmap — one shaded row per province, per city, or per barangay
+ * for the admin choropleth page. Counterpart to {@see ListingClusterService}:
+ * same listing definition, same COALESCE location chain (both inherited from
  * {@see ListingInsightsService}), but it answers "how many" per AREA instead of
  * "where is the bubble".
+ *
+ * Three tiers, one shape:
+ *
+ *   province  — nationwide, or one canonical province.
+ *   city      — nationwide, or the towns of one canonical province group.
+ *   barangay  — the barangays of ONE city group (`city_id` is mandatory; a
+ *               nationwide barangay tier would be 42k rows nobody asked for).
+ *
+ * Parity is the contract between the tiers: the barangay rows of a city MUST
+ * sum to that city's row at the city tier, because the admin drills from one
+ * into the other and reads the two numbers side by side. Both are computed
+ * on the same base query with the same COALESCE chain; the barangay tier
+ * scopes by the city GROUP (every `cities` row that is the same town, see
+ * {@see CityGroup}) exactly as the city tier folds those rows into one. Only
+ * a listing whose project sits in one city while its address barangay sits
+ * in another could break the identity, and today none does.
  *
  * Three things here are deliberate and easy to break:
  *
@@ -31,18 +49,25 @@ use Illuminate\Support\Facades\DB;
  *    functions. "Today" means the Asia/Manila calendar day, converted to UTC
  *    once, here.
  *
- * 3. Every canonical province is SEEDED with zeros before the query rows are
- *    folded in. Only ~60 of the 80 canonical provinces hold a listing; a bare
- *    GROUP BY would drop the other 20 off the map, the table and the CSV, and
- *    the boss would read an empty province as "no data" instead of "zero".
+ * 3. Every area in scope is SEEDED with zeros before the query rows are
+ *    folded in. Only ~60 of the 80 canonical provinces hold a listing, and
+ *    most of a city's barangays hold none; a bare GROUP BY would drop them off
+ *    the map, the table and the CSV, and the boss would read an empty area as
+ *    "no data" instead of "zero".
  *
  * Province identity is {@see ProvinceCanonicalizer}'s, not `provinces.id`'s —
- * see that class for why the two disagree.
+ * see that class for why the two disagree. City identity is
+ * {@see CityGroup}'s, and barangay identity folds identical-name twin rows
+ * inside one city on {@see BarangayNameMatcher::foldKey()} — the registry
+ * carries 361 such duplicate groups and a polygon can only ever point at one.
  */
 class ListingHeatmapService extends ListingInsightsService
 {
     /** Seconds the counts payload stays fresh; echoed to the client as `ttl`. */
     public const TTL = 55;
+
+    /** The tiers, in drill order. Anything else is coerced to the first. */
+    public const LEVELS = ['province', 'city', 'barangay'];
 
     /** Response key => categories.name, in the order the frontend renders them. */
     private const CATEGORIES = [
@@ -58,6 +83,9 @@ class ListingHeatmapService extends ListingInsightsService
         'for_rent', 'for_rent_new_1d', 'for_rent_new_7d', 'for_rent_new_30d',
         'foreclosure', 'foreclosure_new_1d', 'foreclosure_new_7d', 'foreclosure_new_30d',
     ];
+
+    /** Per-instance memo of cityGroupIds(): the controller and heatmap() ask for the same city. */
+    private array $cityGroupCache = [];
 
     /**
      * Fold a `provinces.id` onto the id the heatmap actually paints.
@@ -76,19 +104,89 @@ class ListingHeatmapService extends ListingInsightsService
     }
 
     /**
-     * The full counts payload for one level / province scope.
+     * Fold a `cities.id` onto the id the heatmap paints its town under — the
+     * lowest polygon-linked id of the city group, else the lowest id (exactly
+     * the survivor the city tier's fold picks, see {@see CityGroup::canonicalId()}).
      *
-     * @param  'province'|'city'  $level
-     * @param  int|null  $provinceId  canonical or not — folded either way
-     * @param  int[]|null  $agentIds  null = admin (unscoped), list = team leader
+     * Public for the same reason as canonicalProvinceId(): it is part of the
+     * barangay tier's cache key, so Catbalogan 3 and Catbalogan 5 share one
+     * cached answer instead of computing an identical one twice.
      */
-    public function heatmap(string $level, ?int $provinceId = null, ?array $agentIds = null): array
+    public function canonicalCityId(int $cityId): int
+    {
+        return CityGroup::canonicalId(
+            $this->cityGroupIds($cityId),
+            $this->linkedAreaIds('city', $this->boundariesVersion())
+        );
+    }
+
+    /**
+     * Every `cities` id that is the same town as $cityId, ascending.
+     *
+     * Only the rows of the city's province group are loaded (not all ~1,650
+     * cities) because a fold key always contains the canonical province, so
+     * nothing outside that group can share it. An id with no `cities` row is a
+     * group of itself.
+     *
+     * @return int[]
+     */
+    public function cityGroupIds(int $cityId): array
+    {
+        if (isset($this->cityGroupCache[$cityId])) {
+            return $this->cityGroupCache[$cityId];
+        }
+
+        $city = DB::table('cities')->where('id', $cityId)->first(['id', 'name', 'province_id']);
+        if ($city === null) {
+            return $this->cityGroupCache[$cityId] = [$cityId];
+        }
+
+        $provinceNames = $this->provinceNames();
+        $candidates = DB::table('cities')->select('id', 'name', 'province_id');
+
+        if ($city->province_id === null) {
+            $candidates->whereNull('province_id');
+        } else {
+            $candidates->whereIn('province_id', ProvinceCanonicalizer::groupIds($provinceNames, (int) $city->province_id));
+        }
+
+        return $this->cityGroupCache[$cityId] = CityGroup::groupIds(
+            $candidates->get(),
+            ProvinceCanonicalizer::idMap($provinceNames),
+            $cityId
+        );
+    }
+
+    /**
+     * The full counts payload for one level and scope.
+     *
+     * @param  'province'|'city'|'barangay'  $level
+     * @param  int|null  $provinceId  canonical or not — folded either way; ignored at barangay level
+     * @param  int[]|null  $agentIds  null = admin (unscoped), list = team leader
+     * @param  int|null  $cityId  any id of the city group; REQUIRED at barangay level, ignored elsewhere
+     */
+    public function heatmap(string $level, ?int $provinceId = null, ?array $agentIds = null, ?int $cityId = null): array
     {
         $startedAt = microtime(true);
-        $level = $level === 'city' ? 'city' : 'province';
+        $level = in_array($level, self::LEVELS, true) ? $level : 'province';
+
+        if ($level === 'barangay' && $cityId === null) {
+            throw new InvalidArgumentException('The barangay tier needs a city_id.');
+        }
 
         $provinceNames = $this->provinceNames();
         $idMap = ProvinceCanonicalizer::idMap($provinceNames);
+
+        // Scope is derived from the level, never from whatever params arrived:
+        // the barangay tier is defined by its city, the other two by their
+        // province (or nothing). A stray province_id at barangay level must
+        // not fork the answer.
+        if ($level === 'barangay') {
+            $provinceId = null;
+        } else {
+            $cityId = null;
+        }
+
         $canonicalProvinceId = $provinceId !== null ? ($idMap[$provinceId] ?? $provinceId) : null;
 
         // Scoping to "Samar" must also pick up the rows filed under its
@@ -98,6 +196,7 @@ class ListingHeatmapService extends ListingInsightsService
             : [];
 
         $windows = $this->windows();
+        $version = $this->boundariesVersion();
 
         $this->configure([], $agentIds);
         if ($groupIds !== []) {
@@ -106,16 +205,31 @@ class ListingHeatmapService extends ListingInsightsService
             $this->scopeProvinceIds = $groupIds;
         }
 
-        $version = $this->boundariesVersion();
-        $linked = $this->linkedAreaIds($level, $version);
+        $canonicalCityId = null;
+        $city = null;
 
-        $buckets = $level === 'city'
-            ? $this->cityBuckets($provinceNames, $idMap, $groupIds, $windows, $linked)
-            : $this->provinceBuckets($provinceNames, $idMap, $canonicalProvinceId, $windows);
+        if ($level === 'barangay') {
+            $cityGroupIds = $this->cityGroupIds($cityId);
+            $canonicalCityId = CityGroup::canonicalId($cityGroupIds, $this->linkedAreaIds('city', $version));
+            $city = $this->cityContext($cityGroupIds, $canonicalCityId, $provinceNames, $idMap);
+            $canonicalProvinceId = $city['province_id'];
+
+            // The whole group, for the same reason as the province group above.
+            $this->scopeCityIds = $cityGroupIds;
+
+            $linked = $this->linkedAreaIds('barangay', $version, $cityGroupIds, $canonicalCityId);
+            $buckets = $this->barangayBuckets($cityGroupIds, $city, $windows, $linked);
+        } elseif ($level === 'city') {
+            $linked = $this->linkedAreaIds('city', $version);
+            $buckets = $this->cityBuckets($provinceNames, $idMap, $groupIds, $windows, $linked);
+        } else {
+            $linked = $this->linkedAreaIds('province', $version);
+            $buckets = $this->provinceBuckets($provinceNames, $idMap, $canonicalProvinceId, $windows);
+        }
 
         $data = [];
         foreach ($buckets as $bucket) {
-            $data[] = $this->row($bucket, $level, $linked, $provinceNames, $idMap);
+            $data[] = $this->row($bucket, $level, $linked, $provinceNames);
         }
 
         // Biggest first — the map legend, the Top Areas panel and the CSV all
@@ -131,6 +245,7 @@ class ListingHeatmapService extends ListingInsightsService
         return [
             'level' => $level,
             'province_id' => $canonicalProvinceId,
+            'city_id' => $canonicalCityId,
             'generated_at' => Carbon::now('UTC')->toIso8601ZuluString(),
             'ttl' => self::TTL,
             'scope' => $agentIds === null ? 'admin' : 'team',
@@ -293,12 +408,12 @@ class ListingHeatmapService extends ListingInsightsService
         foreach ($cityQuery->get() as $city) {
             $provinceId = $city->province_id !== null ? (int) $city->province_id : null;
             $canonicalProvince = $provinceId !== null ? ($idMap[$provinceId] ?? $provinceId) : null;
-            $key = $this->cityKey($canonicalProvince, (string) $city->name);
+            $key = CityGroup::key($canonicalProvince, (string) $city->name);
 
             if (! isset($buckets[$key])) {
                 $buckets[$key] = $this->emptyBucket(null, (string) $city->name, $canonicalProvince);
             }
-            $this->offerCityId($buckets[$key], (int) $city->id, (string) $city->name, $linkedCities);
+            $this->offerAreaId($buckets[$key], (int) $city->id, (string) $city->name, $linkedCities);
         }
 
         $rows = $this->aggregate(
@@ -317,12 +432,12 @@ class ListingHeatmapService extends ListingInsightsService
             } else {
                 $provinceId = $row->pid !== null ? (int) $row->pid : null;
                 $canonicalProvince = $provinceId !== null ? ($idMap[$provinceId] ?? $provinceId) : null;
-                $key = $this->cityKey($canonicalProvince, (string) ($row->gname ?? ''));
+                $key = CityGroup::key($canonicalProvince, (string) ($row->gname ?? ''));
 
                 if (! isset($buckets[$key])) {
                     $buckets[$key] = $this->emptyBucket(null, (string) ($row->gname ?? 'Unknown'), $canonicalProvince);
                 }
-                $this->offerCityId($buckets[$key], (int) $row->gid, (string) ($row->gname ?? ''), $linkedCities);
+                $this->offerAreaId($buckets[$key], (int) $row->gid, (string) ($row->gname ?? ''), $linkedCities);
             }
 
             $this->addMetrics($buckets[$key], $row);
@@ -331,24 +446,124 @@ class ListingHeatmapService extends ListingInsightsService
         return array_values($buckets);
     }
 
-    /** Fold key for a city: one canonical province + one normalized town name. */
-    private function cityKey(?int $canonicalProvince, string $name): string
+    /**
+     * Barangay rows of one city group: seed every registry row of the group,
+     * then fold the aggregate (grouped on `properties.address_id`, the same
+     * barangay definition as the rest of Listing Insights) onto the fold key.
+     *
+     * The fold key is {@see BarangayNameMatcher::foldKey()} — the whole name
+     * squashed, so Talisay's two identical "Lagtang" rows become one while
+     * Iloilo's "San Isidro (Jaro)"/"San Isidro (La Paz)" and Subic's "Asinan
+     * Poblacion"/"Asinan Proper" each stay two rows. It is deliberately NOT
+     * the matcher's fullKey(), which drops the Poblacion marker and "Proper"
+     * to reconcile two SOURCES; here a spelling difference inside one source
+     * is a real difference, and folding one away would leave its polygon
+     * without a counts row for the map to shade or name. The group is fixed
+     * for the whole call, so it is not part of the key. The surviving id is
+     * the one a polygon points at (then the lowest), same rule as cities: the
+     * row the map can shade is the row that holds the count.
+     *
+     * Every row carries the GROUP's canonical city and province, not the
+     * particular twin row it came from — the admin clicked one town and every
+     * row under it should say so.
+     *
+     * @param  int[]  $cityGroupIds
+     * @param  array{id: int, name: string, province_id: ?int}  $city
+     * @param  array<int, true>  $linkedBarangays
+     */
+    private function barangayBuckets(array $cityGroupIds, array $city, array $windows, array $linkedBarangays): array
     {
-        return ($canonicalProvince ?? 'none').'|'.CityNameMatcher::normalize($name);
+        $buckets = [];
+
+        $registry = DB::table('barangays')
+            ->select('id', 'name')
+            ->whereIn('city_id', $cityGroupIds)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($registry as $barangay) {
+            $name = trim((string) $barangay->name);
+            $key = $this->barangayKey($name);
+
+            if (! isset($buckets[$key])) {
+                $buckets[$key] = $this->emptyBucket(null, $name, $city['province_id'], $city['id'], $city['name']);
+            }
+            $this->offerAreaId($buckets[$key], (int) $barangay->id, $name, $linkedBarangays);
+        }
+
+        $rows = $this->aggregate('properties.address_id', 'barangays.name', [], $windows);
+
+        foreach ($rows as $row) {
+            if ($row->gid === null) {
+                $key = 'unknown';
+                if (! isset($buckets[$key])) {
+                    $buckets[$key] = $this->emptyBucket(null, 'Unknown', $city['province_id'], $city['id'], $city['name']);
+                }
+            } else {
+                $name = trim((string) ($row->gname ?? ''));
+                $key = $this->barangayKey($name);
+
+                if (! isset($buckets[$key])) {
+                    // A barangay that is in the group by its COALESCE city but
+                    // not by its registry row (or a row with no name at all).
+                    $buckets[$key] = $this->emptyBucket(null, $name, $city['province_id'], $city['id'], $city['name']);
+                }
+                $this->offerAreaId($buckets[$key], (int) $row->gid, $name, $linkedBarangays);
+            }
+
+            $this->addMetrics($buckets[$key], $row);
+        }
+
+        return array_values($buckets);
+    }
+
+    /** Fold key for a barangay inside one city group; a nameless row folds under its own marker. */
+    private function barangayKey(string $name): string
+    {
+        $key = BarangayNameMatcher::foldKey($name);
+
+        return $key !== '' ? $key : 'unnamed';
     }
 
     /**
-     * Offer a candidate `cities.id` to a bucket. The polygon-linked id wins; a
-     * tie between unlinked duplicates goes to the lowest id, so the surviving
-     * id is stable across requests.
+     * The city a barangay payload is about: the canonical id, its name and
+     * its canonical province, read from the `cities` row that id names.
+     *
+     * @param  int[]  $cityGroupIds
+     * @return array{id: int, name: string, province_id: ?int}
      */
-    private function offerCityId(array &$bucket, int $cityId, string $name, array $linkedCities): void
+    private function cityContext(array $cityGroupIds, int $canonicalCityId, array $provinceNames, array $idMap): array
     {
-        $isLinked = isset($linkedCities[$cityId]);
+        $rows = DB::table('cities')
+            ->select('id', 'name', 'province_id')
+            ->whereIn('id', $cityGroupIds)
+            ->orderBy('id')
+            ->get()
+            ->keyBy('id');
+
+        $row = $rows[$canonicalCityId] ?? $rows->first();
+
+        $provinceId = $row !== null && $row->province_id !== null ? (int) $row->province_id : null;
+
+        return [
+            'id' => $canonicalCityId,
+            'name' => $row !== null ? (string) $row->name : '',
+            'province_id' => $provinceId !== null ? ($idMap[$provinceId] ?? $provinceId) : null,
+        ];
+    }
+
+    /**
+     * Offer a candidate area id to a bucket. The polygon-linked id wins; a
+     * tie between unlinked duplicates goes to the lowest id, so the surviving
+     * id is stable across requests. Same rule for cities and barangays.
+     */
+    private function offerAreaId(array &$bucket, int $areaId, string $name, array $linked): void
+    {
+        $isLinked = isset($linked[$areaId]);
         $currentId = $bucket['id'];
 
         if ($currentId === null) {
-            $bucket['id'] = $cityId;
+            $bucket['id'] = $areaId;
             $bucket['name'] = $name !== '' ? $name : $bucket['name'];
             $bucket['linked'] = $isLinked;
 
@@ -356,25 +571,27 @@ class ListingHeatmapService extends ListingInsightsService
         }
 
         if ($isLinked && ! $bucket['linked']) {
-            $bucket['id'] = $cityId;
+            $bucket['id'] = $areaId;
             $bucket['name'] = $name !== '' ? $name : $bucket['name'];
             $bucket['linked'] = true;
 
             return;
         }
 
-        if ($isLinked === $bucket['linked'] && $cityId < $currentId) {
-            $bucket['id'] = $cityId;
+        if ($isLinked === $bucket['linked'] && $areaId < $currentId) {
+            $bucket['id'] = $areaId;
             $bucket['name'] = $name !== '' ? $name : $bucket['name'];
         }
     }
 
-    private function emptyBucket(?int $id, string $name, ?int $provinceId): array
+    private function emptyBucket(?int $id, string $name, ?int $provinceId, ?int $cityId = null, ?string $cityName = null): array
     {
         return [
             'id' => $id,
             'name' => $name,
             'province_id' => $provinceId,
+            'city_id' => $cityId,
+            'city_name' => $cityName,
             'linked' => false,
             'metrics' => array_fill_keys(self::METRICS, 0),
         ];
@@ -387,8 +604,14 @@ class ListingHeatmapService extends ListingInsightsService
         }
     }
 
-    /** One bucket → one response row (contract section A). */
-    private function row(array $bucket, string $level, array $linked, array $provinceNames, array $idMap): array
+    /**
+     * One bucket → one response row (contract section A).
+     *
+     * `city_id` / `city_name` are on every row so the shape is one shape: null
+     * at province level, the row itself at city level, the group's canonical
+     * city at barangay level.
+     */
+    private function row(array $bucket, string $level, array $linked, array $provinceNames): array
     {
         $metrics = $bucket['metrics'];
         $id = $bucket['id'];
@@ -399,6 +622,19 @@ class ListingHeatmapService extends ListingInsightsService
         } else {
             $provinceId = $bucket['province_id'];
             $provinceName = $provinceId !== null ? ($provinceNames[$provinceId] ?? null) : null;
+        }
+
+        $name = $bucket['name'] !== '' ? $bucket['name'] : ($level === 'barangay' && $id !== null ? 'Unnamed barangay' : 'Unknown');
+
+        if ($level === 'city') {
+            $cityId = $id;
+            $cityName = $id !== null ? $name : null;
+        } elseif ($level === 'barangay') {
+            $cityId = $bucket['city_id'];
+            $cityName = $bucket['city_name'];
+        } else {
+            $cityId = null;
+            $cityName = null;
         }
 
         $byCategory = [];
@@ -413,9 +649,11 @@ class ListingHeatmapService extends ListingInsightsService
 
         return [
             'id' => $id,
-            'name' => $bucket['name'] !== '' ? $bucket['name'] : 'Unknown',
+            'name' => $name,
             'province_id' => $provinceId !== null ? (int) $provinceId : null,
             'province_name' => $provinceName !== null ? (string) $provinceName : null,
+            'city_id' => $cityId !== null ? (int) $cityId : null,
+            'city_name' => $cityName !== null ? (string) $cityName : null,
             'total' => $metrics['total'],
             'for_sale' => $metrics['for_sale'],
             'for_rent' => $metrics['for_rent'],
@@ -465,7 +703,7 @@ class ListingHeatmapService extends ListingInsightsService
         ];
     }
 
-    /** Current geometry generation; bumped by boundaries:import / :relink-cities. */
+    /** Current geometry generation; bumped by boundaries:import / :relink-cities / :relink-barangays. */
     public function boundariesVersion(): int
     {
         return (int) Cache::get('heatmap:boundaries:ver', 1);
@@ -475,17 +713,35 @@ class ListingHeatmapService extends ListingInsightsService
      * [area id => true] for every area that owns a polygon, cached for a day
      * under the geometry version so an import/relink invalidates it for free.
      *
+     * Province and city lists are nationwide (~80 and ~1,500 ids). The
+     * barangay list is PER CITY GROUP, keyed by the group's canonical id: a
+     * nationwide list would be ~38k ints deserialised on every 60 s poll, for
+     * a page that only ever looks at one city's ~80.
+     *
+     * @param  int[]|null  $cityGroupIds  barangay level only: the group to scope to
+     * @param  int|null  $canonicalCityId  barangay level only: the group's cache id
      * @return array<int, true>
      */
-    private function linkedAreaIds(string $level, int $version): array
+    private function linkedAreaIds(string $level, int $version, ?array $cityGroupIds = null, ?int $canonicalCityId = null): array
     {
-        $column = $level === 'city' ? 'city_id' : 'province_id';
+        if ($level === 'barangay') {
+            $column = 'barangay_id';
+            $key = "heatmap:linked:v{$version}:barangay:c{$canonicalCityId}";
+        } else {
+            $column = $level === 'city' ? 'city_id' : 'province_id';
+            $key = "heatmap:linked:v{$version}:{$level}";
+        }
 
-        $ids = Cache::remember("heatmap:linked:v{$version}:{$level}", 86400, function () use ($level, $column) {
-            return DB::table('boundaries')
+        $ids = Cache::remember($key, 86400, function () use ($level, $column, $cityGroupIds) {
+            $query = DB::table('boundaries')
                 ->where('level', $level)
-                ->whereNotNull($column)
-                ->distinct()
+                ->whereNotNull($column);
+
+            if ($level === 'barangay') {
+                $query->whereIn('city_id', $cityGroupIds ?: [0]);
+            }
+
+            return $query->distinct()
                 ->pluck($column)
                 ->map(fn ($id) => (int) $id)
                 ->all();

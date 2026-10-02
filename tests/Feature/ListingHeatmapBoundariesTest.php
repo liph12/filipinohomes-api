@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
@@ -40,6 +41,23 @@ class ListingHeatmapBoundariesTest extends TestCase
             $table->string('name');
             $table->string('code')->default('');
         });
+        // The barangay layer resolves its city GROUP through the counts
+        // service, which reads these two tables — the geometry and the counts
+        // must agree on which `cities` rows are the same town.
+        Schema::create('cities', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->unsignedBigInteger('province_id');
+            $table->tinyInteger('type')->default(1);
+        });
+        Schema::create('boundaries', function (Blueprint $table) {
+            $table->id();
+            $table->string('level');
+            $table->string('name');
+            $table->unsignedBigInteger('city_id')->nullable();
+            $table->unsignedBigInteger('province_id')->nullable();
+            $table->unsignedBigInteger('barangay_id')->nullable();
+        });
         Schema::create('agents', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id')->nullable();
@@ -60,6 +78,18 @@ class ListingHeatmapBoundariesTest extends TestCase
             ['id' => 25, 'name' => 'Cebu', 'code' => 'CEB'],
             ['id' => 82, 'name' => 'Southern Samar', 'code' => 'SSA'],
             ['id' => 83, 'name' => 'Samar', 'code' => 'SAM'],
+        ]);
+        DB::table('cities')->insert([
+            ['id' => 1, 'name' => 'Cebu City', 'province_id' => 25, 'type' => 1],
+            ['id' => 3, 'name' => 'Catbalogan', 'province_id' => 83, 'type' => 1],
+            // Same town, second row, filed under the duplicate Samar province.
+            ['id' => 5, 'name' => 'Catbalogan', 'province_id' => 82, 'type' => 1],
+        ]);
+        // The Catbalogan polygon points at the id 5 row, so 5 is the id the
+        // group is painted and cached under.
+        DB::table('boundaries')->insert([
+            ['id' => 1, 'level' => 'city', 'name' => 'Cebu City', 'city_id' => 1, 'province_id' => 25, 'barangay_id' => null],
+            ['id' => 2, 'level' => 'city', 'name' => 'Catbalogan', 'city_id' => 5, 'province_id' => 83, 'barangay_id' => null],
         ]);
         DB::table('agents')->insert([['id' => 8, 'user_id' => 800, 'status' => 'active']]);
 
@@ -190,6 +220,66 @@ class ListingHeatmapBoundariesTest extends TestCase
         $this->boundaries(['level' => 'province'], [], 'agent', 800);
     }
 
+    public function test_barangay_level_scopes_to_the_whole_city_group(): void
+    {
+        $this->boundaries(['level' => 'barangay', 'city_id' => 3]);
+
+        $this->assertSame('barangay', $this->repository->lastLevel);
+        // Catbalogan 3 and Catbalogan 5 are one town, and a polygon can only
+        // point at one of them — scoping to the requested id alone would drop
+        // half of a twin town's barangays off the map.
+        $this->assertSame([3, 5], $this->repository->lastCityIds);
+        $this->assertSame([], $this->repository->lastProvinceIds, 'the barangay layer is scoped by city, never by province');
+
+        // …and the two ids share one cache entry, not two.
+        $this->boundaries(['level' => 'barangay', 'city_id' => 5]);
+        $this->assertSame(1, $this->repository->calls);
+    }
+
+    public function test_each_city_gets_its_own_barangay_layer(): void
+    {
+        $this->boundaries(['level' => 'barangay', 'city_id' => 3]);
+        $this->boundaries(['level' => 'barangay', 'city_id' => 1]);
+
+        // Without a city in the key, the second city would be handed the
+        // first city's polygons — silently, and only visibly wrong to someone
+        // who knows the town.
+        $this->assertSame(2, $this->repository->calls);
+        $this->assertSame([1], $this->repository->lastCityIds);
+    }
+
+    public function test_the_barangay_layer_refuses_to_answer_without_a_city(): void
+    {
+        // A nationwide barangay layer is 42k polygons; the endpoint must not
+        // be able to be asked for one by omission.
+        $this->expectException(ValidationException::class);
+
+        $this->boundaries(['level' => 'barangay']);
+    }
+
+    public function test_barangay_geometry_is_revalidated_with_an_etag_too(): void
+    {
+        $first = $this->boundaries(['level' => 'barangay', 'city_id' => 1]);
+        $etag = $first->headers->get('ETag');
+
+        $this->assertSame(200, $first->getStatusCode());
+        $this->assertMatchesRegularExpression('/^"[0-9a-f]{32}"$/', $etag);
+        $this->assertSame('max-age=86400, private', $this->cacheControl($first));
+
+        $conditional = $this->boundaries(['level' => 'barangay', 'city_id' => 1], ['If-None-Match' => $etag]);
+
+        $this->assertSame(304, $conditional->getStatusCode());
+        $this->assertSame('', $conditional->getContent());
+        $this->assertSame(1, $this->repository->calls);
+    }
+
+    public function test_a_user_who_leads_nobody_is_refused_at_barangay_level(): void
+    {
+        $this->expectException(HttpException::class);
+
+        $this->boundaries(['level' => 'barangay', 'city_id' => 1], [], 'agent', 800);
+    }
+
     /** Symfony re-orders Cache-Control directives; compare them as a set. */
     private function cacheControl($response): string
     {
@@ -213,11 +303,14 @@ class FakeBoundaryGeoJsonRepository extends BoundaryGeoJsonRepository
 
     public array $lastProvinceIds = [];
 
-    public function features(string $level, array $provinceIds = []): array
+    public array $lastCityIds = [];
+
+    public function features(string $level, array $provinceIds = [], array $cityIds = []): array
     {
         $this->calls++;
         $this->lastLevel = $level;
         $this->lastProvinceIds = $provinceIds;
+        $this->lastCityIds = $cityIds;
 
         $square = '{"type":"Polygon","coordinates":[[[123.0,10.0],[124.0,10.0],[124.0,11.0],[123.0,11.0],[123.0,10.0]]]}';
 

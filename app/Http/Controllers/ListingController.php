@@ -2944,9 +2944,10 @@ class ListingController extends Controller
     }
 
     /**
-     * Listings Heatmap — one row per province (or per city) with the counts the
-     * choropleth shades by. Same access rule as the other insights endpoints:
-     * admin unscoped, team leader scoped to their team, everyone else 403.
+     * Listings Heatmap — one row per province, per city or per barangay with
+     * the counts the choropleth shades by. Same access rule as the other
+     * insights endpoints: admin unscoped, team leader scoped to their team,
+     * everyone else 403.
      *
      * The page polls this every 60 s, so the answer is served from a 55 s
      * `Cache::flexible` window with a 300 s stale tail: a poll that lands just
@@ -2961,16 +2962,33 @@ class ListingController extends Controller
         $agentIds = $this->resolveInsightsAgentScope($request);
 
         $validated = $request->validate([
-            'level' => 'nullable|in:province,city',
+            'level' => 'nullable|in:province,city,barangay',
             'province_id' => 'nullable|integer|exists:provinces,id',
+            // The barangay tier is defined by its city: nationwide barangays
+            // would be 42k rows nobody asked for, so the id is mandatory there
+            // and meaningless above it.
+            'city_id' => 'nullable|integer|exists:cities,id|required_if:level,barangay',
         ]);
 
-        $level = ($validated['level'] ?? 'province') === 'city' ? 'city' : 'province';
-        $requestedProvinceId = isset($validated['province_id']) ? (int) $validated['province_id'] : null;
+        $level = in_array($validated['level'] ?? 'province', ListingHeatmapService::LEVELS, true)
+            ? (string) ($validated['level'] ?? 'province')
+            : 'province';
+
+        // Scope is DERIVED from the level, never taken as it arrived: a stray
+        // province_id at barangay level (or a stray city_id above it) would
+        // otherwise fork the cache key into two entries holding one answer.
+        $requestedProvinceId = $level !== 'barangay' && isset($validated['province_id'])
+            ? (int) $validated['province_id']
+            : null;
+        $requestedCityId = $level === 'barangay' && isset($validated['city_id'])
+            ? (int) $validated['city_id']
+            : null;
 
         // Canonicalise BEFORE the key is built, or 82 and 83 (the same Samar)
-        // each compute and cache their own copy of an identical answer.
+        // each compute and cache their own copy of an identical answer. Same
+        // hazard one level down: Catbalogan 3 and Catbalogan 5 are one town.
         $provinceId = $heatmap->canonicalProvinceId($requestedProvinceId);
+        $cityId = $requestedCityId !== null ? $heatmap->canonicalCityId($requestedCityId) : null;
 
         $scopeKey = 'admin';
         if ($agentIds !== null) {
@@ -2984,11 +3002,15 @@ class ListingController extends Controller
         // post-deploy check reads the pre-link numbers for the whole stale window
         // and the client never sees the version change that triggers its geometry
         // refetch.
+        // v2 is a literal generation bump: the key gained a city slot when the
+        // barangay tier landed, and an in-flight v1 entry must not alias onto
+        // the new shape.
         $cacheKey = sprintf(
-            'heatmap:counts:v1:%d:%s:%s:%s',
+            'heatmap:counts:v2:%d:%s:%s:%s:%s',
             $heatmap->boundariesVersion(),
             $level,
             $provinceId !== null ? (string) $provinceId : 'all',
+            $cityId !== null ? (string) $cityId : 'all',
             $scopeKey
         );
 
@@ -2997,9 +3019,9 @@ class ListingController extends Controller
         $payload = Cache::flexible(
             $cacheKey,
             [ListingHeatmapService::TTL, 300],
-            function () use ($heatmap, $level, $provinceId, $agentIds, $cacheKey, &$computed) {
+            function () use ($heatmap, $level, $provinceId, $cityId, $agentIds, $cacheKey, &$computed) {
                 $computed = true;
-                $result = $heatmap->heatmap($level, $provinceId, $agentIds);
+                $result = $heatmap->heatmap($level, $provinceId, $agentIds, $cityId);
 
                 // The plan's budget is ~120 ms locally. A sustained breach is
                 // the signal to precompute this into a table (plan section F),
@@ -3044,14 +3066,26 @@ class ListingController extends Controller
         $this->resolveInsightsAgentScope($request);
 
         $validated = $request->validate([
-            'level' => 'nullable|in:province,city',
+            'level' => 'nullable|in:province,city,barangay',
             'province_id' => 'nullable|integer|exists:provinces,id',
+            // Same rule as the counts endpoint: one city's barangays or none.
+            'city_id' => 'nullable|integer|exists:cities,id|required_if:level,barangay',
         ]);
 
-        $level = ($validated['level'] ?? 'province') === 'city' ? 'city' : 'province';
-        $provinceId = isset($validated['province_id']) ? (int) $validated['province_id'] : null;
+        $level = in_array($validated['level'] ?? 'province', ListingHeatmapService::LEVELS, true)
+            ? (string) ($validated['level'] ?? 'province')
+            : 'province';
 
-        $payload = $boundaries->payload($level, $provinceId);
+        // Derived from the level, not taken as sent — see the counts endpoint.
+        // The service canonicalises both ids itself (the key is built there).
+        $provinceId = $level !== 'barangay' && isset($validated['province_id'])
+            ? (int) $validated['province_id']
+            : null;
+        $cityId = $level === 'barangay' && isset($validated['city_id'])
+            ? (int) $validated['city_id']
+            : null;
+
+        $payload = $boundaries->payload($level, $provinceId, $cityId);
 
         $headers = [
             'Content-Type' => 'application/json',

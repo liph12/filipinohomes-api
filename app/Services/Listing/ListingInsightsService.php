@@ -66,6 +66,16 @@ abstract class ListingInsightsService
     protected ?array $scopeProvinceIds = null;
 
     /**
+     * City IDs for a scope that is SEVERAL `cities` rows at once (null = no
+     * such scope). Mirror of $scopeProvinceIds one level down: the Listings
+     * Heatmap's barangay tier scopes to a whole city GROUP (the duplicate rows
+     * the `cities` table carries for one town), and $cityId filters on one id.
+     * Applied on the same COALESCE(projects.city_id, property_cities.id) chain
+     * as $cityId, so the barangay rows sum to the city row by construction.
+     */
+    protected ?array $scopeCityIds = null;
+
+    /**
      * Viewport bounding box (Listing Insights map clusters). When all four are
      * set, baseListingQuery() restricts to listings whose geo_coordinates fall
      * on-screen, so panning/zooming re-clusters to what's visible.
@@ -138,6 +148,10 @@ abstract class ListingInsightsService
                 DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'),
                 $this->scopeProvinceIds ?: [0]
             );
+        }
+        if ($this->scopeCityIds !== null) {
+            // Empty list → no rows, intentionally (same contract as above).
+            $query->whereIn(DB::raw($this->cityIdExpr()), $this->scopeCityIds ?: [0]);
         }
 
         // Viewport bounding box (map clusters) — restrict to on-screen pins.
@@ -261,6 +275,8 @@ abstract class ListingInsightsService
         $this->maxLat = isset($filters['max_lat']) ? (float) $filters['max_lat'] : null;
         $this->minLng = isset($filters['min_lng']) ? (float) $filters['min_lng'] : null;
         $this->maxLng = isset($filters['max_lng']) ? (float) $filters['max_lng'] : null;
+        // Not a filter key: only the heatmap sets it, after configure().
+        $this->scopeCityIds = null;
 
         $this->resolveScopeProvinceIds();
 

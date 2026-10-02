@@ -59,7 +59,21 @@ class CityNameMatcher
         'sta' => 'santa',
         'sto' => 'santo',
         'mt' => 'mount',
+        // cities 396 / 1663 "Pres. Roxas", 1411 "Pres. Quirino" vs the
+        // barangay file's "President Roxas" / "President Quirino". The token
+        // rule needs a dot or a non-letter after "pres", so "Presentacion"
+        // (city 375) is left alone.
+        'pres' => 'president',
     ];
+
+    /**
+     * The one parent-name rewrite applied BEFORE normalize(), by the barangay
+     * relink command: the 2023 PSA file groups the BARMM Special Geographic
+     * Area's barangays under "Special Geographic Area - <Town> [I|II|III]",
+     * named after the Cotabato town they were carved out of. This registry
+     * still files them under that town, so the group name is reduced to it.
+     */
+    private const SGA_PATTERN = '/^special geographic area\s*-\s*(.+?)(?:\s+[ivx]+)?$/iu';
 
     /**
      * Normalized boundary-file spelling => normalized `cities` spelling.
@@ -104,6 +118,23 @@ class CityNameMatcher
         'enriquebmagalona' => 'enriquemagalona',
         // Too short for the fuzzy pass (5 chars); see the note above.
         'lupon' => 'lopon',
+
+        // Verified against the local DB and the 2023 PSA barangay file on
+        // 2026-10-02 (ADM3_EN spellings this matcher had never seen):
+        //   "Sasmuan (Sexmoan)"     -> cities 1195 "Sexmoan" (Pampanga); the
+        //                             parenthetical is dropped by normalize(),
+        //                             so only the new official name is left.
+        //   "San Jose (Capital)"    -> cities 104 "San Jose de Buenavista"
+        //                             (Antique). Second chance only: every
+        //                             other province's plain "San Jose" row
+        //                             still wins at pass A.
+        //   "Science City of Muñoz" -> cities 1109 "Munoz" (Nueva Ecija).
+        //                             The status phrase below already reduces
+        //                             it; this covers the file spelling the
+        //                             status as part of the name.
+        'sasmuan' => 'sexmoan',
+        'sanjose' => 'sanjosedebuenavista',
+        'sciencemunoz' => 'munoz',
 
         // Manila's 16 city districts.
         'binondo' => 'manila',
@@ -154,7 +185,7 @@ class CityNameMatcher
         }
 
         $s = preg_replace(
-            '/\b(?:island garden city of|city of|municipality of|municipality|city)\b/',
+            '/\b(?:island garden city of|science city of|city of|municipality of|municipality|city)\b/',
             ' ',
             $s
         );
@@ -162,6 +193,20 @@ class CityNameMatcher
         $s = preg_replace('/[^a-z0-9]/', '', $s);
 
         return (string) $s;
+    }
+
+    /**
+     * "Special Geographic Area - Pikit II" => "Pikit"; any other name is
+     * returned untouched. Applied by the barangay relink command to a
+     * polygon group's parent name BEFORE match() — see SGA_PATTERN.
+     */
+    public static function rewriteSga(string $name): string
+    {
+        if (preg_match(self::SGA_PATTERN, trim($name), $m) === 1) {
+            return $m[1];
+        }
+
+        return $name;
     }
 
     /**

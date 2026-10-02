@@ -89,12 +89,20 @@ class ListingHeatmapTest extends TestCase
         });
         // No `geom` column: sqlite has no spatial type, and the counts service
         // only ever reads the id columns. Geometry is the other endpoint's job.
+        // The PSGC columns are here because the real table has them after the
+        // barangay import — nothing on this path reads them, and a fixture that
+        // quietly drifts from the shipped schema is how the next person is
+        // misled about what a row looks like.
         Schema::create('boundaries', function (Blueprint $table) {
             $table->id();
             $table->string('level');
             $table->string('name');
             $table->unsignedBigInteger('city_id')->nullable();
             $table->unsignedBigInteger('province_id')->nullable();
+            $table->unsignedBigInteger('barangay_id')->nullable();
+            $table->string('psgc_code', 16)->nullable();
+            $table->string('parent_psgc', 16)->nullable();
+            $table->string('link_how', 16)->nullable();
         });
         // The 403 path resolves team leadership before it can answer.
         Schema::create('agents', function (Blueprint $table) {
@@ -156,6 +164,20 @@ class ListingHeatmapTest extends TestCase
             ['id' => 13, 'name' => 'Poblacion', 'city_id' => 3],
             ['id' => 14, 'name' => 'Bagacay', 'city_id' => 4],
             ['id' => 15, 'name' => 'Mercedes', 'city_id' => 5],
+            // Cebu City's second registry row, with no listings at all: the
+            // barangay tier's zero-seed case (most of a city's barangays are
+            // this, and a missing row reads as "no data" rather than "zero").
+            ['id' => 17, 'name' => 'Apas', 'city_id' => 1],
+            // Talisay's identical-name pair — the registry carries 363 of
+            // these nationwide and a polygon can only ever point at one.
+            ['id' => 18, 'name' => 'Lagtang', 'city_id' => 2],
+            ['id' => 19, 'name' => 'Lagtang', 'city_id' => 2],
+            // Calbayog's Proper/Poblacion siblings. These are NOT twins: the
+            // PSA file lists both as barangays of their own and gives each a
+            // polygon, so the fold key must keep them apart (the matcher's
+            // fullKey() would not — see BarangayNameMatcher::foldKey()).
+            ['id' => 20, 'name' => 'Asinan Poblacion', 'city_id' => 4],
+            ['id' => 21, 'name' => 'Asinan Proper', 'city_id' => 4],
         ]);
 
         DB::table('categories')->insert([
@@ -170,12 +192,27 @@ class ListingHeatmapTest extends TestCase
         // Calbayog do not, so has_boundary / unmapped_listings have something
         // to say.
         DB::table('boundaries')->insert([
-            ['id' => 1, 'level' => 'province', 'name' => 'Cebu', 'city_id' => null, 'province_id' => 25],
-            ['id' => 2, 'level' => 'province', 'name' => 'Samar', 'city_id' => null, 'province_id' => 83],
-            ['id' => 3, 'level' => 'city', 'name' => 'Cebu City', 'city_id' => 1, 'province_id' => 25],
-            ['id' => 4, 'level' => 'city', 'name' => 'Talisay City', 'city_id' => 2, 'province_id' => 25],
+            ['id' => 1, 'level' => 'province', 'name' => 'Cebu', 'city_id' => null, 'province_id' => 25, 'barangay_id' => null, 'psgc_code' => null, 'parent_psgc' => null, 'link_how' => null],
+            ['id' => 2, 'level' => 'province', 'name' => 'Samar', 'city_id' => null, 'province_id' => 83, 'barangay_id' => null, 'psgc_code' => null, 'parent_psgc' => null, 'link_how' => null],
+            ['id' => 3, 'level' => 'city', 'name' => 'Cebu City', 'city_id' => 1, 'province_id' => 25, 'barangay_id' => null, 'psgc_code' => null, 'parent_psgc' => null, 'link_how' => null],
+            ['id' => 4, 'level' => 'city', 'name' => 'Talisay City', 'city_id' => 2, 'province_id' => 25, 'barangay_id' => null, 'psgc_code' => null, 'parent_psgc' => null, 'link_how' => null],
             // Points at the id 5 row, so the fold must keep 5 and drop 3.
-            ['id' => 5, 'level' => 'city', 'name' => 'Catbalogan', 'city_id' => 5, 'province_id' => 83],
+            ['id' => 5, 'level' => 'city', 'name' => 'Catbalogan', 'city_id' => 5, 'province_id' => 83, 'barangay_id' => null, 'psgc_code' => null, 'parent_psgc' => null, 'link_how' => null],
+
+            // Barangay polygons. Lahug and Poblacion are ordinary links; the
+            // Talisay one points at the SECOND Lagtang row (19), so the
+            // duplicate fold has to pick 19 over the lower id 18 — the row the
+            // map can shade must be the row that holds the count. Apas (17)
+            // deliberately owns no polygon.
+            ['id' => 6, 'level' => 'barangay', 'name' => 'Lahug', 'city_id' => 1, 'province_id' => 25, 'barangay_id' => 11, 'psgc_code' => 'PH072221026', 'parent_psgc' => 'PH0702217', 'link_how' => 'geo+name'],
+            ['id' => 7, 'level' => 'barangay', 'name' => 'Lagtang', 'city_id' => 2, 'province_id' => 25, 'barangay_id' => 19, 'psgc_code' => 'PH072251009', 'parent_psgc' => 'PH0702251', 'link_how' => 'geo+name'],
+            ['id' => 8, 'level' => 'barangay', 'name' => 'Poblacion', 'city_id' => 3, 'province_id' => 83, 'barangay_id' => 13, 'psgc_code' => 'PH086001001', 'parent_psgc' => 'PH0860010', 'link_how' => 'name-only'],
+            // A registry gap: a real polygon with no `barangays` row behind it.
+            // It must never appear as a counts row (it has no id to fold onto).
+            ['id' => 9, 'level' => 'barangay', 'name' => 'Banawa', 'city_id' => 1, 'province_id' => 25, 'barangay_id' => null, 'psgc_code' => 'PH072221081', 'parent_psgc' => 'PH0702217', 'link_how' => null],
+            // One polygon each for the Proper/Poblacion siblings.
+            ['id' => 10, 'level' => 'barangay', 'name' => 'Asinan Poblacion', 'city_id' => 4, 'province_id' => 83, 'barangay_id' => 20, 'psgc_code' => 'PH086002001', 'parent_psgc' => 'PH0860020', 'link_how' => 'geo+name'],
+            ['id' => 11, 'level' => 'barangay', 'name' => 'Asinan Proper', 'city_id' => 4, 'province_id' => 83, 'barangay_id' => 21, 'psgc_code' => 'PH086002002', 'parent_psgc' => 'PH0860020', 'link_how' => 'geo+name'],
         ]);
 
         DB::table('agents')->insert([
@@ -315,11 +352,18 @@ class ListingHeatmapTest extends TestCase
 
         $cebu = $this->areaNamed($payload, 'Cebu');
         $this->assertNotNull($cebu);
+        // One shape for all three tiers: city_id / city_name are on every row
+        // and are null above barangay level. The frontend reads the row by key
+        // and renders a City column from it, so a tier that omitted them would
+        // be a different contract, not a smaller one.
         $this->assertSame([
-            'id', 'name', 'province_id', 'province_name', 'total',
+            'id', 'name', 'province_id', 'province_name', 'city_id', 'city_name', 'total',
             'for_sale', 'for_rent', 'foreclosure', 'new_1d', 'new_7d', 'new_30d',
             'by_category', 'has_boundary',
         ], array_keys($cebu));
+        $this->assertNull($cebu['city_id']);
+        $this->assertNull($cebu['city_name']);
+        $this->assertNull($payload['city_id'], 'the snapshot carries a city_id too, null above barangay level');
 
         // 4 Cebu City For Sale + 2 Talisay For Rent; the Pre-Selling row and
         // both deleted rows are not listings as far as this endpoint is told.
@@ -609,5 +653,237 @@ class ListingHeatmapTest extends TestCase
         $this->expectException(ValidationException::class);
 
         $this->heatmap(['level' => 'city', 'province_id' => 4242]);
+    }
+
+    public function test_barangay_rows_carry_their_city_and_sum_to_the_city_row(): void
+    {
+        $payload = $this->heatmap(['level' => 'barangay', 'city_id' => 1]);
+
+        $this->assertSame('barangay', $payload['level'], 'the response must echo the level that was asked for');
+        $this->assertSame(1, $payload['city_id']);
+        $this->assertSame(25, $payload['province_id'], 'the snapshot still names the province the city sits in');
+
+        $lahug = $this->areaNamed($payload, 'Lahug');
+        $this->assertNotNull($lahug);
+        $this->assertSame([
+            'id', 'name', 'province_id', 'province_name', 'city_id', 'city_name', 'total',
+            'for_sale', 'for_rent', 'foreclosure', 'new_1d', 'new_7d', 'new_30d',
+            'by_category', 'has_boundary',
+        ], array_keys($lahug));
+        $this->assertSame(11, $lahug['id']);
+        $this->assertSame(4, $lahug['total']);
+        $this->assertTrue($lahug['has_boundary']);
+        // Every row names the GROUP's city and province, not whichever
+        // duplicate `cities` row the listing happened to be filed under.
+        $this->assertSame(1, $lahug['city_id']);
+        $this->assertSame('Cebu City', $lahug['city_name']);
+        $this->assertSame(25, $lahug['province_id']);
+        $this->assertSame('Cebu', $lahug['province_name']);
+
+        // The parity the admin reads with their own eyes: they click Cebu City
+        // on the city map and the barangays they get must total the number the
+        // row they clicked was showing.
+        $cityRow = $this->areaNamed($this->heatmap(['level' => 'city', 'province_id' => 25]), 'Cebu City');
+        $this->assertSame(4, $cityRow['total']);
+        $this->assertSame($cityRow['total'], array_sum(array_column($payload['data'], 'total')));
+        $this->assertSame($cityRow['total'], $payload['totals']['listings']);
+
+        // The registry-gap polygon (Banawa, a real shape with no `barangays`
+        // row) is geometry only: it is never a counts row, because there is no
+        // id for a count to fold onto.
+        $this->assertNull($this->areaNamed($payload, 'Banawa'));
+        $this->assertSame(2, $payload['totals']['areas']);
+    }
+
+    public function test_a_barangay_with_no_listings_is_still_on_the_map_as_a_zero(): void
+    {
+        $payload = $this->heatmap(['level' => 'barangay', 'city_id' => 1]);
+
+        // Most of a city's barangays hold nothing; dropping them would read as
+        // "no data here" on a map whose whole claim is "this is all of it".
+        $apas = $this->areaNamed($payload, 'Apas');
+        $this->assertNotNull($apas, 'a barangay with no listings must be seeded, not dropped');
+        $this->assertSame(17, $apas['id']);
+        $this->assertSame(0, $apas['total']);
+        $this->assertSame(1, $apas['city_id']);
+        $this->assertFalse($apas['has_boundary']);
+    }
+
+    public function test_duplicate_barangay_rows_fold_onto_the_id_the_polygon_references(): void
+    {
+        // Talisay really does carry two "Lagtang" rows with listings on both.
+        // Two half-filled rows would paint one and grey the other.
+        $when = $this->manilaMidnight->copy()->subDays(2);
+        $propertyId = 300;
+
+        foreach ([18, 19] as $barangayId) {
+            DB::table('properties')->insert([
+                'id' => $propertyId, 'address_id' => $barangayId, 'status' => 'active',
+                'created_at' => $this->utc($when), 'updated_at' => $this->utc($when),
+            ]);
+            DB::table('listings')->insert([
+                'id' => $propertyId, 'category_id' => 1, 'property_id' => $propertyId, 'agent_id' => 7,
+                'created_at' => $this->utc($when), 'updated_at' => $this->utc($when),
+            ]);
+            $propertyId++;
+        }
+
+        $payload = $this->heatmap(['level' => 'barangay', 'city_id' => 2]);
+
+        $lagtang = $this->areaNamed($payload, 'Lagtang');
+        $this->assertNotNull($lagtang);
+        $this->assertSame(19, $lagtang['id'], 'the survivor is the row boundaries.barangay_id points at, not the lower id');
+        $this->assertSame(2, $lagtang['total'], "both rows' listings land on the surviving id");
+        $this->assertTrue($lagtang['has_boundary']);
+
+        // Two areas, not three: the twins are one barangay.
+        $this->assertSame(2, $payload['totals']['areas']);
+
+        // And the fold must not break parity with the tier above it.
+        $cityRow = $this->areaNamed($this->heatmap(['level' => 'city', 'province_id' => 25]), 'Talisay City');
+        $this->assertSame(4, $cityRow['total']);
+        $this->assertSame($cityRow['total'], array_sum(array_column($payload['data'], 'total')));
+    }
+
+    public function test_a_proper_poblacion_sibling_pair_stays_two_rows_with_two_polygons(): void
+    {
+        // The mirror of the twin fold above, and the case it must NOT swallow.
+        // "Asinan Poblacion" and "Asinan Proper" are two barangays in the PSA
+        // file and own a polygon each. Folding them onto one counts row left
+        // the second polygon with no row to resolve, so the map drew a real
+        // barangay as "not in the registry" and shaded it as a zero.
+        $payload = $this->heatmap(['level' => 'barangay', 'city_id' => 4]);
+
+        $poblacion = $this->areaNamed($payload, 'Asinan Poblacion');
+        $proper = $this->areaNamed($payload, 'Asinan Proper');
+
+        $this->assertNotNull($poblacion);
+        $this->assertNotNull($proper);
+        $this->assertSame(20, $poblacion['id']);
+        $this->assertSame(21, $proper['id']);
+        $this->assertTrue($poblacion['has_boundary']);
+        $this->assertTrue($proper['has_boundary'], 'the second polygon has a counts row of its own to resolve against');
+
+        // Bagacay plus the two siblings — three rows, not two.
+        $this->assertSame(['Bagacay', 'Asinan Poblacion', 'Asinan Proper'], $this->names($payload));
+        $this->assertSame(3, $payload['totals']['areas']);
+
+        // Neither sibling carries inventory, so the city row is unchanged.
+        $cityRow = $this->areaNamed($this->heatmap(['level' => 'city', 'province_id' => 83]), 'Calbayog');
+        $this->assertSame($cityRow['total'], array_sum(array_column($payload['data'], 'total')));
+    }
+
+    public function test_the_barangay_tier_covers_the_whole_city_group_under_one_id(): void
+    {
+        $byDuplicate = $this->heatmap(['level' => 'barangay', 'city_id' => 3]);
+        $byCanonical = $this->heatmap(['level' => 'barangay', 'city_id' => 5]);
+
+        // Catbalogan 3 and Catbalogan 5 are one town; the polygon points at 5,
+        // so that is the id both requests resolve to — and therefore the single
+        // cache entry they share.
+        $this->assertSame(5, $byDuplicate['city_id']);
+        $this->assertSame(5, $byCanonical['city_id']);
+        $this->assertSame(83, $byDuplicate['province_id']);
+        $this->assertSame($byCanonical['data'], $byDuplicate['data']);
+
+        // Both twin rows' barangays are in scope, or the barangays of a twin
+        // town would not sum to the city row.
+        $this->assertSame(['Mercedes', 'Poblacion'], $this->names($byCanonical));
+        $this->assertSame(1, $this->areaNamed($byCanonical, 'Poblacion')['total']);
+        $this->assertSame(1, $this->areaNamed($byCanonical, 'Mercedes')['total']);
+
+        $cityRow = $this->areaNamed($this->heatmap(['level' => 'city', 'province_id' => 83]), 'Catbalogan');
+        $this->assertSame($cityRow['total'], $byCanonical['totals']['listings']);
+    }
+
+    public function test_each_city_gets_its_own_cache_entry(): void
+    {
+        $cebuCity = $this->heatmap(['level' => 'barangay', 'city_id' => 1]);
+
+        $aggregates = [];
+        DB::listen(function ($query) use (&$aggregates) {
+            if (str_contains($query->sql, 'listings')) {
+                $aggregates[] = $query->sql;
+            }
+        });
+
+        // A second city must not be served the first city's payload — the bug
+        // a cache key without a city slot would hand the admin silently.
+        $talisay = $this->heatmap(['level' => 'barangay', 'city_id' => 2]);
+        $this->assertNotSame([], $aggregates, 'a different city has to be computed, not read back');
+        $this->assertSame(['Lahug', 'Apas'], $this->names($cebuCity));
+        $this->assertSame(['Tabunok', 'Lagtang'], $this->names($talisay));
+
+        // …and going back to the first city is still a cache hit.
+        $aggregates = [];
+        $again = $this->heatmap(['level' => 'barangay', 'city_id' => 1]);
+        $this->assertSame([], $aggregates);
+        $this->assertSame($cebuCity['data'], $again['data']);
+        $this->assertTrue($again['meta']['cached']);
+    }
+
+    public function test_a_stray_province_id_is_ignored_at_barangay_level(): void
+    {
+        $plain = $this->heatmap(['level' => 'barangay', 'city_id' => 1]);
+
+        $aggregates = [];
+        DB::listen(function ($query) use (&$aggregates) {
+            if (str_contains($query->sql, 'listings')) {
+                $aggregates[] = $query->sql;
+            }
+        });
+
+        // Scope is derived from the level, so a province_id left over from the
+        // breadcrumb above must neither change the answer nor fork the key
+        // into a second entry holding a copy of it.
+        $stray = $this->heatmap(['level' => 'barangay', 'city_id' => 1, 'province_id' => 83]);
+
+        $this->assertSame([], $aggregates, 'a stray province_id must not fork the cache key');
+        $this->assertSame($plain['data'], $stray['data']);
+        $this->assertSame(25, $stray['province_id'], 'the province is the one the city is in, not the one that was sent');
+    }
+
+    public function test_the_barangay_tier_refuses_to_answer_without_a_city(): void
+    {
+        // 422, not a nationwide 42k-row answer nobody asked for. The frontend
+        // relies on this being a validation failure.
+        $this->expectException(ValidationException::class);
+
+        $this->heatmap(['level' => 'barangay']);
+    }
+
+    public function test_an_unknown_city_id_is_rejected_before_any_work(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        $this->heatmap(['level' => 'barangay', 'city_id' => 4242]);
+    }
+
+    public function test_a_team_leader_sees_only_their_team_at_barangay_level(): void
+    {
+        $payload = $this->heatmap(['level' => 'barangay', 'city_id' => 3], 'agent', 700);
+
+        $this->assertSame('team', $payload['scope']);
+
+        // Catbalogan's two listings belong to agent 9, who is on no team.
+        $this->assertSame(0, $payload['totals']['listings']);
+
+        // Zero-seeding is scope-independent, exactly as it is above: the
+        // leader still sees the barangays, greyed.
+        $this->assertSame(['Mercedes', 'Poblacion'], $this->names($payload));
+        $this->assertSame(0, $this->areaNamed($payload, 'Poblacion')['total']);
+    }
+
+    public function test_a_user_who_leads_nobody_is_refused_at_barangay_level(): void
+    {
+        $this->expectException(HttpException::class);
+
+        $this->heatmap(['level' => 'barangay', 'city_id' => 1], 'agent', 800);
+    }
+
+    /** Row names in response order (biggest first, Unknown last). */
+    private function names(array $payload): array
+    {
+        return array_column($payload['data'], 'name');
     }
 }

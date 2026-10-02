@@ -110,3 +110,33 @@ test('CONTRACT: creating a Davao Occidental province row must delete its alias, 
     $dinagat = ProvinceCanonicalizer::idMap([31 => 'Dinagat Islands', 73 => 'Surigao del Norte']);
     expect($dinagat[31])->toBe(73);
 });
+
+test('the 2023 PSA barangay file\'s ADM2 vocabulary keys to the province rows this DB has', function () {
+    // Verified 2026-10-02: no `provinces` row carries any of these names, so
+    // every one is a pure spelling fold and none is a swallowed row (the
+    // DB-backed mirror guard in ListingHeatmapTest still expects exactly two).
+    $cases = [
+        // The capital region under the file's newer heading.
+        'Metropolitan Manila, First District' => 'metro manila',
+        'Metropolitan Manila, Second District' => 'metro manila',
+        'Metropolitan Manila, Third District' => 'metro manila',
+        'Metropolitan Manila, Fourth District' => 'metro manila',
+        // Renamed in 2019; row 26 keeps the old name. The parenthetical the
+        // file adds is dropped by the normalizer before the alias applies.
+        'Davao de Oro (Compostela Valley)' => 'compostela valley',
+        'Davao de Oro' => 'compostela valley',
+        // Split in 2022; row 45 is the single pre-split province.
+        'Maguindanao del Norte' => 'maguindanao',
+        'Maguindanao del Sur' => 'maguindanao',
+        // BARMM's Special Geographic Area: barangays carved out of Cotabato towns.
+        'Special Geographic Area' => 'cotabato',
+        // Spellings the same file uses for provinces that needed no alias.
+        'Cotabato (North Cotabato)' => 'cotabato',
+        'Samar (Western Samar)' => 'samar',
+        'City of Isabela (Not a Province)' => 'basilan',
+    ];
+
+    foreach ($cases as $name => $expected) {
+        expect([$name, ProvinceCanonicalizer::key($name)])->toBe([$name, $expected]);
+    }
+});

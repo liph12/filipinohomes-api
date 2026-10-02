@@ -79,6 +79,25 @@ class ProvinceCanonicalizer
         // Provinces that exist on the map but not as rows here (see docblock).
         'davao occidental' => 'davao del sur',      // towns 536-539 live under 29
         'dinagat islands' => 'surigao del norte',   // row 31 exists but owns no cities
+
+        // ── The 2023 PSA/NAMRIA barangay file (ADM2_EN vocabulary) ──
+        // Same capital-region split as above, under its newer heading.
+        'metropolitan manila first district' => 'metro manila',
+        'metropolitan manila second district' => 'metro manila',
+        'metropolitan manila third district' => 'metro manila',
+        'metropolitan manila fourth district' => 'metro manila',
+        // Renamed in 2019; this DB keeps row 26 under the old name. The file
+        // writes "Davao de Oro (Compostela Valley)" and IslandMap::normalize()
+        // drops the parenthetical, so the key is the bare new name.
+        'davao de oro' => 'compostela valley',
+        // Split in 2022; this DB has the single pre-split row 45.
+        'maguindanao del norte' => 'maguindanao',
+        'maguindanao del sur' => 'maguindanao',
+        // The BARMM "Special Geographic Area": 63 barangays carved out of five
+        // Cotabato towns (Carmen, Kabacan, Midsayap, Pigkawayan, Pikit). The
+        // registry still files them under those towns, hence Cotabato (27).
+        // CityNameMatcher::rewriteSga() handles the matching town names.
+        'special geographic area' => 'cotabato',
     ];
 
     /**

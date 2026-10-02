@@ -133,3 +133,69 @@ test('match returns null when nothing is close enough', function () {
         ->and(CityNameMatcher::match([], 'Cebu City'))->toBeNull()
         ->and(CityNameMatcher::match([500 => 'Talisayan'], 'City'))->toBeNull();
 });
+
+test('normalize knows the 2023 PSA barangay file\'s town spellings', function () {
+    $cases = [
+        // "Pres." expands like the Gen./Sta. family — cities 396/1663 "Pres.
+        // Roxas", 1411 "Pres. Quirino" vs the file's spelled-out form.
+        'Pres. Roxas' => 'presidentroxas',
+        'President Roxas' => 'presidentroxas',
+        'Pres. Quirino' => 'presidentquirino',
+        'Pres. Manuel A. Roxas' => 'presidentmanuelaroxas',
+        // …but only as a whole token: Presentacion (city 375) is left alone.
+        'Presentacion (Parubcan)' => 'presentacion',
+        'Presentacion' => 'presentacion',
+        // "Science City of" is a status phrase, like "Island Garden City of".
+        'Science City of Muñoz' => 'munoz',
+        'Munoz' => 'munoz',
+    ];
+
+    foreach ($cases as $name => $expected) {
+        expect([$name, CityNameMatcher::normalize($name)])->toBe([$name, $expected]);
+    }
+});
+
+test('the barangay file\'s renamed towns reach their cities rows through aliases', function () {
+    // Pampanga: file "Sasmuan (Sexmoan)" — normalize() drops the parenthetical.
+    expect(CityNameMatcher::match([1195 => 'Sexmoan', 1196 => 'Guagua'], 'Sasmuan (Sexmoan)'))->toBe(1195);
+
+    // Antique: file "San Jose (Capital)" vs cities 104 "San Jose de Buenavista".
+    expect(CityNameMatcher::match([104 => 'San Jose de Buenavista', 105 => 'Sibalom'], 'San Jose (Capital)'))->toBe(104);
+
+    // Nueva Ecija: both routes land on 1109 "Munoz".
+    expect(CityNameMatcher::match([1109 => 'Munoz'], 'Science City of Muñoz'))->toBe(1109)
+        ->and(CityNameMatcher::aliasKey('Science Muñoz'))->toBe('munoz');
+});
+
+test('REGRESSION: the San Jose alias is a second chance only — a plain San Jose row still wins', function () {
+    // Ten provinces have a plain "San Jose"; none of them is Antique's capital.
+    $batangas = [200 => 'San Jose', 201 => 'Lipa City'];
+
+    expect(CityNameMatcher::match($batangas, 'San Jose'))->toBe(200);
+
+    // And a province with neither row gets nothing, not Antique's city.
+    expect(CityNameMatcher::match([201 => 'Lipa City'], 'San Jose'))->toBeNull();
+});
+
+test('rewriteSga reduces a Special Geographic Area group to the Cotabato town it was carved from', function () {
+    $cases = [
+        'Special Geographic Area - Pikit II' => 'Pikit',
+        'Special Geographic Area - Pikit III' => 'Pikit',
+        'Special Geographic Area - Midsayap I' => 'Midsayap',
+        'Special Geographic Area - Kabacan' => 'Kabacan',
+        'Special Geographic Area - Carmen' => 'Carmen',
+        'Special Geographic Area - Pigkawayan' => 'Pigkawayan',
+        // Anything else is returned untouched, including a town whose name
+        // merely ends in roman-numeral letters.
+        'Cebu City' => 'Cebu City',
+        'Tondo I / II' => 'Tondo I / II',
+        'Davao' => 'Davao',
+    ];
+
+    foreach ($cases as $name => $expected) {
+        expect([$name, CityNameMatcher::rewriteSga($name)])->toBe([$name, $expected]);
+    }
+
+    // The rewritten name then matches like any other town.
+    expect(CityNameMatcher::match([1660 => 'Pikit', 1661 => 'Kabacan'], CityNameMatcher::rewriteSga('Special Geographic Area - Pikit II')))->toBe(1660);
+});
