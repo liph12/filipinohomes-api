@@ -27,6 +27,13 @@ use Illuminate\Support\Str;
  * Only recipients who prefer push (and are signed in on a device) get the push
  * here; everyone else receives the submission/acceptance email already sent by
  * ChatController::store (see MessageNotificationMailer channel gating).
+ *
+ * $onlyUserId + $isAcceptance power the second use: InquiryModerationService
+ * re-dispatches this (synchronously) right after an accept, narrowed to just
+ * the newly-attached agent, so a push-preferring agent is told their inquiry
+ * was assigned — the acceptance email already skips them for the same reason
+ * (see MessageNotificationMailer::dispatchForAcceptance's prefersInquiryPush
+ * gate), so exactly one channel ever reaches them, never both, never neither.
  */
 class SendInquiryReviewNotification implements ShouldQueue
 {
@@ -36,6 +43,8 @@ class SendInquiryReviewNotification implements ShouldQueue
         public int $conversationId,
         public int $messageId,
         public int $senderId,
+        public ?int $onlyUserId = null,
+        public bool $isAcceptance = false,
     ) {}
 
     public function handle(): void
@@ -71,6 +80,13 @@ class SendInquiryReviewNotification implements ShouldQueue
             })
             ->unique('id')
             ->values();
+
+        // Acceptance re-dispatch: narrow to the one agent being notified so
+        // admins/the team leader — already pushed at submission — don't get
+        // a second one now.
+        if ($this->onlyUserId !== null) {
+            $recipients = $recipients->filter(fn ($u) => $u->id === $this->onlyUserId)->values();
+        }
 
         if ($recipients->isEmpty()) {
             return;
@@ -118,8 +134,13 @@ class SendInquiryReviewNotification implements ShouldQueue
             'has_team' => (bool) $teamName,
         ]);
 
-        $title = 'New listing inquiry to review';
-        $body = $clientName.' inquired on '.$listingName;
+        // Acceptance copy mirrors the acceptance email's subject line
+        // ("Inquiry assigned to you — <listing>") so the two channels read
+        // as one notification whichever one a given agent actually gets.
+        $title = $this->isAcceptance ? 'Inquiry assigned to you' : 'New listing inquiry to review';
+        $body = $this->isAcceptance
+            ? $clientName.' is waiting for your reply on '.$listingName
+            : $clientName.' inquired on '.$listingName;
         if ($message->body) {
             $body .= ' — '.Str::limit($message->body, 80);
         }

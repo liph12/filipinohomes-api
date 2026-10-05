@@ -14,6 +14,15 @@ Schedule::command('listings:expire-featured')->daily();
 Schedule::command('ats:expiry-reminders')->dailyAt('00:00')->withoutOverlapping();
 Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlapping();
 
+// Automatic inquiry approver — admin-configured in System Settings (days +
+// optional hour window, Asia/Manila). Gating happens INSIDE the command
+// (InquiryAutoApprovalService::isWindowOpen), not here, so a settings change
+// takes effect on the next tick with no deploy. withoutOverlapping(10) caps
+// a stuck run's file-lock at 10 minutes, same guard as everything else in
+// this file — the production scheduler uses file-based mutexes that can be
+// left behind by a crashed run (see the api2-ops footgun notes).
+Schedule::command('inquiries:auto-approve')->everyFiveMinutes()->withoutOverlapping(10);
+
 // Nightly boss digest — today's site activity to every un-muted admin, at the
 // close of the Manila day. `php artisan reports:send-activity you@x.com` for a
 // one-off test send.

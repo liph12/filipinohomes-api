@@ -5,13 +5,12 @@ namespace App\Http\Controllers;
 use App\Http\Resources\ConversationResource;
 use App\Models\Chat;
 use App\Models\Conversation;
+use App\Services\Inquiry\InquiryModerationService;
 use App\Services\ReviewEligibilityService;
 use App\Services\TeamLeadershipService;
 use App\Support\Impersonation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Mail\MessageNotificationMailer;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -95,134 +94,22 @@ class ConversationController extends Controller
     }
 
     /**
-     * Per-conversation accept logic — shared between the single-row
-     * accept() endpoint and the bulkAction() endpoint. Caller is
-     * responsible for authorization + the status === 'pending' check;
-     * this helper assumes both have already passed.
-     *
-     * Side effects: updates conversation status, attaches the agent
-     * to conversation_users so they see the full message history,
-     * and dispatches the acceptance email (with try/catch so a
-     * failing transport never 500s the caller — the DB commit
-     * already succeeded by the time we attempt the send).
+     * Per-conversation accept/reject logic — shared between the single-row
+     * accept()/reject() endpoints, bulkAction(), and the scheduled
+     * auto-approver (App\Console\Commands\AutoApproveInquiries). Caller is
+     * responsible for authorization + the status === 'pending' check; the
+     * service assumes both have already passed. See
+     * App\Services\Inquiry\InquiryModerationService for the mutation + side
+     * effects (status write, agent attach, acceptance email/push, audit).
      */
     private function applyAccept(Conversation $conversation, $user): void
     {
-        $message = $conversation->latestMessage?->body;
-        $agent = $conversation->agentUser;
-        $sender = $conversation->chat?->user;
-        // Load the sender's agent profile so the email can surface
-        // their WhatsApp number when they're an agent. Skipped
-        // silently for regular clients (the relation returns null).
-        $sender?->loadMissing('agent');
-        $type = $conversation->chat?->listing;
-        // Load the relations the email's property card needs so we
-        // don't trigger N+1 queries inside the mailer payload builder.
-        if ($type) {
-            $type->load([
-                'agent',
-                'category',
-                'property.barangay.city.province',
-                'property.propertyAttribute.subtype.type',
-            ]);
-        }
-        // Slug trailer must be the chat_id — the frontend's
-        // ListingInquiries component matches `{slug}-{chat.id}` to
-        // find the right inquiry. Using conversation.id here would
-        // render the page with no inquiry selected (slugError =
-        // "invalid"). Falls through gracefully when the chat has
-        // no listing (agent-direct chats don't carry a listing).
-        $slug = $type
-            ? Str::slug($type->name) . '-' . $conversation->chat_id
-            : 'chat-' . $conversation->chat_id;
-
-        $listingName = $type?->name;
-        $conversation->auditSource = 'inquiry_accept';
-        $conversation->auditDescription = sprintf(
-            '%s accepted the inquiry%s',
-            $user->name,
-            $listingName ? " on {$listingName}" : '',
-        );
-
-        $conversation->update([
-            'status' => 'accepted',
-            'reviewed_by' => $user->id,
-            'reviewed_at' => now(),
-        ]);
-
-        // Add the agent to conversation_users so they can see the full history
-        if ($conversation->agent_user_id) {
-            $conversation->users()->syncWithoutDetaching([
-                $conversation->agent_user_id => [
-                    'last_read_at' => null,
-                    'last_notified_at' => now(),
-                ],
-            ]);
-        }
-
-        // Strictly notify the agent. Admins + team leader already
-        // saw the submission email when the client first filed the
-        // inquiry (see ChatController@store → dispatchForSubmission),
-        // so a second copy here would just be inbox noise.
-        //
-        // The acceptance itself is already committed above — a
-        // failing email transport MUST NOT 500 the controller. Log
-        // the failure + write an audit row, then return success;
-        // the email is a side-effect notification, not a critical
-        // path. Particularly important for bulkAction() where one
-        // bad email shouldn't take down a batch of 50.
-        if (!$agent || !$sender) {
-            return; // nothing to notify (e.g. agent_user_id was null)
-        }
-        try {
-            MessageNotificationMailer::dispatchForAcceptance(
-                sender:      $sender,
-                agent:       $agent,
-                message:     $message ?? '',
-                slug:        $slug,
-                listing:     MessageNotificationMailer::buildListingPayload($type),
-                agentUserId: $conversation->agent_user_id,
-            );
-        } catch (Throwable $e) {
-            Log::warning('Acceptance email failed to dispatch', [
-                'conversation_id' => $conversation->id,
-                'agent_user_id'   => $conversation->agent_user_id,
-                'error'           => $e->getMessage(),
-            ]);
-            app(\App\Services\AuditMailService::class)->recordFailure(
-                $e,
-                MessageNotificationMailer::class,
-                $agent?->email ? [$agent->email] : [],
-                'Inquiry accepted — agent notification',
-                [
-                    'auditable_type' => Conversation::class,
-                    'auditable_id'   => $conversation->id,
-                ],
-            );
-        }
+        app(InquiryModerationService::class)->accept($conversation, $user);
     }
 
-    /**
-     * Per-conversation reject logic — shared between the single-row
-     * reject() endpoint and the bulkAction() endpoint. No email
-     * dispatch on the reject side (clients aren't notified of
-     * rejection by design).
-     */
     private function applyReject(Conversation $conversation, $user): void
     {
-        $listingName = $conversation->chat?->listing?->name;
-        $conversation->auditSource = 'inquiry_reject';
-        $conversation->auditDescription = sprintf(
-            '%s rejected the inquiry%s',
-            $user->name,
-            $listingName ? " on {$listingName}" : '',
-        );
-
-        $conversation->update([
-            'status' => 'rejected',
-            'reviewed_by' => $user->id,
-            'reviewed_at' => now(),
-        ]);
+        app(InquiryModerationService::class)->reject($conversation, $user);
     }
 
     /**

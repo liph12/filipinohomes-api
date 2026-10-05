@@ -26,6 +26,7 @@ use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CityController;
 use App\Http\Controllers\CompanyEventController;
 use App\Http\Controllers\ConversationController;
+use App\Http\Controllers\InquiryAutoApprovalController;
 use App\Http\Controllers\DeviceTokenController;
 use App\Http\Controllers\EmailChangeController;
 use App\Http\Controllers\FacilityAdminController;
@@ -927,6 +928,14 @@ Route::middleware('strip.tags')->group(function () {
                 Route::put('/admin/analytics/report-settings', [AnalyticsController::class, 'updateReportSettings']);
                 Route::post('/admin/analytics/report-test', [AnalyticsController::class, 'sendTestReport'])
                     ->middleware('throttle:3,1'); // GA + OpenAI + SMTP per click
+
+                // Automatic Inquiry Approver — settings KV behind
+                // InquiryAutoApprovalService; consumed by the scheduled
+                // `inquiries:auto-approve` command (routes/console.php).
+                Route::get('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'show']);
+                Route::put('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'update']);
+                Route::post('/admin/inquiries/auto-approval/preview', [InquiryAutoApprovalController::class, 'preview'])
+                    ->middleware('throttle:20,1');
                 // FH Analytics Assistant (OpenAI tool loop over GA/GSC).
                 Route::post('/admin/analytics/chat', [AnalyticsController::class, 'chat'])
                     ->middleware('throttle:20,1');
