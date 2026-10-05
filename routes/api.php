@@ -833,6 +833,22 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);
                 Route::post('/admin/inquiries/mark-all-read', [InquiryController::class, 'markAllRead']);
+
+                // Automatic Inquiry Approver — settings KV behind
+                // InquiryAutoApprovalService; consumed by the scheduled
+                // `inquiries:auto-approve` command (routes/console.php).
+                // MUST stay registered before the GET {inquiry} wildcard
+                // below: Laravel matches routes in registration order, and
+                // {inquiry} has an implicit model binding that would
+                // otherwise swallow "auto-approval" as an Inquiry id lookup
+                // and 404 with "No query results for model [Inquiry]
+                // auto-approval" (same reason mark-all-read above is also
+                // literal-before-wildcard).
+                Route::get('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'show']);
+                Route::put('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'update']);
+                Route::post('/admin/inquiries/auto-approval/preview', [InquiryAutoApprovalController::class, 'preview'])
+                    ->middleware('throttle:20,1');
+
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
@@ -950,14 +966,6 @@ Route::middleware('strip.tags')->group(function () {
                 Route::put('/admin/analytics/report-settings', [AnalyticsController::class, 'updateReportSettings']);
                 Route::post('/admin/analytics/report-test', [AnalyticsController::class, 'sendTestReport'])
                     ->middleware('throttle:3,1'); // GA + OpenAI + SMTP per click
-
-                // Automatic Inquiry Approver — settings KV behind
-                // InquiryAutoApprovalService; consumed by the scheduled
-                // `inquiries:auto-approve` command (routes/console.php).
-                Route::get('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'show']);
-                Route::put('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'update']);
-                Route::post('/admin/inquiries/auto-approval/preview', [InquiryAutoApprovalController::class, 'preview'])
-                    ->middleware('throttle:20,1');
                 // FH Analytics Assistant (OpenAI tool loop over GA/GSC).
                 Route::post('/admin/analytics/chat', [AnalyticsController::class, 'chat'])
                     ->middleware('throttle:20,1');
