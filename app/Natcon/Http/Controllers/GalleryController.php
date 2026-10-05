@@ -1323,7 +1323,7 @@ class GalleryController extends Controller
         $this->guardScope($request, $album->event);
 
         $rows = $request->boolean('inherit')
-            ? $this->framesFor($album)
+            ? $this->framesFor($album, $this->viewerIsAdmin())
             : $album->frames()->live()->orderBy('sort_order')->orderBy('id')->get();
 
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))]);
@@ -1353,6 +1353,11 @@ class GalleryController extends Controller
             'window_w' => 'required|numeric|min:0.05|max:1',
             'window_h' => 'required|numeric|min:0.05|max:1',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
+            // Reserve the frame for one award segment (null/absent = everyone).
+            'award_segments' => ['nullable', 'array'],
+            'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(\App\Natcon\Models\Recipient::SEGMENTS)],
+            // Within those segments: only for awardees flagged Elite.
+            'elite_only' => 'sometimes|boolean',
         ], [
             'frame.mimes' => 'Please upload a PNG with a transparent photo window.',
             'frame.max' => 'That frame is too large. Please keep it under 15MB.',
@@ -1379,6 +1384,9 @@ class GalleryController extends Controller
         $frame = new GalleryAlbumFrame([
             'album_id' => $album?->id,
             'natcon_event_id' => $event?->id,
+            // Only convention-level frames can be reserved for a segment.
+            'award_segments' => $event ? $this->normaliseSegments($data['award_segments'] ?? null) : null,
+            'elite_only' => $event && ! empty($data['award_segments']) && ! empty($data['elite_only']),
             'name' => trim($data['name']),
             'image_url' => rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key,
             's3_key' => $key,
@@ -1411,6 +1419,14 @@ class GalleryController extends Controller
         $data = $request->validate([
             'name' => 'sometimes|string|max:120',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
+            'award_segments' => ['sometimes', 'nullable', 'array'],
+            'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(\App\Natcon\Models\Recipient::SEGMENTS)],
+            'elite_only' => 'sometimes|boolean',
+            // The name plate area, all four or none (null clears it).
+            'text_x' => 'sometimes|nullable|required_with:text_y,text_w,text_h|numeric|min:0|max:1',
+            'text_y' => 'sometimes|nullable|required_with:text_x,text_w,text_h|numeric|min:0|max:1',
+            'text_w' => 'sometimes|nullable|required_with:text_x,text_y,text_h|numeric|min:0.02|max:1',
+            'text_h' => 'sometimes|nullable|required_with:text_x,text_y,text_w|numeric|min:0.01|max:1',
             // Window edits come as a complete set or not at all — a lone
             // coordinate against three stored ones is meaningless.
             'window_x' => 'sometimes|required_with:window_y,window_w,window_h|numeric|min:0|max:1',
@@ -1424,8 +1440,23 @@ class GalleryController extends Controller
             return response()->json(['message' => 'The photo window falls outside the frame.'], 422);
         }
 
+        if (isset($data['text_x'], $data['text_w'], $data['text_y'], $data['text_h'])
+            && ($data['text_x'] + $data['text_w'] > 1.0001 || $data['text_y'] + $data['text_h'] > 1.0001)) {
+            return response()->json(['message' => 'The name area falls outside the frame.'], 422);
+        }
+
         if (isset($data['name'])) {
             $data['name'] = trim($data['name']);
+        }
+
+        // Elite only means something inside a segment — clearing the segment
+        // clears it, and it can't be set on a frame that has none.
+        if (array_key_exists('award_segments', $data)) {
+            $data['award_segments'] = $this->normaliseSegments($data['award_segments']);
+        }
+        $segmentsAfter = array_key_exists('award_segments', $data) ? $data['award_segments'] : $frame->award_segments;
+        if (empty($segmentsAfter)) {
+            $data['elite_only'] = false;
         }
 
         $frame->auditSource = $this->auditSource(null);
@@ -1458,7 +1489,11 @@ class GalleryController extends Controller
      *
      * @return \Illuminate\Support\Collection<int, GalleryAlbumFrame>
      */
-    private function framesFor(GalleryAlbum $album): \Illuminate\Support\Collection
+    /**
+     * @param  bool  $includeSegmented  Segment-reserved frames (award_segments set) are for
+     *                                  awardees only — hidden everywhere except the admin tool.
+     */
+    private function framesFor(GalleryAlbum $album, bool $includeSegmented = false): \Illuminate\Support\Collection
     {
         $ids = [$album->id];
         if (self::FRAMES_INHERIT) {
@@ -1481,6 +1516,7 @@ class GalleryController extends Controller
                 }
             })
             ->live()
+            ->when(! $includeSegmented, fn ($q) => $q->whereNull('award_segments'))
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
@@ -1503,6 +1539,92 @@ class GalleryController extends Controller
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))]);
     }
 
+    /**
+     * The signed-in agent's NATCON award, if any: their FH email matched
+     * against the live convention's recipient roster (there is no user_id on a
+     * recipient — email is the only key, lowercased on both sides). Only
+     * recipients holding an award SEGMENT count; an ordinary Leuterio Realty
+     * agent (segment null) is not an "awardee" here. Server-side only — the
+     * client never states its own segment.
+     *
+     * @return array{event: NatconEvent, segment: string, elite: bool, elite_known: bool, name: string, team: string}|null
+     */
+    private function awardeeFor(Request $request): ?array
+    {
+        $email = mb_strtolower(trim((string) $request->user()?->email));
+        $event = NatconEvent::active();
+
+        if ($email === '' || ! $event) {
+            return null;
+        }
+
+        $recipient = \App\Natcon\Models\Recipient::query()
+            ->where('natcon_event_id', $event->id)
+            ->where('email', $email)
+            ->where('status', '!=', \App\Natcon\Models\Recipient::STATUS_EXCLUDED)
+            ->whereNotNull('award_segment')
+            ->first();
+
+        if (! $recipient) {
+            return null;
+        }
+
+        // Elite is a registration fact (the Elite toggle in the admin's Awardees
+        // table, held by the registration service), joined by email. If that
+        // service can't be reached the awardee simply isn't treated as elite.
+        $registrants = app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year);
+        $row = $registrants[$email] ?? null;
+
+        return [
+            'event' => $event,
+            'segment' => (string) $recipient->award_segment,
+            'elite' => (bool) ($row['is_elite'] ?? false),
+            // false = the registration service couldn't be read (unreachable,
+            // or it rejected our service token), so "not elite" is a guess.
+            'elite_known' => $registrants !== null,
+            // For the awardee frame's name plate. display_name already holds a
+            // couple's whole name ("Jessie and Suzan Cruz").
+            'name' => (string) ($recipient->display_name ?: trim($recipient->first_name.' '.$recipient->last_name)),
+            'team' => (string) ($recipient->team ?? ''),
+        ];
+    }
+
+    /** Agent: am I an awardee of the live convention, and in which segment? */
+    public function myAwardee(Request $request): JsonResponse
+    {
+        $a = $this->awardeeFor($request);
+
+        return response()->json(['data' => [
+            'is_awardee' => $a !== null,
+            'event_id' => $a['event']->id ?? null,
+            'year' => $a['event']->year ?? null,
+            'award_segment' => $a['segment'] ?? null,
+            'is_elite' => $a['elite'] ?? false,
+            'elite_known' => $a['elite_known'] ?? true,
+            'display_name' => $a['name'] ?? null,
+            'team' => ($a['team'] ?? '') !== '' ? $a['team'] : null,
+        ]]);
+    }
+
+    /** Agent: the frames reserved for MY award segment this convention (none → 403). */
+    public function myAwardeeFrames(Request $request): JsonResponse
+    {
+        $a = $this->awardeeFor($request);
+
+        abort_if($a === null, 403, 'Not a NATCON awardee.');
+
+        $rows = GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
+            ->live()
+            ->whereJsonContains('award_segments', $a['segment'])
+            // Elite-circle frames only reach awardees flagged Elite.
+            ->when(! $a['elite'], fn ($q) => $q->where('elite_only', false))
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
+    }
+
     /** Public read of a convention's own live frames, by year. */
     public function publicEventFrames(int $year): JsonResponse
     {
@@ -1512,8 +1634,10 @@ class GalleryController extends Controller
             return response()->json(['message' => 'Event not found.'], 404);
         }
 
+        // General frames only — segment-reserved ones are for awardees.
         $rows = GalleryAlbumFrame::where('natcon_event_id', $event->id)
             ->live()
+            ->whereNull('award_segments')
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -1577,6 +1701,17 @@ class GalleryController extends Controller
         return $flags;
     }
 
+    /** A frame's audience as a clean list: known segments only, unique; empty → null (= everyone). */
+    private function normaliseSegments(?array $segments): ?array
+    {
+        $clean = array_values(array_unique(array_intersect(
+            array_map('strval', $segments ?? []),
+            \App\Natcon\Models\Recipient::SEGMENTS,
+        )));
+
+        return $clean === [] ? null : $clean;
+    }
+
     private function presentFrame(GalleryAlbumFrame $f): array
     {
         return [
@@ -1584,6 +1719,9 @@ class GalleryController extends Controller
             'album_id' => $f->album_id,
             // Set instead of album_id for convention-level frames.
             'natcon_event_id' => $f->natcon_event_id,
+            // Reserved for this award segment; null = offered to everyone.
+            'award_segments' => $f->award_segments ?? [],
+            'elite_only' => (bool) $f->elite_only,
             'name' => $f->name,
             'image_url' => $f->image_url,
             'width' => $f->width,
@@ -1593,6 +1731,13 @@ class GalleryController extends Controller
                 'y' => (float) $f->window_y,
                 'w' => (float) $f->window_w,
                 'h' => (float) $f->window_h,
+            ],
+            // Where the awardee's name is written (fractions of the frame); null = not set.
+            'text_area' => $f->text_x === null ? null : [
+                'x' => (float) $f->text_x,
+                'y' => (float) $f->text_y,
+                'w' => (float) $f->text_w,
+                'h' => (float) $f->text_h,
             ],
             'sort_order' => $f->sort_order,
             'created_at' => $f->created_at?->toIso8601String(),

@@ -607,6 +607,9 @@ Route::middleware('strip.tags')->group(function () {
                 Route::post('/admin/natcon/gallery/face-search', [NatconGalleryController::class, 'faceSearch']);
                 Route::get('/admin/natcon/gallery/albums', [NatconGalleryController::class, 'albums']);
                 Route::get('/admin/natcon/gallery/albums/{album}/frames', [NatconGalleryController::class, 'albumFrames']);
+                // The signed-in agent's own award + the frames reserved for that segment.
+                Route::get('/natcon/my-awardee', [NatconGalleryController::class, 'myAwardee']);
+                Route::get('/natcon/my-awardee/frames', [NatconGalleryController::class, 'myAwardeeFrames']);
             });
 
             // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.

@@ -33,14 +33,20 @@ class GalleryAlbumFrame extends Model implements Auditable
     protected array $auditLabelAttributes = ['name'];
 
     protected $fillable = [
-        'album_id', 'natcon_event_id', 'name', 'image_url', 's3_key', 'width', 'height',
+        'album_id', 'natcon_event_id', 'award_segments', 'elite_only', 'name', 'image_url', 's3_key', 'width', 'height',
         'byte_size', 'window_x', 'window_y', 'window_w', 'window_h',
+        'text_x', 'text_y', 'text_w', 'text_h',
+        'text_x', 'text_y', 'text_w', 'text_h',
         'sort_order', 'status', 'created_by',
     ];
 
     protected $casts = [
         // float, NOT decimal:5 — the decimal cast serializes as a STRING,
         // which the frontend's numeric window math would choke on.
+        'text_x' => 'float',
+        'text_y' => 'float',
+        'text_w' => 'float',
+        'text_h' => 'float',
         'window_x' => 'float',
         'window_y' => 'float',
         'window_w' => 'float',
@@ -49,6 +55,8 @@ class GalleryAlbumFrame extends Model implements Auditable
         'height' => 'integer',
         'byte_size' => 'integer',
         'sort_order' => 'integer',
+        'award_segments' => 'array',
+        'elite_only' => 'boolean',
     ];
 
     /** Album-level frame (public albums, or a legacy convention album frame). */
