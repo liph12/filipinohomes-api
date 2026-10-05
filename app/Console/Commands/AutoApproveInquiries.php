@@ -27,11 +27,13 @@ use Throwable;
  * Audit: console-context model auditing is off by default
  * (config('audit.console') === false), so the LogsActivity-driven audit row
  * Conversation::update() normally writes would be silently skipped here.
- * This command flips that flag on for the duration of the run (process-
- * local — never persisted) so the mutation is still recorded under the
- * 'inquiries' category, filterable by its own 'inquiry_auto_approve' source —
- * distinct from a human's 'inquiry_accept' and the existing submit-time
- * 'inquiry_auto_accept' bypass for trusted senders.
+ * This command flips that flag on — as the FIRST thing handle() does, before
+ * any Conversation model is touched (see the comment at the top of handle())
+ * — for the duration of the run (process-local — never persisted) so the
+ * mutation is still recorded under the 'inquiries' category, filterable by
+ * its own 'inquiry_auto_approve' source — distinct from a human's
+ * 'inquiry_accept' and the existing submit-time 'inquiry_auto_accept' bypass
+ * for trusted senders. Visible in the admin System Logs → All Logs screen.
  */
 class AutoApproveInquiries extends Command
 {
@@ -43,6 +45,18 @@ class AutoApproveInquiries extends Command
 
     public function handle(InquiryAutoApprovalService $approval, InquiryModerationService $moderation): int
     {
+        // See the class doc — console model-auditing is off by default.
+        // This MUST run before any Conversation model is touched (including
+        // the eligibility query below): owen-it's auditing package decides
+        // whether to register its audit observer for a model class exactly
+        // once, the first time that class boots in this process
+        // (vendor/owen-it/laravel-auditing/src/Auditable.php — bootAuditable
+        // reads audit.console once and only then registers the observer).
+        // Flipping the config AFTER Conversation has already booted is too
+        // late and silently produces zero audit rows — confirmed by hand
+        // against the local dev DB before this ordering fix.
+        config(['audit.console' => true]);
+
         $settings = $approval->settings();
 
         if (! $settings['enabled']) {
@@ -76,10 +90,6 @@ class AutoApproveInquiries extends Command
 
             return self::SUCCESS;
         }
-
-        // See the class doc — console model-auditing is off by default;
-        // turn it on for this run only so acceptance writes an audit row.
-        config(['audit.console' => true]);
 
         $approved = 0;
         $failed = 0;
