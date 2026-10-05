@@ -36,6 +36,15 @@ class GalleryUploadInvite extends Model implements Auditable
     protected array $auditLabelAttributes = ['label'];
 
     /**
+     * `last_used_at` is bookkeeping, not an edit — every single upload moves
+     * it. Auditing it filled the photographer's History with a "Link changed"
+     * entry between each of their photos, which buried the uploads the screen
+     * exists to show. Rotating or revoking the token still audits: those
+     * change what the link DOES.
+     */
+    protected $auditExclude = ['last_used_at'];
+
+    /**
      * Token fields are deliberately NOT fillable — they are set via forceFill
      * by GalleryInviteService only, exactly like Recipient's.
      */

@@ -46,6 +46,15 @@ class PhotographerGalleryController extends Controller
         private FaceRecognitionService $faces,
     ) {}
 
+    /**
+     * Every album of the invite's scope, keyed by id — filled by scopeAlbums()
+     * and read by publicPath() so building an album's slug chain costs no
+     * extra queries.
+     *
+     * @var \Illuminate\Support\Collection<int, GalleryAlbum>|null
+     */
+    private ?\Illuminate\Support\Collection $albumsById = null;
+
     // ── Read ─────────────────────────────────────────────────────────────────
 
     /**
@@ -316,6 +325,57 @@ class PhotographerGalleryController extends Controller
         });
     }
 
+    /**
+     * Remove several of the photographer's own photos in one request.
+     *
+     * Event day produces hundreds of near-identical frames and the portal's
+     * one-at-a-time delete made culling them a hold-confirm per photo. Same
+     * status flip as destroyPhoto, same ownership fence — ids that are not
+     * this invite's, or are already deleted, are reported as `skipped` rather
+     * than refused, because a wrong id must not confirm the photo exists.
+     *
+     * Nothing owned at all IS a 404, matching the single delete: that is the
+     * shape of "you are asking about photos that are not yours".
+     *
+     * One touch and one debounced purge for the whole batch — a 200-photo cull
+     * must not fire 200 frontend revalidations.
+     */
+    public function bulkDestroyPhotos(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            't' => 'required|string|min:16|max:160',
+            'ids' => 'required|array|min:1|max:200',
+            'ids.*' => 'integer',
+        ]);
+
+        return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($data) {
+            $ids = array_values(array_unique(array_map('intval', $data['ids'])));
+
+            $photos = GalleryPhoto::whereIn('id', $ids)
+                ->where('upload_invite_id', $invite->id)
+                ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+                ->get();
+
+            abort_if($photos->isEmpty(), 404, 'Photo not found.');
+
+            foreach ($photos as $photo) {
+                $photo->auditSource = 'photographer_invite';
+                $photo->forceFill(['status' => GalleryPhoto::STATUS_DELETED])->save();
+                $this->forgetFaces($photo);
+            }
+
+            $this->touch($invite);
+            $this->purgeDebounced($invite);
+
+            $deleted = $photos->pluck('id')->all();
+
+            return response()->json(['data' => [
+                'deleted' => $deleted,
+                'skipped' => array_values(array_diff($ids, $deleted)),
+            ]]);
+        });
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /**
@@ -344,6 +404,11 @@ class PhotographerGalleryController extends Controller
     private function scopeAlbums(GalleryUploadInvite $invite): \Illuminate\Support\Collection
     {
         $all = GalleryAlbum::forEvent($invite->event)->orderBy('name')->get();
+
+        // Keep the UNFILTERED set for publicPath(): an album's shareable URL is
+        // its whole slug chain from the gallery root, which for a fenced invite
+        // runs through ancestors the photographer can't see.
+        $this->albumsById = $all->keyBy('id');
 
         if (! $invite->root_album_id) {
             return $all;
@@ -505,6 +570,34 @@ class PhotographerGalleryController extends Controller
         }
     }
 
+    /**
+     * The album's public URL path — the slug chain the page is served at,
+     * without the /natcon/gallery prefix the frontend adds.
+     *
+     * Walks the id map scopeAlbums() built rather than the `parent` relation,
+     * so a tree of albums costs one query instead of one per level — and falls
+     * back to ancestors() on a miss, because the single-album writes answer
+     * without ever loading the scope. The 20-step cap matches
+     * GalleryAlbum::ancestors(): corrupt self-referencing data stops the walk
+     * instead of hanging it.
+     */
+    private function publicPath(GalleryAlbum $a): string
+    {
+        $chain = [$a->slug];
+
+        $node = $a;
+        for ($i = 0; $i < 20 && $node->parent_id; $i++) {
+            $parent = $this->albumsById?->get($node->parent_id) ?? $node->parent;
+            if (! $parent) {
+                break;
+            }
+            array_unshift($chain, $parent->slug);
+            $node = $parent;
+        }
+
+        return implode('/', array_filter($chain));
+    }
+
     private function presentAlbum(GalleryAlbum $a, GalleryUploadInvite $invite, ?int $photoCount = null): array
     {
         return [
@@ -512,6 +605,12 @@ class PhotographerGalleryController extends Controller
             'parent_id' => $a->parent_id,
             'name' => $a->name,
             'path' => $a->path(),
+            // `event` or `prep` — the portal collapses Behind the scenes, which
+            // is rarely the hired photographer's to shoot.
+            'section' => $a->section,
+            'slug' => $a->slug,
+            // Where this album is published, for the portal's Share button.
+            'public_path' => $this->publicPath($a),
             'sort_order' => $a->sort_order,
             'photo_count' => $photoCount ?? (int) ($a->photos_count ?? 0),
             'mine' => $a->upload_invite_id === $invite->id,

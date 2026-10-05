@@ -54,6 +54,11 @@ class ActivityLogController extends Controller
         // The outbox and send batches are deliberately NOT audited — they exist
         // to churn status flips, and the sends themselves land under 'mailer'.
         'natcon',
+        // Convention + public photo galleries: albums, photos (uploads,
+        // captions, hide/remove/restore/permanent delete) and the photographer
+        // upload links (LogsActivity, $auditCategory='gallery'). Photographer
+        // rows carry no user — the actor is the link, named by `source`.
+        'gallery',
     ];
 
     /**

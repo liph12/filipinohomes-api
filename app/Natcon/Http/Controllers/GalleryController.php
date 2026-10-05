@@ -2,7 +2,9 @@
 
 namespace App\Natcon\Http\Controllers;
 
+use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\Controller;
+use App\Models\Audit;
 use App\Models\GalleryAlbum;
 use App\Models\GalleryAlbumFrame;
 use App\Models\GalleryPhoto;
@@ -750,6 +752,366 @@ class GalleryController extends Controller
         return response()->json(['data' => $this->present($photo->fresh(), detailed: true)]);
     }
 
+    // ── Trash (deleted photos: restore, or remove for real) ──────────────────
+
+    /**
+     * What has been removed from this scope and can still be got back.
+     *
+     * Every delete in this module is a status flip, so "deleted" photos have
+     * always been sitting in the table — findable only by an admin with SQL.
+     * Photographers delete their own work through the portal and an event-day
+     * mistake was unrecoverable in practice. This is that drawer, opened.
+     *
+     * `restores_as` and `deleted_by` are reconstructed from the audit trail,
+     * not stored: the status column holds one value and the row it replaced
+     * (active vs hidden) is only recorded in the audit. Shown on the tile so
+     * the admin knows whether restoring republishes a photo or returns it to
+     * the review queue BEFORE they press it.
+     */
+    public function trash(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+
+        $rows = GalleryPhoto::with(['album:id,parent_id,slug,name,sort_order', 'uploadInvite:id,label'])
+            ->forEvent($event)
+            ->where('status', GalleryPhoto::STATUS_DELETED)
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->limit(500)
+            ->get();
+
+        $meta = $this->deletionMeta($rows->pluck('id')->all());
+
+        return response()->json(['data' => $rows->map(function (GalleryPhoto $p) use ($meta, $event) {
+            $m = $meta[$p->id] ?? [];
+
+            return $this->present($p, detailed: true) + [
+                'restores_as' => $m['restores_as'] ?? GalleryPhoto::STATUS_HIDDEN,
+                'deleted_at' => ($m['deleted_at'] ?? $p->updated_at)?->toIso8601String(),
+                'deleted_by' => $m['deleted_by'] ?? null,
+                // False for the imported rows whose file belongs to another
+                // folder: deleting those removes the row only.
+                's3_owned' => $this->ownedS3Keys($p, $event) !== [],
+                'invite' => $p->uploadInvite ? [
+                    'id' => $p->uploadInvite->id,
+                    'label' => $p->uploadInvite->label,
+                ] : null,
+            ];
+        })]);
+    }
+
+    /**
+     * Put photos back where they were.
+     *
+     * Restores to the status the audit says they held — a photo hidden pending
+     * review returns to the review queue, not to the public page. Fallback is
+     * hidden, which is also what a row whose audit has aged out gets: showing
+     * something publicly again is the admin's call, never a guess of ours.
+     *
+     * ⚠️ The face columns must be nulled. forgetFaces() evicted the vectors
+     *    from Rekognition on delete but left face_ids/faces_indexed_at on the
+     *    row, and the re-index sweep's work-list is "faces_indexed_at IS NULL"
+     *    — so without this a restored photo would never be findable by face
+     *    again. Nulling hands it to natcon:index-gallery-faces, which runs
+     *    every five minutes; indexing inline would be a Rekognition round trip
+     *    per photo with a whole multi-select waiting on it.
+     */
+    public function restorePhotos(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+        $ids = $this->trashIds($request, max: 200);
+
+        $rows = GalleryPhoto::with('album')
+            ->forEvent($event)
+            ->whereIn('id', $ids)
+            ->where('status', GalleryPhoto::STATUS_DELETED)
+            ->get();
+
+        $meta = $this->deletionMeta($rows->pluck('id')->all());
+        $restored = [];
+        $purgeAlbums = [];
+
+        foreach ($rows as $photo) {
+            $status = $meta[$photo->id]['restores_as'] ?? GalleryPhoto::STATUS_HIDDEN;
+
+            $photo->auditSource = $this->auditSource($event);
+            $photo->auditDescription = 'Restored from trash';
+            $photo->forceFill([
+                'status' => $status,
+                'face_ids' => null,
+                // ⚠️ 0, not null: gallery_photos.face_count is NOT NULL
+                //    DEFAULT 0 (the sibling natcon_album_photos table is
+                //    nullable, which is the trap). `faces_indexed_at` is the
+                //    sweep's work-list and IS nullable — that one is what
+                //    actually re-queues the photo.
+                'face_count' => 0,
+                'faces_indexed_at' => null,
+                'index_error' => null,
+            ])->save();
+
+            $restored[] = $photo;
+
+            // Only a photo that is public again changes a public page.
+            if ($status === GalleryPhoto::STATUS_ACTIVE) {
+                $purgeAlbums[$photo->album_id] = $photo->album;
+            }
+        }
+
+        foreach ($purgeAlbums as $album) {
+            $this->purge($event, $album);
+        }
+
+        return response()->json(['data' => [
+            'restored' => array_map(fn (GalleryPhoto $p) => $this->present($p->fresh(), detailed: true), $restored),
+            'skipped' => array_values(array_diff($ids, array_map(fn (GalleryPhoto $p) => $p->id, $restored))),
+        ]]);
+    }
+
+    /**
+     * Delete photos for real — the row AND the file in the bucket.
+     *
+     * The only place in this module that does. Everything else flips a status
+     * precisely because the row is the only pointer to the S3 object; here the
+     * admin has said the photo should not exist, so the pointer and the object
+     * go together and the audit row is what survives.
+     */
+    public function purgePhotos(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+        $ids = $this->trashIds($request, max: 100);
+
+        $rows = GalleryPhoto::forEvent($event)
+            ->whereIn('id', $ids)
+            ->where('status', GalleryPhoto::STATUS_DELETED)
+            ->get();
+
+        $purged = [];
+        $failed = [];
+
+        foreach ($rows as $photo) {
+            $result = $this->purgeOne($photo, $event);
+            if ($result['ok']) {
+                $purged[] = ['id' => $result['id'], 's3_removed' => $result['s3_removed']];
+            } else {
+                $failed[] = ['id' => $result['id'], 'reason' => $result['reason']];
+            }
+        }
+
+        return response()->json(['data' => [
+            'purged' => $purged,
+            'failed' => $failed,
+        ]]);
+    }
+
+    /**
+     * Empty the whole trash for this scope, in capped batches.
+     *
+     * `expected_count` is the count the admin was looking at when they typed
+     * the confirmation. A mismatch means somebody else restored or removed
+     * something in between, and the answer is 409 — this is the one action in
+     * the module that destroys files, and it must not run against a drawer
+     * whose contents changed under it.
+     *
+     * Capped at 100 rows a call because each one is an S3 delete on a request
+     * thread (no queue in production); the UI loops on `remaining`.
+     */
+    public function emptyTrash(Request $request): JsonResponse
+    {
+        $event = $this->resolveEvent($request);
+
+        $request->validate([
+            'confirm' => 'required|string|in:EMPTY TRASH',
+            'expected_count' => 'required|integer|min:0',
+        ]);
+
+        $query = fn () => GalleryPhoto::forEvent($event)->where('status', GalleryPhoto::STATUS_DELETED);
+
+        $total = $query()->count();
+        if ($total !== (int) $request->input('expected_count')) {
+            return response()->json([
+                'message' => 'The trash changed since you looked — reopen it and try again.',
+                'count' => $total,
+            ], 409);
+        }
+
+        $purged = [];
+        $failed = [];
+
+        foreach ($query()->orderBy('id')->limit(100)->get() as $photo) {
+            $result = $this->purgeOne($photo, $event);
+            if ($result['ok']) {
+                $purged[] = ['id' => $result['id'], 's3_removed' => $result['s3_removed']];
+            } else {
+                $failed[] = ['id' => $result['id'], 'reason' => $result['reason']];
+            }
+        }
+
+        return response()->json(['data' => [
+            'purged' => $purged,
+            'failed' => $failed,
+            'remaining' => $query()->count(),
+        ]]);
+    }
+
+    /** Shared validation for the trash's id-list bodies. */
+    private function trashIds(Request $request, int $max): array
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1|max:'.$max,
+            'ids.*' => 'integer',
+        ]);
+
+        return array_values(array_unique(array_map('intval', $data['ids'])));
+    }
+
+    /**
+     * Who removed each photo and what status it held before — read back from
+     * the audit rows, which are the only record of either.
+     *
+     * One indexed query over the morph index for the whole batch. The newest
+     * `updated` row whose new status is `deleted` is the delete; its old status
+     * is what a restore should return to.
+     *
+     * @return array<int, array{restores_as: string, deleted_at: ?\Illuminate\Support\Carbon, deleted_by: ?string}>
+     */
+    private function deletionMeta(array $photoIds): array
+    {
+        if ($photoIds === []) {
+            return [];
+        }
+
+        $audits = Audit::query()
+            ->where('auditable_type', GalleryPhoto::class)
+            ->whereIn('auditable_id', $photoIds)
+            ->where('event', 'updated')
+            ->orderByDesc('id')
+            ->get(['auditable_id', 'old_values', 'new_values', 'user_name', 'source', 'created_at']);
+
+        $out = [];
+        foreach ($audits as $audit) {
+            $id = (int) $audit->auditable_id;
+            if (isset($out[$id])) {
+                continue; // Newest wins — this is an older flip of the same row.
+            }
+            if (($audit->new_values['status'] ?? null) !== GalleryPhoto::STATUS_DELETED) {
+                continue;
+            }
+
+            $prior = $audit->old_values['status'] ?? null;
+
+            $out[$id] = [
+                'restores_as' => in_array($prior, [GalleryPhoto::STATUS_ACTIVE, GalleryPhoto::STATUS_HIDDEN], true)
+                    ? $prior
+                    : GalleryPhoto::STATUS_HIDDEN,
+                'deleted_at' => $audit->created_at,
+                'deleted_by' => $audit->user_name
+                    ?: ($audit->source === 'photographer_invite' ? 'Photographer' : null),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The S3 keys this photo's scope actually OWNS.
+     *
+     * Not every row's file is ours to delete: natcon:import-gallery rows point
+     * at folders that belong elsewhere (and carry no thumb), s3_key is
+     * nullable, and two rows can legitimately reference the same object. So a
+     * key is removable only when it sits under this scope's own prefix and no
+     * other row still points at it — otherwise the answer is an empty list and
+     * the row is dropped on its own.
+     *
+     * The thumb comes from thumb_url, never from guessing a suffix on s3_key:
+     * the naming is GalleryService's business and an imported row has none.
+     *
+     * @return array<int, string>
+     */
+    private function ownedS3Keys(GalleryPhoto $photo, ?NatconEvent $event): array
+    {
+        $prefix = trim(
+            $event
+                ? $event->s3Prefix('gallery')
+                : (string) config('natcon.gallery.public_s3_prefix', 'filipinohomes-new/gallery'),
+            '/'
+        ).'/';
+
+        $base = rtrim((string) config('filesystems.disks.s3.url'), '/').'/';
+
+        $keys = [];
+
+        if ($photo->s3_key && Str::startsWith($photo->s3_key, $prefix)) {
+            $shared = GalleryPhoto::where('s3_key', $photo->s3_key)
+                ->where('id', '!=', $photo->id)
+                ->exists();
+            if (! $shared) {
+                $keys[] = $photo->s3_key;
+            }
+        }
+
+        if ($photo->thumb_url && Str::startsWith($photo->thumb_url, $base)) {
+            $thumbKey = Str::after($photo->thumb_url, $base);
+            if (Str::startsWith($thumbKey, $prefix)) {
+                $shared = GalleryPhoto::where('thumb_url', $photo->thumb_url)
+                    ->where('id', '!=', $photo->id)
+                    ->exists();
+                if (! $shared) {
+                    $keys[] = $thumbKey;
+                }
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * Remove one trash row for good: vectors, then files, then the row.
+     *
+     * ⚠️ S3 BEFORE the row, always. The row is the only record of the key, so
+     *    deleting it first and failing on the bucket leaves an object nobody
+     *    can ever find again to clean up — the exact thing the soft-delete rule
+     *    exists to prevent. The disk is configured with throw=false, so the
+     *    boolean is the error channel; a missing key answers true, which makes
+     *    a retry after a half-failure converge.
+     *
+     * The audit row written by delete() carries the full old_values (s3_key,
+     * caption, upload_invite_id) and the invite tag, so the photographer's
+     * history still shows this photo after the row is gone.
+     *
+     * @return array{ok: bool, id: int, s3_removed: bool, reason: ?string}
+     */
+    private function purgeOne(GalleryPhoto $photo, ?NatconEvent $event): array
+    {
+        $this->forgetFaces($photo);
+
+        $keys = $this->ownedS3Keys($photo, $event);
+
+        if ($keys !== []) {
+            try {
+                $ok = Storage::disk('s3')->delete($keys);
+            } catch (\Throwable $e) {
+                Log::warning('gallery purge: s3 delete threw', [
+                    'photo_id' => $photo->id,
+                    'error' => $e->getMessage(),
+                ]);
+                $ok = false;
+            }
+
+            if (! $ok) {
+                return ['ok' => false, 'id' => $photo->id, 's3_removed' => false, 'reason' => 'storage'];
+            }
+        }
+
+        $id = $photo->id;
+        $photo->auditSource = $this->auditSource($event);
+        $photo->auditDescription = $keys === []
+            ? 'Permanently deleted (file kept — not this gallery\'s)'
+            : 'Permanently deleted with '.count($keys).' file(s)';
+        $photo->delete();
+
+        return ['ok' => true, 'id' => $id, 's3_removed' => $keys !== [], 'reason' => null];
+    }
+
     // ── Albums (folders inside one scope's gallery) ──────────────────────────
 
     /**
@@ -1386,6 +1748,173 @@ class GalleryController extends Controller
         ])->save();
 
         return response()->json(['data' => $this->presentInvite($invite->fresh(['rootAlbum']))]);
+    }
+
+    /**
+     * One photographer's trail: every upload, re-caption, removal, restore and
+     * permanent delete on this link, plus the link's own lifecycle.
+     *
+     * Built on the audits table rather than a new one. The join that would be
+     * obvious — audits for photos whose upload_invite_id is this invite —
+     * breaks exactly when the history is most wanted, because a permanently
+     * deleted photo has no row left to join to. So GalleryPhoto::generateTags()
+     * stamps `invite:{id}` into the audit at write time and this reads that
+     * instead; the tag is a copy, so it outlives the photo.
+     *
+     * Filtering on the indexed `category` first keeps the unindexed `tags`
+     * comparison off the whole table.
+     */
+    public function inviteHistory(Request $request, GalleryUploadInvite $invite): JsonResponse
+    {
+        $this->guardInvite($request, $invite);
+
+        $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
+
+        $paginated = Audit::query()
+            ->where('category', 'gallery')
+            ->where(function ($q) use ($invite) {
+                $q->where(function ($q) use ($invite) {
+                    $q->where('auditable_type', GalleryPhoto::class)
+                        ->where('tags', 'invite:'.$invite->id)
+                        // Keep only edits to things a PERSON changed. Indexing
+                        // a photo's faces writes face_ids/face_count/
+                        // faces_indexed_at back onto the row, which audits as
+                        // an ordinary update and read as "Edited ·
+                        // Photographer" — an edit nobody made, between every
+                        // pair of real entries. The four keys below are also
+                        // exactly what `changes` surfaces, so anything kept
+                        // has something to show.
+                        ->where(function ($q) {
+                            $q->where('event', '!=', 'updated');
+                            foreach (['caption', 'status', 'album_id', 'sort_order'] as $key) {
+                                $q->orWhere('new_values', 'like', '%'.$key.'%');
+                            }
+                        });
+                })->orWhere(function ($q) use ($invite) {
+                    $q->where('auditable_type', GalleryUploadInvite::class)
+                        ->where('auditable_id', $invite->id)
+                        // Drop the `last_used_at` touch every upload makes:
+                        // it is bookkeeping, and one entry between each photo
+                        // buried the uploads this screen exists to show.
+                        // Dropped HERE rather than after paging, so the total
+                        // the dialog prints is what it actually lists.
+                        //
+                        // Two shapes, because $auditExclude was added later:
+                        // new rows carry an empty diff, older ones carry
+                        // last_used_at as their ONLY key — and a lone key has
+                        // no comma separating it from a second one (the value
+                        // is a timestamp, which has none either). LIKE rather
+                        // than a JSON function: new_values is TEXT, and the
+                        // tests run on sqlite.
+                        ->where(function ($q) {
+                            $q->where('event', '!=', 'updated')
+                                ->orWhere(function ($q) {
+                                    $q->whereNotNull('new_values')
+                                        ->whereNotIn('new_values', ['[]', '{}', ''])
+                                        ->where(function ($q) {
+                                            $q->where('new_values', 'not like', '%last_used_at%')
+                                                ->orWhere('new_values', 'like', '%,%');
+                                        });
+                                });
+                        });
+                });
+            })
+            ->orderByDesc('id')
+            ->paginate($perPage);
+
+        $rows = ActivityLogController::scrubRows(array_map(
+            fn ($m) => $m->toArray(),
+            $paginated->items()
+        ));
+
+        // The photos still on file, for thumbnails. A row whose photo is gone
+        // renders from the audit alone — that IS the permanent-delete entry.
+        $photoIds = array_values(array_unique(array_filter(array_map(
+            fn ($row) => ($row['auditable_type'] ?? null) === GalleryPhoto::class
+                ? (int) $row['auditable_id']
+                : null,
+            $rows
+        ))));
+
+        $photos = $photoIds === []
+            ? collect()
+            : GalleryPhoto::whereIn('id', $photoIds)->get()->keyBy('id');
+
+        return response()->json([
+            'data' => array_map(fn ($row) => $this->presentHistoryRow($row, $photos), $rows),
+            'current_page' => $paginated->currentPage(),
+            'last_page' => $paginated->lastPage(),
+            'per_page' => $paginated->perPage(),
+            'total' => $paginated->total(),
+        ]);
+    }
+
+    /**
+     * Turn one audit row into a timeline entry.
+     *
+     * `kind` is decided here, not in the frontend: reading a status flip as
+     * "removed" vs "restored" vs "hidden" means knowing the module's status
+     * lifecycle, and that knowledge belongs on this side of the wire.
+     */
+    private function presentHistoryRow(array $row, \Illuminate\Support\Collection $photos): array
+    {
+        $old = is_array($row['old_values'] ?? null) ? $row['old_values'] : [];
+        $new = is_array($row['new_values'] ?? null) ? $row['new_values'] : [];
+        $event = (string) ($row['event'] ?? '');
+        $isPhoto = ($row['auditable_type'] ?? null) === GalleryPhoto::class;
+
+        $kind = match (true) {
+            ! $isPhoto && $event === 'created' => 'invite_created',
+            ! $isPhoto && $event === 'deleted' => 'invite_deleted',
+            ! $isPhoto => 'invite_updated',
+            $event === 'created' => 'uploaded',
+            $event === 'deleted' => 'purged',
+            ($new['status'] ?? null) === GalleryPhoto::STATUS_DELETED => 'removed',
+            ($old['status'] ?? null) === GalleryPhoto::STATUS_DELETED => 'restored',
+            ($new['status'] ?? null) === GalleryPhoto::STATUS_ACTIVE => 'published',
+            ($new['status'] ?? null) === GalleryPhoto::STATUS_HIDDEN => 'hidden',
+            array_key_exists('caption', $new) => 'caption',
+            array_key_exists('album_id', $new) => 'moved',
+            default => 'updated',
+        };
+
+        $photo = $isPhoto ? $photos->get((int) $row['auditable_id']) : null;
+
+        // A captionless photo has no label of its own, so resolveAuditLabel()
+        // falls back to "GalleryPhoto #12" — a class name and a row id, which
+        // says nothing the thumbnail beside it doesn't say better.
+        $label = $row['subject_label'] ?? null;
+        if ($label && preg_match('/^GalleryPhoto #\d+$/', $label)) {
+            $label = null;
+        }
+
+        $changes = [];
+        foreach (['caption', 'status', 'album_id'] as $key) {
+            if (array_key_exists($key, $old) || array_key_exists($key, $new)) {
+                $changes[$key] = ['from' => $old[$key] ?? null, 'to' => $new[$key] ?? null];
+            }
+        }
+
+        return [
+            'id' => $row['id'] ?? null,
+            'kind' => $kind,
+            'created_at' => $row['created_at'] ?? null,
+            'description' => $row['description'] ?? null,
+            'subject_label' => $label,
+            'source' => $row['source'] ?? null,
+            // A token upload has no user: the actor IS the link.
+            'actor' => $row['user_name']
+                ?: (($row['source'] ?? null) === 'photographer_invite' ? 'Photographer' : 'System'),
+            // (object) or an empty diff ships as `[]` — a list where the
+            // client was promised a map. Module rule; see the reactions tally.
+            'changes' => (object) $changes,
+            'photo' => $photo ? [
+                'id' => $photo->id,
+                'thumb_url' => $photo->thumb_url ?: $photo->image_url,
+                'caption' => $photo->caption,
+                'status' => $photo->status,
+            ] : null,
+        ];
     }
 
     /**

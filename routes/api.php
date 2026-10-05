@@ -372,6 +372,12 @@ Route::middleware('strip.tags')->group(function () {
                 ->middleware('throttle:60,1');
             Route::delete('/natcon/upload-invite/photos/{photo}', [NatconPhotographerController::class, 'destroyPhoto'])
                 ->middleware('throttle:60,1');
+            // Cull a selection in one go — event day produces hundreds of
+            // near-identical frames. POST because a DELETE carrying a body of
+            // ids is not reliably forwarded. Registered after /{photo} is
+            // harmless: 'bulk-delete' is a POST and /{photo} is a DELETE.
+            Route::post('/natcon/upload-invite/photos/bulk-delete', [NatconPhotographerController::class, 'bulkDestroyPhotos'])
+                ->middleware('throttle:60,1');
         });
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);
@@ -734,6 +740,17 @@ Route::middleware('strip.tags')->group(function () {
                     Route::post('/admin/natcon/gallery/invites/{invite}/link', [NatconGalleryController::class, 'inviteLink']);
                     Route::post('/admin/natcon/gallery/invites/{invite}/reissue', [NatconGalleryController::class, 'reissueInvite']);
                     Route::post('/admin/natcon/gallery/invites/{invite}/revoke', [NatconGalleryController::class, 'revokeInvite']);
+                    // One photographer's trail, read back out of the audit log.
+                    Route::get('/admin/natcon/gallery/invites/{invite}/history', [NatconGalleryController::class, 'inviteHistory']);
+
+                    // Trash: the deleted photos of this scope, restore, and the
+                    // one place in the module that removes a row and its S3
+                    // object for good. Literal 'trash' before /gallery/{photo}
+                    // so it is never bound as a photo id.
+                    Route::get('/admin/natcon/gallery/trash', [NatconGalleryController::class, 'trash']);
+                    Route::post('/admin/natcon/gallery/trash/restore', [NatconGalleryController::class, 'restorePhotos']);
+                    Route::post('/admin/natcon/gallery/trash/purge', [NatconGalleryController::class, 'purgePhotos']);
+                    Route::post('/admin/natcon/gallery/trash/empty', [NatconGalleryController::class, 'emptyTrash']);
                     // Secondary albums (folders) inside one convention's
                     // gallery — the convention is the primary album; these are
                     // the single level under it (per photographer/company).
@@ -779,6 +796,11 @@ Route::middleware('strip.tags')->group(function () {
                     Route::group(['prefix' => '/admin/albums'], function () {
                         $scope = ['scope' => 'public'];
                         Route::get('/photos', [NatconGalleryController::class, 'adminGallery'])->setDefaults($scope);
+                        // Trash — literal segments before /photos/{photo}.
+                        Route::get('/photos/trash', [NatconGalleryController::class, 'trash'])->setDefaults($scope);
+                        Route::post('/photos/trash/restore', [NatconGalleryController::class, 'restorePhotos'])->setDefaults($scope);
+                        Route::post('/photos/trash/purge', [NatconGalleryController::class, 'purgePhotos'])->setDefaults($scope);
+                        Route::post('/photos/trash/empty', [NatconGalleryController::class, 'emptyTrash'])->setDefaults($scope);
                         // Same 120/min ceiling as the NATCON gallery upload above.
                         Route::post('/photos', [NatconGalleryController::class, 'storeGalleryPhoto'])
                             ->middleware('throttle:120,1')->setDefaults($scope);

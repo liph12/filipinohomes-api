@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Auditing\LogsActivity;
+use App\Natcon\Models\GalleryUploadInvite;
 use App\Natcon\Models\NatconEvent;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -71,6 +72,16 @@ class GalleryPhoto extends Model implements Auditable
         return $this->belongsTo(GalleryAlbum::class, 'album_id');
     }
 
+    /**
+     * The photographer's upload link this came in on; NULL for admin uploads
+     * (and for photographer uploads whose invite was later deleted — the FK
+     * nulls rather than taking the photos with it).
+     */
+    public function uploadInvite(): BelongsTo
+    {
+        return $this->belongsTo(GalleryUploadInvite::class, 'upload_invite_id');
+    }
+
     /** Photos of one scope — a convention's, or (null) the public gallery's. */
     public function scopeForEvent(Builder $query, ?NatconEvent $event): Builder
     {
@@ -85,5 +96,23 @@ class GalleryPhoto extends Model implements Auditable
         return $query->where('status', self::STATUS_ACTIVE)
             ->orderBy('sort_order')
             ->orderBy('id');
+    }
+
+    /**
+     * Stamp the photographer's invite onto every audit row this photo writes.
+     *
+     * This is what makes "what did this photographer do?" answerable. The
+     * alternative — joining audits back to gallery_photos on upload_invite_id —
+     * stops working the moment a row is permanently deleted from the trash,
+     * which is exactly when the history matters most. A tag is copied into the
+     * audit at write time, so it outlives the row.
+     *
+     * One tag, so the history query can match on equality. Admin edits to a
+     * photographer's photo are tagged too: the invite's timeline should show
+     * the admin who hid or restored their work, not just their own uploads.
+     */
+    public function generateTags(): array
+    {
+        return $this->upload_invite_id ? ['invite:'.$this->upload_invite_id] : [];
     }
 }
