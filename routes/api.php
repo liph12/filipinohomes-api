@@ -703,6 +703,7 @@ Route::middleware('strip.tags')->group(function () {
                 Route::middleware(RoleMiddleware::class.':admin,editor')->group(function () {
                     // VVIP honourees imported from the awards sheet, per convention.
                     Route::get('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'index']);
+                    Route::get('/admin/natcon/vvip/check', [\App\Natcon\Http\Controllers\VvipController::class, 'check']);
                     Route::post('/admin/natcon/vvip/import', [\App\Natcon\Http\Controllers\VvipController::class, 'import']);
                     Route::delete('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'clear']);
                     Route::get('/admin/natcon/announcements', [NatconLandingController::class, 'adminAnnouncements']);

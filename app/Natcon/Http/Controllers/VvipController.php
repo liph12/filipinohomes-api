@@ -129,6 +129,104 @@ class VvipController extends Controller
         return $this->index($request);
     }
 
+    /**
+     * Admin: compare the stored VVIP list with the awardee roster and the admin's own
+     * VVIP flags (the VVIP toggle in the Awardees table, held by the registration
+     * service), joined by email — so the two can be made to agree.
+     */
+    public function check(Request $request): JsonResponse
+    {
+        $event = $this->event($request);
+
+        $entries = VvipEntry::where('natcon_event_id', $event->id)->orderBy('id')->get();
+        $roster = \App\Natcon\Models\Recipient::where('natcon_event_id', $event->id)
+            ->where('status', '!=', \App\Natcon\Models\Recipient::STATUS_EXCLUDED)
+            ->get()
+            ->keyBy('email');
+        $registrants = app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year);
+
+        $flagged = collect($registrants ?? [])
+            ->filter(fn ($r) => ! empty($r['is_vvip']))
+            ->keys()
+            ->map(fn ($e) => mb_strtolower((string) $e))
+            ->all();
+
+        // Names are compared loosely: case, punctuation, accents and spacing don't matter,
+        // and "&" counts as "and" ("Jo-Ann & Albert" = "Jo-Ann and Albert").
+        $norm = fn (?string $n) => trim((string) preg_replace(
+            ['/\s*&\s*/', '/[^a-z0-9]+/'],
+            [' and ', ' '],
+            mb_strtolower(\Illuminate\Support\Str::ascii((string) $n)),
+        ));
+        $titleOf = fn (VvipEntry $e) => trim(($e->rank ? $e->rank.' · ' : '').$e->category);
+
+        // One row per PERSON (email), with every category they are listed under.
+        $people = [];
+        foreach ($entries as $e) {
+            $key = $e->email ?? 'noemail:'.$e->id;
+            $people[$key]['name'] = $people[$key]['name'] ?? $e->name;
+            $people[$key]['email'] = $e->email;
+            $people[$key]['listed'][] = $titleOf($e);
+        }
+
+        $sheetOnly = [];
+        $nameDiffers = [];
+        $matched = 0;
+
+        foreach ($people as $p) {
+            $email = $p['email'];
+            $listed = implode(', ', $p['listed']);
+
+            if ($email === null) {
+                $sheetOnly[] = ['name' => $p['name'], 'email' => null, 'listed' => $listed, 'reason' => 'no_email'];
+                continue;
+            }
+
+            $recipient = $roster->get($email);
+            if (! $recipient) {
+                $sheetOnly[] = ['name' => $p['name'], 'email' => $email, 'listed' => $listed, 'reason' => 'not_on_roster'];
+                continue;
+            }
+
+            if ($registrants !== null && ! in_array($email, $flagged, true)) {
+                $sheetOnly[] = ['name' => $p['name'], 'email' => $email, 'listed' => $listed, 'reason' => 'not_vvip_in_admin'];
+                continue;
+            }
+
+            $matched++;
+
+            $rosterName = (string) ($recipient->display_name ?: trim($recipient->first_name.' '.$recipient->last_name));
+            if ($norm($rosterName) !== '' && $norm($rosterName) !== $norm($p['name'])) {
+                $nameDiffers[] = ['email' => $email, 'sheet_name' => $p['name'], 'roster_name' => $rosterName];
+            }
+        }
+
+        $sheetEmails = collect($people)->pluck('email')->filter()->all();
+        $adminOnly = [];
+        foreach ($flagged as $email) {
+            if (in_array($email, $sheetEmails, true)) {
+                continue;
+            }
+            $r = $roster->get($email);
+            $adminOnly[] = [
+                'email' => $email,
+                'name' => $r ? (string) ($r->display_name ?: trim($r->first_name.' '.$r->last_name)) : $email,
+                'on_roster' => (bool) $r,
+            ];
+        }
+
+        return response()->json(['data' => [
+            // false = the registration service couldn't be read, so the admin VVIP flags are unknown.
+            'registration_available' => $registrants !== null,
+            'sheet_people' => count($people),
+            'admin_vvip' => count($flagged),
+            'matched' => $matched,
+            'sheet_only' => $sheetOnly,
+            'admin_only' => $adminOnly,
+            'name_differs' => $nameDiffers,
+        ]]);
+    }
+
     /** Admin: empty the convention's VVIP list. */
     public function clear(Request $request): JsonResponse
     {
