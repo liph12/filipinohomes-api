@@ -1276,6 +1276,19 @@ class GalleryController extends Controller
      */
     private const FRAMES_INHERIT = true;
 
+    /** The audience key for an awardee with no special award (the roster's NULL segment). */
+    private const REGULAR_AWARDEE = 'top_agent';
+
+    /** What an awardee frame can be reserved for: the five awards, plus every other awardee. */
+    private const FRAME_AUDIENCES = [
+        \App\Natcon\Models\Recipient::SEGMENT_GLOBAL_PARTNER,
+        \App\Natcon\Models\Recipient::SEGMENT_FHI_GLOBAL,
+        \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER,
+        \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER_RM_PRO,
+        \App\Natcon\Models\Recipient::SEGMENT_ELITE_TEAM_LEADER,
+        self::REGULAR_AWARDEE,
+    ];
+
     /** Public: frames offered for one album's photos. Token-less, never 401. */
     public function publicAlbumFrames(string $slug): JsonResponse
     {
@@ -1355,7 +1368,7 @@ class GalleryController extends Controller
             'sort_order' => 'sometimes|integer|min:0|max:9999',
             // Reserve the frame for one award segment (null/absent = everyone).
             'award_segments' => ['nullable', 'array'],
-            'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(\App\Natcon\Models\Recipient::SEGMENTS)],
+            'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
             // Within those segments: only for awardees flagged Elite.
             'elite_only' => 'sometimes|boolean',
             // A VVIP frame: category (+ optional rank). Mutually exclusive with award segments.
@@ -1430,7 +1443,7 @@ class GalleryController extends Controller
             'name' => 'sometimes|string|max:120',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
             'award_segments' => ['sometimes', 'nullable', 'array'],
-            'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(\App\Natcon\Models\Recipient::SEGMENTS)],
+            'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
             'elite_only' => 'sometimes|boolean',
             'vvip_category' => 'sometimes|nullable|string|max:120',
             'vvip_rank' => 'sometimes|nullable|integer|min:1|max:999',
@@ -1598,7 +1611,6 @@ class GalleryController extends Controller
             ->where('natcon_event_id', $event->id)
             ->where('email', $email)
             ->where('status', '!=', \App\Natcon\Models\Recipient::STATUS_EXCLUDED)
-            ->whereNotNull('award_segment')
             ->first();
 
         if (! $recipient) {
@@ -1613,7 +1625,8 @@ class GalleryController extends Controller
 
         return [
             'event' => $event,
-            'segment' => (string) $recipient->award_segment,
+            // No award on the roster row = a regular awardee, which frames call "top_agent".
+            'segment' => (string) ($recipient->award_segment ?? self::REGULAR_AWARDEE),
             'elite' => (bool) ($row['is_elite'] ?? false),
             // false = the registration service couldn't be read (unreachable,
             // or it rejected our service token), so "not elite" is a guess.
@@ -1755,7 +1768,7 @@ class GalleryController extends Controller
     {
         $clean = array_values(array_unique(array_intersect(
             array_map('strval', $segments ?? []),
-            \App\Natcon\Models\Recipient::SEGMENTS,
+            self::FRAME_AUDIENCES,
         )));
 
         return $clean === [] ? null : $clean;
