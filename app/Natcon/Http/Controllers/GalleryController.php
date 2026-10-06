@@ -1358,6 +1358,12 @@ class GalleryController extends Controller
             'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(\App\Natcon\Models\Recipient::SEGMENTS)],
             // Within those segments: only for awardees flagged Elite.
             'elite_only' => 'sometimes|boolean',
+            // A VVIP frame: category (+ optional rank). Mutually exclusive with award segments.
+            'vvip_category' => 'nullable|string|max:120',
+            'vvip_rank' => 'nullable|integer|min:1|max:999',
+            'vvip' => 'sometimes|boolean',
+            'vvip_types' => ['nullable', 'array'],
+            'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
         ], [
             'frame.mimes' => 'Please upload a PNG with a transparent photo window.',
             'frame.max' => 'That frame is too large. Please keep it under 15MB.',
@@ -1387,6 +1393,10 @@ class GalleryController extends Controller
             // Only convention-level frames can be reserved for a segment.
             'award_segments' => $event ? $this->normaliseSegments($data['award_segments'] ?? null) : null,
             'elite_only' => $event && ! empty($data['award_segments']) && ! empty($data['elite_only']),
+            'vvip' => $event && (! empty($data['vvip']) || ! empty($data['vvip_category'])),
+            'vvip_types' => $event ? $this->normaliseTypes($data['vvip_types'] ?? null) : null,
+            'vvip_category' => $event ? ($data['vvip_category'] ?? null) : null,
+            'vvip_rank' => $event && ! empty($data['vvip_category']) ? ($data['vvip_rank'] ?? null) : null,
             'name' => trim($data['name']),
             'image_url' => rtrim((string) config('filesystems.disks.s3.url'), '/').'/'.$key,
             's3_key' => $key,
@@ -1422,6 +1432,11 @@ class GalleryController extends Controller
             'award_segments' => ['sometimes', 'nullable', 'array'],
             'award_segments.*' => ['string', \Illuminate\Validation\Rule::in(\App\Natcon\Models\Recipient::SEGMENTS)],
             'elite_only' => 'sometimes|boolean',
+            'vvip_category' => 'sometimes|nullable|string|max:120',
+            'vvip_rank' => 'sometimes|nullable|integer|min:1|max:999',
+            'vvip' => 'sometimes|boolean',
+            'vvip_types' => ['sometimes', 'nullable', 'array'],
+            'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
             // The name plate area, all four or none (null clears it).
             'text_x' => 'sometimes|nullable|required_with:text_y,text_w,text_h|numeric|min:0|max:1',
             'text_y' => 'sometimes|nullable|required_with:text_x,text_w,text_h|numeric|min:0|max:1',
@@ -1453,6 +1468,27 @@ class GalleryController extends Controller
         // clears it, and it can't be set on a frame that has none.
         if (array_key_exists('award_segments', $data)) {
             $data['award_segments'] = $this->normaliseSegments($data['award_segments']);
+        }
+
+        // VVIP and award segments are different audiences: turning one on clears the other.
+        // A VVIP frame lists what it is for — logo types, category, rank — each optional
+        // ("any" when empty); turning VVIP off clears all three.
+        if (array_key_exists('vvip_types', $data)) {
+            $data['vvip_types'] = $this->normaliseTypes($data['vvip_types']);
+        }
+        if (! empty($data['vvip']) || ! empty($data['vvip_category'])) {
+            $data['vvip'] = true;
+            $data['award_segments'] = null;
+        } elseif (! empty($data['award_segments'])) {
+            $data['vvip'] = false;
+        }
+        if (array_key_exists('vvip', $data) && ! $data['vvip']) {
+            $data['vvip_category'] = null;
+            $data['vvip_rank'] = null;
+            $data['vvip_types'] = null;
+        }
+        if (array_key_exists('vvip_category', $data) && empty($data['vvip_category'])) {
+            $data['vvip_rank'] = null;
         }
         $segmentsAfter = array_key_exists('award_segments', $data) ? $data['award_segments'] : $frame->award_segments;
         if (empty($segmentsAfter)) {
@@ -1516,7 +1552,7 @@ class GalleryController extends Controller
                 }
             })
             ->live()
-            ->when(! $includeSegmented, fn ($q) => $q->whereNull('award_segments'))
+            ->when(! $includeSegmented, fn ($q) => $q->whereNull('award_segments')->where('vvip', false))
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
@@ -1615,6 +1651,7 @@ class GalleryController extends Controller
 
         $rows = GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
             ->live()
+            ->where('vvip', false)
             ->whereJsonContains('award_segments', $a['segment'])
             // Elite-circle frames only reach awardees flagged Elite.
             ->when(! $a['elite'], fn ($q) => $q->where('elite_only', false))
@@ -1638,6 +1675,7 @@ class GalleryController extends Controller
         $rows = GalleryAlbumFrame::where('natcon_event_id', $event->id)
             ->live()
             ->whereNull('award_segments')
+            ->where('vvip', false)
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -1701,6 +1739,17 @@ class GalleryController extends Controller
         return $flags;
     }
 
+    /** VVIP logo types: known keys only, unique; empty → null (= any type). */
+    private function normaliseTypes(?array $types): ?array
+    {
+        $clean = array_values(array_unique(array_intersect(
+            array_map('strval', $types ?? []),
+            array_keys(\App\Natcon\Models\VvipEntry::TYPES),
+        )));
+
+        return $clean === [] ? null : $clean;
+    }
+
     /** A frame's audience as a clean list: known segments only, unique; empty → null (= everyone). */
     private function normaliseSegments(?array $segments): ?array
     {
@@ -1712,6 +1761,12 @@ class GalleryController extends Controller
         return $clean === [] ? null : $clean;
     }
 
+    /** presentFrame for other controllers (the VVIP endpoints). */
+    public function presentFramePublic(GalleryAlbumFrame $f): array
+    {
+        return $this->presentFrame($f);
+    }
+
     private function presentFrame(GalleryAlbumFrame $f): array
     {
         return [
@@ -1721,6 +1776,11 @@ class GalleryController extends Controller
             'natcon_event_id' => $f->natcon_event_id,
             // Reserved for this award segment; null = offered to everyone.
             'award_segments' => $f->award_segments ?? [],
+            // A VVIP frame: only for people listed under this category (and rank).
+            'vvip' => (bool) $f->vvip,
+            'vvip_types' => $f->vvip_types ?? [],
+            'vvip_category' => $f->vvip_category,
+            'vvip_rank' => $f->vvip_rank,
             'elite_only' => (bool) $f->elite_only,
             'name' => $f->name,
             'image_url' => $f->image_url,

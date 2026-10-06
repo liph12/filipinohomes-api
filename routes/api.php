@@ -610,6 +610,8 @@ Route::middleware('strip.tags')->group(function () {
                 // The signed-in agent's own award + the frames reserved for that segment.
                 Route::get('/natcon/my-awardee', [NatconGalleryController::class, 'myAwardee']);
                 Route::get('/natcon/my-awardee/frames', [NatconGalleryController::class, 'myAwardeeFrames']);
+                Route::get('/natcon/my-vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'myEntries']);
+                Route::get('/natcon/my-vvip/frames', [\App\Natcon\Http\Controllers\VvipController::class, 'myFrames']);
             });
 
             // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.
@@ -699,6 +701,10 @@ Route::middleware('strip.tags')->group(function () {
                 // of video links, not the send machinery. Kept inside the same
                 // auth group and re-gated on the line below.
                 Route::middleware(RoleMiddleware::class.':admin,editor')->group(function () {
+                    // VVIP honourees imported from the awards sheet, per convention.
+                    Route::get('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'index']);
+                    Route::post('/admin/natcon/vvip/import', [\App\Natcon\Http\Controllers\VvipController::class, 'import']);
+                    Route::delete('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'clear']);
                     Route::get('/admin/natcon/announcements', [NatconLandingController::class, 'adminAnnouncements']);
                     Route::post('/admin/natcon/announcements', [NatconLandingController::class, 'storeAnnouncement']);
                     Route::patch('/admin/natcon/announcements/{announcement}', [NatconLandingController::class, 'updateAnnouncement']);
