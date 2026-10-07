@@ -1694,6 +1694,15 @@ class GalleryController extends Controller
             ->orderBy('id')
             ->get();
 
+        // An awardee gets their MOST SPECIFIC frames, not every frame they qualify for: an Elite
+        // Global Partner is offered the "Elite Global Partner" frame instead of also the plain
+        // Global Partner one and the all-awardee Elite one. A frame is more specific when it is
+        // Elite-only, and then when it names fewer audiences; only the top tier is returned
+        // (several equally specific frames all stay, so the awardee can still choose).
+        $specificity = fn (GalleryAlbumFrame $f) => ($f->elite_only ? 1000 : 0) - count($f->award_segments ?? []);
+        $best = $rows->isEmpty() ? 0 : $rows->max($specificity);
+        $rows = $rows->filter(fn (GalleryAlbumFrame $f) => $specificity($f) === $best)->values();
+
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
     }
 
