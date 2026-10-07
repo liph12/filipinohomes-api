@@ -28,16 +28,57 @@ class VvipController extends Controller
         return $event;
     }
 
-    private function present(VvipEntry $e): array
+    /** The convention's awardee roster by email (name and award come from here — the VVIP list keeps only category, rank and email). */
+    private function roster(NatconEvent $event)
     {
+        return \App\Natcon\Models\Recipient::where('natcon_event_id', $event->id)
+            ->where('status', '!=', \App\Natcon\Models\Recipient::STATUS_EXCLUDED)
+            ->get()
+            ->keyBy('email');
+    }
+
+    private function rosterName(?\App\Natcon\Models\Recipient $r): string
+    {
+        return $r ? (string) ($r->display_name ?: trim($r->first_name.' '.$r->last_name)) : '';
+    }
+
+    /**
+     * The logos a person carries, DERIVED from their awardee record instead of typed into the
+     * list: Elite Circle ← the Elite toggle; RM Pro ← Top Rent Manager Pro OR Top Rent Manager &
+     * RM Pro; Global Partners ← Global Partner; FHI Dubai ← FHI Global. (VVIP itself = being on the list.)
+     *
+     * @return array<int, string> keys of VvipEntry::TYPES, in display order
+     */
+    public static function derivedTypes(?\App\Natcon\Models\Recipient $r, bool $elite): array
+    {
+        $segment = $r?->award_segment;
+
+        return array_values(array_filter([
+            $elite ? 'elite_circle' : null,
+            in_array($segment, [\App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER, \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER_RM_PRO], true) ? 'rm_pro' : null,
+            $segment === \App\Natcon\Models\Recipient::SEGMENT_GLOBAL_PARTNER ? 'global_partners' : null,
+            $segment === \App\Natcon\Models\Recipient::SEGMENT_FHI_GLOBAL ? 'fhi_dubai' : null,
+        ]));
+    }
+
+    /** @return array<string, array<string, mixed>>|null registration rows by email (null when the service can't be read) */
+    private function registrants(NatconEvent $event): ?array
+    {
+        return app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year);
+    }
+
+    private function present(VvipEntry $e, $roster = null, ?array $registrants = null): array
+    {
+        $r = $roster?->get($e->email);
+
         return [
             'id' => $e->id,
             'category' => $e->category,
             'rank' => $e->rank,
-            'name' => $e->name,
+            // From the awardee roster by email (the list itself doesn't store a name).
+            'name' => $this->rosterName($r) ?: (string) $e->name,
             'email' => $e->email,
-            // Logo types (several allowed). The title is category + rank, built by the client.
-            'types' => $e->types ?? [],
+            'types' => self::derivedTypes($r, ! empty($registrants[$e->email]['is_elite'])),
         ];
     }
 
@@ -49,8 +90,10 @@ class VvipController extends Controller
         $rows = VvipEntry::where('natcon_event_id', $event->id)
             ->orderBy('id')
             ->get();
+        $roster = $this->roster($event);
+        $registrants = $this->registrants($event);
 
-        return response()->json(['data' => $rows->map(fn (VvipEntry $e) => $this->present($e))->values()]);
+        return response()->json(['data' => $rows->map(fn (VvipEntry $e) => $this->present($e, $roster, $registrants))->values()]);
     }
 
     /**
@@ -67,7 +110,8 @@ class VvipController extends Controller
             // Free text: whatever the sheet calls the award ("Top Sales Agents").
             'entries.*.category' => 'required|string|max:120',
             'entries.*.rank' => 'nullable|integer|min:1|max:999',
-            'entries.*.name' => 'required|string|max:191',
+            // Only category, rank and email are kept; a name or logos sent along are ignored (they come from the awardee roster).
+            'entries.*.name' => 'nullable|string|max:191',
             'entries.*.email' => 'nullable|email|max:191',
             'entries.*.types' => 'nullable|array|max:8',
             'entries.*.types.*' => ['string', Rule::in(array_keys(VvipEntry::TYPES))],
@@ -117,9 +161,9 @@ class VvipController extends Controller
                     'natcon_event_id' => $event->id,
                     'category' => trim($row['category']),
                     'rank' => $row['rank'] ?? null,
-                    'name' => trim($row['name']),
+                    'name' => '',
                     'email' => ! empty($row['email']) ? mb_strtolower(trim($row['email'])) : null,
-                    'types' => ! empty($row['types']) ? json_encode(array_values(array_unique($row['types']))) : null,
+                    'types' => null,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ], $chunk));
@@ -164,7 +208,7 @@ class VvipController extends Controller
         $people = [];
         foreach ($entries as $e) {
             $key = $e->email ?? 'noemail:'.$e->id;
-            $people[$key]['name'] = $people[$key]['name'] ?? $e->name;
+            $people[$key]['name'] = $people[$key]['name'] ?? ($this->rosterName($roster->get($e->email)) ?: (string) $e->name);
             $people[$key]['email'] = $e->email;
             $people[$key]['listed'][] = $titleOf($e);
         }
@@ -195,10 +239,6 @@ class VvipController extends Controller
 
             $matched++;
 
-            $rosterName = (string) ($recipient->display_name ?: trim($recipient->first_name.' '.$recipient->last_name));
-            if ($norm($rosterName) !== '' && $norm($rosterName) !== $norm($p['name'])) {
-                $nameDiffers[] = ['email' => $email, 'sheet_name' => $p['name'], 'roster_name' => $rosterName];
-            }
         }
 
         $sheetEmails = collect($people)->pluck('email')->filter()->all();
@@ -224,6 +264,43 @@ class VvipController extends Controller
             'sheet_only' => $sheetOnly,
             'admin_only' => $adminOnly,
             'name_differs' => $nameDiffers,
+        ]]);
+    }
+
+    /**
+     * Admin: the saved list, simplified — one row per entry with the person's NAME and LOGOS taken
+     * from the awardee roster by email: VVIP (being on the list), Elite Circle (the Elite toggle),
+     * RM Pro (Top Rent Manager Pro or Top Rent Manager & RM Pro), Global Partners, FHI Dubai.
+     */
+    public function simplified(Request $request): JsonResponse
+    {
+        $event = $this->event($request);
+        $roster = $this->roster($event);
+        $registrants = $this->registrants($event);
+
+        $rows = VvipEntry::where('natcon_event_id', $event->id)->orderBy('id')->get()->map(function (VvipEntry $e) use ($roster, $registrants) {
+            $r = $roster->get($e->email);
+            $types = self::derivedTypes($r, ! empty($registrants[$e->email]['is_elite']));
+
+            return [
+                'id' => $e->id,
+                'category' => $e->category,
+                'rank' => $e->rank,
+                'email' => $e->email,
+                'name' => $this->rosterName($r),
+                'on_roster' => (bool) $r,
+                'vvip' => true,
+                'elite_circle' => in_array('elite_circle', $types, true),
+                'rm_pro' => in_array('rm_pro', $types, true),
+                'global_partners' => in_array('global_partners', $types, true),
+                'fhi_dubai' => in_array('fhi_dubai', $types, true),
+            ];
+        })->values();
+
+        return response()->json(['data' => [
+            // false = the registration service couldn't be read, so Elite Circle is unknown (shown unticked).
+            'registration_available' => $registrants !== null,
+            'rows' => $rows,
         ]]);
     }
 
@@ -258,7 +335,7 @@ class VvipController extends Controller
             'is_vvip' => $entries->isNotEmpty(),
             'event_id' => $event?->id,
             'year' => $event?->year,
-            'entries' => $entries->map(fn (VvipEntry $e) => $this->present($e))->values(),
+            'entries' => $entries->map(fn (VvipEntry $e) => $this->present($e, $event ? $this->roster($event) : null, $event ? $this->registrants($event) : null))->values(),
         ]]);
     }
 
@@ -280,15 +357,21 @@ class VvipController extends Controller
             ->orderBy('id')
             ->get();
 
+        // Name and logos come from the person's awardee record (the list keeps only category, rank, email).
+        $myEmail = (string) $entries->first()->email;
+        $me = $this->roster($event)->get($myEmail);
+        $myName = $this->rosterName($me) ?: (string) $entries->first()->name;
+        $myTypes = self::derivedTypes($me, ! empty(($this->registrants($event) ?? [])[$myEmail]['is_elite']));
+
         // 1. VVIP frames — matched on the logos / category / rank the person is listed with.
-        $vvipFrames = $rows->where('vvip', true)->map(function (GalleryAlbumFrame $f) use ($entries, $gallery) {
+        $vvipFrames = $rows->where('vvip', true)->map(function (GalleryAlbumFrame $f) use ($entries, $gallery, $myTypes, $myName) {
             // A frame lists what it is for; each filter it leaves empty means "any":
             // category, rank, and the logo types (a person matches if they carry ANY of them).
             $match = $entries->first(fn (VvipEntry $e) => ($f->vvip_category === null || VvipEntry::categoryKey($e->category) === VvipEntry::categoryKey($f->vvip_category))
                 && ($f->vvip_rank === null || (int) $f->vvip_rank === (int) $e->rank)
-                && (empty($f->vvip_types) || array_intersect($f->vvip_types, $e->types ?? []) !== []));
+                && (empty($f->vvip_types) || array_intersect($f->vvip_types, $myTypes) !== []));
 
-            return $match ? $gallery->presentFramePublic($f) + ['for_name' => $match->name] : null;
+            return $match ? $gallery->presentFramePublic($f) + ['for_name' => $myName] : null;
         })->filter();
 
         // 2. Awardee frames marked "VVIP" in Who can use it: for a VVIP who also meets the rest of
@@ -298,7 +381,7 @@ class VvipController extends Controller
             $rows->where('vvip', false)
                 ->filter(fn (GalleryAlbumFrame $f) => $f->require_vvip && ! empty($f->award_segments))
                 ->filter(fn (GalleryAlbumFrame $f) => GalleryController::frameEligible($f, $ctx['segment'], $ctx['elite'], true)),
-        )->map(fn (GalleryAlbumFrame $f) => $gallery->presentFramePublic($f) + ['for_name' => $entries->first()->name]);
+        )->map(fn (GalleryAlbumFrame $f) => $gallery->presentFramePublic($f) + ['for_name' => $myName]);
 
         $frames = $vvipFrames->concat($shared)->sortBy('sort_order')->values();
 
