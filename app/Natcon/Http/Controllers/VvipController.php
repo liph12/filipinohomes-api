@@ -274,29 +274,33 @@ class VvipController extends Controller
 
         abort_if($entries->isEmpty(), 403, 'Not on the VVIP list.');
 
-        $frames = GalleryAlbumFrame::where('natcon_event_id', $event->id)
+        $rows = GalleryAlbumFrame::where('natcon_event_id', $event->id)
             ->live()
-            // VVIP frames, plus awardee frames an admin ticked "Also for VVIP" on.
-            ->where(fn ($q) => $q->where('vvip', true)->orWhere(fn ($q2) => $q2->where('vvip', false)->where('include_vvip', true)))
             ->orderBy('sort_order')
             ->orderBy('id')
-            ->get()
-            ->map(function (GalleryAlbumFrame $f) use ($entries, $gallery) {
-                // "Also for VVIP" awardee frames: being on the VVIP list is enough.
-                if (! $f->vvip) {
-                    return $gallery->presentFramePublic($f) + ['for_name' => $entries->first()->name];
-                }
+            ->get();
 
-                // A frame lists what it is for; each filter it leaves empty means "any":
-                // category, rank, and the logo types (a person matches if they carry ANY of them).
-                $match = $entries->first(fn (VvipEntry $e) => ($f->vvip_category === null || VvipEntry::categoryKey($e->category) === VvipEntry::categoryKey($f->vvip_category))
-                    && ($f->vvip_rank === null || (int) $f->vvip_rank === (int) $e->rank)
-                    && (empty($f->vvip_types) || array_intersect($f->vvip_types, $e->types ?? []) !== []));
+        // 1. VVIP frames — matched on the logos / category / rank the person is listed with.
+        $vvipFrames = $rows->where('vvip', true)->map(function (GalleryAlbumFrame $f) use ($entries, $gallery) {
+            // A frame lists what it is for; each filter it leaves empty means "any":
+            // category, rank, and the logo types (a person matches if they carry ANY of them).
+            $match = $entries->first(fn (VvipEntry $e) => ($f->vvip_category === null || VvipEntry::categoryKey($e->category) === VvipEntry::categoryKey($f->vvip_category))
+                && ($f->vvip_rank === null || (int) $f->vvip_rank === (int) $e->rank)
+                && (empty($f->vvip_types) || array_intersect($f->vvip_types, $e->types ?? []) !== []));
 
-                return $match ? $gallery->presentFramePublic($f) + ['for_name' => $match->name] : null;
-            })
-            ->filter()
-            ->values();
+            return $match ? $gallery->presentFramePublic($f) + ['for_name' => $match->name] : null;
+        })->filter();
+
+        // 2. Awardee frames marked "VVIP" in Who can use it: for a VVIP who also meets the rest of
+        //    their conditions (award, Elite) — and only the most specific of them.
+        $ctx = $gallery->personContext($request);
+        $shared = GalleryController::mostSpecific(
+            $rows->where('vvip', false)
+                ->filter(fn (GalleryAlbumFrame $f) => $f->require_vvip && ! empty($f->award_segments))
+                ->filter(fn (GalleryAlbumFrame $f) => GalleryController::frameEligible($f, $ctx['segment'], $ctx['elite'], true)),
+        )->map(fn (GalleryAlbumFrame $f) => $gallery->presentFramePublic($f) + ['for_name' => $entries->first()->name]);
+
+        $frames = $vvipFrames->concat($shared)->sortBy('sort_order')->values();
 
         return response()->json(['data' => $frames]);
     }

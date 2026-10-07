@@ -1375,7 +1375,7 @@ class GalleryController extends Controller
             'vvip_category' => 'nullable|string|max:120',
             'vvip_rank' => 'nullable|integer|min:1|max:999',
             'vvip' => 'sometimes|boolean',
-            'include_vvip' => 'sometimes|boolean',
+            'require_vvip' => 'sometimes|boolean',
             'vvip_types' => ['nullable', 'array'],
             'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
         ], [
@@ -1408,8 +1408,8 @@ class GalleryController extends Controller
             'award_segments' => $event ? $this->normaliseSegments($data['award_segments'] ?? null) : null,
             'elite_only' => $event && ! empty($data['award_segments']) && ! empty($data['elite_only']),
             'vvip' => $event && (! empty($data['vvip']) || ! empty($data['vvip_category'])),
-            // An awardee frame (segments set) that VVIPs may use too.
-            'include_vvip' => $event && ! empty($data['include_vvip']) && ! empty($data['award_segments']) && empty($data['vvip']),
+            // An awardee frame that only VVIPs (who also meet the other conditions) can use.
+            'require_vvip' => $event && ! empty($data['require_vvip']) && ! empty($data['award_segments']) && empty($data['vvip']),
             'vvip_types' => $event ? $this->normaliseTypes($data['vvip_types'] ?? null) : null,
             'vvip_category' => $event ? ($data['vvip_category'] ?? null) : null,
             'vvip_rank' => $event && ! empty($data['vvip_category']) ? ($data['vvip_rank'] ?? null) : null,
@@ -1451,7 +1451,7 @@ class GalleryController extends Controller
             'vvip_category' => 'sometimes|nullable|string|max:120',
             'vvip_rank' => 'sometimes|nullable|integer|min:1|max:999',
             'vvip' => 'sometimes|boolean',
-            'include_vvip' => 'sometimes|boolean',
+            'require_vvip' => 'sometimes|boolean',
             'vvip_types' => ['sometimes', 'nullable', 'array'],
             'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
             // The name plate area, all four or none (null clears it).
@@ -1499,12 +1499,12 @@ class GalleryController extends Controller
         } elseif (! empty($data['award_segments'])) {
             $data['vvip'] = false;
         }
-        // "Also for VVIP" belongs to awardee frames only: a VVIP frame already is one, and a frame
+        // "VVIP required" belongs to awardee frames only: a VVIP frame already is one, and a frame
         // with no awards is public.
         $isVvipAfter = array_key_exists('vvip', $data) ? (bool) $data['vvip'] : (bool) $frame->vvip;
         $segmentsForVvip = array_key_exists('award_segments', $data) ? $data['award_segments'] : $frame->award_segments;
         if ($isVvipAfter || empty($segmentsForVvip)) {
-            $data['include_vvip'] = false;
+            $data['require_vvip'] = false;
         }
         if (array_key_exists('vvip', $data) && ! $data['vvip']) {
             $data['vvip_category'] = null;
@@ -1670,7 +1670,48 @@ class GalleryController extends Controller
         ]]);
     }
 
-    /** Agent: the frames reserved for MY award segment this convention (none → 403). */
+    /**
+     * Does this person meet EVERY condition an awardee frame sets? The conditions are the ones ticked
+     * in "Who can use it", and all of them must hold at once:
+     *   · award(s)  — their award is one of those ticked (when any award is ticked),
+     *   · Elite     — they are flagged Elite (when ticked),
+     *   · VVIP      — they are a VVIP (when ticked).
+     * Nothing else ticked means REGULAR awardee: no award, and neither Elite nor VVIP.
+     */
+    public static function frameEligible(GalleryAlbumFrame $f, string $segment, bool $elite, bool $vvip): bool
+    {
+        $real = array_values(array_diff($f->award_segments ?? [], [self::REGULAR_AWARDEE]));
+
+        if ($real === [] && ! $f->elite_only && ! $f->require_vvip) {
+            return $segment === self::REGULAR_AWARDEE && ! $elite && ! $vvip;
+        }
+
+        return ($real === [] || in_array($segment, $real, true))
+            && (! $f->elite_only || $elite)
+            && (! $f->require_vvip || $vvip);
+    }
+
+    /**
+     * A person gets their MOST SPECIFIC frames, not every frame they qualify for: an Elite Global
+     * Partner is offered the "Global Partner + Elite" frame instead of also the plain Global Partner
+     * one. Specificity = how many conditions the frame sets (an award, Elite, VVIP), then the fewer
+     * awards it lists the better. Only the top tier is returned; equally specific frames all stay.
+     *
+     * @param  \Illuminate\Support\Collection<int, GalleryAlbumFrame>  $frames
+     */
+    public static function mostSpecific($frames)
+    {
+        $score = function (GalleryAlbumFrame $f) {
+            $real = array_diff($f->award_segments ?? [], [self::REGULAR_AWARDEE]);
+
+            return ((count($real) > 0 ? 1 : 0) + ($f->elite_only ? 1 : 0) + ($f->require_vvip ? 1 : 0)) * 100 - count($real);
+        };
+        $best = $frames->isEmpty() ? 0 : $frames->max($score);
+
+        return $frames->filter(fn (GalleryAlbumFrame $f) => $score($f) === $best)->values();
+    }
+
+    /** Agent: the awardee frames that fit me — all conditions met, most specific only (none → 403). */
     public function myAwardeeFrames(Request $request): JsonResponse
     {
         $a = $this->awardeeFor($request);
@@ -1680,30 +1721,29 @@ class GalleryController extends Controller
         $rows = GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
             ->live()
             ->where('vvip', false)
-            ->whereJsonContains('award_segments', $a['segment'])
-            ->when(
-                $a['segment'] === self::REGULAR_AWARDEE,
-                // A REGULAR awardee is one with no award who is neither Elite nor VVIP: a regular
-                // frame is theirs; an Elite-only one is for the no-award awardees who ARE Elite;
-                // and a VVIP never gets a regular frame (their own VVIP page has theirs).
-                fn ($q) => $a['vvip'] ? $q->whereRaw('1 = 0') : $q->where('elite_only', $a['elite']),
-                // Awardees with an award: Elite-circle frames only reach those flagged Elite.
-                fn ($q) => $q->when(! $a['elite'], fn ($q2) => $q2->where('elite_only', false)),
-            )
+            ->whereNotNull('award_segments')
+            // Frames that require VVIP are shown on the VVIP page, not here.
+            ->where('require_vvip', false)
             ->orderBy('sort_order')
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segment'], $a['elite'], $a['vvip']));
 
-        // An awardee gets their MOST SPECIFIC frames, not every frame they qualify for: an Elite
-        // Global Partner is offered the "Elite Global Partner" frame instead of also the plain
-        // Global Partner one and the all-awardee Elite one. A frame is more specific when it is
-        // Elite-only, and then when it names fewer audiences; only the top tier is returned
-        // (several equally specific frames all stay, so the awardee can still choose).
-        $specificity = fn (GalleryAlbumFrame $f) => ($f->elite_only ? 1000 : 0) - count($f->award_segments ?? []);
-        $best = $rows->isEmpty() ? 0 : $rows->max($specificity);
-        $rows = $rows->filter(fn (GalleryAlbumFrame $f) => $specificity($f) === $best)->values();
+        return response()->json(['data' => self::mostSpecific($rows)->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
+    }
 
-        return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
+    /** For the VVIP page: who this login is as far as awardee frames go (their award, Elite flag), even when not on the roster. */
+    public function personContext(Request $request): array
+    {
+        $email = mb_strtolower(trim((string) $request->user()?->email));
+        $event = NatconEvent::active();
+        $recipient = $event ? \App\Natcon\Models\Recipient::where('natcon_event_id', $event->id)->where('email', $email)->first() : null;
+        $registrants = $event ? app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year) : null;
+
+        return [
+            'segment' => (string) ($recipient?->award_segment ?? self::REGULAR_AWARDEE),
+            'elite' => (bool) (($registrants[$email]['is_elite'] ?? false)),
+        ];
     }
 
     /** Public read of a convention's own live frames, by year. */
@@ -1822,8 +1862,8 @@ class GalleryController extends Controller
             'award_segments' => $f->award_segments ?? [],
             // A VVIP frame: only for people listed under this category (and rank).
             'vvip' => (bool) $f->vvip,
-            // An awardee frame that people on the VVIP list can use too.
-            'include_vvip' => (bool) $f->include_vvip,
+            // An awardee frame that only VVIPs can use (and only if they meet its other conditions).
+            'require_vvip' => (bool) $f->require_vvip,
             'vvip_types' => $f->vvip_types ?? [],
             'vvip_category' => $f->vvip_category,
             'vvip_rank' => $f->vvip_rank,
