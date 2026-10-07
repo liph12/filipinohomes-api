@@ -25,10 +25,17 @@ class VvipEntry extends Model
         'fhi_dubai' => 'FHI Dubai',
     ];
 
-    /** Categories are free text, stored as typed; two match only if they are equal ignoring case and extra spaces. */
+    /**
+     * Categories are free text, stored as typed. Two are the SAME category when they match
+     * ignoring case, extra spaces and a plural "s": "Top Sales Superstars" (a couple) and
+     * "Top Sales Superstar" (one agent) are one category.
+     */
     public static function categoryKey(?string $category): string
     {
-        return trim((string) preg_replace('/\s+/u', ' ', mb_strtolower(trim((string) $category))));
+        $key = trim((string) preg_replace('/\s+/u', ' ', mb_strtolower(trim((string) $category))));
+
+        // Drop a plural "s" from every word of 4+ letters (sales → sale, superstars → superstar).
+        return (string) preg_replace('/(?<=\w{3})s\b/u', '', $key);
     }
 
     public function setEmailAttribute(?string $value): void
