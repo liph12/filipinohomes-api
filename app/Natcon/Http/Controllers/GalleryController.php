@@ -1607,7 +1607,7 @@ class GalleryController extends Controller
      * agent (segment null) is not an "awardee" here. Server-side only — the
      * client never states its own segment.
      *
-     * @return array{event: NatconEvent, segment: string, elite: bool, elite_known: bool, name: string, team: string}|null
+     * @return array{event: NatconEvent, segment: string, elite: bool, vvip: bool, elite_known: bool, name: string, team: string}|null
      */
     private function awardeeFor(Request $request): ?array
     {
@@ -1639,6 +1639,10 @@ class GalleryController extends Controller
             // No award on the roster row = a regular awardee, which frames call "top_agent".
             'segment' => (string) ($recipient->award_segment ?? self::REGULAR_AWARDEE),
             'elite' => (bool) ($row['is_elite'] ?? false),
+            // On the VVIP list, or marked VVIP in the admin's Awardees table. VVIPs have their
+            // own frames, so they are never "regular" awardees.
+            'vvip' => (bool) ($row['is_vvip'] ?? false)
+                || \App\Natcon\Models\VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->exists(),
             // false = the registration service couldn't be read (unreachable,
             // or it rejected our service token), so "not elite" is a guess.
             'elite_known' => $registrants !== null,
@@ -1677,8 +1681,15 @@ class GalleryController extends Controller
             ->live()
             ->where('vvip', false)
             ->whereJsonContains('award_segments', $a['segment'])
-            // Elite-circle frames only reach awardees flagged Elite.
-            ->when(! $a['elite'], fn ($q) => $q->where('elite_only', false))
+            ->when(
+                $a['segment'] === self::REGULAR_AWARDEE,
+                // A REGULAR awardee is one with no award who is neither Elite nor VVIP: a regular
+                // frame is theirs; an Elite-only one is for the no-award awardees who ARE Elite;
+                // and a VVIP never gets a regular frame (their own VVIP page has theirs).
+                fn ($q) => $a['vvip'] ? $q->whereRaw('1 = 0') : $q->where('elite_only', $a['elite']),
+                // Awardees with an award: Elite-circle frames only reach those flagged Elite.
+                fn ($q) => $q->when(! $a['elite'], fn ($q2) => $q2->where('elite_only', false)),
+            )
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
