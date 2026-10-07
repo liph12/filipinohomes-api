@@ -276,11 +276,17 @@ class VvipController extends Controller
 
         $frames = GalleryAlbumFrame::where('natcon_event_id', $event->id)
             ->live()
-            ->where('vvip', true)
+            // VVIP frames, plus awardee frames an admin ticked "Also for VVIP" on.
+            ->where(fn ($q) => $q->where('vvip', true)->orWhere(fn ($q2) => $q2->where('vvip', false)->where('include_vvip', true)))
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
             ->map(function (GalleryAlbumFrame $f) use ($entries, $gallery) {
+                // "Also for VVIP" awardee frames: being on the VVIP list is enough.
+                if (! $f->vvip) {
+                    return $gallery->presentFramePublic($f) + ['for_name' => $entries->first()->name];
+                }
+
                 // A frame lists what it is for; each filter it leaves empty means "any":
                 // category, rank, and the logo types (a person matches if they carry ANY of them).
                 $match = $entries->first(fn (VvipEntry $e) => ($f->vvip_category === null || VvipEntry::categoryKey($e->category) === VvipEntry::categoryKey($f->vvip_category))

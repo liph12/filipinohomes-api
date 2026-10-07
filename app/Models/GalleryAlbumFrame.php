@@ -33,7 +33,7 @@ class GalleryAlbumFrame extends Model implements Auditable
     protected array $auditLabelAttributes = ['name'];
 
     protected $fillable = [
-        'album_id', 'natcon_event_id', 'award_segments', 'elite_only', 'vvip', 'vvip_types', 'vvip_category', 'vvip_rank', 'name', 'image_url', 's3_key', 'width', 'height',
+        'album_id', 'natcon_event_id', 'award_segments', 'elite_only', 'include_vvip', 'vvip', 'vvip_types', 'vvip_category', 'vvip_rank', 'name', 'image_url', 's3_key', 'width', 'height',
         'byte_size', 'window_x', 'window_y', 'window_w', 'window_h',
         'text_x', 'text_y', 'text_w', 'text_h',
         'text_x', 'text_y', 'text_w', 'text_h',
@@ -59,6 +59,7 @@ class GalleryAlbumFrame extends Model implements Auditable
         'elite_only' => 'boolean',
         'vvip_rank' => 'integer',
         'vvip' => 'boolean',
+        'include_vvip' => 'boolean',
         'vvip_types' => 'array',
     ];
 

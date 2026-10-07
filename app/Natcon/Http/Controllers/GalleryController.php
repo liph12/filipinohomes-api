@@ -1375,6 +1375,7 @@ class GalleryController extends Controller
             'vvip_category' => 'nullable|string|max:120',
             'vvip_rank' => 'nullable|integer|min:1|max:999',
             'vvip' => 'sometimes|boolean',
+            'include_vvip' => 'sometimes|boolean',
             'vvip_types' => ['nullable', 'array'],
             'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
         ], [
@@ -1407,6 +1408,8 @@ class GalleryController extends Controller
             'award_segments' => $event ? $this->normaliseSegments($data['award_segments'] ?? null) : null,
             'elite_only' => $event && ! empty($data['award_segments']) && ! empty($data['elite_only']),
             'vvip' => $event && (! empty($data['vvip']) || ! empty($data['vvip_category'])),
+            // An awardee frame (segments set) that VVIPs may use too.
+            'include_vvip' => $event && ! empty($data['include_vvip']) && ! empty($data['award_segments']) && empty($data['vvip']),
             'vvip_types' => $event ? $this->normaliseTypes($data['vvip_types'] ?? null) : null,
             'vvip_category' => $event ? ($data['vvip_category'] ?? null) : null,
             'vvip_rank' => $event && ! empty($data['vvip_category']) ? ($data['vvip_rank'] ?? null) : null,
@@ -1448,6 +1451,7 @@ class GalleryController extends Controller
             'vvip_category' => 'sometimes|nullable|string|max:120',
             'vvip_rank' => 'sometimes|nullable|integer|min:1|max:999',
             'vvip' => 'sometimes|boolean',
+            'include_vvip' => 'sometimes|boolean',
             'vvip_types' => ['sometimes', 'nullable', 'array'],
             'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
             // The name plate area, all four or none (null clears it).
@@ -1494,6 +1498,13 @@ class GalleryController extends Controller
             $data['award_segments'] = null;
         } elseif (! empty($data['award_segments'])) {
             $data['vvip'] = false;
+        }
+        // "Also for VVIP" belongs to awardee frames only: a VVIP frame already is one, and a frame
+        // with no awards is public.
+        $isVvipAfter = array_key_exists('vvip', $data) ? (bool) $data['vvip'] : (bool) $frame->vvip;
+        $segmentsForVvip = array_key_exists('award_segments', $data) ? $data['award_segments'] : $frame->award_segments;
+        if ($isVvipAfter || empty($segmentsForVvip)) {
+            $data['include_vvip'] = false;
         }
         if (array_key_exists('vvip', $data) && ! $data['vvip']) {
             $data['vvip_category'] = null;
@@ -1791,6 +1802,8 @@ class GalleryController extends Controller
             'award_segments' => $f->award_segments ?? [],
             // A VVIP frame: only for people listed under this category (and rank).
             'vvip' => (bool) $f->vvip,
+            // An awardee frame that people on the VVIP list can use too.
+            'include_vvip' => (bool) $f->include_vvip,
             'vvip_types' => $f->vvip_types ?? [],
             'vvip_category' => $f->vvip_category,
             'vvip_rank' => $f->vvip_rank,
