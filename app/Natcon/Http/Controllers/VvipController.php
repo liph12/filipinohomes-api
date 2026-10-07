@@ -39,13 +39,21 @@ class VvipController extends Controller
 
     private function rosterName(?\App\Natcon\Models\Recipient $r): string
     {
-        return $r ? (string) ($r->display_name ?: trim($r->first_name.' '.$r->last_name)) : '';
+        // A couple's name is written "Angie Kay and Marc Godornes" on the roster; the VVIP list and
+        // frames use "&" ("Angie Kay & Marc Godornes").
+        return $r ? self::ampersand((string) ($r->display_name ?: trim($r->first_name.' '.$r->last_name))) : '';
+    }
+
+    /** " and " (any case, as its own word) → " & ". */
+    public static function ampersand(string $name): string
+    {
+        return (string) preg_replace('/\s+and\s+/i', ' & ', $name);
     }
 
     /**
      * The logos a person carries, DERIVED from their awardee record instead of typed into the
      * list: Elite Circle ← the Elite toggle; RM Pro ← Top Rent Manager Pro OR Top Rent Manager &
-     * RM Pro; Global Partners ← Global Partner; FHI Dubai ← FHI Global. (VVIP itself = being on the list.)
+     * RM Pro; Global Partners ← Global Partner; FHI Dubai ← FHI Global; Elite Team Leader ← Elite Team Leader. (VVIP itself = being on the list.)
      *
      * @return array<int, string> keys of VvipEntry::TYPES, in display order
      */
@@ -58,6 +66,7 @@ class VvipController extends Controller
             in_array($segment, [\App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER, \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER_RM_PRO], true) ? 'rm_pro' : null,
             $segment === \App\Natcon\Models\Recipient::SEGMENT_GLOBAL_PARTNER ? 'global_partners' : null,
             $segment === \App\Natcon\Models\Recipient::SEGMENT_FHI_GLOBAL ? 'fhi_dubai' : null,
+            $segment === \App\Natcon\Models\Recipient::SEGMENT_ELITE_TEAM_LEADER ? 'elite_team_leader' : null,
         ]));
     }
 
@@ -294,6 +303,7 @@ class VvipController extends Controller
                 'rm_pro' => in_array('rm_pro', $types, true),
                 'global_partners' => in_array('global_partners', $types, true),
                 'fhi_dubai' => in_array('fhi_dubai', $types, true),
+                'elite_team_leader' => in_array('elite_team_leader', $types, true),
             ];
         })->values();
 

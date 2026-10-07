@@ -23,6 +23,7 @@ class VvipEntry extends Model
         'rm_pro' => 'RM Pro',
         'global_partners' => 'Global Partners',
         'fhi_dubai' => 'FHI Dubai',
+        'elite_team_leader' => 'Elite Team Leader',
     ];
 
     /**

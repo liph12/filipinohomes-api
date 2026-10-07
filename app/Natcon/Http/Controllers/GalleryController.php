@@ -1648,7 +1648,7 @@ class GalleryController extends Controller
             'elite_known' => $registrants !== null,
             // For the awardee frame's name plate. display_name already holds a
             // couple's whole name ("Jessie and Suzan Cruz").
-            'name' => (string) ($recipient->display_name ?: trim($recipient->first_name.' '.$recipient->last_name)),
+            'name' => \App\Natcon\Http\Controllers\VvipController::ampersand((string) ($recipient->display_name ?: trim($recipient->first_name.' '.$recipient->last_name))),
             'team' => (string) ($recipient->team ?? ''),
         ];
     }
