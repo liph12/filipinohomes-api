@@ -29,7 +29,7 @@ class NatconEvent extends Model implements Auditable
         'hashtag', 'photo_deadline_at', 'timezone', 'update_profile_url',
         'banner_base', 'email_banner_url', 'sponsor_display', 'thank_you_message',
         'reminder_offsets', 'is_active', 'sales_breakpoint',
-        'reactions_enabled',
+        'reactions_enabled', 'awardee_face_album_ids',
     ];
 
     protected $casts = [
@@ -41,6 +41,7 @@ class NatconEvent extends Model implements Auditable
         'sponsor_display' => 'array',
         'is_active' => 'boolean',
         'reactions_enabled' => 'boolean',
+        'awardee_face_album_ids' => 'array',
         'sales_breakpoint' => 'decimal:2',
     ];
 

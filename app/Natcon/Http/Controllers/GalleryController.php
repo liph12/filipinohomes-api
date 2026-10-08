@@ -493,10 +493,15 @@ class GalleryController extends Controller
         }
         [$matches, $mode, $total] = $result;
 
+        // Optional narrowing to some of the convention's albums (`album_ids[]`, sub-albums included) —
+        // the awardee frames' search is limited to the albums the admin picked.
+        $albumIds = self::albumIdsWithChildren($event, array_map('intval', (array) $request->input('album_ids', [])));
+
         // whereIn loses the similarity ordering; reassemble in match order.
         $photos = GalleryPhoto::with('album:id,parent_id,slug,name,sort_order')
             ->forEvent($event)
             ->whereIn('id', array_keys($matches))
+            ->when($albumIds !== [], fn ($q) => $q->whereIn('album_id', $albumIds))
             ->where('status', GalleryPhoto::STATUS_ACTIVE)
             ->get()
             ->keyBy('id');
@@ -1767,6 +1772,37 @@ class GalleryController extends Controller
         ];
     }
 
+    /**
+     * The given album ids of this convention plus every album nested under them; [] when none are
+     * given (or none are the convention's), which readers take as "the whole convention".
+     *
+     * @param  array<int,int>  $ids
+     * @return array<int,int>
+     */
+    public static function albumIdsWithChildren(NatconEvent $event, array $ids): array
+    {
+        $ids = array_values(array_filter($ids, fn ($n) => $n > 0));
+        if ($ids === []) {
+            return [];
+        }
+
+        $byParent = GalleryAlbum::forEvent($event)->get(['id', 'parent_id'])->groupBy('parent_id');
+        $out = [];
+        $queue = array_values(array_intersect($ids, $byParent->flatten()->pluck('id')->all()));
+        while ($queue !== []) {
+            $id = array_shift($queue);
+            if (isset($out[$id])) {
+                continue;
+            }
+            $out[$id] = true;
+            foreach ($byParent->get($id, collect()) as $child) {
+                $queue[] = $child->id;
+            }
+        }
+
+        return array_map('intval', array_keys($out));
+    }
+
     /** Agent: am I an awardee of the live convention, and in which segment? */
     public function myAwardee(Request $request): JsonResponse
     {
@@ -1782,6 +1818,8 @@ class GalleryController extends Controller
             'elite_known' => $a['elite_known'] ?? true,
             'display_name' => $a['name'] ?? null,
             'team' => ($a['team'] ?? '') !== '' ? $a['team'] : null,
+            // The albums "Find my photos" searches for awardee frames; [] = the whole convention.
+            'face_album_ids' => isset($a['event']) ? array_values(array_map('intval', (array) ($a['event']->awardee_face_album_ids ?? []))) : [],
         ]]);
     }
 

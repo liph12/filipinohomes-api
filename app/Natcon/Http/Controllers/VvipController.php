@@ -402,6 +402,8 @@ class VvipController extends Controller
             'is_vvip' => $isVvip,
             'event_id' => $event?->id,
             'year' => $event?->year,
+            // The albums "Find my photos" searches (the Awardee tab's setting); [] = the whole convention.
+            'face_album_ids' => array_values(array_map('intval', (array) ($event?->awardee_face_album_ids ?? []))),
             'entries' => $entries->map(fn (VvipEntry $e) => $this->present($e, $event ? $this->roster($event) : null, $event ? $this->registrants($event) : null))->values(),
         ]]);
     }

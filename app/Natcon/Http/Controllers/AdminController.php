@@ -274,6 +274,9 @@ class AdminController extends Controller
             'thank_you_message' => 'sometimes|nullable|string|max:512',
             'is_active' => 'sometimes|boolean',
             'reactions_enabled' => 'sometimes|boolean',
+            // The albums the awardee frames' face search covers; empty = the whole convention.
+            'awardee_face_album_ids' => 'sometimes|nullable|array|max:50',
+            'awardee_face_album_ids.*' => 'integer',
             // Accepted as a wall-clock time in the event's timezone, because
             // "the 24th" is a Manila date. Converted to UTC below.
             'photo_deadline_at' => 'sometimes|date',
@@ -282,6 +285,12 @@ class AdminController extends Controller
         if (isset($data['photo_deadline_at'])) {
             $tz = $data['timezone'] ?? $event->timezone ?? 'Asia/Manila';
             $data['photo_deadline_at'] = Carbon::parse($data['photo_deadline_at'], $tz)->utc();
+        }
+
+        if (array_key_exists('awardee_face_album_ids', $data)) {
+            // Only this convention's own albums; nothing = whole convention.
+            $own = \App\Models\GalleryAlbum::forEvent($event)->whereIn('id', (array) ($data['awardee_face_album_ids'] ?? []))->pluck('id')->all();
+            $data['awardee_face_album_ids'] = $own === [] ? null : array_values($own);
         }
 
         $event->fill($data)->save();
