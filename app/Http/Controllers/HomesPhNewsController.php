@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\NewsAnalytics;
+use App\Services\News\NewsCachePurger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -23,6 +24,8 @@ use Illuminate\Support\Facades\Log;
  */
 class HomesPhNewsController extends Controller
 {
+    public function __construct(private NewsCachePurger $purger) {}
+
     /**
      * List articles. Forwards all query params to HomesPhNews.
      */
@@ -130,8 +133,17 @@ class HomesPhNewsController extends Controller
 
             // Only cache a successful response so a transient upstream error
             // doesn't stick for the whole TTL.
+            //
+            // ⚠️ Was 30 minutes. An edit on the upstream CMS (title, body, or
+            //    the hero image a share preview is built from) sat behind
+            //    this PLUS the frontend's own 5-minute ISR window — up to
+            //    ~35 minutes where anyone, including Facebook's own scraper,
+            //    could still be served the pre-edit article. 5 minutes
+            //    matches index()'s own list TTL just above, and purgeCache()
+            //    below is there for "I need this live right now" rather than
+            //    waiting out even that.
             if ($cached['status'] >= 200 && $cached['status'] < 300) {
-                Cache::put($cacheKey, $cached, now()->addMinutes(30));
+                Cache::put($cacheKey, $cached, now()->addMinutes(5));
             }
         }
 
@@ -141,6 +153,19 @@ class HomesPhNewsController extends Controller
         }
 
         return response()->json($body, $cached['status']);
+    }
+
+    /**
+     * Drop this article's cached copy on both sides (ours and the
+     * frontend's), for right after an edit on the upstream CMS — see
+     * NewsCachePurger's own docblock for why this has to be a manual action
+     * rather than an automatic one.
+     */
+    public function purgeCache(string $identifier): JsonResponse
+    {
+        $this->purger->purge($identifier);
+
+        return response()->json(['purged' => true, 'identifier' => $identifier]);
     }
 
     /**

@@ -8,9 +8,9 @@ use App\Http\Controllers\AdPlacementController;
 use App\Http\Controllers\AdPreviewController;
 use App\Http\Controllers\AdSectionController;
 use App\Http\Controllers\AgentController;
-use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\AgentReviewController;
 use App\Http\Controllers\AmenityController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AppConfigController;
 use App\Http\Controllers\AppVersionController;
@@ -26,7 +26,6 @@ use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CityController;
 use App\Http\Controllers\CompanyEventController;
 use App\Http\Controllers\ConversationController;
-use App\Http\Controllers\InquiryAutoApprovalController;
 use App\Http\Controllers\DeviceTokenController;
 use App\Http\Controllers\EmailChangeController;
 use App\Http\Controllers\FacilityAdminController;
@@ -43,6 +42,7 @@ use App\Http\Controllers\HomesPhNewsController;
 use App\Http\Controllers\ImageUploadController;
 use App\Http\Controllers\ImpersonationController;
 use App\Http\Controllers\InquiryAnalyticsController;
+use App\Http\Controllers\InquiryAutoApprovalController;
 use App\Http\Controllers\InquiryController;
 use App\Http\Controllers\ListingController;
 use App\Http\Controllers\MagazineController;
@@ -79,12 +79,13 @@ use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
 use App\Natcon\Http\Controllers\OrganizerController as NatconOrganizerController;
-use App\Natcon\Http\Controllers\RaffleController as NatconRaffleController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicAwardeeController as NatconPublicAwardeeController;
 use App\Natcon\Http\Controllers\PublicController as NatconPublicController;
+use App\Natcon\Http\Controllers\RaffleController as NatconRaffleController;
 use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
+use App\Natcon\Http\Controllers\VvipController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('strip.tags')->group(function () {
@@ -408,6 +409,11 @@ Route::middleware('strip.tags')->group(function () {
         Route::post('news/{identifier}/impression', [HomesPhNewsController::class, 'trackImpression']);
         Route::post('news/{identifier}/click', [HomesPhNewsController::class, 'trackClick']);
 
+        // Editors as well as admins: refreshing a news article's cache after
+        // an upstream edit is editorial housekeeping, not the send machinery.
+        Route::post('news/{identifier}/purge-cache', [HomesPhNewsController::class, 'purgeCache'])
+            ->middleware(['auth:sanctum', RoleMiddleware::class.':admin,editor']);
+
         // Public magazine routes
         Route::get('magazines', [MagazineController::class, 'index']);
         Route::get('magazines/years', [MagazineController::class, 'years']);
@@ -613,8 +619,8 @@ Route::middleware('strip.tags')->group(function () {
                 // The signed-in agent's own award + the frames reserved for that segment.
                 Route::get('/natcon/my-awardee', [NatconGalleryController::class, 'myAwardee']);
                 Route::get('/natcon/my-awardee/frames', [NatconGalleryController::class, 'myAwardeeFrames']);
-                Route::get('/natcon/my-vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'myEntries']);
-                Route::get('/natcon/my-vvip/frames', [\App\Natcon\Http\Controllers\VvipController::class, 'myFrames']);
+                Route::get('/natcon/my-vvip', [VvipController::class, 'myEntries']);
+                Route::get('/natcon/my-vvip/frames', [VvipController::class, 'myFrames']);
             });
 
             // Admin-only: Get In Touch / Contact Us inquiry inbox + replies.
@@ -705,13 +711,13 @@ Route::middleware('strip.tags')->group(function () {
                 // auth group and re-gated on the line below.
                 Route::middleware(RoleMiddleware::class.':admin,editor')->group(function () {
                     // VVIP honourees imported from the awards sheet, per convention.
-                    Route::get('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'index']);
-                    Route::get('/admin/natcon/vvip/simplified', [\App\Natcon\Http\Controllers\VvipController::class, 'simplified']);
-                    Route::get('/admin/natcon/vvip/check', [\App\Natcon\Http\Controllers\VvipController::class, 'check']);
+                    Route::get('/admin/natcon/vvip', [VvipController::class, 'index']);
+                    Route::get('/admin/natcon/vvip/simplified', [VvipController::class, 'simplified']);
+                    Route::get('/admin/natcon/vvip/check', [VvipController::class, 'check']);
                     // The Frames preview: every awardee as the frames see them, with the frames they get.
-                    Route::get('/admin/natcon/frames/preview', [\App\Natcon\Http\Controllers\VvipController::class, 'framesPreview']);
-                    Route::post('/admin/natcon/vvip/import', [\App\Natcon\Http\Controllers\VvipController::class, 'import']);
-                    Route::delete('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'clear']);
+                    Route::get('/admin/natcon/frames/preview', [VvipController::class, 'framesPreview']);
+                    Route::post('/admin/natcon/vvip/import', [VvipController::class, 'import']);
+                    Route::delete('/admin/natcon/vvip', [VvipController::class, 'clear']);
                     Route::get('/admin/natcon/announcements', [NatconLandingController::class, 'adminAnnouncements']);
                     Route::post('/admin/natcon/announcements', [NatconLandingController::class, 'storeAnnouncement']);
                     Route::patch('/admin/natcon/announcements/{announcement}', [NatconLandingController::class, 'updateAnnouncement']);
