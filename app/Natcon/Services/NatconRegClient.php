@@ -25,7 +25,9 @@ use Illuminate\Support\Facades\Log;
  *
  * Cached for five minutes, matching the public endpoint's own window: one
  * request per five minutes per year reaches v2 no matter how the page is
- * hammered.
+ * hammered. A caller that must see the admin's LATEST toggles (the awardee's own
+ * frame pages, the VVIP checks) asks with `fresh: true`: that skips the cached
+ * copy, reads v2 now and refreshes the cache for everyone else.
  */
 class NatconRegClient
 {
@@ -36,7 +38,7 @@ class NatconRegClient
      *
      * @return array<string, array<string, mixed>>|null  null when v2 could not be reached
      */
-    public function byEmail(int $year, bool $withCodes = false): ?array
+    public function byEmail(int $year, bool $withCodes = false, bool $fresh = false): ?array
     {
         /*
          * Its own cache entry. Sharing one with the code-less call would serve
@@ -47,7 +49,7 @@ class NatconRegClient
 
         // A failure is NOT cached: v2 coming back up should show through on the
         // next request, not five minutes later.
-        $cached = Cache::get($cacheKey);
+        $cached = $fresh ? null : Cache::get($cacheKey);
 
         if (is_array($cached)) {
             return $cached;

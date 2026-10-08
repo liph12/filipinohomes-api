@@ -78,6 +78,30 @@ class GalleryController extends Controller
     }
 
     /**
+     * Public: a few of the year's live photos by id (`ids=1,2,3`, up to 50) — how the awardee frame
+     * studio gets its picked photos back after a page reload, from the ids it kept in the URL.
+     */
+    public function galleryPhotosByIds(Request $request, int $year): JsonResponse
+    {
+        $event = NatconEvent::forYear($year);
+        $ids = array_slice(array_values(array_unique(array_filter(array_map('intval', explode(',', (string) $request->query('ids', ''))), fn ($n) => $n > 0))), 0, 50);
+
+        if (! $event || $ids === []) {
+            return response()->json(['data' => []]);
+        }
+
+        $rows = GalleryPhoto::with('album:id,parent_id,slug,name,sort_order')
+            ->forEvent($event)
+            ->live()
+            ->whereIn('id', $ids)
+            ->get()
+            ->sortBy(fn (GalleryPhoto $p) => array_search($p->id, $ids, true))
+            ->values();
+
+        return response()->json(['data' => $rows->map(fn (GalleryPhoto $p) => $this->present($p))]);
+    }
+
+    /**
      * Which conventions have a public gallery — the year switcher's whole
      * source of truth, and the answer to "can I still see the 2025 photos?"
      *
@@ -1719,7 +1743,8 @@ class GalleryController extends Controller
         // Elite is a registration fact (the Elite toggle in the admin's Awardees
         // table, held by the registration service), joined by email. If that
         // service can't be reached the awardee simply isn't treated as elite.
-        $registrants = app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year);
+        // Read fresh: a toggle the admin just flipped must show on the very next load.
+        $registrants = app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year, false, true);
         $row = $registrants[$email] ?? null;
 
         return [
@@ -1840,15 +1865,16 @@ class GalleryController extends Controller
 
         abort_if($a === null, 403, 'Not a NATCON awardee.');
 
-        // VVIPs use their VVIP page; this page is the first column (people who are not VVIP).
-        $rows = $a['vvip'] ? collect() : GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
+        // Every frame with a row this person matches — as they are now, VVIP included (a VVIP flagged in
+        // the admin's table gets the frames whose row ticks VVIP, whether or not they are on the VVIP list).
+        $rows = GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
             ->live()
             ->where('vvip', false)
             ->whereNotNull('award_segments')
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
-            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segment'], $a['elite'], false));
+            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segment'], $a['elite'], $a['vvip']));
 
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
     }
@@ -1859,7 +1885,7 @@ class GalleryController extends Controller
         $email = mb_strtolower(trim((string) $request->user()?->email));
         $event = NatconEvent::active();
         $recipient = $event ? \App\Natcon\Models\Recipient::where('natcon_event_id', $event->id)->where('email', $email)->first() : null;
-        $registrants = $event ? app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year) : null;
+        $registrants = $event ? app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year, false, true) : null;
 
         return [
             'segment' => (string) ($recipient?->award_segment ?? self::REGULAR_AWARDEE),

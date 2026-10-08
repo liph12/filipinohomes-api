@@ -70,10 +70,15 @@ class VvipController extends Controller
         ]));
     }
 
-    /** @return array<string, array<string, mixed>>|null registration rows by email (null when the service can't be read) */
+    /**
+     * Registration rows by email (null when the service can't be read) — read FRESH from v2, never the
+     * five-minute copy: the VVIP / Elite toggles the admin flips there must show on the next load.
+     *
+     * @return array<string, array<string, mixed>>|null
+     */
     private function registrants(NatconEvent $event): ?array
     {
-        return app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year);
+        return app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year, false, true);
     }
 
     private function present(VvipEntry $e, $roster = null, ?array $registrants = null): array
@@ -196,7 +201,7 @@ class VvipController extends Controller
             ->where('status', '!=', \App\Natcon\Models\Recipient::STATUS_EXCLUDED)
             ->get()
             ->keyBy('email');
-        $registrants = app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year);
+        $registrants = $this->registrants($event);
 
         $flagged = collect($registrants ?? [])
             ->filter(fn ($r) => ! empty($r['is_vvip']))

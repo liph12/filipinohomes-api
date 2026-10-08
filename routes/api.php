@@ -255,6 +255,9 @@ Route::middleware('strip.tags')->group(function () {
             ->whereNumber('year');
         Route::get('/natcon/{year}/gallery', [NatconGalleryController::class, 'gallery'])
             ->whereNumber('year');
+        // A few live photos by id — the awardee studio's reload path (ids kept in its URL).
+        Route::get('/natcon/{year}/gallery/photos', [NatconGalleryController::class, 'galleryPhotosByIds'])
+            ->whereNumber('year');
         // Frames a photo in one convention album can wear — the public
         // /natcon/gallery opens a photo straight into the poster / frame /
         // reel studio, so this is token-less like the gallery read itself.
