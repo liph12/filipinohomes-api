@@ -384,14 +384,13 @@ class VvipController extends Controller
             return $match ? $gallery->presentFramePublic($f) + ['for_name' => $myName] : null;
         })->filter();
 
-        // 2. Awardee frames marked "VVIP" in Who can use it: for a VVIP who also meets the rest of
-        //    their conditions (award, Elite) — and only the most specific of them.
+        // 2. Awardee frames with an audience row for VVIPs that this person matches exactly (their award, Elite).
         $ctx = $gallery->personContext($request);
-        $shared = GalleryController::mostSpecific(
-            $rows->where('vvip', false)
-                ->filter(fn (GalleryAlbumFrame $f) => $f->require_vvip && ! empty($f->award_segments))
-                ->filter(fn (GalleryAlbumFrame $f) => GalleryController::frameEligible($f, $ctx['segment'], $ctx['elite'], true)),
-        )->map(fn (GalleryAlbumFrame $f) => $gallery->presentFramePublic($f) + ['for_name' => $myName]);
+        $shared = $rows->where('vvip', false)
+            ->filter(fn (GalleryAlbumFrame $f) => ! empty($f->award_segments))
+            ->filter(fn (GalleryAlbumFrame $f) => GalleryController::frameEligible($f, $ctx['segment'], $ctx['elite'], true))
+            ->values()
+            ->map(fn (GalleryAlbumFrame $f) => $gallery->presentFramePublic($f) + ['for_name' => $myName]);
 
         $frames = $vvipFrames->concat($shared)->sortBy('sort_order')->values();
 

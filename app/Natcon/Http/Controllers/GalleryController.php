@@ -1279,7 +1279,13 @@ class GalleryController extends Controller
     /** The audience key for an awardee with no special award (the roster's NULL segment). */
     private const REGULAR_AWARDEE = 'top_agent';
 
-    /** What an awardee frame can be reserved for: the five awards, plus every other awardee. */
+    /**
+     * Stored in award_segments when nothing is ticked in the first column ("Segment"): the frame is still an
+     * awardee frame (an empty list would make it a public one), it just isn't for anyone in that column.
+     */
+    private const NO_ONE = 'no_one';
+
+    /** What an awardee frame can be reserved for: the five awards, plus "regular awardee" and the nobody marker. */
     private const FRAME_AUDIENCES = [
         \App\Natcon\Models\Recipient::SEGMENT_GLOBAL_PARTNER,
         \App\Natcon\Models\Recipient::SEGMENT_FHI_GLOBAL,
@@ -1287,6 +1293,7 @@ class GalleryController extends Controller
         \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER_RM_PRO,
         \App\Natcon\Models\Recipient::SEGMENT_ELITE_TEAM_LEADER,
         self::REGULAR_AWARDEE,
+        self::NO_ONE,
     ];
 
     /** Public: frames offered for one album's photos. Token-less, never 401. */
@@ -1376,6 +1383,15 @@ class GalleryController extends Controller
             'vvip_rank' => 'nullable|integer|min:1|max:999',
             'vvip' => 'sometimes|boolean',
             'require_vvip' => 'sometimes|boolean',
+            // The VVIP column of Who can use it (shown when the VVIP box is ticked): its own awards / Elite; null = copy the first column.
+            'either_vvip' => 'sometimes|boolean',
+            'vvip_award_segments' => ['sometimes', 'nullable', 'array'],
+            'vvip_award_segments.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
+            'vvip_elite_only' => 'sometimes|boolean',
+            // The Elite Circle column (its own box, then its own awards; null = copy the first column).
+            'either_elite' => 'sometimes|boolean',
+            'elite_award_segments' => ['sometimes', 'nullable', 'array'],
+            'elite_award_segments.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
             'vvip_types' => ['nullable', 'array'],
             'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
         ], [
@@ -1410,6 +1426,11 @@ class GalleryController extends Controller
             'vvip' => $event && (! empty($data['vvip']) || ! empty($data['vvip_category'])),
             // An awardee frame that only VVIPs (who also meet the other conditions) can use.
             'require_vvip' => $event && ! empty($data['require_vvip']) && ! empty($data['award_segments']) && empty($data['vvip']),
+            'either_vvip' => $event && (! empty($data['either_vvip']) || ! empty($data['require_vvip'])) && ! empty($data['award_segments']) && empty($data['vvip']),
+            'vvip_award_segments' => $event && (! empty($data['either_vvip']) || ! empty($data['require_vvip'])) ? $this->normaliseSegments($data['vvip_award_segments'] ?? null) : null,
+            'vvip_elite_only' => $event && (! empty($data['either_vvip']) || ! empty($data['require_vvip'])) && ! empty($data['vvip_elite_only']),
+            'either_elite' => $event && ! empty($data['either_elite']) && ! empty($data['award_segments']) && empty($data['vvip']),
+            'elite_award_segments' => $event && ! empty($data['either_elite']) ? $this->normaliseSegments($data['elite_award_segments'] ?? null) : null,
             'vvip_types' => $event ? $this->normaliseTypes($data['vvip_types'] ?? null) : null,
             'vvip_category' => $event ? ($data['vvip_category'] ?? null) : null,
             'vvip_rank' => $event && ! empty($data['vvip_category']) ? ($data['vvip_rank'] ?? null) : null,
@@ -1452,6 +1473,21 @@ class GalleryController extends Controller
             'vvip_rank' => 'sometimes|nullable|integer|min:1|max:999',
             'vvip' => 'sometimes|boolean',
             'require_vvip' => 'sometimes|boolean',
+            // The VVIP column of Who can use it (shown when the VVIP box is ticked): its own awards / Elite; null = copy the first column.
+            'either_vvip' => 'sometimes|boolean',
+            'vvip_award_segments' => ['sometimes', 'nullable', 'array'],
+            'vvip_award_segments.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
+            'vvip_elite_only' => 'sometimes|boolean',
+            // The Elite Circle column (its own box, then its own awards; null = copy the first column).
+            'either_elite' => 'sometimes|boolean',
+            'elite_award_segments' => ['sometimes', 'nullable', 'array'],
+            'elite_award_segments.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
+            // Who can use it, as a list of audiences (see rulesOf()); an empty list makes the frame public.
+            'audiences' => ['sometimes', 'nullable', 'array'],
+            'audiences.*.awards' => ['present', 'array'],
+            'audiences.*.awards.*' => ['string', \Illuminate\Validation\Rule::in(self::FRAME_AUDIENCES)],
+            'audiences.*.elite' => ['sometimes', 'boolean'],
+            'audiences.*.vvip' => ['sometimes', 'boolean'],
             'vvip_types' => ['sometimes', 'nullable', 'array'],
             'vvip_types.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Natcon\Models\VvipEntry::TYPES))],
             // The name plate area, all four or none (null clears it).
@@ -1459,6 +1495,11 @@ class GalleryController extends Controller
             'text_y' => 'sometimes|nullable|required_with:text_x,text_w,text_h|numeric|min:0|max:1',
             'text_w' => 'sometimes|nullable|required_with:text_x,text_y,text_h|numeric|min:0.02|max:1',
             'text_h' => 'sometimes|nullable|required_with:text_x,text_y,text_w|numeric|min:0.01|max:1',
+            // The VVIP title area (the first title line; more lines stack up from it), all four or none.
+            'title_x' => 'sometimes|nullable|required_with:title_y,title_w,title_h|numeric|min:0|max:1',
+            'title_y' => 'sometimes|nullable|required_with:title_x,title_w,title_h|numeric|min:0|max:1',
+            'title_w' => 'sometimes|nullable|required_with:title_x,title_y,title_h|numeric|min:0.02|max:1',
+            'title_h' => 'sometimes|nullable|required_with:title_x,title_y,title_w|numeric|min:0.01|max:1',
             // Window edits come as a complete set or not at all — a lone
             // coordinate against three stored ones is meaningless.
             'window_x' => 'sometimes|required_with:window_y,window_w,window_h|numeric|min:0|max:1',
@@ -1477,6 +1518,11 @@ class GalleryController extends Controller
             return response()->json(['message' => 'The name area falls outside the frame.'], 422);
         }
 
+        if (isset($data['title_x'], $data['title_w'], $data['title_y'], $data['title_h'])
+            && ($data['title_x'] + $data['title_w'] > 1.0001 || $data['title_y'] + $data['title_h'] > 1.0001)) {
+            return response()->json(['message' => 'The title area falls outside the frame.'], 422);
+        }
+
         if (isset($data['name'])) {
             $data['name'] = trim($data['name']);
         }
@@ -1485,6 +1531,26 @@ class GalleryController extends Controller
         // clears it, and it can't be set on a frame that has none.
         if (array_key_exists('award_segments', $data)) {
             $data['award_segments'] = $this->normaliseSegments($data['award_segments']);
+        }
+
+        // The audience list is the whole of "Who can use it": saving it rewrites the older columns so
+        // every reader agrees — award_segments stays non-null (the "awardee frame" marker: the awards the
+        // rows name, or the nobody marker) and the three-column flags are cleared.
+        if (array_key_exists('audiences', $data)) {
+            $rules = self::normaliseRules($data['audiences'] ?? []);
+            $union = array_values(array_unique(array_merge(...array_map(fn ($r) => $r['awards'], $rules ?: [['awards' => []]]))));
+            $data['audiences'] = $rules === [] ? null : $rules;
+            $data['award_segments'] = $rules === [] ? null : ($union === [] ? [self::NO_ONE] : $union);
+            $data['elite_only'] = false;
+            $data['require_vvip'] = false;
+            $data['either_vvip'] = false;
+            $data['vvip_award_segments'] = null;
+            $data['vvip_elite_only'] = false;
+            $data['either_elite'] = false;
+            $data['elite_award_segments'] = null;
+            if ($rules !== []) {
+                $data['vvip'] = false;
+            }
         }
 
         // VVIP and award segments are different audiences: turning one on clears the other.
@@ -1505,6 +1571,28 @@ class GalleryController extends Controller
         $segmentsForVvip = array_key_exists('award_segments', $data) ? $data['award_segments'] : $frame->award_segments;
         if ($isVvipAfter || empty($segmentsForVvip)) {
             $data['require_vvip'] = false;
+            $data['either_vvip'] = false;
+            $data['either_elite'] = false;
+        }
+        // "VVIP only" implies the VVIP column is on.
+        if (! empty($data['require_vvip'])) {
+            $data['either_vvip'] = true;
+        }
+        // The VVIP column only exists while the VVIP box is ticked.
+        $eitherAfter = array_key_exists('either_vvip', $data) ? (bool) $data['either_vvip'] : (bool) $frame->either_vvip;
+        $requireAfter = array_key_exists('require_vvip', $data) ? (bool) $data['require_vvip'] : (bool) $frame->require_vvip;
+        if (! $eitherAfter && ! $requireAfter) {
+            $data['vvip_award_segments'] = null;
+            $data['vvip_elite_only'] = false;
+        } elseif (array_key_exists('vvip_award_segments', $data)) {
+            $data['vvip_award_segments'] = $this->normaliseSegments($data['vvip_award_segments']);
+        }
+        // The Elite Circle column exists only while its box is ticked.
+        $eliteColAfter = array_key_exists('either_elite', $data) ? (bool) $data['either_elite'] : (bool) $frame->either_elite;
+        if (! $eliteColAfter) {
+            $data['elite_award_segments'] = null;
+        } elseif (array_key_exists('elite_award_segments', $data)) {
+            $data['elite_award_segments'] = $this->normaliseSegments($data['elite_award_segments']);
         }
         if (array_key_exists('vvip', $data) && ! $data['vvip']) {
             $data['vvip_category'] = null;
@@ -1671,65 +1759,98 @@ class GalleryController extends Controller
     }
 
     /**
-     * Does this person meet EVERY condition an awardee frame sets? The conditions are the ones ticked
-     * in "Who can use it", and all of them must hold at once:
-     *   · award(s)  — their award is one of those ticked (when any award is ticked),
-     *   · Elite     — they are flagged Elite (when ticked),
-     *   · VVIP      — they are a VVIP (when ticked).
-     * Nothing else ticked means REGULAR awardee: no award, and neither Elite nor VVIP.
+     * "Who can use it" as a list of audiences, each {awards, elite, vvip}. A person matches a row EXACTLY:
+     * their award is one of its awards (none ticked = no award), and they are Elite / VVIP just as the
+     * row is ticked. So a row with only Elite ticked is for Elite people with no award — an Elite Global
+     * Partner needs their own row with both ticked.
+     *
+     * Frames saved before the list existed have it derived from the three-column fields: the first
+     * column (its awards + Elite, or Regular awardee), the Elite Circle column and the VVIP column.
+     *
+     * @return array<int, array{awards: array<int, string>, elite: bool, vvip: bool}>
      */
-    public static function frameEligible(GalleryAlbumFrame $f, string $segment, bool $elite, bool $vvip): bool
+    public static function rulesOf(GalleryAlbumFrame $f): array
     {
-        $real = array_values(array_diff($f->award_segments ?? [], [self::REGULAR_AWARDEE]));
-
-        if ($real === [] && ! $f->elite_only && ! $f->require_vvip) {
-            return $segment === self::REGULAR_AWARDEE && ! $elite && ! $vvip;
+        if ($f->audiences !== null) {
+            return self::normaliseRules($f->audiences);
         }
 
-        return ($real === [] || in_array($segment, $real, true))
-            && (! $f->elite_only || $elite)
-            && (! $f->require_vvip || $vvip);
+        $strip = fn (?array $list) => array_values(array_diff($list ?? [], [self::REGULAR_AWARDEE, self::NO_ONE]));
+        $first = $strip($f->award_segments);
+        $rules = [];
+
+        if (! $f->require_vvip) {
+            if ($first !== []) {
+                $rules[] = ['awards' => $first, 'elite' => (bool) $f->elite_only, 'vvip' => false];
+            } elseif ($f->elite_only) {
+                $rules[] = ['awards' => [], 'elite' => true, 'vvip' => false];
+            }
+            if (in_array(self::REGULAR_AWARDEE, $f->award_segments ?? [], true)) {
+                $rules[] = ['awards' => [], 'elite' => false, 'vvip' => false];
+            }
+        }
+        if ($f->either_elite) {
+            $rules[] = ['awards' => $f->elite_award_segments !== null ? $strip($f->elite_award_segments) : $first, 'elite' => true, 'vvip' => false];
+        }
+        if ($f->either_vvip || $f->require_vvip) {
+            $own = $f->vvip_award_segments !== null;
+            $rules[] = ['awards' => $own ? $strip($f->vvip_award_segments) : $first, 'elite' => (bool) ($own ? $f->vvip_elite_only : $f->elite_only), 'vvip' => true];
+        }
+
+        return self::normaliseRules($rules);
     }
 
-    /**
-     * A person gets their MOST SPECIFIC frames, not every frame they qualify for: an Elite Global
-     * Partner is offered the "Global Partner + Elite" frame instead of also the plain Global Partner
-     * one. Specificity = how many conditions the frame sets (an award, Elite, VVIP), then the fewer
-     * awards it lists the better. Only the top tier is returned; equally specific frames all stay.
-     *
-     * @param  \Illuminate\Support\Collection<int, GalleryAlbumFrame>  $frames
-     */
-    public static function mostSpecific($frames)
+    /** Clean rows: known awards only (no markers), unique, each row once. */
+    private static function normaliseRules(array $rows): array
     {
-        $score = function (GalleryAlbumFrame $f) {
-            $real = array_diff($f->award_segments ?? [], [self::REGULAR_AWARDEE]);
+        $clean = [];
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $awards = array_values(array_unique(array_intersect(
+                array_map('strval', (array) ($row['awards'] ?? [])),
+                array_diff(self::FRAME_AUDIENCES, [self::REGULAR_AWARDEE, self::NO_ONE]),
+            )));
+            sort($awards);
+            $rule = ['awards' => $awards, 'elite' => (bool) ($row['elite'] ?? false), 'vvip' => (bool) ($row['vvip'] ?? false)];
+            $clean[json_encode($rule)] = $rule;
+        }
 
-            return ((count($real) > 0 ? 1 : 0) + ($f->elite_only ? 1 : 0) + ($f->require_vvip ? 1 : 0)) * 100 - count($real);
-        };
-        $best = $frames->isEmpty() ? 0 : $frames->max($score);
-
-        return $frames->filter(fn (GalleryAlbumFrame $f) => $score($f) === $best)->values();
+        return array_values($clean);
     }
 
-    /** Agent: the awardee frames that fit me — all conditions met, most specific only (none → 403). */
+    /** Can this person use the frame? They must match one of its audience rows exactly. */
+    public static function frameEligible(GalleryAlbumFrame $f, string $segment, bool $personElite, bool $personVvip): bool
+    {
+        foreach (self::rulesOf($f) as $rule) {
+            $awardOk = $rule['awards'] === [] ? $segment === self::REGULAR_AWARDEE : in_array($segment, $rule['awards'], true);
+            if ($awardOk && $rule['elite'] === $personElite && $rule['vvip'] === $personVvip) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Agent: the awardee frames that fit me — one of each frame's audience rows matched exactly (none → 403). */
     public function myAwardeeFrames(Request $request): JsonResponse
     {
         $a = $this->awardeeFor($request);
 
         abort_if($a === null, 403, 'Not a NATCON awardee.');
 
-        $rows = GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
+        // VVIPs use their VVIP page; this page is the first column (people who are not VVIP).
+        $rows = $a['vvip'] ? collect() : GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
             ->live()
             ->where('vvip', false)
             ->whereNotNull('award_segments')
-            // Frames that require VVIP are shown on the VVIP page, not here.
-            ->where('require_vvip', false)
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
-            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segment'], $a['elite'], $a['vvip']));
+            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segment'], $a['elite'], false));
 
-        return response()->json(['data' => self::mostSpecific($rows)->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
+        return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
     }
 
     /** For the VVIP page: who this login is as far as awardee frames go (their award, Elite flag), even when not on the roster. */
@@ -1864,10 +1985,19 @@ class GalleryController extends Controller
             'vvip' => (bool) $f->vvip,
             // An awardee frame that only VVIPs can use (and only if they meet its other conditions).
             'require_vvip' => (bool) $f->require_vvip,
+            // The VVIP column of Who can use it (null = it copies the first column).
+            'either_vvip' => (bool) $f->either_vvip,
+            'vvip_award_segments' => $f->vvip_award_segments,
+            'vvip_elite_only' => (bool) $f->vvip_elite_only,
+            // The Elite Circle column of Who can use it (null = it copies the first column).
+            'either_elite' => (bool) $f->either_elite,
+            'elite_award_segments' => $f->elite_award_segments,
             'vvip_types' => $f->vvip_types ?? [],
             'vvip_category' => $f->vvip_category,
             'vvip_rank' => $f->vvip_rank,
             'elite_only' => (bool) $f->elite_only,
+            // Who can use it, as the list the admin edits (derived from the older columns until re-saved).
+            'audiences' => $f->vvip ? [] : self::rulesOf($f),
             'name' => $f->name,
             'image_url' => $f->image_url,
             'width' => $f->width,
@@ -1884,6 +2014,13 @@ class GalleryController extends Controller
                 'y' => (float) $f->text_y,
                 'w' => (float) $f->text_w,
                 'h' => (float) $f->text_h,
+            ],
+            // Where a VVIP's titles go (the first line's box; more lines stack up from it); null = not set.
+            'title_area' => $f->title_x === null ? null : [
+                'x' => (float) $f->title_x,
+                'y' => (float) $f->title_y,
+                'w' => (float) $f->title_w,
+                'h' => (float) $f->title_h,
             ],
             'sort_order' => $f->sort_order,
             'created_at' => $f->created_at?->toIso8601String(),
