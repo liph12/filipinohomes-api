@@ -708,6 +708,8 @@ Route::middleware('strip.tags')->group(function () {
                     Route::get('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'index']);
                     Route::get('/admin/natcon/vvip/simplified', [\App\Natcon\Http\Controllers\VvipController::class, 'simplified']);
                     Route::get('/admin/natcon/vvip/check', [\App\Natcon\Http\Controllers\VvipController::class, 'check']);
+                    // The Frames preview: every awardee as the frames see them, with the frames they get.
+                    Route::get('/admin/natcon/frames/preview', [\App\Natcon\Http\Controllers\VvipController::class, 'framesPreview']);
                     Route::post('/admin/natcon/vvip/import', [\App\Natcon\Http\Controllers\VvipController::class, 'import']);
                     Route::delete('/admin/natcon/vvip', [\App\Natcon\Http\Controllers\VvipController::class, 'clear']);
                     Route::get('/admin/natcon/announcements', [NatconLandingController::class, 'adminAnnouncements']);

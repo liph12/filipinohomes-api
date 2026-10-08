@@ -341,6 +341,45 @@ class VvipController extends Controller
         return [$event, VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->orderBy('id')->get()];
     }
 
+    /**
+     * Admin: every awardee of the convention with the frames they would get, for the Frames preview —
+     * who they are as the frames see them (award, Elite, VVIP, their VVIP titles) and the ids of the
+     * awardee frames whose rows they match. Registration flags are read fresh, like the awardee pages.
+     */
+    public function framesPreview(Request $request, GalleryController $gallery): JsonResponse
+    {
+        $event = $this->event($request);
+        $registrants = $this->registrants($event) ?? [];
+        $entries = VvipEntry::where('natcon_event_id', $event->id)->orderBy('rank')->orderBy('id')->get()->groupBy('email');
+        $frames = GalleryAlbumFrame::where('natcon_event_id', $event->id)
+            ->live()
+            ->where('vvip', false)
+            ->whereNotNull('award_segments')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        $people = $this->roster($event)->map(function (\App\Natcon\Models\Recipient $r) use ($registrants, $entries, $frames, $gallery) {
+            $email = (string) $r->email;
+            $reg = $registrants[$email] ?? null;
+            $segment = (string) ($r->award_segment ?: 'top_agent');
+            $elite = (bool) ($reg['is_elite'] ?? false);
+            $vvip = (bool) ($reg['is_vvip'] ?? false) || $entries->has($email);
+
+            return [
+                'email' => $email,
+                'name' => $this->rosterName($r),
+                'segment' => $segment,
+                'elite' => $elite,
+                'vvip' => $vvip,
+                'titles' => $entries->get($email, collect())->map(fn (VvipEntry $e) => ['category' => $e->category, 'rank' => $e->rank])->values(),
+                'frame_ids' => $frames->filter(fn (GalleryAlbumFrame $f) => $gallery::frameEligible($f, $segment, $elite, $vvip))->pluck('id')->values(),
+            ];
+        })->values();
+
+        return response()->json(['data' => $people]);
+    }
+
     /** Agent: am I on the VVIP list? */
     public function myEntries(Request $request): JsonResponse
     {
