@@ -71,6 +71,8 @@ class ServiceController extends Controller
                 // the value has to travel with the roster — a classification
                 // like team and state, not personal data.
                 'award_segment' => $r->award_segment,
+                // Every award held (award_segment is the primary among them), for a v2 that wants the set.
+                'award_segments' => $r->awardSet(),
             ])
             ->values();
 

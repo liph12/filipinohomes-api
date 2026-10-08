@@ -282,7 +282,7 @@ class PublicAwardeeController extends Controller
             // "no segment" filter rather than a value match.
             $award === 'top_agent'
                 ? $query->whereNull('award_segment')
-                : $query->where('award_segment', $award);
+                : $query->whereJsonContains('award_segments', $award);
         }
 
         /*

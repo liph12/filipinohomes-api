@@ -1749,13 +1749,14 @@ class GalleryController extends Controller
 
         return [
             'event' => $event,
-            // No award on the roster row = a regular awardee, which frames call "top_agent".
+            // Every award on the roster row; [] = a regular awardee.
+            'segments' => $recipient->awardSet(),
+            // The primary alone, for the page heading; "top_agent" = regular.
             'segment' => (string) ($recipient->award_segment ?? self::REGULAR_AWARDEE),
             'elite' => (bool) ($row['is_elite'] ?? false),
-            // On the VVIP list, or marked VVIP in the admin's Awardees table. VVIPs have their
-            // own frames, so they are never "regular" awardees.
-            'vvip' => (bool) ($row['is_vvip'] ?? false)
-                || \App\Natcon\Models\VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->exists(),
+            // VVIP is the toggle in the admin's Awardees table (the registration service), like Elite.
+            // The VVIP list only supplies titles (category + rank) — being on it does NOT make a VVIP.
+            'vvip' => (bool) ($row['is_vvip'] ?? false),
             // false = the registration service couldn't be read (unreachable,
             // or it rejected our service token), so "not elite" is a guess.
             'elite_known' => $registrants !== null,
@@ -1776,6 +1777,7 @@ class GalleryController extends Controller
             'event_id' => $a['event']->id ?? null,
             'year' => $a['event']->year ?? null,
             'award_segment' => $a['segment'] ?? null,
+            'award_segments' => $a['segments'] ?? [],
             'is_elite' => $a['elite'] ?? false,
             'elite_known' => $a['elite_known'] ?? true,
             'display_name' => $a['name'] ?? null,
@@ -1785,9 +1787,9 @@ class GalleryController extends Controller
 
     /**
      * "Who can use it" as a list of audiences, each {awards, elite, vvip}. A person matches a row EXACTLY:
-     * their award is one of its awards (none ticked = no award), and they are Elite / VVIP just as the
-     * row is ticked. So a row with only Elite ticked is for Elite people with no award — an Elite Global
-     * Partner needs their own row with both ticked.
+     * the row's awards are the WHOLE set they hold (none = no award; "FHI Global & Global Partner" = someone
+     * holding both, not either), and Elite / VVIP just as the row is ticked. So a row with only Elite ticked
+     * is for Elite people with no award — an Elite Global Partner needs their own row with both.
      *
      * Frames saved before the list existed have it derived from the three-column fields: the first
      * column (its awards + Elite, or Regular awardee), the Elite Circle column and the VVIP column.
@@ -1825,11 +1827,7 @@ class GalleryController extends Controller
         return self::normaliseRules($rules);
     }
 
-    /**
-     * Clean rows: known awards only (no markers), each row once — and ONE award per row. A row that
-     * names several awards (an older "either" row, or a hand-made request) is split into one row per
-     * award, so "Global Partner or FHI Global" is two rows and every row is a single kind of person.
-     */
+    /** Clean rows: known awards only (no markers), sorted, each row once. */
     private static function normaliseRules(array $rows): array
     {
         $clean = [];
@@ -1841,23 +1839,27 @@ class GalleryController extends Controller
                 array_map('strval', (array) ($row['awards'] ?? [])),
                 array_diff(self::FRAME_AUDIENCES, [self::REGULAR_AWARDEE, self::NO_ONE]),
             )));
-            $elite = (bool) ($row['elite'] ?? false);
-            $vvip = (bool) ($row['vvip'] ?? false);
-            foreach ($awards === [] ? [[]] : array_map(fn ($a) => [$a], $awards) as $one) {
-                $rule = ['awards' => $one, 'elite' => $elite, 'vvip' => $vvip];
-                $clean[json_encode($rule)] = $rule;
-            }
+            sort($awards);
+            $rule = ['awards' => $awards, 'elite' => (bool) ($row['elite'] ?? false), 'vvip' => (bool) ($row['vvip'] ?? false)];
+            $clean[json_encode($rule)] = $rule;
         }
 
         return array_values($clean);
     }
 
-    /** Can this person use the frame? They must match one of its audience rows exactly. */
-    public static function frameEligible(GalleryAlbumFrame $f, string $segment, bool $personElite, bool $personVvip): bool
+    /**
+     * Can this person use the frame? They must match one of its audience rows EXACTLY: the row's awards
+     * are the whole set they hold, and Elite / VVIP as ticked.
+     *
+     * @param  array<int,string>  $segments  every award the person holds (Recipient::awardSet())
+     */
+    public static function frameEligible(GalleryAlbumFrame $f, array $segments, bool $personElite, bool $personVvip): bool
     {
+        $mine = array_values(array_diff($segments, [self::REGULAR_AWARDEE, self::NO_ONE]));
+        sort($mine);
+
         foreach (self::rulesOf($f) as $rule) {
-            $awardOk = $rule['awards'] === [] ? $segment === self::REGULAR_AWARDEE : in_array($segment, $rule['awards'], true);
-            if ($awardOk && $rule['elite'] === $personElite && $rule['vvip'] === $personVvip) {
+            if ($rule['awards'] === $mine && $rule['elite'] === $personElite && $rule['vvip'] === $personVvip) {
                 return true;
             }
         }
@@ -1881,7 +1883,7 @@ class GalleryController extends Controller
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
-            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segment'], $a['elite'], $a['vvip']));
+            ->filter(fn (GalleryAlbumFrame $f) => self::frameEligible($f, $a['segments'], $a['elite'], $a['vvip']));
 
         return response()->json(['data' => $rows->map(fn (GalleryAlbumFrame $f) => $this->presentFrame($f))->values()]);
     }
@@ -1895,7 +1897,7 @@ class GalleryController extends Controller
         $registrants = $event ? app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year, false, true) : null;
 
         return [
-            'segment' => (string) ($recipient?->award_segment ?? self::REGULAR_AWARDEE),
+            'segments' => $recipient?->awardSet() ?? [],
             'elite' => (bool) (($registrants[$email]['is_elite'] ?? false)),
         ];
     }

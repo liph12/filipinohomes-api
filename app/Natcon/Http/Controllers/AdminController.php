@@ -576,11 +576,15 @@ class AdminController extends Controller
             'segments' => collect(Recipient::SEGMENTS)
                 ->map(fn ($segment) => [
                     'value' => $segment,
-                    'count' => (clone $withPlace)->where('award_segment', $segment)->count(),
+                    // Everyone HOLDING the award, not only those with it as primary — so a person with
+                    // two awards is counted under both (the counts no longer sum to the roster).
+                    'count' => (clone $withPlace)->whereJsonContains('award_segments', $segment)->count(),
                 ])
                 ->filter(fn ($row) => $row['count'] > 0)
                 ->values(),
             'no_segment' => (clone $withPlace)->whereNull('award_segment')->count(),
+            // Holding two or more awards (a Global Partner who is also FHI Global).
+            'multi_segment' => (clone $withPlace)->whereRaw('JSON_LENGTH(award_segments) >= 2')->count(),
             'photos_required' => Recipient::requiredPhotoCount(),
             // Awardees a reviewer has told to re-shoot.
             'requires_new_photo' => (clone $base)->where('requires_new_photo', true)->count(),
@@ -896,6 +900,9 @@ class AdminController extends Controller
             'notes' => 'nullable|string|max:1000',
             'status' => 'nullable|in:pending,invited,excluded',
             'award_segment' => 'nullable|in:'.implode(',', Recipient::SEGMENTS),
+            // The whole award set (checkboxes in the drawer); award_segment above is the older single form.
+            'award_segments' => 'nullable|array',
+            'award_segments.*' => 'in:'.implode(',', Recipient::SEGMENTS),
             /**
              * Editable because the people who need it will never get any of
              * this from LR: Global Partners and FHI Global agents are not on
@@ -931,8 +938,10 @@ class AdminController extends Controller
 
         // array_key_exists, not empty(): null is a real value for both — it
         // means "an ordinary LR agent" and "fall back to the LR name".
-        if (array_key_exists('award_segment', $data)) {
-            $recipient->award_segment = $data['award_segment'];
+        if (array_key_exists('award_segments', $data)) {
+            $recipient->setAwards((array) ($data['award_segments'] ?? []));
+        } elseif (array_key_exists('award_segment', $data)) {
+            $recipient->setAwards(array_filter([(string) $data['award_segment']]));
         }
 
         if (array_key_exists('display_name', $data)) {
@@ -1265,6 +1274,7 @@ class AdminController extends Controller
             'region' => 'nullable|string|max:32',
             'award_segment' => 'nullable|in:'.implode(',', Recipient::SEGMENTS),
             'no_segment' => 'nullable|boolean',
+            'multi_segment' => 'nullable|boolean',
             'min_sales' => 'nullable|numeric',
             'max_sales' => 'nullable|numeric',
             'no_sales' => 'nullable|boolean',
@@ -1392,7 +1402,7 @@ class AdminController extends Controller
                     'filters' => $request->only([
                         'statuses', 'recipient_ids', 'kind',
                         'state', 'no_state', 'region',
-                        'award_segment', 'no_segment',
+                        'award_segment', 'no_segment', 'multi_segment',
                         'min_sales', 'max_sales', 'no_sales',
                     ]),
                     'total' => $total,
@@ -1482,7 +1492,7 @@ class AdminController extends Controller
                     'count' => count($links),
                     'scope' => $request->only([
                         'status', 'state', 'no_state', 'region', 'team',
-                        'award_segment', 'no_segment', 'search',
+                        'award_segment', 'no_segment', 'multi_segment', 'search',
                         'min_sales', 'max_sales', 'no_sales',
                     ]),
                 ],
@@ -2224,10 +2234,17 @@ class AdminController extends Controller
             return $query->whereNull('award_segment');
         }
 
+        // Two or more awards held — its own case, like no_segment: a count of awards, not a value.
+        if ($request->boolean('multi_segment')) {
+            return $query->whereRaw('JSON_LENGTH(award_segments) >= 2');
+        }
+
         $segment = (string) $request->input('award_segment');
 
         if ($segment !== '' && in_array($segment, Recipient::SEGMENTS, true)) {
-            $query->where('award_segment', $segment);
+            // Holding the award at all, not only as primary: a Global Partner who is also FHI Global
+            // shows under both filters.
+            $query->whereJsonContains('award_segments', $segment);
         }
 
         return $query;

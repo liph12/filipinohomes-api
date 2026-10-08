@@ -136,6 +136,8 @@ class RecipientResource extends JsonResource
              * be spotted among 289 agents without opening each drawer.
              */
             'award_segment' => $r->award_segment,
+            /** Every award they hold (award_segment is the primary among them); [] = an LR agent. */
+            'award_segments' => $r->awardSet(),
 
             'send_failures' => (int) $r->send_failures,
             'last_error'    => $r->last_error,

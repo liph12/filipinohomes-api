@@ -59,14 +59,16 @@ class VvipController extends Controller
      */
     public static function derivedTypes(?\App\Natcon\Models\Recipient $r, bool $elite): array
     {
-        $segment = $r?->award_segment;
+        // Every award held — a Global Partner who is also FHI Global carries both logos.
+        $held = $r?->awardSet() ?? [];
+        $has = fn (string ...$keys) => array_intersect($keys, $held) !== [];
 
         return array_values(array_filter([
             $elite ? 'elite_circle' : null,
-            in_array($segment, [\App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER, \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER_RM_PRO], true) ? 'rm_pro' : null,
-            $segment === \App\Natcon\Models\Recipient::SEGMENT_GLOBAL_PARTNER ? 'global_partners' : null,
-            $segment === \App\Natcon\Models\Recipient::SEGMENT_FHI_GLOBAL ? 'fhi_dubai' : null,
-            $segment === \App\Natcon\Models\Recipient::SEGMENT_ELITE_TEAM_LEADER ? 'elite_team_leader' : null,
+            $has(\App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER, \App\Natcon\Models\Recipient::SEGMENT_RENT_MANAGER_RM_PRO) ? 'rm_pro' : null,
+            $has(\App\Natcon\Models\Recipient::SEGMENT_GLOBAL_PARTNER) ? 'global_partners' : null,
+            $has(\App\Natcon\Models\Recipient::SEGMENT_FHI_GLOBAL) ? 'fhi_dubai' : null,
+            $has(\App\Natcon\Models\Recipient::SEGMENT_ELITE_TEAM_LEADER) ? 'elite_team_leader' : null,
         ]));
     }
 
@@ -303,7 +305,8 @@ class VvipController extends Controller
                 'email' => $e->email,
                 'name' => $this->rosterName($r),
                 'on_roster' => (bool) $r,
-                'vvip' => true,
+                // The Awardees-table toggle, like Elite — not "on the list".
+                'vvip' => ! empty($registrants[$e->email]['is_vvip']),
                 'elite_circle' => in_array('elite_circle', $types, true),
                 'rm_pro' => in_array('rm_pro', $types, true),
                 'global_partners' => in_array('global_partners', $types, true),
@@ -328,17 +331,26 @@ class VvipController extends Controller
         return response()->json(['data' => []]);
     }
 
-    /** The signed-in agent's entries for the LIVE convention (matched by login email). */
+    /**
+     * The signed-in agent for the LIVE convention: the event, their VVIP list entries (titles — matched
+     * by login email, smallest rank first) and whether they ARE a VVIP, which is the Awardees-table
+     * toggle alone (the registration service, read fresh), never list membership.
+     *
+     * @return array{0: ?NatconEvent, 1: \Illuminate\Support\Collection<int, VvipEntry>, 2: bool, 3: string}
+     */
     private function mine(Request $request): array
     {
         $email = mb_strtolower(trim((string) $request->user()?->email));
         $event = NatconEvent::active();
 
         if ($email === '' || ! $event) {
-            return [null, collect()];
+            return [null, collect(), false, $email];
         }
 
-        return [$event, VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->orderBy('id')->get()];
+        $entries = VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->orderBy('rank')->orderBy('id')->get();
+        $isVvip = ! empty(($this->registrants($event) ?? [])[$email]['is_vvip']);
+
+        return [$event, $entries, $isVvip, $email];
     }
 
     /**
@@ -362,31 +374,32 @@ class VvipController extends Controller
         $people = $this->roster($event)->map(function (\App\Natcon\Models\Recipient $r) use ($registrants, $entries, $frames, $gallery) {
             $email = (string) $r->email;
             $reg = $registrants[$email] ?? null;
-            $segment = (string) ($r->award_segment ?: 'top_agent');
+            $segments = $r->awardSet();
             $elite = (bool) ($reg['is_elite'] ?? false);
-            $vvip = (bool) ($reg['is_vvip'] ?? false) || $entries->has($email);
+            // VVIP is the Awardees-table toggle alone; the list only supplies titles.
+            $vvip = (bool) ($reg['is_vvip'] ?? false);
 
             return [
                 'email' => $email,
                 'name' => $this->rosterName($r),
-                'segment' => $segment,
+                'segments' => $segments,
                 'elite' => $elite,
                 'vvip' => $vvip,
                 'titles' => $entries->get($email, collect())->map(fn (VvipEntry $e) => ['category' => $e->category, 'rank' => $e->rank])->values(),
-                'frame_ids' => $frames->filter(fn (GalleryAlbumFrame $f) => $gallery::frameEligible($f, $segment, $elite, $vvip))->pluck('id')->values(),
+                'frame_ids' => $frames->filter(fn (GalleryAlbumFrame $f) => $gallery::frameEligible($f, $segments, $elite, $vvip))->pluck('id')->values(),
             ];
         })->values();
 
         return response()->json(['data' => $people]);
     }
 
-    /** Agent: am I on the VVIP list? */
+    /** Agent: am I a VVIP (the Awardees-table toggle), and what titles does the VVIP list give me? */
     public function myEntries(Request $request): JsonResponse
     {
-        [$event, $entries] = $this->mine($request);
+        [$event, $entries, $isVvip] = $this->mine($request);
 
         return response()->json(['data' => [
-            'is_vvip' => $entries->isNotEmpty(),
+            'is_vvip' => $isVvip,
             'event_id' => $event?->id,
             'year' => $event?->year,
             'entries' => $entries->map(fn (VvipEntry $e) => $this->present($e, $event ? $this->roster($event) : null, $event ? $this->registrants($event) : null))->values(),
@@ -401,9 +414,9 @@ class VvipController extends Controller
      */
     public function myFrames(Request $request, GalleryController $gallery): JsonResponse
     {
-        [$event, $entries] = $this->mine($request);
+        [$event, $entries, $isVvip, $myEmail] = $this->mine($request);
 
-        abort_if($entries->isEmpty(), 403, 'Not on the VVIP list.');
+        abort_unless($isVvip, 403, 'Not a VVIP.');
 
         $rows = GalleryAlbumFrame::where('natcon_event_id', $event->id)
             ->live()
@@ -412,9 +425,8 @@ class VvipController extends Controller
             ->get();
 
         // Name and logos come from the person's awardee record (the list keeps only category, rank, email).
-        $myEmail = (string) $entries->first()->email;
         $me = $this->roster($event)->get($myEmail);
-        $myName = $this->rosterName($me) ?: (string) $entries->first()->name;
+        $myName = $this->rosterName($me) ?: (string) ($entries->first()?->name ?? '');
         $myTypes = self::derivedTypes($me, ! empty(($this->registrants($event) ?? [])[$myEmail]['is_elite']));
 
         // 1. VVIP frames — matched on the logos / category / rank the person is listed with.
@@ -432,7 +444,7 @@ class VvipController extends Controller
         $ctx = $gallery->personContext($request);
         $shared = $rows->where('vvip', false)
             ->filter(fn (GalleryAlbumFrame $f) => ! empty($f->award_segments))
-            ->filter(fn (GalleryAlbumFrame $f) => GalleryController::frameEligible($f, $ctx['segment'], $ctx['elite'], true))
+            ->filter(fn (GalleryAlbumFrame $f) => GalleryController::frameEligible($f, $ctx['segments'], $ctx['elite'], true))
             ->values()
             ->map(fn (GalleryAlbumFrame $f) => $gallery->presentFramePublic($f) + ['for_name' => $myName]);
 

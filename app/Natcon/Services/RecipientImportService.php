@@ -73,10 +73,12 @@ final class RecipientImportService
         // Only when a segment is being stamped: what each row currently holds,
         // so the preview can say what would really change and a re-paste of the
         // same list reports "skipped" rather than claiming an update.
+        // (The whole set per row: a stamp ADDS the award to whatever they already hold.)
         $segments = $awardSegment !== null
             ? Recipient::withTrashed()
                 ->where('natcon_event_id', $event->id)
-                ->pluck('award_segment', 'email')
+                ->get(['email', 'award_segment', 'award_segments'])
+                ->mapWithKeys(fn (Recipient $r) => [$r->email => $r->awardSet()])
             : collect();
 
         foreach ($source->emails() as $raw) {
@@ -134,7 +136,7 @@ final class RecipientImportService
                  * protects — name, team, photos, status, decisions people
                  * made — is untouched by a stamp.
                  */
-                $stamp = $awardSegment !== null && $segments->get($email) !== $awardSegment;
+                $stamp = $awardSegment !== null && ! in_array($awardSegment, $segments->get($email, []), true);
 
                 if (! $refresh && ! $stamp) {
                     $skipped++;
@@ -164,7 +166,9 @@ final class RecipientImportService
                 $changes = $refresh ? $attributes : [];
 
                 if ($stamp) {
-                    $changes['award_segment'] = $awardSegment;
+                    // Added to the set, never replacing it: pasting the FHI Global list after the
+                    // Global Partner list leaves a person on both holding both.
+                    $row->setAwards([...$row->awardSet(), $awardSegment]);
                 }
 
                 $row->auditSource      = $refresh ? 'lr_qualifiers_sync' : 'admin_award_segment';
@@ -191,6 +195,7 @@ final class RecipientImportService
                 'status'            => Recipient::STATUS_PENDING,
                 'lr_lookup_status'  => Recipient::LR_PENDING,
                 'award_segment'     => $awardSegment,
+                'award_segments'    => $awardSegment !== null ? [$awardSegment] : null,
             ] + ($enriched?->attributesFor($email) ?? []));
 
             // Value is unused for a row created in this run — nothing later in

@@ -124,7 +124,7 @@ class Recipient extends Model implements Auditable
         'owner_name', 'seat_number', 'lr_polo_shirt_size', 'lr_approved',
         'lr_photos', 'lr_primary_photo', 'lr_qr_code', 'lr_payload',
         'lr_fetched_at', 'lr_lookup_status', 'lr_last_error',
-        'source', 'award_segment', 'imported_batch_id', 'created_by',
+        'source', 'award_segment', 'award_segments', 'imported_batch_id', 'created_by',
         'status', 'notes',
         // From LR's qualifiers list. Mass-assignable because the import service
         // merges them straight into Recipient::create().
@@ -132,6 +132,7 @@ class Recipient extends Model implements Auditable
     ];
 
     protected $casts = [
+        'award_segments'    => 'array',
         'lr_photos'         => 'array',
         'lr_payload'        => 'array',
         'lr_approved'       => 'boolean',
@@ -334,6 +335,35 @@ class Recipient extends Model implements Auditable
      *
      * @return array<int,string>
      */
+    /**
+     * Every award this person holds, as sorted segment keys ([] = an ordinary LR agent). The set is
+     * `award_segments`; a row from before the set existed falls back to its single `award_segment`.
+     *
+     * @return array<int,string>
+     */
+    public function awardSet(): array
+    {
+        $set = $this->award_segments ?? array_filter([(string) $this->award_segment]);
+        $set = array_values(array_intersect(array_unique(array_map('strval', (array) $set)), self::SEGMENTS));
+        sort($set);
+
+        return $set;
+    }
+
+    /**
+     * Set the whole award set, keeping `award_segment` (the PRIMARY: the card's title, the single
+     * value the roster filters, exports and v2 read) in step — the current primary if it is still
+     * held, else the first held award in SEGMENTS order, else null.
+     *
+     * @param  array<int,string>  $segments
+     */
+    public function setAwards(array $segments): void
+    {
+        $set = array_values(array_intersect(self::SEGMENTS, array_unique(array_map('strval', $segments))));
+        $this->award_segments = $set === [] ? null : $set;
+        $this->award_segment = in_array($this->award_segment, $set, true) ? $this->award_segment : ($set[0] ?? null);
+    }
+
     public function personNames(): array
     {
         $parts = preg_split('/\s+(?:\band\b|&|\+)\s+/iu', trim($this->displayName()));
