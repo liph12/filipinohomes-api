@@ -1825,7 +1825,11 @@ class GalleryController extends Controller
         return self::normaliseRules($rules);
     }
 
-    /** Clean rows: known awards only (no markers), unique, each row once. */
+    /**
+     * Clean rows: known awards only (no markers), each row once — and ONE award per row. A row that
+     * names several awards (an older "either" row, or a hand-made request) is split into one row per
+     * award, so "Global Partner or FHI Global" is two rows and every row is a single kind of person.
+     */
     private static function normaliseRules(array $rows): array
     {
         $clean = [];
@@ -1837,9 +1841,12 @@ class GalleryController extends Controller
                 array_map('strval', (array) ($row['awards'] ?? [])),
                 array_diff(self::FRAME_AUDIENCES, [self::REGULAR_AWARDEE, self::NO_ONE]),
             )));
-            sort($awards);
-            $rule = ['awards' => $awards, 'elite' => (bool) ($row['elite'] ?? false), 'vvip' => (bool) ($row['vvip'] ?? false)];
-            $clean[json_encode($rule)] = $rule;
+            $elite = (bool) ($row['elite'] ?? false);
+            $vvip = (bool) ($row['vvip'] ?? false);
+            foreach ($awards === [] ? [[]] : array_map(fn ($a) => [$a], $awards) as $one) {
+                $rule = ['awards' => $one, 'elite' => $elite, 'vvip' => $vvip];
+                $clean[json_encode($rule)] = $rule;
+            }
         }
 
         return array_values($clean);
