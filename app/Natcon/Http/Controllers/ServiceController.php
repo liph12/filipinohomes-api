@@ -53,19 +53,29 @@ class ServiceController extends Controller
             ->orderBy('id')
             ->get()
             ->map(fn (Recipient $r) => [
+                // OUR recipient id. Distinct from lr_awardee_id below, which is
+                // LR's agent id from the qualifier feed — two different
+                // namespaces that have been confused before.
+                //
+                // It travels because the printed NATCON tickets encode it: the
+                // photobooth stub's QR is `pb-{this}`, so the venue scanner has
+                // to be able to turn that number back into a party WITHOUT
+                // asking this service at the door. Nothing identifying — the
+                // same id is already on the open /natcon/awardees roster.
+                'fh_recipient_id' => $r->id,
                 'lr_awardee_id' => $r->lr_awardee_id,
-                'email'         => $r->email,
-                'display_name'  => $r->displayName(),
+                'email' => $r->email,
+                'display_name' => $r->displayName(),
                 // Pre-split server-side: personNames() owns the couple rules
                 // (118 of 292 are couples on one login) and v2 must not grow
                 // a second copy of that split.
-                'person_names'  => $r->personNames(),
-                'team'          => $r->team,
+                'person_names' => $r->personNames(),
+                'team' => $r->team,
                 // LR's team art, straight from the stored qualifier record —
                 // the registration page shows it beside the team name. Empty
                 // string means "no logo"; normalised to null.
-                'team_logo'     => data_get($r->qualifier_payload, 'sales_team_member.sales_team.teamlogo') ?: null,
-                'state'         => $r->state,
+                'team_logo' => data_get($r->qualifier_payload, 'sales_team_member.sales_team.teamlogo') ?: null,
+                'state' => $r->state,
                 // Which group's award they receive (null = an LR agent). v2
                 // turns this into the fixed line on the invitation card, so
                 // the value has to travel with the roster — a classification
@@ -80,7 +90,7 @@ class ServiceController extends Controller
             'data' => $rows,
             'meta' => [
                 'event' => [
-                    'id'   => $event->id,
+                    'id' => $event->id,
                     'year' => $event->year,
                     'slug' => $event->slug,
                     'name' => $event->name,
