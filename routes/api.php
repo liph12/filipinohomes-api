@@ -382,6 +382,12 @@ Route::middleware('strip.tags')->group(function () {
             // harmless: 'bulk-delete' is a POST and /{photo} is a DELETE.
             Route::post('/natcon/upload-invite/photos/bulk-delete', [NatconPhotographerController::class, 'bulkDestroyPhotos'])
                 ->middleware('throttle:60,1');
+            // Hide or show a selection in one go (same scope as the single update).
+            Route::post('/natcon/upload-invite/photos/bulk-visibility', [NatconPhotographerController::class, 'bulkSetVisibility'])
+                ->middleware('throttle:60,1');
+            // Drag-to-reorder within one album: the album's photos in the order given.
+            Route::post('/natcon/upload-invite/photos/reorder', [NatconPhotographerController::class, 'reorderPhotos'])
+                ->middleware('throttle:60,1');
         });
         Route::get('/offices/{slug}', [OfficeController::class, 'show']);
         Route::get('/__dev__/__admins__', [AgentController::class, 'admins']);

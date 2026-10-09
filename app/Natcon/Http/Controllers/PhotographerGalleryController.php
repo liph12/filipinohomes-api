@@ -14,6 +14,7 @@ use App\Natcon\Services\GalleryInviteService;
 use App\Natcon\Services\GalleryService;
 use App\Natcon\Services\LandingCachePurger;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -290,13 +291,29 @@ class PhotographerGalleryController extends Controller
         $data = $request->validate([
             't' => 'required|string|min:16|max:160',
             'caption' => 'sometimes|nullable|string|max:255',
+            // Hide (true) or show (false) the photo. Showing is refused under a review-required invite:
+            // there, only the events team can make a photo public.
+            'hidden' => 'sometimes|boolean',
         ]);
 
         return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($photo, $data) {
-            $this->guardOwnPhoto($invite, $photo);
+            // Caption and visibility: any photo in the albums this link reaches, not only the link's own
+            // uploads — the photographer curates the album. Deleting stays limited to their own (below).
+            $this->guardReachablePhoto($invite, $photo);
+
+            $changes = [];
+            if (array_key_exists('caption', $data)) {
+                $changes['caption'] = $data['caption'] ?? null;
+            }
+            if (array_key_exists('hidden', $data)) {
+                if (! $data['hidden'] && $invite->review_required) {
+                    return response()->json(['message' => 'Photos on this link are made public by the events team after review.'], 422);
+                }
+                $changes['status'] = $data['hidden'] ? GalleryPhoto::STATUS_HIDDEN : GalleryPhoto::STATUS_ACTIVE;
+            }
 
             $photo->auditSource = 'photographer_invite';
-            $photo->fill(['caption' => $data['caption'] ?? null])->save();
+            $photo->fill($changes)->save();
 
             $this->touch($invite);
             $this->purgeDebounced($invite);
@@ -310,7 +327,8 @@ class PhotographerGalleryController extends Controller
         $data = $request->validate(['t' => 'required|string|min:16|max:160']);
 
         return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($photo) {
-            $this->guardOwnPhoto($invite, $photo);
+            // Any photo in the albums the link reaches — a status flip (soft delete), like the admin's own.
+            $this->guardReachablePhoto($invite, $photo);
 
             // A status flip, never delete() — the row is the only pointer to
             // the S3 object (same rule as the admin path).
@@ -322,6 +340,95 @@ class PhotographerGalleryController extends Controller
             $this->purgeDebounced($invite);
 
             return response()->json(['message' => 'Photo removed.']);
+        });
+    }
+
+    /**
+     * Hide or show several photos at once — any live photo in an album the link reaches. Showing is
+     * refused under a review-required link, as on the single update. One purge for the batch.
+     */
+    public function bulkSetVisibility(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            't' => 'required|string|min:16|max:160',
+            'ids' => 'required|array|min:1|max:500',
+            'ids.*' => 'integer',
+            'hidden' => 'required|boolean',
+        ]);
+
+        return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($data) {
+            if (! $data['hidden'] && $invite->review_required) {
+                return response()->json(['message' => 'Photos on this link are made public by the events team after review.'], 422);
+            }
+
+            $albumIds = $this->scopeAlbums($invite)->pluck('id')->all();
+            $photos = GalleryPhoto::whereIn('id', array_values(array_unique(array_map('intval', $data['ids']))))
+                ->where('natcon_event_id', $invite->natcon_event_id)
+                ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+                ->where(fn ($q) => $invite->root_album_id ? $q->whereIn('album_id', $albumIds) : $q->where(fn ($q2) => $q2->whereNull('album_id')->orWhereIn('album_id', $albumIds)))
+                ->get();
+
+            abort_if($photos->isEmpty(), 404, 'Photo not found.');
+
+            $status = $data['hidden'] ? GalleryPhoto::STATUS_HIDDEN : GalleryPhoto::STATUS_ACTIVE;
+            foreach ($photos as $photo) {
+                if ($photo->status !== $status) {
+                    $photo->auditSource = 'photographer_invite';
+                    $photo->forceFill(['status' => $status])->save();
+                }
+            }
+
+            $this->touch($invite);
+            $this->purgeDebounced($invite);
+
+            return response()->json(['data' => ['updated' => $photos->pluck('id')->all(), 'status' => $status]]);
+        });
+    }
+
+    /**
+     * Reorder one album's photos: `ids` is the album's live photos in the order wanted, and each gets
+     * its position as sort_order. Any photo in an album the link reaches can be moved (like caption
+     * and visibility — the photographer curates the album); ids outside that album are ignored, photos
+     * of the album left out keep their place after the ones given. One purge for the whole drag.
+     */
+    public function reorderPhotos(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            't' => 'required|string|min:16|max:160',
+            'album_id' => 'required|integer',
+            'ids' => 'required|array|min:1|max:2000',
+            'ids.*' => 'integer',
+        ]);
+
+        return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($data) {
+            $album = $this->resolveScopedAlbum($invite, $data['album_id']);
+            $ids = array_values(array_unique(array_map('intval', $data['ids'])));
+
+            $photos = GalleryPhoto::where('natcon_event_id', $invite->natcon_event_id)
+                ->where('album_id', $album->id)
+                ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get()
+                ->keyBy('id');
+
+            $ordered = array_values(array_filter($ids, fn ($id) => $photos->has($id)));
+            $rest = $photos->keys()->diff($ordered)->values()->all();
+
+            DB::transaction(function () use ($ordered, $rest, $photos) {
+                foreach ([...$ordered, ...$rest] as $pos => $id) {
+                    $photo = $photos->get($id);
+                    if ((int) $photo->sort_order !== $pos + 1) {
+                        $photo->auditSource = 'photographer_invite';
+                        $photo->forceFill(['sort_order' => $pos + 1])->save();
+                    }
+                }
+            });
+
+            $this->touch($invite);
+            $this->purgeDebounced($invite);
+
+            return response()->json(['data' => ['order' => [...$ordered, ...$rest]]]);
         });
     }
 
@@ -351,9 +458,12 @@ class PhotographerGalleryController extends Controller
         return $this->withInvite($data['t'], function (GalleryUploadInvite $invite) use ($data) {
             $ids = array_values(array_unique(array_map('intval', $data['ids'])));
 
+            // Any live photo in an album the link reaches (same scope as caption / hide / single delete).
+            $albumIds = $this->scopeAlbums($invite)->pluck('id')->all();
             $photos = GalleryPhoto::whereIn('id', $ids)
-                ->where('upload_invite_id', $invite->id)
+                ->where('natcon_event_id', $invite->natcon_event_id)
                 ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
+                ->where(fn ($q) => $invite->root_album_id ? $q->whereIn('album_id', $albumIds) : $q->where(fn ($q2) => $q2->whereNull('album_id')->orWhereIn('album_id', $albumIds)))
                 ->get();
 
             abort_if($photos->isEmpty(), 404, 'Photo not found.');
@@ -509,6 +619,18 @@ class PhotographerGalleryController extends Controller
         return null;
     }
 
+    /** A live photo of this convention, in an album the link reaches (404 otherwise — never confirm an id). */
+    private function guardReachablePhoto(GalleryUploadInvite $invite, GalleryPhoto $photo): void
+    {
+        $inScope = $photo->natcon_event_id === $invite->natcon_event_id
+            && $photo->status !== GalleryPhoto::STATUS_DELETED
+            && ($photo->album_id === null
+                ? ! $invite->root_album_id
+                : $this->scopeAlbums($invite)->contains('id', $photo->album_id));
+
+        abort_unless($inScope, 404, 'Photo not found.');
+    }
+
     private function guardOwnPhoto(GalleryUploadInvite $invite, GalleryPhoto $photo): void
     {
         // 404, not 403 — a wrong id must not confirm the photo exists. Also
@@ -629,6 +751,8 @@ class PhotographerGalleryController extends Controller
             'album_id' => $p->album_id,
             'status' => $p->status,
             'mine' => $p->upload_invite_id === $invite->id,
+            // Caption / hide / show / remove are open on every photo the link reaches (what state() lists).
+            'editable' => true,
             'created_at' => $p->created_at?->toIso8601String(),
         ];
     }
