@@ -1759,9 +1759,10 @@ class GalleryController extends Controller
             // The primary alone, for the page heading; "top_agent" = regular.
             'segment' => (string) ($recipient->award_segment ?? self::REGULAR_AWARDEE),
             'elite' => (bool) ($row['is_elite'] ?? false),
-            // VVIP is the toggle in the admin's Awardees table (the registration service), like Elite.
-            // The VVIP list only supplies titles (category + rank) — being on it does NOT make a VVIP.
-            'vvip' => (bool) ($row['is_vvip'] ?? false),
+            // VVIP for FRAMES: the toggle in the admin's Awardees table (the registration service) OR a
+            // row on the VVIP list. The toggle alone is the door (QR / photobooth), so someone on the list
+            // with it off is "Regular photobooth, VVIP frames". See VvipController's class doc.
+            'vvip' => VvipController::framesVvip($row, \App\Natcon\Models\VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->exists()),
             // false = the registration service couldn't be read (unreachable,
             // or it rejected our service token), so "not elite" is a guess.
             'elite_known' => $registrants !== null,
@@ -1912,8 +1913,8 @@ class GalleryController extends Controller
 
         abort_if($a === null, 403, 'Not a NATCON awardee.');
 
-        // Every frame with a row this person matches — as they are now, VVIP included (a VVIP flagged in
-        // the admin's table gets the frames whose row ticks VVIP, whether or not they are on the VVIP list).
+        // Every frame with a row this person matches — as they are now, VVIP included (the toggle in the
+        // admin's table OR a row on the VVIP list gets the frames whose row ticks VVIP).
         $rows = GalleryAlbumFrame::where('natcon_event_id', $a['event']->id)
             ->live()
             ->where('vvip', false)

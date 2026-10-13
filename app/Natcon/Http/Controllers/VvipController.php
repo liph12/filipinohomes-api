@@ -14,6 +14,19 @@ use Illuminate\Validation\Rule;
 /**
  * VVIP honourees: the awards sheet imported per convention (admin), and the
  * signed-in agent's own entries + the frames those entries unlock.
+ *
+ * ─── Two VVIP switches, one product each ─────────────────────────────────────
+ *
+ *  - The Awardees-table VVIP TOGGLE (held by the registration service) is the
+ *    DOOR: the QR scanner and the photobooth say "VVIP" or "Regular" from it.
+ *  - Being on the VVIP LIST (natcon_vvip_entries, this repo) is the FRAMES:
+ *    it grants the VVIP frames and supplies the titles drawn on them.
+ *
+ *  VVIP frames go to EITHER — the toggle alone (no titles, as before) or the
+ *  list alone. So a person on the list whose toggle is off is a "Regular
+ *  photobooth, VVIP frames" awardee: scans as Regular, frames as VVIP. The door
+ *  never reads the list. (Decided 2026-10-13; before that the toggle was the
+ *  only way in.)
  */
 class VvipController extends Controller
 {
@@ -53,7 +66,7 @@ class VvipController extends Controller
     /**
      * The logos a person carries, DERIVED from their awardee record instead of typed into the
      * list: Elite Circle ← the Elite toggle; RM Pro ← Top Rent Manager Pro OR Top Rent Manager &
-     * RM Pro; Global Partners ← Global Partner; FHI Dubai ← FHI Global; Elite Team Leader ← Elite Team Leader. (VVIP itself = being on the list.)
+     * RM Pro; Global Partners ← Global Partner; FHI Dubai ← FHI Global; Elite Team Leader ← Elite Team Leader. (VVIP itself = the toggle or being on the list; see the class doc.)
      *
      * @return array<int, string> keys of VvipEntry::TYPES, in display order
      */
@@ -81,6 +94,15 @@ class VvipController extends Controller
     private function registrants(NatconEvent $event): ?array
     {
         return app(\App\Natcon\Services\NatconRegClient::class)->byEmail((int) $event->year, false, true);
+    }
+
+    /**
+     * Is this person VVIP as far as FRAMES go: the Awardees-table toggle OR a row on the VVIP list.
+     * The door (QR / photobooth) reads the toggle alone — see the class doc.
+     */
+    public static function framesVvip(?array $registrant, bool $onList): bool
+    {
+        return ! empty($registrant['is_vvip']) || $onList;
     }
 
     private function present(VvipEntry $e, $roster = null, ?array $registrants = null): array
@@ -192,7 +214,9 @@ class VvipController extends Controller
     /**
      * Admin: compare the stored VVIP list with the awardee roster and the admin's own
      * VVIP flags (the VVIP toggle in the Awardees table, held by the registration
-     * service), joined by email — so the two can be made to agree.
+     * service), joined by email. The list and the toggle drive different products
+     * (frames vs the door), so "on the list, toggle off" is reported on its own as
+     * Regular photobooth rather than as a mismatch.
      */
     public function check(Request $request): JsonResponse
     {
@@ -230,6 +254,7 @@ class VvipController extends Controller
         }
 
         $sheetOnly = [];
+        $regularPhotobooth = [];
         $nameDiffers = [];
         $matched = 0;
 
@@ -248,8 +273,10 @@ class VvipController extends Controller
                 continue;
             }
 
+            // On the list with the toggle off = "Regular photobooth, VVIP frames". Not a mismatch
+            // (the list alone grants the frames), but called out so the admin sees who scans as Regular.
             if ($registrants !== null && ! in_array($email, $flagged, true)) {
-                $sheetOnly[] = ['name' => $p['name'], 'email' => $email, 'listed' => $listed, 'reason' => 'not_vvip_in_admin'];
+                $regularPhotobooth[] = ['name' => $p['name'], 'email' => $email, 'listed' => $listed, 'reason' => 'regular_photobooth'];
                 continue;
             }
 
@@ -278,6 +305,8 @@ class VvipController extends Controller
             'admin_vvip' => count($flagged),
             'matched' => $matched,
             'sheet_only' => $sheetOnly,
+            // On the list, toggle off: VVIP frames, Regular at the door.
+            'regular_photobooth' => $regularPhotobooth,
             'admin_only' => $adminOnly,
             'name_differs' => $nameDiffers,
         ]]);
@@ -285,8 +314,10 @@ class VvipController extends Controller
 
     /**
      * Admin: the saved list, simplified — one row per entry with the person's NAME and LOGOS taken
-     * from the awardee roster by email: VVIP (being on the list), Elite Circle (the Elite toggle),
-     * RM Pro (Top Rent Manager Pro or Top Rent Manager & RM Pro), Global Partners, FHI Dubai.
+     * from the awardee roster by email: Elite Circle (the Elite toggle), RM Pro (Top Rent Manager
+     * Pro or Top Rent Manager & RM Pro), Global Partners, FHI Dubai — plus the DOOR: `vvip` is the
+     * Awardees-table toggle, so a row with it off is a "Regular photobooth, VVIP frames" person
+     * (everyone on the list gets the VVIP frames; the toggle only decides what the QR scanner says).
      */
     public function simplified(Request $request): JsonResponse
     {
@@ -305,8 +336,10 @@ class VvipController extends Controller
                 'email' => $e->email,
                 'name' => $this->rosterName($r),
                 'on_roster' => (bool) $r,
-                // The Awardees-table toggle, like Elite — not "on the list".
+                // The Awardees-table toggle (the DOOR), like Elite — not "on the list". Off = Regular photobooth.
                 'vvip' => ! empty($registrants[$e->email]['is_vvip']),
+                // Unknown while the registration service can't be read (null), so the UI doesn't call everyone Regular.
+                'regular_photobooth' => $registrants === null ? null : empty($registrants[$e->email]['is_vvip']),
                 'elite_circle' => in_array('elite_circle', $types, true),
                 'rm_pro' => in_array('rm_pro', $types, true),
                 'global_partners' => in_array('global_partners', $types, true),
@@ -333,10 +366,11 @@ class VvipController extends Controller
 
     /**
      * The signed-in agent for the LIVE convention: the event, their VVIP list entries (titles — matched
-     * by login email, smallest rank first) and whether they ARE a VVIP, which is the Awardees-table
-     * toggle alone (the registration service, read fresh), never list membership.
+     * by login email, smallest rank first) and whether they are VVIP for FRAMES: the Awardees-table
+     * toggle (the registration service, read fresh) OR being on the list. The 5th value is the toggle
+     * alone — what the door says.
      *
-     * @return array{0: ?NatconEvent, 1: \Illuminate\Support\Collection<int, VvipEntry>, 2: bool, 3: string}
+     * @return array{0: ?NatconEvent, 1: \Illuminate\Support\Collection<int, VvipEntry>, 2: bool, 3: string, 4: bool}
      */
     private function mine(Request $request): array
     {
@@ -344,13 +378,15 @@ class VvipController extends Controller
         $event = NatconEvent::active();
 
         if ($email === '' || ! $event) {
-            return [null, collect(), false, $email];
+            return [null, collect(), false, $email, false];
         }
 
         $entries = VvipEntry::where('natcon_event_id', $event->id)->where('email', $email)->orderBy('rank')->orderBy('id')->get();
-        $isVvip = ! empty(($this->registrants($event) ?? [])[$email]['is_vvip']);
+        $registrant = ($this->registrants($event) ?? [])[$email] ?? null;
+        $doorVvip = ! empty($registrant['is_vvip']);
+        $isVvip = self::framesVvip($registrant, $entries->isNotEmpty());
 
-        return [$event, $entries, $isVvip, $email];
+        return [$event, $entries, $isVvip, $email, $doorVvip];
     }
 
     /**
@@ -376,8 +412,8 @@ class VvipController extends Controller
             $reg = $registrants[$email] ?? null;
             $segments = $r->awardSet();
             $elite = (bool) ($reg['is_elite'] ?? false);
-            // VVIP is the Awardees-table toggle alone; the list only supplies titles.
-            $vvip = (bool) ($reg['is_vvip'] ?? false);
+            // VVIP for frames: the Awardees-table toggle OR being on the list (the list also supplies titles).
+            $vvip = self::framesVvip($reg, $entries->has($email));
 
             return [
                 'email' => $email,
@@ -393,13 +429,16 @@ class VvipController extends Controller
         return response()->json(['data' => $people]);
     }
 
-    /** Agent: am I a VVIP (the Awardees-table toggle), and what titles does the VVIP list give me? */
+    /** Agent: do I get the VVIP frames (the Awardees-table toggle or the list), and what titles does the list give me? */
     public function myEntries(Request $request): JsonResponse
     {
-        [$event, $entries, $isVvip] = $this->mine($request);
+        [$event, $entries, $isVvip, , $doorVvip] = $this->mine($request);
 
         return response()->json(['data' => [
+            // VVIP frames: the toggle OR on the list.
             'is_vvip' => $isVvip,
+            // The toggle alone — what the QR scanner / photobooth say. false with is_vvip true = Regular photobooth, VVIP frames.
+            'door_vvip' => $doorVvip,
             'event_id' => $event?->id,
             'year' => $event?->year,
             // The albums "Find my photos" searches (the Awardee tab's setting); [] = the whole convention.
