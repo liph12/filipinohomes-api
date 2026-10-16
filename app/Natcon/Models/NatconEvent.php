@@ -29,7 +29,7 @@ class NatconEvent extends Model implements Auditable
         'hashtag', 'photo_deadline_at', 'timezone', 'update_profile_url',
         'banner_base', 'email_banner_url', 'sponsor_display', 'thank_you_message',
         'reminder_offsets', 'is_active', 'sales_breakpoint',
-        'reactions_enabled', 'awardee_face_album_ids',
+        'reactions_enabled', 'awardee_face_album_ids', 'live_url', 'live_enabled',
     ];
 
     protected $casts = [
@@ -41,9 +41,27 @@ class NatconEvent extends Model implements Auditable
         'sponsor_display' => 'array',
         'is_active' => 'boolean',
         'reactions_enabled' => 'boolean',
+        'live_enabled' => 'boolean',
         'awardee_face_album_ids' => 'array',
         'sales_breakpoint' => 'decimal:2',
     ];
+
+    /**
+     * The live stream as the public pages see it: on/off, the pasted link, and the embed built from it.
+     *
+     * @return array{enabled: bool, url: string|null, provider: string|null, embed_url: string|null}
+     */
+    public function liveStream(): array
+    {
+        $embed = \App\Natcon\Services\LiveStreamEmbed::for($this->live_url ?? null);
+
+        return [
+            'enabled' => (bool) ($this->live_enabled ?? false) && $embed !== null,
+            'url' => $embed['watch_url'] ?? null,
+            'provider' => $embed['provider'] ?? null,
+            'embed_url' => $embed['embed_url'] ?? null,
+        ];
+    }
 
     public function recipients()
     {

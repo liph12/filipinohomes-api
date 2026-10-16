@@ -159,6 +159,15 @@ class LandingCachePurger
         $this->send('natcon/organizers', $tags);
     }
 
+    /**
+     * The live stream switch: the nav's own-origin /api/natcon/live proxy and the /natcon/live page
+     * both fetch with `natcon-live`, so flipping the switch in the admin shows up on the next request.
+     */
+    public function purgeLive(): void
+    {
+        $this->send('natcon/live', ['natcon-live', 'natcon-event']);
+    }
+
     public function purgeRecaps(): void
     {
         $this->send(null, ['natcon-recaps']);

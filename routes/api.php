@@ -221,6 +221,8 @@ Route::middleware('strip.tags')->group(function () {
         // reference endpoints (provinces, app-config, buyer-forms/{slug}). The
         // /natcon landing page fetches this during SSR.
         Route::get('/natcon/event', [NatconPublicController::class, 'event']);
+        // The live-stream switch alone, for the public bar's red dot (polled through the frontend's own proxy).
+        Route::get('/natcon/live', [NatconPublicController::class, 'live']);
 
         // The rest of the landing page's content, outside the token group for the
         // SAME reason /natcon/event is: the page is server-rendered and

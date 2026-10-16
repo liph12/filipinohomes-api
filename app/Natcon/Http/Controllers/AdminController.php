@@ -274,6 +274,17 @@ class AdminController extends Controller
             'thank_you_message' => 'sometimes|nullable|string|max:512',
             'is_active' => 'sometimes|boolean',
             'reactions_enabled' => 'sometimes|boolean',
+            // The live stream: a YouTube / Facebook link, and the switch that puts "Live" in the public bar.
+            'live_url' => [
+                'sometimes', 'nullable', 'url', 'max:2048',
+                // Only the two hosts the live page can embed — anything else would show a button, not a stream.
+                function (string $attribute, mixed $value, \Closure $fail) {
+                    if ($value !== null && $value !== '' && ! \App\Natcon\Services\LiveStreamEmbed::isSupported((string) $value)) {
+                        $fail('Only YouTube and Facebook links can be streamed. Paste a youtube.com, youtu.be, facebook.com or fb.watch link.');
+                    }
+                },
+            ],
+            'live_enabled' => 'sometimes|boolean',
             // The albums the awardee frames' face search covers; empty = the whole convention.
             'awardee_face_album_ids' => 'sometimes|nullable|array|max:50',
             'awardee_face_album_ids.*' => 'integer',
@@ -350,6 +361,10 @@ class AdminController extends Controller
         // Same reasoning as the announcement and sponsor writes — see
         // LandingCachePurger.
         app(LandingCachePurger::class)->purgeYear($event->year);
+        if ($event->wasChanged(['live_url', 'live_enabled'])) {
+            // The bar's red dot and /natcon/live read their own tag, so the switch shows within the request.
+            app(LandingCachePurger::class)->purgeLive();
+        }
 
         return response()->json([
             'data' => $event->fresh(),

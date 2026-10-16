@@ -104,7 +104,25 @@ class PublicController extends Controller
             // Cast because a missing column on an un-migrated environment would
             // otherwise send null and read as "off".
             'reactions_enabled' => (bool) ($event->reactions_enabled ?? true),
+            // The live stream (admin-pasted YouTube / Facebook link + switch) — see live() for the bar's cheap read.
+            'live' => $event->liveStream(),
         ]]);
+    }
+
+    /**
+     * Is the LIVE convention streaming right now? The smallest possible read, for the public bar's
+     * red "Live" dot: the nav on every NATCON page asks our own origin (/api/natcon/live, cached
+     * 30s + the natcon-live tag), which asks this. No token, no PII — a link and a switch.
+     */
+    public function live(): JsonResponse
+    {
+        $event = NatconEvent::active();
+        $live = $event?->liveStream() ?? ['enabled' => false, 'url' => null, 'provider' => null, 'embed_url' => null];
+
+        return response()->json(['data' => $live + [
+            'year' => $event?->year,
+            'short_name' => $event?->displayShortName(),
+        ]])->header('Cache-Control', 'public, max-age=30');
     }
 
     /** The awardee's own record, resolved from the token alone. */
