@@ -552,6 +552,7 @@ class CommandService extends CacheService
         - Ignore messages unrelated to Filipino Homes real estate
         
         INTENT:
+        - price → user asks what properties COST in an area: price range, average/typical price, going rate, "magkano", "how much is a studio in Lahug", rent levels — a market question, not a request to see specific listings
         - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
         - agent → user shows intent to find, search, contact, or inquire about a real estate agent (explicit or implied)
         - normal → greetings, small talk, or anything NOT related to Filipino Homes real estate
@@ -560,11 +561,13 @@ class CommandService extends CacheService
         - Be strict
         - If unsure or off-topic, return: normal
         - If the user asks for a person (agent, broker, realtor), classify as: agent
-        - If the user asks for property (house, condo, lot, rent, price, location), classify as: listing
+        - If the user asks how much properties cost / the price range / average price / rate in a place, classify as: price
+        - If the user asks for property (house, condo, lot, rent, location) or to see/find/show listings, classify as: listing
+        - A stated budget while looking for property ("condo in Makati under 5M") is: listing — not price
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: listing OR agent OR normal
+        - Return EXACTLY one word: price OR listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -585,7 +588,7 @@ class CommandService extends CacheService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'listing', 'agent'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent', 'price'])) {
             return 'normal';
         }
     

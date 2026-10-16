@@ -7,6 +7,7 @@ use App\Services\OpenAI\CommandService;
 use App\Services\OpenAI\CacheService;
 use App\Services\OpenAI\DataLayerService;
 use App\Services\OpenAI\ListingCommandService;
+use App\Services\OpenAI\PriceCommandService;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
 use App\Models\AiSearchLog;
@@ -18,13 +19,15 @@ class OpenAIController extends Controller
     private $cacheService;
     private $dataService;
     private $listingService;
+    private $priceService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p)
     {
         $this->sqService = $s;
         $this->cacheService = $c;
         $this->dataService = $d;
         $this->listingService = $l;
+        $this->priceService = $p;
     }
 
     public function getDailyLimit(Request $request)
@@ -83,6 +86,11 @@ class OpenAIController extends Controller
     
             if ($classification === 'agent') {
                 return $this->sqService->replySearchingAgentStream($thread, $request);
+            }
+
+            // "How much is a studio in Lahug?" — the Price Guide, in chat (numbers from our listings, never the model).
+            if ($classification === 'price') {
+                return $this->priceService->replyStream($thread, $request);
             }
         }
     
