@@ -117,7 +117,7 @@ class PublicController extends Controller
     public function live(): JsonResponse
     {
         $event = NatconEvent::active();
-        $live = $event?->liveStream() ?? ['enabled' => false, 'url' => null, 'provider' => null, 'embed_url' => null];
+        $live = $event?->liveStream() ?? ['enabled' => false, 'url' => null, 'provider' => null, 'embed_url' => null, 'chat_url' => null];
 
         return response()->json(['data' => $live + [
             'year' => $event?->year,

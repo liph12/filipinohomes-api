@@ -3,6 +3,7 @@
 namespace App\Natcon\Models;
 
 use App\Auditing\LogsActivity;
+use App\Natcon\Services\LiveStreamEmbed;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use OwenIt\Auditing\Contracts\Auditable;
@@ -49,17 +50,19 @@ class NatconEvent extends Model implements Auditable
     /**
      * The live stream as the public pages see it: on/off, the pasted link, and the embed built from it.
      *
-     * @return array{enabled: bool, url: string|null, provider: string|null, embed_url: string|null}
+     * @return array{enabled: bool, url: string|null, provider: string|null, embed_url: string|null, chat_url: string|null}
      */
     public function liveStream(): array
     {
-        $embed = \App\Natcon\Services\LiveStreamEmbed::for($this->live_url ?? null);
+        $embed = LiveStreamEmbed::for($this->live_url ?? null);
 
         return [
             'enabled' => (bool) ($this->live_enabled ?? false) && $embed !== null,
             'url' => $embed['watch_url'] ?? null,
             'provider' => $embed['provider'] ?? null,
             'embed_url' => $embed['embed_url'] ?? null,
+            // Live chat beside the player — YouTube only; null for Facebook (no embeddable chat) and channel /live links.
+            'chat_url' => $embed['chat_url'] ?? null,
         ];
     }
 
