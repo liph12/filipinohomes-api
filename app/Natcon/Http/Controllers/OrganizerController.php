@@ -167,6 +167,9 @@ class OrganizerController extends Controller
             'phase' => "{$rule}|string|in:".implode(',', OrganizerCommittee::PHASES),
             'title' => "{$rule}|string|max:191",
             'note' => 'sometimes|nullable|string|max:191',
+            // What the card calls the people under the head — "Members",
+            // "Staff". Null falls back to "Assistant(s)".
+            'members_label' => 'sometimes|nullable|string|max:60',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
             'members' => 'sometimes|array|max:60',
             'members.*.id' => 'sometimes|nullable|integer',
@@ -235,6 +238,7 @@ class OrganizerController extends Controller
             'phase' => $c->phase,
             'title' => $c->title,
             'note' => $c->note,
+            'members_label' => $c->members_label,
             'members' => $c->members->map(function (OrganizerMember $m) use ($detailed, $photos) {
                 $shared = $m->photo_url ? null : ($photos[self::nameKey($m->name)] ?? null);
 

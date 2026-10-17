@@ -29,7 +29,7 @@ class OrganizerCommittee extends Model implements Auditable
     protected array $auditLabelAttributes = ['title', 'phase'];
 
     protected $fillable = [
-        'natcon_event_id', 'phase', 'title', 'note',
+        'natcon_event_id', 'phase', 'title', 'note', 'members_label',
         'sort_order', 'created_by',
     ];
 
