@@ -170,6 +170,8 @@ class OrganizerController extends Controller
             // What the card calls the people under the head — "Members",
             // "Staff". Null falls back to "Assistant(s)".
             'members_label' => 'sometimes|nullable|string|max:60',
+            // True: no word above them at all, just the faces.
+            'hide_members_label' => 'sometimes|boolean',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
             'members' => 'sometimes|array|max:60',
             'members.*.id' => 'sometimes|nullable|integer',
@@ -239,6 +241,7 @@ class OrganizerController extends Controller
             'title' => $c->title,
             'note' => $c->note,
             'members_label' => $c->members_label,
+            'hide_members_label' => (bool) $c->hide_members_label,
             'members' => $c->members->map(function (OrganizerMember $m) use ($detailed, $photos) {
                 $shared = $m->photo_url ? null : ($photos[self::nameKey($m->name)] ?? null);
 

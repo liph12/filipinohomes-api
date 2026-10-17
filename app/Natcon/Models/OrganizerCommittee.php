@@ -29,12 +29,13 @@ class OrganizerCommittee extends Model implements Auditable
     protected array $auditLabelAttributes = ['title', 'phase'];
 
     protected $fillable = [
-        'natcon_event_id', 'phase', 'title', 'note', 'members_label',
+        'natcon_event_id', 'phase', 'title', 'note', 'members_label', 'hide_members_label',
         'sort_order', 'created_by',
     ];
 
     protected $casts = [
         'sort_order' => 'integer',
+        'hide_members_label' => 'boolean',
     ];
 
     public function event(): BelongsTo
