@@ -50,7 +50,7 @@ class NatconEvent extends Model implements Auditable
     /**
      * The live stream as the public pages see it: on/off, the pasted link, and the embed built from it.
      *
-     * @return array{enabled: bool, url: string|null, provider: string|null, embed_url: string|null, chat_url: string|null}
+     * @return array{enabled: bool, url: string|null, provider: string|null, embed_url: string|null, chat_url: string|null, video_id: string|null}
      */
     public function liveStream(): array
     {
@@ -63,6 +63,8 @@ class NatconEvent extends Model implements Auditable
             'embed_url' => $embed['embed_url'] ?? null,
             // Live chat beside the player — YouTube only; null for Facebook (no embeddable chat) and channel /live links.
             'chat_url' => $embed['chat_url'] ?? null,
+            // The YouTube video id (video-id links only) — what the viewer count and the chat are looked up by.
+            'video_id' => $embed['video_id'] ?? null,
         ];
     }
 

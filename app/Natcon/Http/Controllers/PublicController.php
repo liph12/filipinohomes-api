@@ -8,12 +8,13 @@ use App\Natcon\Exceptions\InvalidLinkException;
 use App\Natcon\Http\Resources\PublicProfileResource;
 use App\Natcon\Models\NatconEvent;
 use App\Natcon\Models\Outbox;
-use App\Natcon\Models\Recipient;
 use App\Natcon\Models\PhotoSubmission;
+use App\Natcon\Models\Recipient;
 use App\Natcon\Models\Suppression;
 use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
 use App\Natcon\Services\PhotoService;
+use App\Natcon\Services\YouTubeLiveViewers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -69,37 +70,37 @@ class PublicController extends Controller
         $event = match (true) {
             $request->filled('year') => NatconEvent::forYear($request->integer('year')),
             $request->filled('slug') => NatconEvent::where('slug', $request->string('slug'))->first(),
-            default                  => NatconEvent::active(),
+            default => NatconEvent::active(),
         };
 
         if (! $event) {
             return response()->json(['message' => 'No NATCON event found.'], 404);
         }
 
-        $tz      = $event->timezone ?: 'Asia/Manila';
+        $tz = $event->timezone ?: 'Asia/Manila';
         $current = NatconEvent::active();
 
         return response()->json(['data' => [
-            'slug'           => $event->slug,
-            'year'           => $event->year,
-            'name'           => $event->name,
-            'short_name'     => $event->displayShortName(),
-            'starts_on'      => $event->starts_on?->toDateString(),
-            'ends_on'        => $event->ends_on?->toDateString(),
-            'date_label'     => $event->dateLabel(),
-            'venue'          => $event->venue,
-            'hashtag'        => $event->hashtag,
-            'banner_base'    => $event->banner_base,
+            'slug' => $event->slug,
+            'year' => $event->year,
+            'name' => $event->name,
+            'short_name' => $event->displayShortName(),
+            'starts_on' => $event->starts_on?->toDateString(),
+            'ends_on' => $event->ends_on?->toDateString(),
+            'date_label' => $event->dateLabel(),
+            'venue' => $event->venue,
+            'hashtag' => $event->hashtag,
+            'banner_base' => $event->banner_base,
             'sponsor_display' => $event->sponsor_display,
-            'deadline_at'    => $event->photo_deadline_at?->copy()->setTimezone($tz)->toIso8601String(),
-            'timezone'       => $tz,
+            'deadline_at' => $event->photo_deadline_at?->copy()->setTimezone($tz)->toIso8601String(),
+            'timezone' => $tz,
             'days_remaining' => max(0, (int) ($event->daysUntilDeadline() ?? 0)),
-            'is_past'        => $event->isPhotoWindowClosed(),
+            'is_past' => $event->isPhotoWindowClosed(),
             // Lets /natcon redirect to the right year, and lets an archive page
             // say "this year has finished" without a second request.
-            'is_current'     => $current && $current->id === $event->id,
-            'current_year'   => $current?->year,
-            'server_time'    => now()->setTimezone($tz)->toIso8601String(),
+            'is_current' => $current && $current->id === $event->id,
+            'current_year' => $current?->year,
+            'server_time' => now()->setTimezone($tz)->toIso8601String(),
             // Whether the landing page renders the announcement reaction bar.
             // Cast because a missing column on an un-migrated environment would
             // otherwise send null and read as "off".
@@ -117,9 +118,14 @@ class PublicController extends Controller
     public function live(): JsonResponse
     {
         $event = NatconEvent::active();
-        $live = $event?->liveStream() ?? ['enabled' => false, 'url' => null, 'provider' => null, 'embed_url' => null, 'chat_url' => null];
+        $live = $event?->liveStream() ?? ['enabled' => false, 'url' => null, 'provider' => null, 'embed_url' => null, 'chat_url' => null, 'video_id' => null];
+        // YouTube's own concurrent-viewer figure while a YouTube video is live (cached 30s); null otherwise.
+        $viewers = ! empty($live['enabled']) && ($live['provider'] ?? null) === 'youtube' && ! empty($live['video_id'])
+            ? app(YouTubeLiveViewers::class)->count((string) $live['video_id'])
+            : null;
 
         return response()->json(['data' => $live + [
+            'viewers' => $viewers,
             'year' => $event?->year,
             'short_name' => $event?->displayShortName(),
         ]])->header('Cache-Control', 'public, max-age=30');
@@ -136,7 +142,7 @@ class PublicController extends Controller
             // move this call into a server-rendered page.
             $recipient->forceFill([
                 'first_opened_at' => $recipient->first_opened_at ?? Carbon::now(),
-                'open_count'      => $recipient->open_count + 1,
+                'open_count' => $recipient->open_count + 1,
             ])->save();
 
             return $this->profilePayload($recipient);
@@ -151,13 +157,13 @@ class PublicController extends Controller
     public function respond(Request $request)
     {
         $data = $request->validate([
-            't'                  => 'required|string|min:16|max:160',
-            'choice'             => 'required|in:retain,change',
+            't' => 'required|string|min:16|max:160',
+            'choice' => 'required|in:retain,change',
             'retained_photo_url' => 'nullable|url|max:2048',
         ]);
 
         return $this->withRecipient($data['t'], function (Recipient $recipient) use ($data) {
-            $event  = $recipient->event;
+            $event = $recipient->event;
             $choice = $data['choice'];
 
             // Post-deadline policy, deliberately asymmetric: accepting a "retain"
@@ -167,7 +173,7 @@ class PublicController extends Controller
             if ($event->isPhotoWindowClosed() && $choice === Recipient::RESPONSE_CHANGE) {
                 return response()->json([
                     'message' => 'The photo collection deadline has passed. Please contact the NATCON team.',
-                    'code'    => 'deadline_passed',
+                    'code' => 'deadline_passed',
                 ], 422);
             }
 
@@ -182,7 +188,7 @@ class PublicController extends Controller
                     return response()->json([
                         'message' => $recipient->requires_new_photo_note
                             ?: 'The photo we have on file cannot be used for the official materials. Please send us a new one.',
-                        'code'    => 'new_photo_required',
+                        'code' => 'new_photo_required',
                     ], 422);
                 }
 
@@ -191,7 +197,7 @@ class PublicController extends Controller
                 if (! $available) {
                     return response()->json([
                         'message' => "We don't have a photo on file for you yet, so there's nothing to retain. Please upload one.",
-                        'code'    => 'no_photo_on_file',
+                        'code' => 'no_photo_on_file',
                     ], 422);
                 }
 
@@ -203,7 +209,7 @@ class PublicController extends Controller
                 if ($requested !== null && ! in_array($requested, $available, true)) {
                     return response()->json([
                         'message' => 'That photo is not one of the photos on file for you.',
-                        'code'    => 'unknown_photo',
+                        'code' => 'unknown_photo',
                     ], 422);
                 }
 
@@ -211,10 +217,10 @@ class PublicController extends Controller
             }
 
             $recipient->forceFill([
-                'response'           => $choice,
-                'responded_at'       => Carbon::now(),
+                'response' => $choice,
+                'responded_at' => Carbon::now(),
                 'retained_photo_url' => $retained,
-                'status'             => $choice === Recipient::RESPONSE_RETAIN
+                'status' => $choice === Recipient::RESPONSE_RETAIN
                     ? Recipient::STATUS_RESPONDED_RETAIN
                     // "change" is an intent, not a delivery — status only advances
                     // to photo_uploaded once a file actually lands.
@@ -233,23 +239,23 @@ class PublicController extends Controller
     public function photo(Request $request)
     {
         $data = $request->validate([
-            't'    => 'required|string|min:16|max:160',
+            't' => 'required|string|min:16|max:160',
             // HEIC/HEIF are accepted because iPhones hand them over from the photo
             // library by default; rejecting them means "Invalid file type:
             // IMG_4821.HEIC" and an abandoned submission we cannot re-collect.
             // mimes: is checked against the decoded type, so this is not a
             // client-controlled claim.
-            'file' => 'required|file|mimetypes:image/jpeg,image/png,image/webp,image/heic,image/heif|max:' . (int) config('natcon.photo.max_upload_kb', 15360),
+            'file' => 'required|file|mimetypes:image/jpeg,image/png,image/webp,image/heic,image/heif|max:'.(int) config('natcon.photo.max_upload_kb', 15360),
         ], [
             'file.mimetypes' => 'Please upload a JPG, PNG, WEBP or HEIC image.',
-            'file.max'       => 'That image is too large. Please keep it under 15MB.',
+            'file.max' => 'That image is too large. Please keep it under 15MB.',
         ]);
 
         return $this->withRecipient($data['t'], function (Recipient $recipient) use ($request) {
             if ($recipient->event->isPhotoWindowClosed()) {
                 return response()->json([
                     'message' => 'The photo collection deadline has passed. Please contact the NATCON team.',
-                    'code'    => 'deadline_passed',
+                    'code' => 'deadline_passed',
                 ], 422);
             }
 
@@ -271,12 +277,12 @@ class PublicController extends Controller
             } catch (\Throwable $e) {
                 Log::error('NATCON photo upload failed', [
                     'recipient_id' => $recipient->id,
-                    'error'        => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
 
                 return response()->json([
                     'message' => "We couldn't save that photo. Please try again.",
-                    'code'    => 'upload_failed',
+                    'code' => 'upload_failed',
                 ], 500);
             }
 
@@ -307,8 +313,8 @@ class PublicController extends Controller
     public function keepPhotos(Request $request)
     {
         $data = $request->validate([
-            't'      => 'required|string|min:16|max:160',
-            'urls'   => 'present|array|max:10',
+            't' => 'required|string|min:16|max:160',
+            'urls' => 'present|array|max:10',
             'urls.*' => 'string|max:2048',
         ]);
 
@@ -316,7 +322,7 @@ class PublicController extends Controller
             if ($recipient->event->isPhotoWindowClosed()) {
                 return response()->json([
                     'message' => 'The photo collection deadline has passed. Please contact the NATCON team.',
-                    'code'    => 'deadline_passed',
+                    'code' => 'deadline_passed',
                 ], 422);
             }
 
@@ -330,7 +336,7 @@ class PublicController extends Controller
                 return response()->json([
                     'message' => $recipient->requires_new_photo_note
                         ?: 'The photo we have on file cannot be used for the official materials. Please send us new ones.',
-                    'code'    => 'new_photo_required',
+                    'code' => 'new_photo_required',
                 ], 422);
             }
 
@@ -351,7 +357,7 @@ class PublicController extends Controller
     public function deletePhoto(Request $request)
     {
         $data = $request->validate([
-            't'             => 'required|string|min:16|max:160',
+            't' => 'required|string|min:16|max:160',
             'submission_id' => 'required|integer',
         ]);
 
@@ -362,7 +368,7 @@ class PublicController extends Controller
             if ($recipient->event->isPhotoWindowClosed()) {
                 return response()->json([
                     'message' => 'The photo collection deadline has passed, so photos can no longer be changed. Please contact the NATCON team.',
-                    'code'    => 'deadline_passed',
+                    'code' => 'deadline_passed',
                 ], 422);
             }
 
@@ -381,7 +387,7 @@ class PublicController extends Controller
             if (! $submission) {
                 return response()->json([
                     'message' => 'That photo is no longer on file.',
-                    'code'    => 'unknown_photo',
+                    'code' => 'unknown_photo',
                 ], 404);
             }
 
@@ -415,7 +421,7 @@ class PublicController extends Controller
         return response()->json([
             'message' => "Your {$what} is already saved and can no longer be changed here. "
                 .'Please contact the NATCON team if something needs correcting.',
-            'code'    => 'already_submitted',
+            'code' => 'already_submitted',
         ], 422);
     }
 
@@ -423,7 +429,7 @@ class PublicController extends Controller
     public function form(Request $request)
     {
         $data = $request->validate([
-            't'       => 'required|string|min:16|max:160',
+            't' => 'required|string|min:16|max:160',
             'answers' => 'required|array',
         ]);
 
@@ -525,7 +531,7 @@ class PublicController extends Controller
         $base = Recipient::where('natcon_event_id', $event->id);
 
         $event->forceFill([
-            'responded_count'      => (clone $base)->whereNotNull('responded_at')->count(),
+            'responded_count' => (clone $base)->whereNotNull('responded_at')->count(),
             'photo_uploaded_count' => (clone $base)->whereNotNull('photo_uploaded_at')->count(),
         ])->save();
     }

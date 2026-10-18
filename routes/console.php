@@ -106,6 +106,12 @@ Schedule::command('natcon:drain-outbox')
     ->everyMinute()
     ->withoutOverlapping();
 
+// The live stream's YouTube chat, stored while the admin's Live switch is on (the live-page raffle's
+// commenter list). Each run reads for ~50s; no-ops when nothing is live or no YouTube credential is set.
+Schedule::command('natcon:collect-live-chat')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // Self-checks against natcon_events.reminder_offsets vs photo_deadline_at and
 // no-ops on any other day, so this is safe to leave scheduled forever. Default
 // offsets [4,3,2] against the Aug 24 2026 deadline == Aug 20 / 21 / 22. Moving

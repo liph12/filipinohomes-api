@@ -86,6 +86,8 @@ use App\Natcon\Http\Controllers\RaffleController as NatconRaffleController;
 use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
 use App\Natcon\Http\Controllers\VvipController;
+use App\Natcon\Http\Controllers\LiveChatController as NatconLiveChatController;
+use App\Natcon\Http\Controllers\LiveEntryController as NatconLiveEntryController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('strip.tags')->group(function () {
@@ -337,6 +339,16 @@ Route::middleware('strip.tags')->group(function () {
             Route::post('/natcon/announcements/{announcement}/reactions',
                 [NatconReactionController::class, 'store'])
                 ->middleware('throttle:natcon-react');
+
+            // "Join the raffle" from the live page — the viewer's own name/email/phone (no platform gives us those).
+            Route::post('/natcon/live/join', [NatconLiveEntryController::class, 'store'])
+                ->middleware('throttle:10,1');
+            Route::get('/natcon/live/join/status', [NatconLiveEntryController::class, 'status'])
+                ->middleware('throttle:30,1');
+            Route::get('/natcon/live/contest', [NatconLiveEntryController::class, 'contest'])
+                ->middleware('throttle:60,1');
+            Route::get('/natcon/live/join/status', [NatconLiveEntryController::class, 'status'])
+                ->middleware('throttle:30,1');
 
             // "Find my photos" on /albums — selfies in, live public-album
             // photos out. Each hit is up to 5 Rekognition calls, so a tight
@@ -719,6 +731,23 @@ Route::middleware('strip.tags')->group(function () {
                 // auth group and re-gated on the line below.
                 Route::middleware(RoleMiddleware::class.':admin,editor')->group(function () {
                     // VVIP honourees imported from the awards sheet, per convention.
+                    // Who commented on the live stream (collected while live, for the raffle) — see LiveChatController.
+                    Route::get('/admin/natcon/live/commenters', [NatconLiveChatController::class, 'commenters']);
+                    Route::get('/admin/natcon/live/commenters/export', [NatconLiveChatController::class, 'export']);
+                    Route::get('/admin/natcon/live/commenters/{channelId}/comments', [NatconLiveChatController::class, 'comments']);
+                    Route::delete('/admin/natcon/live/commenters', [NatconLiveChatController::class, 'clear']);
+                    Route::post('/admin/natcon/live/commenters/collect', [NatconLiveChatController::class, 'collectNow']);
+                    // Raffle entries from the live page's form — see LiveEntryController.
+                    Route::get('/admin/natcon/live/entries', [NatconLiveEntryController::class, 'index']);
+                    Route::get('/admin/natcon/live/entries/export', [NatconLiveEntryController::class, 'export']);
+                    Route::delete('/admin/natcon/live/entries', [NatconLiveEntryController::class, 'clear']);
+                    // Several contests per convention, one open at a time; each ended by the admin.
+                    Route::get('/admin/natcon/live/contests', [NatconLiveEntryController::class, 'contests']);
+                    Route::post('/admin/natcon/live/contests', [NatconLiveEntryController::class, 'storeContest']);
+                    Route::patch('/admin/natcon/live/contests/{contest}', [NatconLiveEntryController::class, 'updateContest']);
+                    Route::post('/admin/natcon/live/contests/{contest}/start', [NatconLiveEntryController::class, 'startContest']);
+                    Route::post('/admin/natcon/live/contests/{contest}/end', [NatconLiveEntryController::class, 'endContest']);
+                    Route::delete('/admin/natcon/live/contests/{contest}', [NatconLiveEntryController::class, 'destroyContest']);
                     Route::get('/admin/natcon/vvip', [VvipController::class, 'index']);
                     Route::get('/admin/natcon/vvip/simplified', [VvipController::class, 'simplified']);
                     Route::get('/admin/natcon/vvip/check', [VvipController::class, 'check']);

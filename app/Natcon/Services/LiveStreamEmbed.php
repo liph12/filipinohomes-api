@@ -29,7 +29,7 @@ class LiveStreamEmbed
     }
 
     /**
-     * @return array{provider: 'youtube'|'facebook'|null, embed_url: string|null, chat_url?: string, watch_url: string}|null
+     * @return array{provider: 'youtube'|'facebook'|null, video_id?: string, embed_url: string|null, chat_url?: string, watch_url: string}|null
      */
     public static function for(?string $url): ?array
     {
@@ -59,6 +59,7 @@ class LiveStreamEmbed
             if ($id !== null && preg_match('/^[A-Za-z0-9_-]{6,}$/', $id)) {
                 return [
                     'provider' => 'youtube',
+                    'video_id' => $id,
                     'embed_url' => 'https://www.youtube-nocookie.com/embed/'.$id.'?autoplay=1&rel=0',
                     // YouTube's embeddable live chat — the one platform that offers one. It needs the video id
                     // (a channel /live link has none) and the embedding page's host in embed_domain.

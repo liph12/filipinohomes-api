@@ -104,6 +104,9 @@ return [
         'client_id' => env('YOUTUBE_CLIENT_ID'),
         'client_secret' => env('YOUTUBE_CLIENT_SECRET'),
         'refresh_token' => env('YOUTUBE_REFRESH_TOKEN'),
+        // A plain Data API key for public READS — the NATCON live page's chat collector (any public channel's
+        // stream). Optional: falls back to the OAuth token above; with neither, nothing is collected.
+        'api_key' => env('YOUTUBE_API_KEY'),
         // Hard daily ceiling. Under the historical quota pricing one full
         // upload costs ~2,050 units (insert 1600 + thumbnail 50 + caption
         // 400), so 4/day fits the default 10k allowance; raise only after
