@@ -12,7 +12,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * The NATCON Live Contest: contests (several per convention, ONE open at a time, each ended by the
- * admin) and the registrations made from the live page — FULL NAME, MOBILE and EMAIL, the details no
+ * admin) and the registrations made from the live page — FULL NAME, MOBILE, GCASH NUMBER (for cash prizes) and EMAIL, the details no
  * platform gives us. A registration belongs to the contest open when it was made; the same mobile or
  * email registers once per contest (same person = same mobile AND email → update; a partial match is
  * refused in words). "Am I registered?" is answered by the server from this browser's visitor id, so
@@ -42,10 +42,13 @@ class LiveEntryController extends Controller
         $data = $request->validate([
             'full_name' => 'required|string|max:191',
             'phone' => 'required|string|min:7|max:32',
+            // GCash number for cash prizes — its own number, required.
+            'gcash' => 'required|string|min:7|max:32',
             'email' => 'required|email|max:191',
             'visitor_id' => 'nullable|string|max:64',
         ]);
         $phone = self::phoneKey($data['phone']);
+        $gcash = self::phoneKey($data['gcash']);
         abort_if(strlen($phone) < 7, 422, 'Please enter a valid mobile number.');
         $email = mb_strtolower(trim($data['email']));
         $now = now();
@@ -65,6 +68,7 @@ class LiveEntryController extends Controller
         $row = [
             'full_name' => preg_replace('/\s+/', ' ', trim($data['full_name'])),
             'phone' => $phone,
+            'gcash' => $gcash,
             'email' => $email,
             'visitor_id' => $data['visitor_id'] ?? null,
             'updated_at' => $now,
@@ -99,7 +103,7 @@ class LiveEntryController extends Controller
             'email' => $email !== '' ? preg_replace('/^(.).*(@.*)$/', '$1•••$2', $email) : null,
             // The same browser's OWN details, unmasked, so the Edit form can be prefilled. This read is keyed
             // by the browser's private visitor id and never cached, so nobody else's row can come back here.
-            'details' => ['full_name' => self::nameOf($row), 'phone' => $phone ?: null, 'email' => $email ?: null],
+            'details' => ['full_name' => self::nameOf($row), 'phone' => $phone ?: null, 'gcash' => $row->gcash ?: null, 'email' => $email ?: null],
             'registered_at' => $row->created_at,
         ]])->header('Cache-Control', 'no-store');
     }
@@ -222,10 +226,10 @@ class LiveEntryController extends Controller
 
         return response()->streamDownload(function () use ($rows) {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['Name', 'Contact', 'Registered at'], ',', '"', '\\');
+            fputcsv($out, ['Name', 'Contact', 'GCash', 'Registered at'], ',', '"', '\\');
             foreach ($rows as $r) {
                 // Contact = "mobile | email", one cell, exactly as the admin table shows it and the raffle sheet reads it.
-                fputcsv($out, [self::nameOf($r), implode(' | ', array_filter([$r->phone, $r->email])), $r->created_at], ',', '"', '\\');
+                fputcsv($out, [self::nameOf($r), implode(' | ', array_filter([$r->phone, $r->email])), $r->gcash, $r->created_at], ',', '"', '\\');
             }
             fclose($out);
         }, "natcon-{$event->year}-contest{$slug}-registrations.csv", ['Content-Type' => 'text/csv; charset=UTF-8']);
