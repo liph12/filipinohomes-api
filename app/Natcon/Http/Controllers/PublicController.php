@@ -14,7 +14,6 @@ use App\Natcon\Models\Suppression;
 use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
 use App\Natcon\Services\PhotoService;
-use App\Natcon\Services\YouTubeLiveViewers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -119,13 +118,10 @@ class PublicController extends Controller
     {
         $event = NatconEvent::active();
         $live = $event?->liveStream() ?? ['enabled' => false, 'url' => null, 'provider' => null, 'embed_url' => null, 'chat_url' => null, 'video_id' => null];
-        // YouTube's own concurrent-viewer figure while a YouTube video is live (cached 30s); null otherwise.
-        $viewers = ! empty($live['enabled']) && ($live['provider'] ?? null) === 'youtube' && ! empty($live['video_id'])
-            ? app(YouTubeLiveViewers::class)->count((string) $live['video_id'])
-            : null;
+        // No viewer count here: the live page reads YouTube's "watching now" itself, without the Data API
+        // (frontend /api/natcon/live/viewers), so the daily quota is kept for the chat collector.
 
         return response()->json(['data' => $live + [
-            'viewers' => $viewers,
             'year' => $event?->year,
             'short_name' => $event?->displayShortName(),
         ]])->header('Cache-Control', 'public, max-age=30');
