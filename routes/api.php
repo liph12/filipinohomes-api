@@ -558,6 +558,9 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/projects/insights/detail/{projectKey}', [ProjectController::class, 'insightsDetail'])
                 ->where('projectKey', '(project|property):\d+');
             Route::get('/listings/insights/by-province', [ListingController::class, 'insightsByProvince']);
+            // Price Insights: asking prices and ₱/sqm by place — see ListingPriceInsightsService.
+            Route::get('/listings/insights/prices', [ListingController::class, 'insightsPrices']);
+            Route::get('/listings/insights/prices/summary', [ListingController::class, 'insightsPricesSummary']);
             Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
             Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);

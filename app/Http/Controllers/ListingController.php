@@ -26,6 +26,7 @@ use App\Services\Listing\ListingByTypeService;
 use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
 use App\Services\Listing\ListingHeatmapService;
+use App\Services\Listing\ListingPriceInsightsService;
 use App\Services\Listing\ListingSummaryService;
 use App\Services\Listing\ListingTopCreatorsService;
 use App\Services\Project\ProjectService;
@@ -2723,6 +2724,42 @@ class ListingController extends Controller
      * Listing Insights — province breakdown. Mirrors ProjectController::byProvince
      * but counts ALL listings (project + standalone) and uses listing-row counts.
      */
+    /** Price Insights: average / median price and ₱ per sqm by province, city or barangay — see ListingPriceInsightsService. */
+    public function insightsPrices(Request $request, ListingPriceInsightsService $insights): JsonResponse
+    {
+        return response()->json($insights->byPlace($this->insightsPriceParams($request) + [
+            'level' => $request->query('level'),
+            'category' => $request->query('category'),
+            'type' => $request->query('type'),
+            'sort_by' => $request->query('sort_by'),
+            'limit' => $request->query('limit'),
+        ], $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** The Price Insights tile's numbers: median price and ₱/sqm for sale and for rent. */
+    public function insightsPricesSummary(Request $request, ListingPriceInsightsService $insights): JsonResponse
+    {
+        return response()->json($insights->totals($this->insightsPriceParams($request), $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** @return array<string, mixed> */
+    private function insightsPriceParams(Request $request): array
+    {
+        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
+        $provinceId = $request->query('province_id');
+        $cityId = $request->query('city_id');
+
+        return [
+            'date_start' => is_string($request->query('date_start')) ? $request->query('date_start') : null,
+            'date_end' => is_string($request->query('date_end')) ? $request->query('date_end') : null,
+            'province_id' => is_numeric($provinceId) ? (int) $provinceId : null,
+            'city_id' => is_numeric($cityId) ? (int) $cityId : null,
+            'island' => $island,
+            'region' => $region,
+            'barangay_id' => $barangayId,
+        ];
+    }
+
     public function insightsByProvince(Request $request, ListingByProvinceService $insights): JsonResponse
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
