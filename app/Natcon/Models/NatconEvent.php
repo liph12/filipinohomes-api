@@ -6,6 +6,7 @@ use App\Auditing\LogsActivity;
 use App\Natcon\Services\LiveStreamEmbed;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use OwenIt\Auditing\Contracts\Auditable;
 
 /**
@@ -30,7 +31,7 @@ class NatconEvent extends Model implements Auditable
         'hashtag', 'photo_deadline_at', 'timezone', 'update_profile_url',
         'banner_base', 'email_banner_url', 'sponsor_display', 'thank_you_message',
         'reminder_offsets', 'is_active', 'sales_breakpoint',
-        'reactions_enabled', 'awardee_face_album_ids', 'live_url', 'live_enabled',
+        'reactions_enabled', 'awardee_face_album_ids', 'live_url', 'live_enabled', 'live_started_at',
     ];
 
     protected $casts = [
@@ -43,6 +44,7 @@ class NatconEvent extends Model implements Auditable
         'is_active' => 'boolean',
         'reactions_enabled' => 'boolean',
         'live_enabled' => 'boolean',
+        'live_started_at' => 'datetime',
         'awardee_face_album_ids' => 'array',
         'sales_breakpoint' => 'decimal:2',
     ];
@@ -66,6 +68,46 @@ class NatconEvent extends Model implements Auditable
             // The YouTube video id (video-id links only) — what the viewer count and the chat are looked up by.
             'video_id' => $embed['video_id'] ?? null,
         ];
+    }
+
+    /**
+     * Earlier streams of this convention, newest first, as /natcon/live shows them under the player:
+     * a finished YouTube/Facebook live stays watchable at the same link. Replays are written by the
+     * admin's save (AdminController::recordLiveReplay). The one that is live RIGHT NOW is left out
+     * unless `includeCurrent` (the admin's list), so the page never shows the same stream twice.
+     *
+     * @return list<array{id:int,url:string,provider:?string,embed_url:?string,video_id:?string,title:?string,started_at:?string,ended_at:string,current:bool}>
+     */
+    public function liveReplays(bool $includeCurrent = false): array
+    {
+        $currentHash = $this->live_enabled && $this->live_url ? hash('sha256', trim((string) $this->live_url)) : null;
+        $rows = DB::table('natcon_live_replays')
+            ->where('natcon_event_id', $this->id)
+            ->orderByDesc('ended_at')
+            ->get();
+        $out = [];
+        foreach ($rows as $r) {
+            $current = $currentHash !== null && $r->url_hash === $currentHash;
+            if ($current && ! $includeCurrent) {
+                continue;
+            }
+            $embed = LiveStreamEmbed::for($r->url) ?? [];
+            // A replay plays on demand — no autoplay, unlike the live player.
+            $embedUrl = isset($embed['embed_url']) ? preg_replace('/([?&])autoplay=(1|true)&?/', '$1', (string) $embed['embed_url']) : null;
+            $out[] = [
+                'id' => (int) $r->id,
+                'url' => $r->url,
+                'provider' => $embed['provider'] ?? null,
+                'embed_url' => $embedUrl ? rtrim($embedUrl, '?&') : null,
+                'video_id' => $embed['video_id'] ?? null,
+                'title' => $r->title,
+                'started_at' => $r->started_at,
+                'ended_at' => $r->ended_at,
+                'current' => $current,
+            ];
+        }
+
+        return $out;
     }
 
     public function recipients()

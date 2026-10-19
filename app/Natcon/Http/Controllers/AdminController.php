@@ -21,11 +21,13 @@ use App\Natcon\Services\AwardeeService;
 use App\Natcon\Services\FormService;
 use App\Natcon\Services\InviteService;
 use App\Natcon\Services\LandingCachePurger;
+use App\Natcon\Services\LiveStreamEmbed;
 use App\Natcon\Services\PhotoService;
 use App\Natcon\Services\RecipientImportService;
 use App\Natcon\Services\Sources\LrQualifiersSource;
 use App\Natcon\Services\Sources\ManualListSource;
 use App\Support\OfficeRegionMap;
+use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -279,7 +281,7 @@ class AdminController extends Controller
                 'sometimes', 'nullable', 'url', 'max:2048',
                 // Only the two hosts the live page can embed — anything else would show a button, not a stream.
                 function (string $attribute, mixed $value, \Closure $fail) {
-                    if ($value !== null && $value !== '' && ! \App\Natcon\Services\LiveStreamEmbed::isSupported((string) $value)) {
+                    if ($value !== null && $value !== '' && ! LiveStreamEmbed::isSupported((string) $value)) {
                         $fail('Only YouTube and Facebook links can be streamed. Paste a youtube.com, youtu.be, facebook.com or fb.watch link.');
                     }
                 },
@@ -300,11 +302,29 @@ class AdminController extends Controller
 
         if (array_key_exists('awardee_face_album_ids', $data)) {
             // Only this convention's own albums; nothing = whole convention.
-            $own = \App\Models\GalleryAlbum::forEvent($event)->whereIn('id', (array) ($data['awardee_face_album_ids'] ?? []))->pluck('id')->all();
+            $own = GalleryAlbum::forEvent($event)->whereIn('id', (array) ($data['awardee_face_album_ids'] ?? []))->pluck('id')->all();
             $data['awardee_face_album_ids'] = $own === [] ? null : array_values($own);
         }
 
+        // The live stream's history: what was playing BEFORE this save, so a stream that ends (switch off)
+        // or is replaced (new link while on) is kept as a replay — and the new one knows when it started.
+        $wasLive = (bool) $event->live_enabled && ! empty($event->live_url);
+        $oldLiveUrl = $event->live_url;
+        $oldLiveStarted = $event->live_started_at;
+        $nowLive = (bool) ($data['live_enabled'] ?? $event->live_enabled) && ! empty($data['live_url'] ?? $event->live_url);
+        $newLiveUrl = $data['live_url'] ?? $event->live_url;
+        if ($nowLive && (! $wasLive || trim((string) $newLiveUrl) !== trim((string) $oldLiveUrl))) {
+            $data['live_started_at'] = now();
+        }
+        if (! $nowLive) {
+            $data['live_started_at'] = null;
+        }
+
         $event->fill($data)->save();
+
+        if ($wasLive && (! $nowLive || trim((string) $newLiveUrl) !== trim((string) $oldLiveUrl))) {
+            $this->recordLiveReplay($event, (string) $oldLiveUrl, $oldLiveStarted);
+        }
 
         // Same rule as creating one: exactly one convention is live, and
         // active() must never have to break a tie nobody meant to create.
@@ -348,11 +368,11 @@ class AdminController extends Controller
                 ->update(['token_expires_at' => $expiry]);
 
             Log::info('natcon.deadline_moved', [
-                'event'           => $event->slug,
-                'deadline_at'     => $event->photo_deadline_at?->toIso8601String(),
-                'links_extended'  => $linksExtended,
+                'event' => $event->slug,
+                'deadline_at' => $event->photo_deadline_at?->toIso8601String(),
+                'links_extended' => $linksExtended,
                 'token_expires_at' => $expiry?->toIso8601String(),
-                'by'              => $request->user()?->id,
+                'by' => $request->user()?->id,
             ]);
         }
 
@@ -421,14 +441,14 @@ class AdminController extends Controller
          * because an album owns no S3 object — so those need no such filter.
          */
         $counts = [
-            'awardee'       => Recipient::where('natcon_event_id', $event->id)->count(),
+            'awardee' => Recipient::where('natcon_event_id', $event->id)->count(),
             'gallery photo' => GalleryPhoto::where('natcon_event_id', $event->id)
                 ->where('status', '!=', GalleryPhoto::STATUS_DELETED)
                 ->count(),
-            'album'         => GalleryAlbum::where('natcon_event_id', $event->id)->count(),
-            'announcement'  => NatconAnnouncement::where('natcon_event_id', $event->id)->count(),
-            'sponsor'       => Sponsor::where('natcon_event_id', $event->id)->count(),
-            'committee'     => OrganizerCommittee::where('natcon_event_id', $event->id)->count(),
+            'album' => GalleryAlbum::where('natcon_event_id', $event->id)->count(),
+            'announcement' => NatconAnnouncement::where('natcon_event_id', $event->id)->count(),
+            'sponsor' => Sponsor::where('natcon_event_id', $event->id)->count(),
+            'committee' => OrganizerCommittee::where('natcon_event_id', $event->id)->count(),
         ];
 
         $held = collect($counts)
@@ -440,12 +460,12 @@ class AdminController extends Controller
             return response()->json([
                 'message' => "{$event->short_name} still holds ".$held->join(', ', ' and ')
                     .'. Move or remove those first — deleting the year would take them with it.',
-                'holds'   => $counts,
+                'holds' => $counts,
             ], 422);
         }
 
         $label = $event->short_name ?: $event->name;
-        $year  = $event->year;
+        $year = $event->year;
 
         // Said out loud rather than discovered later: these rows are what make
         // a deleted photo restorable, and the year's FK cascade takes them.
@@ -456,8 +476,8 @@ class AdminController extends Controller
         $event->delete();
 
         Log::info('natcon.event_deleted', [
-            'year'             => $year,
-            'name'             => $label,
+            'year' => $year,
+            'name' => $label,
             'deleted_photo_rows' => $tombstones,
         ]);
 
@@ -943,10 +963,10 @@ class AdminController extends Controller
              * Lengths match the columns: team/state 191, phone 32, seat 32.
              */
             'display_name' => 'nullable|string|max:191',
-            'team'         => 'nullable|string|max:191',
-            'phone'        => 'nullable|string|max:32',
-            'state'        => 'nullable|string|max:191',
-            'seat_number'  => 'nullable|string|max:32',
+            'team' => 'nullable|string|max:191',
+            'phone' => 'nullable|string|max:32',
+            'state' => 'nullable|string|max:191',
+            'seat_number' => 'nullable|string|max:32',
         ]);
 
         if (array_key_exists('notes', $data)) {
@@ -1082,7 +1102,7 @@ class AdminController extends Controller
         $recipient->load('event');
 
         $hadToken = $recipient->token_nonce !== null && $recipient->token_issued_at !== null;
-        $raw      = $this->invites->ensureToken($recipient);
+        $raw = $this->invites->ensureToken($recipient);
 
         /**
          * Audited even though nothing rotated: this hands whoever asked a
@@ -1094,22 +1114,22 @@ class AdminController extends Controller
          * audit row, so a plain copy would leave no trace at all.
          */
         Audit::create([
-            'event'          => 'natcon',
+            'event' => 'natcon',
             'auditable_type' => Recipient::class,
-            'auditable_id'   => $recipient->id,
-            'user_type'      => request()->user() ? get_class(request()->user()) : null,
-            'user_id'        => request()->user()?->id,
-            'new_values'     => [
+            'auditable_id' => $recipient->id,
+            'user_type' => request()->user() ? get_class(request()->user()) : null,
+            'user_id' => request()->user()?->id,
+            'new_values' => [
                 'source' => 'admin_copy_link',
-                'email'  => $recipient->email,
+                'email' => $recipient->email,
                 'minted' => ! $hadToken,
             ],
         ]);
 
         return response()->json(['data' => [
-            'url'        => $this->invites->buildLink($recipient, $raw),
+            'url' => $this->invites->buildLink($recipient, $raw),
             'expires_at' => $recipient->token_expires_at?->toIso8601String(),
-            'minted'     => ! $hadToken,
+            'minted' => ! $hadToken,
         ]]);
     }
 
@@ -1657,8 +1677,8 @@ class AdminController extends Controller
             ->where('review_status', PhotoSubmission::REVIEW_APPROVED)
             ->update([
                 'review_status' => PhotoSubmission::REVIEW_PENDING,
-                'reviewed_by'   => $userId,
-                'reviewed_at'   => Carbon::now(),
+                'reviewed_by' => $userId,
+                'reviewed_at' => Carbon::now(),
             ]);
     }
 
@@ -1691,7 +1711,7 @@ class AdminController extends Controller
             // Same rules as the awardee's own upload. mimetypes: is checked
             // against the DECODED type, so a renamed .exe cannot walk through.
             'file' => 'required|file|mimetypes:image/jpeg,image/png,image/webp,image/heic,image/heif|max:'
-                . (int) config('natcon.photo.max_upload_kb', 15360),
+                .(int) config('natcon.photo.max_upload_kb', 15360),
             'replace_submission_id' => 'nullable|integer',
         ]);
 
@@ -1718,8 +1738,8 @@ class AdminController extends Controller
         // 3 photos") and names an action the admin does not have to take.
         if (! $replacing && $recipient->activePhotos()->count() >= $max) {
             return response()->json([
-                'message' => "This awardee already has {$max} photo" . ($max === 1 ? '' : 's')
-                    . '. Replace one of them, or remove one first.',
+                'message' => "This awardee already has {$max} photo".($max === 1 ? '' : 's')
+                    .'. Replace one of them, or remove one first.',
             ], 422);
         }
 
@@ -1754,7 +1774,7 @@ class AdminController extends Controller
         }
 
         return response()->json([
-            'data'    => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
+            'data' => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
             'message' => $replacing ? 'Photo replaced.' : 'Photo added.',
         ]);
     }
@@ -1783,7 +1803,7 @@ class AdminController extends Controller
         }
 
         return response()->json([
-            'data'    => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
+            'data' => RecipientResource::detailed($recipient->fresh(['event', 'formSubmission'])),
             'message' => 'Photo removed.',
         ]);
     }
@@ -2304,5 +2324,21 @@ class AdminController extends Controller
         }
 
         return $query;
+    }
+
+    /**
+     * Keep a stream that has just ended (or been replaced) as a replay on /natcon/live. One row per
+     * link per convention: ending and restarting the same link only refreshes its end time.
+     */
+    private function recordLiveReplay(NatconEvent $event, string $url, ?CarbonInterface $startedAt): void
+    {
+        $url = trim($url);
+        if ($url === '' || ! LiveStreamEmbed::isSupported($url)) {
+            return;
+        }
+        DB::table('natcon_live_replays')->updateOrInsert(
+            ['natcon_event_id' => $event->id, 'url_hash' => hash('sha256', $url)],
+            ['url' => $url, 'started_at' => $startedAt, 'ended_at' => now(), 'updated_at' => now(), 'created_at' => now()],
+        );
     }
 }

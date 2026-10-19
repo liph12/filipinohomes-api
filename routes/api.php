@@ -78,6 +78,9 @@ use App\Natcon\Http\Controllers\AnnouncementReactionController as NatconReaction
 use App\Natcon\Http\Controllers\FormFieldController as NatconFormFieldController;
 use App\Natcon\Http\Controllers\GalleryController as NatconGalleryController;
 use App\Natcon\Http\Controllers\LandingController as NatconLandingController;
+use App\Natcon\Http\Controllers\LiveChatController as NatconLiveChatController;
+use App\Natcon\Http\Controllers\LiveEntryController as NatconLiveEntryController;
+use App\Natcon\Http\Controllers\LiveReplayController as NatconLiveReplayController;
 use App\Natcon\Http\Controllers\OrganizerController as NatconOrganizerController;
 use App\Natcon\Http\Controllers\PhotographerGalleryController as NatconPhotographerController;
 use App\Natcon\Http\Controllers\PublicAwardeeController as NatconPublicAwardeeController;
@@ -86,8 +89,6 @@ use App\Natcon\Http\Controllers\RaffleController as NatconRaffleController;
 use App\Natcon\Http\Controllers\ServiceController as NatconServiceController;
 use App\Natcon\Http\Controllers\SponsorCaptionController as NatconSponsorCaptionController;
 use App\Natcon\Http\Controllers\VvipController;
-use App\Natcon\Http\Controllers\LiveChatController as NatconLiveChatController;
-use App\Natcon\Http\Controllers\LiveEntryController as NatconLiveEntryController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('strip.tags')->group(function () {
@@ -737,6 +738,10 @@ Route::middleware('strip.tags')->group(function () {
                     Route::get('/admin/natcon/live/commenters/{channelId}/comments', [NatconLiveChatController::class, 'comments']);
                     Route::delete('/admin/natcon/live/commenters', [NatconLiveChatController::class, 'clear']);
                     Route::post('/admin/natcon/live/commenters/collect', [NatconLiveChatController::class, 'collectNow']);
+                    // The live page's replays (earlier streams) — recorded by the event save; named or dropped here.
+                    Route::get('/admin/natcon/live/replays', [NatconLiveReplayController::class, 'index']);
+                    Route::patch('/admin/natcon/live/replays/{replay}', [NatconLiveReplayController::class, 'update']);
+                    Route::delete('/admin/natcon/live/replays/{replay}', [NatconLiveReplayController::class, 'destroy']);
                     // Raffle entries from the live page's form — see LiveEntryController.
                     Route::get('/admin/natcon/live/entries', [NatconLiveEntryController::class, 'index']);
                     Route::get('/admin/natcon/live/entries/export', [NatconLiveEntryController::class, 'export']);

@@ -124,6 +124,8 @@ class PublicController extends Controller
         return response()->json(['data' => $live + [
             'year' => $event?->year,
             'short_name' => $event?->displayShortName(),
+            // Earlier streams of this convention, shown under the player (and on the off-air page).
+            'replays' => $event?->liveReplays() ?? [],
         ]])->header('Cache-Control', 'public, max-age=30');
     }
 
