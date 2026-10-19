@@ -740,6 +740,7 @@ Route::middleware('strip.tags')->group(function () {
                     Route::post('/admin/natcon/live/commenters/collect', [NatconLiveChatController::class, 'collectNow']);
                     // The live page's replays (earlier streams) — recorded by the event save; named or dropped here.
                     Route::get('/admin/natcon/live/replays', [NatconLiveReplayController::class, 'index']);
+                    Route::post('/admin/natcon/live/replays', [NatconLiveReplayController::class, 'store']);
                     Route::patch('/admin/natcon/live/replays/{replay}', [NatconLiveReplayController::class, 'update']);
                     Route::delete('/admin/natcon/live/replays/{replay}', [NatconLiveReplayController::class, 'destroy']);
                     // Raffle entries from the live page's form — see LiveEntryController.

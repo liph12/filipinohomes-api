@@ -76,7 +76,7 @@ class NatconEvent extends Model implements Auditable
      * admin's save (AdminController::recordLiveReplay). The one that is live RIGHT NOW is left out
      * unless `includeCurrent` (the admin's list), so the page never shows the same stream twice.
      *
-     * @return list<array{id:int,url:string,provider:?string,embed_url:?string,video_id:?string,title:?string,started_at:?string,ended_at:string,current:bool}>
+     * @return list<array{id:int,url:string,provider:?string,embed_url:?string,video_id:?string,thumbnail_url:?string,title:?string,started_at:?string,ended_at:string,happened_local:?string,current:bool}>
      */
     public function liveReplays(bool $includeCurrent = false): array
     {
@@ -100,9 +100,13 @@ class NatconEvent extends Model implements Auditable
                 'provider' => $embed['provider'] ?? null,
                 'embed_url' => $embedUrl ? rtrim($embedUrl, '?&') : null,
                 'video_id' => $embed['video_id'] ?? null,
+                // YouTube's own poster frame; Facebook publishes none without a token.
+                'thumbnail_url' => ! empty($embed['video_id']) ? 'https://i.ytimg.com/vi/'.$embed['video_id'].'/hqdefault.jpg' : null,
                 'title' => $r->title,
                 'started_at' => $r->started_at,
                 'ended_at' => $r->ended_at,
+                // For the admin's date field: a wall clock in the event's timezone (Y-m-d\TH:i).
+                'happened_local' => $r->started_at ? \Carbon\Carbon::parse($r->started_at)->setTimezone($this->timezone ?: 'Asia/Manila')->format('Y-m-d\TH:i') : null,
                 'current' => $current,
             ];
         }
