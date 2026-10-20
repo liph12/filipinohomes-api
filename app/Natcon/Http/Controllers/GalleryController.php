@@ -1182,9 +1182,12 @@ class GalleryController extends Controller
 
         // Friendly 422 instead of the unique index's 500 — the index stays as
         // the backstop against a concurrent double-submit. For public albums
-        // (NULL event) the index does not fire, so this IS the guard.
-        if (GalleryAlbum::forEvent($event)->where('name', $name)->exists()) {
-            return response()->json(['message' => "An album called \"{$name}\" already exists".($event ? ' for this convention.' : '.')], 422);
+        // (NULL event) and top-level ones (NULL parent) the index does not
+        // fire, so this IS the guard. Siblings only, matching the index:
+        // "2026" inside Vietnam and "2026" inside Thailand › Staff are
+        // different albums.
+        if ($this->siblingNameTaken($event, $parent?->id, $name)) {
+            return response()->json(['message' => $this->siblingNameMessage($name, $parent)], 422);
         }
 
         $album = new GalleryAlbum([
@@ -1219,12 +1222,8 @@ class GalleryController extends Controller
 
         if (isset($data['name'])) {
             $data['name'] = trim($data['name']);
-            $duplicate = GalleryAlbum::forEvent($album->event)
-                ->where('name', $data['name'])
-                ->where('id', '!=', $album->id)
-                ->exists();
-            if ($duplicate) {
-                return response()->json(['message' => "An album called \"{$data['name']}\" already exists".($album->event ? ' for this convention.' : '.')], 422);
+            if ($this->siblingNameTaken($album->event, $album->parent_id, $data['name'], $album->id)) {
+                return response()->json(['message' => $this->siblingNameMessage($data['name'], $album->parent)], 422);
             }
         }
 
@@ -2669,6 +2668,29 @@ class GalleryController extends Controller
      * scope or the request is a 404 — an album id from another year, or from
      * the public gallery, must never attach.
      */
+    /**
+     * Is $name already used by a SIBLING — an album with the same parent in
+     * the same scope? Mirrors the (event, parent_id, name) unique index and
+     * PhotographerGalleryController::availableName(). A null parent is a real
+     * value, not "any parent": top-level albums are siblings of each other.
+     */
+    private function siblingNameTaken(?NatconEvent $event, ?int $parentId, string $name, ?int $ignoreId = null): bool
+    {
+        return GalleryAlbum::forEvent($event)
+            ->where('parent_id', $parentId)
+            ->where('name', $name)
+            ->when($ignoreId, fn ($q) => $q->where('id', '!=', $ignoreId))
+            ->exists();
+    }
+
+    /** Names the folder the clash is in, so the admin knows where to look. */
+    private function siblingNameMessage(string $name, ?GalleryAlbum $parent): string
+    {
+        return $parent
+            ? "\"{$parent->name}\" already has an album called \"{$name}\"."
+            : "There is already a top-level album called \"{$name}\".";
+    }
+
     private function resolveAlbum(?NatconEvent $event, mixed $albumId): ?GalleryAlbum
     {
         if ($albumId === null || $albumId === '') {
