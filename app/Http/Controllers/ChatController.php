@@ -275,9 +275,9 @@ class ChatController extends Controller
             }
 
             $result = [
-                'total'          => 0,
-                'inquiries'      => 0,
-                'messages'       => 0,
+                'total' => 0,
+                'inquiries' => 0,
+                'messages' => 0,
                 'inquiries_mine' => 0,
                 'inquiries_team' => 0,
             ];
@@ -547,6 +547,10 @@ class ChatController extends Controller
                         );
                     }
                 } elseif ($validated['type'] === 'agent') {
+                    // An older chat re-used from a known page: record where it came from if it never was.
+                    if ($existing->source === null && ! empty($validated['source'])) {
+                        $existing->forceFill(['source' => $validated['source']])->save();
+                    }
                     $this->dispatchAgentProfileEmail(
                         chatId: $existing->id,
                         agentUserId: (int) $validated['target_user_id'],
@@ -633,6 +637,8 @@ class ChatController extends Controller
                 'type' => $validated['type'],
                 'type_id' => $validated['type_id'],
                 'user_id' => $user->id,
+                // agent_profile / agent_page — stored so Agent Insights can split them.
+                'source' => $validated['type'] === 'agent' ? ($validated['source'] ?? null) : null,
                 ...$originGeo,
             ]);
 

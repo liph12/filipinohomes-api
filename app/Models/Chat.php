@@ -11,7 +11,7 @@ class Chat extends Model
 
     // origin_* = the inquirer's geo frozen at send time (browser ipinfo, with a
     // user_info fallback) — read by the Inquiry Analytics origin views.
-    protected $fillable = ['type', 'user_id', 'type_id', 'origin_country', 'origin_region', 'origin_city'];
+    protected $fillable = ['type', 'user_id', 'type_id', 'source', 'origin_country', 'origin_region', 'origin_city'];
 
     public function user()
     {

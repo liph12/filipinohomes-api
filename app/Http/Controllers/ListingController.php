@@ -18,6 +18,7 @@ use App\Models\User;
 use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\ExpoPushService;
+use App\Services\Listing\AgentInsightsService;
 use App\Services\Listing\HeatmapBoundaryService;
 use App\Services\Listing\ListingByCityService;
 use App\Services\Listing\ListingByProvinceService;
@@ -2735,6 +2736,36 @@ class ListingController extends Controller
             'limit' => $request->query('limit'),
             'with_unplaced' => $request->boolean('with_unplaced'),
         ], $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** Agent Insights: every agent with listings created, live, closed and last activity. */
+    public function insightsAgents(Request $request, AgentInsightsService $insights): JsonResponse
+    {
+        return response()->json($insights->agents($this->insightsAgentParams($request) + [
+            'status' => $request->query('status'),
+        ], $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** The Agent Insights page's bento tiles. */
+    public function insightsAgentsSummary(Request $request, AgentInsightsService $insights): JsonResponse
+    {
+        return response()->json($insights->summary($this->insightsAgentParams($request), $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** Agent Insights: distinct active agents per week or month. */
+    public function insightsAgentsActivity(Request $request, AgentInsightsService $insights): JsonResponse
+    {
+        return response()->json($insights->activityTrend([
+            'granularity' => $request->query('granularity') === 'month' ? 'month' : 'week',
+        ], $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** @return array{date_start: ?string, date_end: ?string} */
+    private function insightsAgentParams(Request $request): array
+    {
+        $date = fn (string $k) => is_string($request->query($k)) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $request->query($k)) ? $request->query($k) : null;
+
+        return ['date_start' => $date('date_start'), 'date_end' => $date('date_end')];
     }
 
     /** Price Insights drill-down: the priced listings behind one place row. */
