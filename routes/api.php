@@ -561,6 +561,7 @@ Route::middleware('strip.tags')->group(function () {
             // Price Insights: asking prices and ₱/sqm by place — see ListingPriceInsightsService.
             Route::get('/listings/insights/prices', [ListingController::class, 'insightsPrices']);
             Route::get('/listings/insights/prices/summary', [ListingController::class, 'insightsPricesSummary']);
+            Route::get('/listings/insights/prices/listings', [ListingController::class, 'insightsPricesListings']);
             Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
             Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);

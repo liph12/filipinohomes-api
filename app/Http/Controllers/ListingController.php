@@ -2733,6 +2733,23 @@ class ListingController extends Controller
             'type' => $request->query('type'),
             'sort_by' => $request->query('sort_by'),
             'limit' => $request->query('limit'),
+            'with_unplaced' => $request->boolean('with_unplaced'),
+        ], $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** Price Insights drill-down: the priced listings behind one place row. */
+    public function insightsPricesListings(Request $request, ListingPriceInsightsService $insights): JsonResponse
+    {
+        $params = $this->insightsPriceParams($request);
+        // barangay_id=0 is the "No barangay set" bucket; insightsScopeParams would drop a 0.
+        if ($request->query('barangay_id') === '0') {
+            $params['barangay_id'] = 0;
+        }
+
+        return response()->json($insights->listings($params + [
+            'category' => $request->query('category'),
+            'type' => $request->query('type'),
+            'limit' => $request->query('limit'),
         ], $this->resolveInsightsAgentScope($request)));
     }
 

@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\DB;
  * many listings, the average and the median price, and the average and median price per square metre.
  *
  * Same hygiene as the public price guide (PriceGuideService): public, unflagged listings with a real
- * price (For Sale ≥ ₱100k, For Rent ≥ ₱1k, so placeholder prices stay out), and ₱/sqm only where the
+ * price (For Sale and Foreclosure ≥ ₱100k, For Rent ≥ ₱1k, so placeholder prices stay out; "All" is the
+ * three together, each against its own floor), and ₱/sqm only where the
  * area is at least 10 sqm — floor area for buildings, lot area for land. Medians are reported beside
  * averages because a few ₱200M mansions move an average a long way and a median not at all.
  *
@@ -20,7 +21,8 @@ class ListingPriceInsightsService extends ListingInsightsService
 {
     public const LEVELS = ['province', 'city', 'barangay'];
 
-    public const CATEGORIES = ['For Sale', 'For Rent'];
+    /** Selectable categories; anything else (incl. none / "All") means all three together. */
+    public const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
 
     private const SALE_PRICE_FLOOR = 100_000;
 
@@ -33,7 +35,7 @@ class ListingPriceInsightsService extends ListingInsightsService
     {
         $this->bindScope($params, $agentIds);
         $level = in_array($params['level'] ?? null, self::LEVELS, true) ? $params['level'] : 'city';
-        $category = in_array($params['category'] ?? null, self::CATEGORIES, true) ? $params['category'] : 'For Sale';
+        $category = in_array($params['category'] ?? null, self::CATEGORIES, true) ? $params['category'] : '';
         $type = trim((string) ($params['type'] ?? ''));
 
         [$idExpr, $nameExpr] = match ($level) {
@@ -52,18 +54,22 @@ class ListingPriceInsightsService extends ListingInsightsService
                 'property_attributes.floor_area',
                 'property_attributes.lot_area',
             )
-            ->whereNotNull(DB::raw($idExpr))
+            // with_unplaced (barangay level, used by the drill-down under a city): listings with no
+            // barangay set land in a "No barangay set" bucket (place_id 0), so a city's barangay rows
+            // add up to the city's count instead of silently dropping project-only listings.
+            ->when(! ($level === 'barangay' && ! empty($params['with_unplaced'])), fn ($q) => $q->whereNotNull(DB::raw($idExpr)))
             ->get();
 
         $places = [];
         foreach ($rows as $r) {
             $key = (int) $r->place_id;
-            $places[$key] ??= ['place_id' => $key, 'place_name' => (string) $r->place_name, 'parent_name' => $r->parent_name !== null ? (string) $r->parent_name : null, 'prices' => [], 'ppsqm' => []];
+            $places[$key] ??= ['place_id' => $key, 'place_name' => $r->place_id === null ? 'No barangay set' : (string) $r->place_name, 'parent_name' => $r->parent_name !== null ? (string) $r->parent_name : null, 'prices' => [], 'ppsqm' => [], 'areas' => []];
             $price = (float) $r->price;
             $places[$key]['prices'][] = $price;
             $ppsqm = self::perSqm($price, (string) $r->type, $r->floor_area, $r->lot_area);
             if ($ppsqm !== null) {
                 $places[$key]['ppsqm'][] = $ppsqm;
+                $places[$key]['areas'][] = self::area((string) $r->type, $r->floor_area, $r->lot_area);
             }
         }
 
@@ -74,7 +80,7 @@ class ListingPriceInsightsService extends ListingInsightsService
                 'place_name' => $p['place_name'],
                 'parent_name' => $p['parent_name'],
                 'listings' => count($p['prices']),
-            ] + self::stats($p['prices'], $p['ppsqm']);
+            ] + self::stats($p['prices'], $p['ppsqm'], $p['areas']);
         }
 
         $sort = (string) ($params['sort_by'] ?? 'listings');
@@ -93,13 +99,62 @@ class ListingPriceInsightsService extends ListingInsightsService
             'data' => $data,
             'meta' => [
                 'level' => $level,
-                'category' => $category,
+                'category' => $category !== '' ? $category : null,
                 'type' => $type !== '' ? $type : null,
                 'places' => count($places),
                 'listings' => $rows->count(),
                 'ppsqm_listings' => array_sum(array_map(fn (array $p) => count($p['ppsqm']), $places)),
-                'overall' => self::stats(array_map(fn ($r) => (float) $r->price, $rows->all()), array_values(array_filter(array_map(fn ($r) => self::perSqm((float) $r->price, (string) $r->type, $r->floor_area, $r->lot_area), $rows->all()), fn ($v) => $v !== null))),
+                'overall' => self::stats(
+                    array_map(fn ($r) => (float) $r->price, $rows->all()),
+                    array_merge(...array_column($places, 'ppsqm')),
+                    array_merge(...array_column($places, 'areas')),
+                ),
             ],
+        ];
+    }
+
+    /**
+     * The listings behind one place row (the drill-down's last level): priced listings in the scope,
+     * dearest first, with their own ₱/sqm. barangay_id 0 means "no barangay set" inside the city_id.
+     *
+     * @return array{data: list<array<string, mixed>>, meta: array{total: int, limit: int}}
+     */
+    public function listings(array $params, ?array $agentIds = null): array
+    {
+        $unplaced = isset($params['barangay_id']) && (int) $params['barangay_id'] === 0;
+        if ($unplaced) {
+            $params['barangay_id'] = null;
+        }
+        $this->bindScope($params, $agentIds);
+        $category = in_array($params['category'] ?? null, self::CATEGORIES, true) ? $params['category'] : '';
+        $type = trim((string) ($params['type'] ?? ''));
+        $limit = max(1, min(500, (int) ($params['limit'] ?? 200)));
+
+        $query = $this->pricedQuery($category, $type)->when($unplaced, fn ($q) => $q->whereNull('barangays.id'));
+        $total = (clone $query)->count();
+        $rows = $query
+            ->select(
+                'listings.id', 'listings.code', 'listings.name', 'listings.slug', 'listings.price',
+                'property_types.name as type', 'property_attributes.floor_area', 'property_attributes.lot_area',
+                DB::raw('barangays.name as barangay_name'),
+            )
+            ->orderByDesc('listings.price')
+            ->limit($limit)
+            ->get();
+
+        return [
+            'data' => $rows->map(fn ($r) => [
+                'id' => (int) $r->id,
+                'code' => $r->code,
+                'name' => $r->name,
+                'slug' => $r->slug,
+                'type' => $r->type,
+                'barangay_name' => $r->barangay_name,
+                'price' => (float) $r->price,
+                'area' => ($a = self::area((string) $r->type, $r->floor_area, $r->lot_area)) > 0 ? $a : null,
+                'ppsqm' => ($v = self::perSqm((float) $r->price, (string) $r->type, $r->floor_area, $r->lot_area)) !== null ? round($v) : null,
+            ])->all(),
+            'meta' => ['total' => $total, 'limit' => $limit],
         ];
     }
 
@@ -108,7 +163,7 @@ class ListingPriceInsightsService extends ListingInsightsService
     {
         $this->bindScope($params, $agentIds);
         $out = [];
-        foreach (self::CATEGORIES as $category) {
+        foreach (['For Sale', 'For Rent'] as $category) {
             $rows = $this->pricedQuery($category, '')
                 ->select('listings.price', 'property_types.name as type', 'property_attributes.floor_area', 'property_attributes.lot_area')
                 ->get();
@@ -133,7 +188,7 @@ class ListingPriceInsightsService extends ListingInsightsService
         $this->resolveScopeProvinceIds();
     }
 
-    /** Public, unflagged, really-priced listings of one category, with their property type and areas. */
+    /** Public, unflagged, really-priced listings of one category ('' = all), with their property type and areas. */
     private function pricedQuery(string $category, string $type)
     {
         return $this->baseListingQuery()
@@ -142,25 +197,35 @@ class ListingPriceInsightsService extends ListingInsightsService
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
             ->where('listings.visibility', 'public')
             ->where(fn ($q) => $q->whereNull('listings.verification_status')->orWhere('listings.verification_status', '!=', 'flagged'))
-            ->where('categories.name', $category)
+            ->when($category !== '', fn ($q) => $q->where('categories.name', $category))
             ->whereNotNull('listings.price')
-            ->where('listings.price', '>=', $category === 'For Rent' ? self::RENT_PRICE_FLOOR : self::SALE_PRICE_FLOOR)
+            // Each listing against its own category's floor: rent ≥ ₱1k, sale and foreclosure ≥ ₱100k.
+            ->where(fn ($q) => $q
+                ->where(fn ($r) => $r->where('categories.name', 'For Rent')->where('listings.price', '>=', self::RENT_PRICE_FLOOR))
+                ->orWhere(fn ($r) => $r->where('categories.name', '!=', 'For Rent')->where('listings.price', '>=', self::SALE_PRICE_FLOOR)))
             ->when($type !== '', fn ($q) => $q->where('property_types.name', $type));
     }
 
-    /** ₱ per sqm: lot area for land, floor area for everything else; null below 10 sqm or when unknown. */
+    /** The area a listing is priced on: lot area for land, floor area for everything else (0 when unknown). */
+    private static function area(string $type, mixed $floorArea, mixed $lotArea): float
+    {
+        return strcasecmp(trim($type), 'Land') === 0 ? (float) ($lotArea ?? 0) : (float) ($floorArea ?? 0);
+    }
+
+    /** ₱ per sqm on that area; null below 10 sqm or when unknown. */
     private static function perSqm(float $price, string $type, mixed $floorArea, mixed $lotArea): ?float
     {
-        $area = strcasecmp(trim($type), 'Land') === 0 ? (float) ($lotArea ?? 0) : (float) ($floorArea ?? 0);
+        $area = self::area($type, $floorArea, $lotArea);
 
         return $area >= self::MIN_AREA_SQM ? $price / $area : null;
     }
 
-    /** @return array{avg_price: ?float, median_price: ?float, min_price: ?float, max_price: ?float, avg_ppsqm: ?float, median_ppsqm: ?float, ppsqm_listings: int} */
-    private static function stats(array $prices, array $ppsqm): array
+    /** @return array{avg_price: ?float, median_price: ?float, min_price: ?float, max_price: ?float, avg_ppsqm: ?float, median_ppsqm: ?float, ppsqm_listings: int, min_area: ?float, max_area: ?float} */
+    private static function stats(array $prices, array $ppsqm, array $areas = []): array
     {
         sort($prices);
         sort($ppsqm);
+        sort($areas);
 
         return [
             'avg_price' => $prices ? round(array_sum($prices) / count($prices)) : null,
@@ -170,6 +235,9 @@ class ListingPriceInsightsService extends ListingInsightsService
             'avg_ppsqm' => $ppsqm ? round(array_sum($ppsqm) / count($ppsqm)) : null,
             'median_ppsqm' => $ppsqm ? round(self::median($ppsqm)) : null,
             'ppsqm_listings' => count($ppsqm),
+            // Size range over the same listings the ₱/sqm uses (usable area ≥ 10 sqm).
+            'min_area' => $areas ? $areas[0] : null,
+            'max_area' => $areas ? $areas[count($areas) - 1] : null,
         ];
     }
 
