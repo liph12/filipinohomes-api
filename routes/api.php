@@ -562,6 +562,7 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/listings/insights/prices', [ListingController::class, 'insightsPrices']);
             Route::get('/listings/insights/prices/summary', [ListingController::class, 'insightsPricesSummary']);
             Route::get('/listings/insights/prices/listings', [ListingController::class, 'insightsPricesListings']);
+            Route::get('/listings/insights/prices/by-type', [ListingController::class, 'insightsPricesByType']);
             Route::get('/listings/insights/agents', [ListingController::class, 'insightsAgents']);
             Route::get('/listings/insights/agents/summary', [ListingController::class, 'insightsAgentsSummary']);
             Route::get('/listings/insights/agents/activity', [ListingController::class, 'insightsAgentsActivity']);
@@ -1030,6 +1031,7 @@ Route::middleware('strip.tags')->group(function () {
 
                 // ── Website Analytics (GA4) dashboard ───────────────────
                 // Server-cached GA Data API reports (10 min; realtime 45 s).
+                Route::get('/admin/dashboard/pulse', \App\Http\Controllers\Admin\DashboardPulseController::class);
                 Route::get('/admin/analytics/status', [AnalyticsController::class, 'status']);
                 Route::get('/admin/analytics/website', [AnalyticsController::class, 'website']);
                 Route::get('/admin/analytics/website/realtime', [AnalyticsController::class, 'realtime']);

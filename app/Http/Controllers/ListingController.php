@@ -306,6 +306,11 @@ class ListingController extends Controller
                     $found->increment('clicks');
                     $found->timestamps = true;
                     Cache::put($cacheKey, true, now()->addDay());
+                    // The same view, by Philippine day — the dashboard's "listing views" trend.
+                    DB::statement(
+                        'INSERT INTO listing_view_days (date, listing_id, views) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE views = views + 1',
+                        [now('Asia/Manila')->toDateString(), $found->id],
+                    );
                 }
 
                 // Only public listings whose owning agent is still active are
@@ -2766,6 +2771,12 @@ class ListingController extends Controller
         $date = fn (string $k) => is_string($request->query($k)) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $request->query($k)) ? $request->query($k) : null;
 
         return ['date_start' => $date('date_start'), 'date_end' => $date('date_end')];
+    }
+
+    /** Prices by Type (admin main dashboard): average price per type, subtype and furnishing. */
+    public function insightsPricesByType(Request $request, ListingPriceInsightsService $insights): JsonResponse
+    {
+        return response()->json($insights->byType(['category' => $request->query('category')], $this->resolveInsightsAgentScope($request)));
     }
 
     /** Price Insights drill-down: the priced listings behind one place row. */
