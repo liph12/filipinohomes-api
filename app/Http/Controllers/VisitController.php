@@ -76,12 +76,13 @@ class VisitController extends Controller
     private function resolveChannel(?string $utmSource, ?string $clickId, ?string $referrer): string
     {
         // 1. Explicit utm_source wins. AI assistants are checked first so
-        //    utm_source=chatgpt.com reads as "ai", not "referral".
+        //    utm_source=chatgpt.com reads as its own lowercase channel
+        //    ("chatgpt"), not "referral".
         $ai = app(AiVisibilityService::class);
         $src = strtolower(trim((string) $utmSource));
         if ($src !== '') {
-            if ($ai->classifyClick($src, null)) {
-                return 'ai';
+            if ($assistant = $ai->classifyClick($src, null)) {
+                return $assistant;
             }
 
             return $this->matchChannel($src) ?? 'referral';
@@ -103,14 +104,15 @@ class VisitController extends Controller
             return $clickChannel;
         }
 
-        // 3. Referrer host. AI first: gemini.google.com would otherwise
-        //    match "google" and be counted as Google search.
+        // 3. Referrer host. AI first, one channel per assistant:
+        //    gemini.google.com would otherwise match "google" and be
+        //    counted as Google search.
         $host = strtolower((string) parse_url((string) $referrer, PHP_URL_HOST));
         if ($host === '') {
             return 'direct';
         }
-        if ($ai->classifyClick(null, $referrer)) {
-            return 'ai';
+        if ($assistant = $ai->classifyClick(null, $referrer)) {
+            return $assistant;
         }
 
         return $this->matchChannel($host) ?? 'referral';

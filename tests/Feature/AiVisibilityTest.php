@@ -39,6 +39,8 @@ class AiVisibilityTest extends TestCase
             $table->id();
             $table->string('name');
             $table->string('slug');
+            $table->json('featured_photo')->nullable();
+            $table->timestamp('photos_variants_generated_at')->nullable();
             $table->softDeletes();
         });
     }
@@ -133,7 +135,11 @@ class AiVisibilityTest extends TestCase
     public function test_report_totals_sources_and_names_listing_pages(): void
     {
         $this->actingAsAdmin();
-        DB::table('listings')->insert(['name' => 'Cafe ice top shop for sale', 'slug' => 'cafe-for-sale']);
+        DB::table('listings')->insert([
+            'name' => 'Cafe ice top shop for sale',
+            'slug' => 'cafe-for-sale',
+            'featured_photo' => json_encode(['https://example.com/cafe.webp']),
+        ]);
 
         $ai = app(AiVisibilityService::class);
         $ai->record('view', 'chatgpt', '/cafe-for-sale', 'ChatGPT-User');
@@ -146,9 +152,58 @@ class AiVisibilityTest extends TestCase
         $res->assertJsonPath('totals', ['view' => 2, 'crawl' => 1, 'click' => 1]);
         $res->assertJsonPath('top_pages.0.path', '/cafe-for-sale');
         $res->assertJsonPath('top_pages.0.title', 'Cafe ice top shop for sale');
+        $res->assertJsonPath('top_pages.0.photo', 'https://example.com/cafe.webp');
         $res->assertJsonPath('top_pages.0.views', 2);
         $res->assertJsonPath('top_pages.0.clicks', 1);
         $res->assertJsonPath('top_pages.1.title', null);
         $this->assertSame(['chatgpt', 'perplexity'], array_column($res->json('sources'), 'source'));
+        $res->assertJsonPath('top_pages_meta', ['page' => 1, 'per_page' => 50, 'total' => 2, 'last_page' => 1, 'sort' => 'views']);
+    }
+
+    public function test_top_pages_paginate_and_sort(): void
+    {
+        $this->actingAsAdmin();
+        $ai = app(AiVisibilityService::class);
+        foreach (range(1, 12) as $i) {
+            $ai->record('view', 'chatgpt', "/page-{$i}", 'ChatGPT-User');
+        }
+        $ai->record('click', 'gemini', '/page-7');
+        $ai->record('view', 'chatgpt', '/Page-3', 'ChatGPT-User'); // same page, other case
+
+        $first = $this->getJson('/api/admin/ai-visibility?per_page=10')->assertOk();
+        $first->assertJsonPath('top_pages_meta.total', 12);
+        $first->assertJsonPath('top_pages_meta.last_page', 2);
+        $first->assertJsonPath('top_pages.0.path', '/page-3');
+        $this->assertCount(10, $first->json('top_pages'));
+
+        $this->getJson('/api/admin/ai-visibility?per_page=10&page=2')->assertOk()
+            ->assertJsonCount(2, 'top_pages');
+
+        $this->getJson('/api/admin/ai-visibility?per_page=10&sort=clicks')->assertOk()
+            ->assertJsonPath('top_pages.0.path', '/page-7');
+    }
+
+    public function test_visit_channel_is_the_assistant_itself(): void
+    {
+        Schema::create('visits', function (Blueprint $table) {
+            $table->id();
+            $table->string('visitor_id', 64)->nullable();
+            $table->string('channel', 32)->default('direct');
+            $table->string('utm_source', 128)->nullable();
+            $table->string('utm_medium', 128)->nullable();
+            $table->string('utm_campaign', 191)->nullable();
+            $table->string('referrer', 512)->nullable();
+            $table->string('landing_path', 512)->nullable();
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->string('ip', 45)->nullable();
+            $table->string('country', 64)->nullable();
+            $table->string('region', 96)->nullable();
+            $table->string('city', 96)->nullable();
+            $table->timestamp('created_at')->nullable();
+        });
+
+        $this->postJson('/api/track/visit', ['utm_source' => 'chatgpt.com'])->assertJson(['channel' => 'chatgpt']);
+        $this->postJson('/api/track/visit', ['referrer' => 'https://gemini.google.com/app'])->assertJson(['channel' => 'gemini']);
+        $this->postJson('/api/track/visit', ['referrer' => 'https://www.google.com/'])->assertJson(['channel' => 'google']);
     }
 }

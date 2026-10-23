@@ -3,6 +3,7 @@
 namespace App\Services\Audience;
 
 use App\Models\AiEvent;
+use App\Support\VariantUrl;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -36,6 +37,8 @@ class AiVisibilityService
      * outbound link with utm_source=chatgpt.com; the rest are referrers.
      * Order matters only for overlaps — `gemini.google` must be matched
      * here, before anything generic would read it as Google search.
+     * The keys double as visits.channel values (lowercase, one per
+     * assistant) — the web's CHANNEL_META labels them.
      */
     private const CLICK_NEEDLES = [
         'chatgpt' => ['chatgpt', 'openai'],
@@ -43,7 +46,7 @@ class AiVisibilityService
         'gemini' => ['gemini.google', 'bard.google', 'gemini'],
         'copilot' => ['copilot'],
         'claude' => ['claude.ai', 'claude'],
-        'meta' => ['meta.ai'],
+        'meta-ai' => ['meta.ai'],
         'deepseek' => ['deepseek'],
         'grok' => ['grok'],
         'mistral' => ['chat.mistral', 'mistral'],
@@ -88,10 +91,13 @@ class AiVisibilityService
         return null;
     }
 
-    /** Path only, no query/fragment, trimmed to the column width. */
+    /**
+     * Path only, lowercased (slugs are lowercase, so /Foo and /foo are one
+     * page), no query/fragment, trimmed to the column width.
+     */
     public function normalizePath(string $path): string
     {
-        $path = (string) parse_url($path, PHP_URL_PATH);
+        $path = strtolower((string) parse_url($path, PHP_URL_PATH));
         $path = '/'.ltrim($path, '/');
         if (strlen($path) > 1) {
             $path = rtrim($path, '/');
@@ -110,13 +116,18 @@ class AiVisibilityService
         ]);
     }
 
+    /** Top-pages sort keys (each an aggregate column of the query). */
+    public const SORTS = ['views', 'clicks', 'crawls'];
+
     /**
      * The admin "AI Visibility" report for [from, to] (inclusive days).
+     * Top pages are paginated ($perPage a page) and sorted by `$sort`.
      *
      * @return array<string, mixed>
      */
-    public function report(Carbon $from, Carbon $to, int $limit = 50): array
+    public function report(Carbon $from, Carbon $to, int $page = 1, int $perPage = 50, string $sort = 'views'): array
     {
+        $sort = in_array($sort, self::SORTS, true) ? $sort : 'views';
         $base = fn () => DB::table('ai_events')->whereBetween('created_at', [$from, $to]);
 
         $countsBy = fn (string $column) => $base()
@@ -146,6 +157,13 @@ class AiVisibilityService
             $trend[$row->d][$row->kind] = (int) $row->c;
         }
 
+        $totalPages = (int) $base()->distinct()->count('path');
+        $lastPage = max(1, (int) ceil($totalPages / $perPage));
+        $page = min(max(1, $page), $lastPage);
+
+        // Ties fall through the other two measures, then path, so a page
+        // boundary never shuffles rows between requests.
+        $tieBreak = array_values(array_diff(self::SORTS, [$sort]));
         $pages = $base()
             ->select(
                 'path',
@@ -154,9 +172,11 @@ class AiVisibilityService
                 DB::raw("SUM(CASE WHEN kind = 'crawl' THEN 1 ELSE 0 END) as crawls"),
             )
             ->groupBy('path')
-            ->orderByRaw('SUM(CASE WHEN kind IN (\'view\', \'click\') THEN 1 ELSE 0 END) DESC')
-            ->orderByDesc(DB::raw('COUNT(*)'))
-            ->limit($limit)
+            ->orderByDesc($sort)
+            ->orderByDesc($tieBreak[0])
+            ->orderByDesc($tieBreak[1])
+            ->orderBy('path')
+            ->forPage($page, $perPage)
             ->get();
 
         // Listing pages live at the site root (/{slug}); name them so the
@@ -167,7 +187,9 @@ class AiVisibilityService
             ->values();
         $listings = $slugs->isEmpty()
             ? collect()
-            : DB::table('listings')->whereIn('slug', $slugs)->whereNull('deleted_at')->get(['id', 'slug', 'name'])->keyBy('slug');
+            : DB::table('listings')->whereIn('slug', $slugs)->whereNull('deleted_at')
+                ->get(['id', 'slug', 'name', 'featured_photo', 'photos_variants_generated_at'])
+                ->keyBy('slug');
 
         $topPages = $pages->map(function ($row) use ($listings) {
             $listing = $listings->get(ltrim($row->path, '/'));
@@ -176,6 +198,7 @@ class AiVisibilityService
                 'path' => $row->path,
                 'title' => $listing->name ?? null,
                 'listing_id' => $listing->id ?? null,
+                'photo' => $listing ? $this->thumbnail($listing) : null,
                 'views' => (int) $row->views,
                 'clicks' => (int) $row->clicks,
                 'crawls' => (int) $row->crawls,
@@ -187,7 +210,28 @@ class AiVisibilityService
             'sources' => $sources,
             'trend' => array_values($trend),
             'top_pages' => $topPages,
+            'top_pages_meta' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalPages,
+                'last_page' => $lastPage,
+                'sort' => $sort,
+            ],
             'meta' => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
         ];
+    }
+
+    /** First listing photo, as the 320px variant when variants exist. */
+    private function thumbnail(object $listing): ?string
+    {
+        $photos = json_decode((string) $listing->featured_photo, true);
+        $url = is_array($photos) ? ($photos[0] ?? null) : null;
+        if (! is_string($url) || $url === '') {
+            return null;
+        }
+
+        return $listing->photos_variants_generated_at
+            ? (VariantUrl::variantUrl($url, 320) ?? $url)
+            : $url;
     }
 }

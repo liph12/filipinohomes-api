@@ -78,13 +78,15 @@ class AiVisibilityController extends Controller
         return response()->json(['ok' => true, 'source' => $source]);
     }
 
-    /** GET /admin/ai-visibility?from=&to= — admin report (route-gated). */
+    /** GET /admin/ai-visibility?from=&to=&page=&per_page=&sort= — admin report (route-gated). */
     public function report(Request $request): JsonResponse
     {
         $data = $request->validate([
             'from' => 'nullable|date',
             'to' => 'nullable|date',
-            'limit' => 'nullable|integer|min:1|max:200',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:10|max:100',
+            'sort' => 'nullable|in:'.implode(',', AiVisibilityService::SORTS),
         ]);
 
         $to = isset($data['to']) ? Carbon::parse($data['to'])->endOfDay() : now()->endOfDay();
@@ -93,6 +95,12 @@ class AiVisibilityController extends Controller
             [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->endOfDay()];
         }
 
-        return response()->json($this->ai->report($from, $to, (int) ($data['limit'] ?? 50)));
+        return response()->json($this->ai->report(
+            $from,
+            $to,
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 50),
+            $data['sort'] ?? 'views',
+        ));
     }
 }
