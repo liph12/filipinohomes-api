@@ -14,6 +14,7 @@ use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AppConfigController;
 use App\Http\Controllers\AppVersionController;
+use App\Http\Controllers\AiVisibilityController;
 use App\Http\Controllers\AudienceInsightsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\BackgroundJobController;
@@ -127,6 +128,10 @@ Route::middleware('strip.tags')->group(function () {
         Route::post('/contact-us', [UserController::class, 'sendContactUs']);
         // Public acquisition ping — visitor source tracking (once per session).
         Route::post('/track/visit', [VisitController::class, 'store']);
+        // AI-assistant visibility: live fetches by ChatGPT-User & co. (server-to-server
+        // from the web's proxy.ts, build-token gated) and clicks from an assistant.
+        Route::post('/track/ai-fetch', [AiVisibilityController::class, 'storeFetch']);
+        Route::post('/track/ai-click', [AiVisibilityController::class, 'storeClick']);
         Route::get('/blogs', [PostController::class, 'index']);
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
         Route::get('/blogs/{slug}', [BlogCategoryController::class, 'show']);
@@ -972,6 +977,8 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/user/audience-insights', [AudienceInsightsController::class, 'show']);
                 // Geography breakdown (own date range so the card filters independently).
                 Route::get('/user/audience-insights/geography', [AudienceInsightsController::class, 'geographyShow']);
+                // AI Visibility — assistant views / clicks / crawls per page (admin-only).
+                Route::get('/admin/ai-visibility', [AiVisibilityController::class, 'report']);
 
                 // App version download links (CRUD for the web downloads page).
                 Route::post('/admin/app-versions', [AppVersionController::class, 'store']);

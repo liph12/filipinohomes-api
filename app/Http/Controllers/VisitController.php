@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Visit;
+use App\Services\Audience\AiVisibilityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -74,9 +75,15 @@ class VisitController extends Controller
      */
     private function resolveChannel(?string $utmSource, ?string $clickId, ?string $referrer): string
     {
-        // 1. Explicit utm_source wins.
+        // 1. Explicit utm_source wins. AI assistants are checked first so
+        //    utm_source=chatgpt.com reads as "ai", not "referral".
+        $ai = app(AiVisibilityService::class);
         $src = strtolower(trim((string) $utmSource));
         if ($src !== '') {
+            if ($ai->classifyClick($src, null)) {
+                return 'ai';
+            }
+
             return $this->matchChannel($src) ?? 'referral';
         }
 
@@ -96,10 +103,14 @@ class VisitController extends Controller
             return $clickChannel;
         }
 
-        // 3. Referrer host.
+        // 3. Referrer host. AI first: gemini.google.com would otherwise
+        //    match "google" and be counted as Google search.
         $host = strtolower((string) parse_url((string) $referrer, PHP_URL_HOST));
         if ($host === '') {
             return 'direct';
+        }
+        if ($ai->classifyClick(null, $referrer)) {
+            return 'ai';
         }
 
         return $this->matchChannel($host) ?? 'referral';
