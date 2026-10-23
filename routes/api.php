@@ -16,6 +16,7 @@ use App\Http\Controllers\AppConfigController;
 use App\Http\Controllers\AppVersionController;
 use App\Http\Controllers\AiVisibilityController;
 use App\Http\Controllers\AudienceInsightsController;
+use App\Http\Controllers\ExternalListingController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\BackgroundJobController;
 use App\Http\Controllers\BlockedUserController;
@@ -111,7 +112,12 @@ Route::middleware('strip.tags')->group(function () {
         // (X-FH-Agent-Token), independent of the site-wide guest token.
         //   POST /api/fh-agent/token            → { token }
         //   GET  /api/fh-agent/{email}          (header: X-FH-Agent-Token)
+        //   GET  /api/fh-agent/listings         every audited (fully verified /
+        //                                       verified) public listing, paginated
         Route::middleware('verify.fh.agent.token')->group(function () {
+            // Registered BEFORE {email}: that route matches any path ('.*'),
+            // so it would otherwise swallow /fh-agent/listings.
+            Route::get('/fh-agent/listings', [ExternalListingController::class, 'index']);
             Route::get('/fh-agent/{email}', [AgentController::class, 'showByEmail'])->where('email', '.*');
         });
 

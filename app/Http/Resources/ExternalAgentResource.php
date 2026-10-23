@@ -65,8 +65,10 @@ class ExternalAgentResource extends JsonResource
     /**
      * Flatten a listing into a clean external shape — only the fields a
      * partner site needs to render a property card, with an absolute URL.
+     * Public + static so ExternalListingResource (GET /fh-agent/listings)
+     * emits the exact same listing shape.
      */
-    protected function mapListing($listing, string $siteUrl): array
+    public static function mapListing($listing, string $siteUrl): array
     {
         $property = $listing->property;
         $attr     = $property?->propertyAttribute;
