@@ -663,6 +663,7 @@ class CommandService extends CacheService
         - Condominium
         - Commercial (unless clearly stated)
         7. Keep values realistic for Philippine real estate.
+        7b. Write places as their full names, never abbreviations or parentheses: "CDO" → "Cagayan de Oro", "BGC" → "Taguig City", "QC" → "Quezon City", "GenSan" → "General Santos City", "MNL" → "Manila".
 
         ADDITIONAL RULES:
         8. Generate a keyword (query_words) based ONLY on the latest user intent. Pick the most relevant word: property type or key feature. DO NOT USE THE LOCATION.
@@ -866,6 +867,8 @@ class CommandService extends CacheService
             3. Only extract relevant real estate information for Filipino Homes agents.
             4. The "property_keyword" field must reflect a real estate type, e.g., "condo", "house", "land", "townhouse", "apartment".
             5. Provide empty strings or 0 if information is missing, but never return null.
+            6. Write places as their full names, never abbreviations or parentheses: "CDO" → "Cagayan de Oro", "BGC" → "Taguig City", "QC" → "Quezon City", "GenSan" → "General Santos City", "MNL" → "Manila".
+            7. A place the user wants the agent to WORK in ("agents in Lahug", "best agent for Davao condos") goes in listing_address; agent_address is only for where the agent is based.
             SYSTEM
         ];
     

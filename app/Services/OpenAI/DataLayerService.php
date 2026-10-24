@@ -21,6 +21,48 @@ class DataLayerService
     {
     }
 
+    /** Everyday abbreviations for places, expanded before matching addresses. Lower-case keys. */
+    private const PLACE_ALIASES = [
+        'cdo' => 'Cagayan de Oro',
+        // Addresses say "Taguig" far more often than they spell out the district.
+        'bgc' => 'Taguig',
+        'qc' => 'Quezon City',
+        'gensan' => 'General Santos',
+        'mnl' => 'Manila',
+        'ncr' => 'Metro Manila',
+        'mm' => 'Metro Manila',
+        'sjdm' => 'San Jose del Monte',
+    ];
+
+    /** Words that match almost every address or none ("de", "city", "(cdo)") and only slow the LIKEs. */
+    private const PLACE_STOPWORDS = ['de', 'del', 'la', 'las', 'los', 'city', 'cty', 'the', 'of', 'in', 'sa', 'ng', 'philippines', 'ph', 'area', 'province', 'metro'];
+
+    /**
+     * The words of a typed place that are worth matching an address on: abbreviations expanded,
+     * punctuation dropped, filler words removed. "Cagayan de Oro (CDO)" → ["cagayan", "oro"].
+     *
+     * @return array<int, string>
+     */
+    public static function placeWords(string $place): array
+    {
+        $text = mb_strtolower(trim($place));
+        $text = preg_replace('/[^\p{L}\p{N}\s-]+/u', ' ', $text) ?? $text;
+        $out = [];
+        foreach (preg_split('/\s+/u', $text) ?: [] as $w) {
+            if ($w === '') {
+                continue;
+            }
+            $expanded = mb_strtolower(self::PLACE_ALIASES[$w] ?? $w);
+            foreach (explode(' ', $expanded) as $part) {
+                if (mb_strlen($part) >= 3 && ! in_array($part, self::PLACE_STOPWORDS, true)) {
+                    $out[] = $part;
+                }
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
     /** Whether a table exists, asked once per request — the production schema can trail local. */
     private static function hasTable(string $table): bool
     {
@@ -285,8 +327,8 @@ class DataLayerService
                 }
             })->having('listings_count', '>=', $args['listings_count']);
         })->whereHas('property', function($q) use($args, $address, $attr, $array_words, $point){    
-            // "Lahug, Cebu City" → lahug / cebu / city: the comma must not ride along into the LIKE.
-            $addr = array_values(array_filter(preg_split('/[\s,]+/', (string) $address)));
+            // "Lahug, Cebu City" → lahug / cebu; "CDO" → cagayan / oro (see placeWords).
+            $addr = self::placeWords((string) $address);
 
             // Measuring from a known point, the pin decides the place — the typed address need not
             // name it (a listing 400 m from IT Park may say "Apas", not "Lahug").
@@ -389,8 +431,9 @@ class DataLayerService
         // where the agent is based (agent_address). Both the match below and extractAgent's
         // `area_listings` use it.
         $area = trim((string) ($args['listing_address'] ?? '')) ?: trim((string) ($args['agent_address'] ?? ''));
-        $this->areaWords = array_values(array_filter(explode(' ', mb_strtolower($area))));
-        $this->areaLabel = $area;
+        $this->areaWords = self::placeWords($area);
+        // The label follows the expansion too: "CDO" is shown as "Cagayan de Oro".
+        $this->areaLabel = self::PLACE_ALIASES[mb_strtolower(trim($area))] ?? $area;
         $propertyType = trim((string) ($args['property_type'] ?? ''));
 
         $agents = Agent::withCount('listings')
@@ -404,8 +447,8 @@ class DataLayerService
         }])
         ->where(function ($q) use ($args, $propertyType) {
             $extName = array_filter(explode(' ', (string) $args['name']));
-            $extAddr = array_filter(explode(' ', (string) $args['agent_address']));
-            $listAddr = array_filter(explode(' ', (string) ($args['listing_address'] ?? '')));
+            $extAddr = self::placeWords((string) $args['agent_address']);
+            $listAddr = self::placeWords((string) ($args['listing_address'] ?? ''));
 
             foreach ($extName as $w) {
                 $q->where(function ($sub) use ($w) {

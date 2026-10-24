@@ -123,6 +123,7 @@ class PriceCommandService extends CacheService
                     Return the city and, when named, the barangay (district) — e.g. "Lahug" is a barangay of "Cebu City";
                     "Mactan" of "Lapu-Lapu City"; "BGC" / "Bonifacio Global City" of "Taguig City"; "IT Park" is in Lahug, Cebu City.
                     If only a barangay is named and you know its city, fill the city too. Do not guess a place that was not implied.
+                    Expand abbreviations to full names: "CDO" → "Cagayan de Oro", "BGC" → barangay "Bonifacio Global City" in "Taguig City", "QC" → "Quezon City", "GenSan" → "General Santos City".
                     Leave fields empty ("") when not mentioned. Never output prices.
                     SYSTEM,
                 ]], $thread),
