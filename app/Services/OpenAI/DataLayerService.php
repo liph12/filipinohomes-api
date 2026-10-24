@@ -152,7 +152,7 @@ class DataLayerService
         ];
     }
 
-    protected function extractAgent($a)
+    protected function extractAgent($a, ?int $areaListings = null)
     {
         $agentName = $a->first_name . " " . $a->last_name;
         $listings = $a->listings;
@@ -184,21 +184,6 @@ class DataLayerService
         } catch (\Throwable) {
             $awards = [];
         }
-        $areaListings = null;
-        if ($this->areaWords !== []) {
-            try {
-                $words = $this->areaWords;
-                $areaListings = (int) Listing::publiclyListed()->where('agent_id', $a->id)
-                    ->whereHas('property', function ($q) use ($words) {
-                        foreach ($words as $w) {
-                            $q->where('properties.address', 'LIKE', "%{$w}%");
-                        }
-                    })->count();
-            } catch (\Throwable) {
-                $areaListings = null;
-            }
-        }
-
         // NATCON awardee years, matched by the agent's email — Leuterio Realty's own recognition,
         // read from the convention's list and never written to.
         $natcon = $this->natconByEmail[mb_strtolower(trim((string) ($a->user->email ?? '')))] ?? [];
@@ -435,63 +420,87 @@ class DataLayerService
         // The label follows the expansion too: "CDO" is shown as "Cagayan de Oro".
         $this->areaLabel = self::PLACE_ALIASES[mb_strtolower(trim($area))] ?? $area;
         $propertyType = trim((string) ($args['property_type'] ?? ''));
+        $nameWords = array_values(array_filter(explode(' ', (string) ($args['name'] ?? ''))));
+        $email = trim((string) ($args['email'] ?? ''));
 
-        $agents = Agent::withCount('listings')
-        // Only surface active agents in public AI search (their listings are
-        // already gated by publiclyListed() in the eager-load below).
-        ->where('status', 'active')
-        ->with(['listings' => function($q) {
-            $q->publiclyListed()->with('property.propertyAttribute.subtype.type')
-              ->orderBy('clicks', 'DESC')
-              ->limit(10);
-        }])
-        ->where(function ($q) use ($args, $propertyType) {
-            $extName = array_filter(explode(' ', (string) $args['name']));
-            $extAddr = self::placeWords((string) $args['agent_address']);
-            $listAddr = self::placeWords((string) ($args['listing_address'] ?? ''));
+        // Who LISTS in the area, from the listings side in one pass — the agents with the most live
+        // listings there. (An agent-by-agent subquery over every agent timed out on broad words such
+        // as "general santos".) Agents BASED there are added so a newcomer with no listings yet still
+        // appears. The counts double as `area_listings`, so extractAgent runs no query for them.
+        $areaCounts = [];
+        if ($this->areaWords !== []) {
+            try {
+                $q = DB::table('listings')
+                    ->join('properties', 'properties.id', '=', 'listings.property_id')
+                    ->join('agents', fn ($j) => $j->on('agents.id', '=', 'listings.agent_id')->where('agents.status', 'active')->whereNull('agents.deleted_at'))
+                    ->whereNull('listings.deleted_at')->whereNull('properties.deleted_at')
+                    ->where('listings.visibility', 'public')
+                    ->where(fn ($w) => $w->whereNull('listings.verification_status')->orWhere('listings.verification_status', '!=', 'flagged'));
+                foreach ($this->areaWords as $w) {
+                    $q->where('properties.address', 'LIKE', "%{$w}%");
+                }
+                if ($propertyType !== '') {
+                    $q->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+                        ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+                        ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+                        ->where('property_types.name', $propertyType);
+                }
+                $areaCounts = $q->groupBy('listings.agent_id')
+                    ->orderByDesc('n')
+                    ->limit(40)
+                    ->pluck(DB::raw('COUNT(*) as n'), 'listings.agent_id')
+                    ->map(fn ($n) => (int) $n)
+                    ->all();
+            } catch (\Throwable) {
+                $areaCounts = [];
+            }
+        }
 
-            foreach ($extName as $w) {
-                $q->where(function ($sub) use ($w) {
-                    $sub->where('first_name', 'LIKE', "%{$w}%")
+        $query = Agent::withCount('listings')
+            // Only surface active agents in public AI search (their listings are
+            // already gated by publiclyListed() in the eager-load below).
+            ->where('status', 'active')
+            ->with(['user', 'listings' => function ($q) {
+                $q->publiclyListed()->with('property.propertyAttribute.subtype.type')
+                    ->orderBy('clicks', 'DESC')
+                    ->limit(10);
+            }]);
+
+        if ($this->areaWords !== []) {
+            $words = $this->areaWords;
+            $ids = array_keys($areaCounts);
+            $query->where(function ($or) use ($ids, $words) {
+                if ($ids !== []) {
+                    $or->whereIn('id', $ids);
+                }
+                $or->orWhere(function ($based) use ($words) {
+                    foreach ($words as $w) {
+                        $based->where('address', 'LIKE', "%{$w}%");
+                    }
+                });
+            });
+        }
+        foreach ($nameWords as $w) {
+            $query->where(function ($sub) use ($w) {
+                $sub->where('first_name', 'LIKE', "%{$w}%")
                     ->orWhere('middle_name', 'LIKE', "%{$w}%")
                     ->orWhere('last_name', 'LIKE', "%{$w}%");
-                });
-            }
-            // An agent "for Lahug" is one BASED there or one who LISTS there — the second is the one
-            // buyers actually want, and the old address-only match missed them.
-            $areaWords = $listAddr !== [] ? $listAddr : $extAddr;
-            if ($areaWords !== []) {
-                $q->where(function ($or) use ($areaWords, $propertyType) {
-                    $or->where(function ($based) use ($areaWords) {
-                        foreach ($areaWords as $w) {
-                            $based->where('address', 'LIKE', "%{$w}%");
-                        }
-                    })->orWhereHas('listings', function ($l) use ($areaWords, $propertyType) {
-                        $l->publiclyListed()->whereHas('property', function ($p) use ($areaWords, $propertyType) {
-                            foreach ($areaWords as $w) {
-                                $p->where('address', 'LIKE', "%{$w}%");
-                            }
-                            if ($propertyType !== '') {
-                                $p->whereHas('propertyAttribute.subtype.type', fn ($t) => $t->where('name', $propertyType));
-                            }
-                        });
-                    });
-                });
-            }
-            $q->with(['user' => function($q) use($args){
-                $q->where('email', 'LIKE', "%{$args['email']}%");
-            }]);
-        })
-        ->having('listings_count', '>=', $args['listings_count'])
-        ->orderBy('listings_count','DESC')
-        ->limit(25)
-        ->get();
+            });
+        }
+        if ($email !== '') {
+            $query->whereHas('user', fn ($u) => $u->where('email', 'LIKE', "%{$email}%"));
+        }
+
+        $agents = $query->having('listings_count', '>=', (int) ($args['listings_count'] ?? 0))
+            ->orderBy('listings_count', 'DESC')
+            ->limit(25)
+            ->get();
 
         $this->natconByEmail = $this->natconAwards($agents->map(fn ($a) => $a->user->email ?? '')->all());
 
-        foreach($agents as $a)
-        {
-            $inquiredAgents[] = $this->extractAgent($a);
+        foreach ($agents as $a) {
+            $card = $this->extractAgent($a, $this->areaWords !== [] ? ($areaCounts[$a->id] ?? 0) : null);
+            $inquiredAgents[] = $card;
         }
 
         // Proven performance first: live listings in the asked area weigh most, then how they answer
