@@ -10,7 +10,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * One listing for EXTERNAL / partner websites (GET /fh-agent/listings).
  *
  * Same listing shape as the by-email endpoint (ExternalAgentResource::
- * mapListing), plus the audit result and a small public card for the
+ * mapListing), plus its status, the audit result and a small public card for the
  * listing's agent — a partner showing every listing needs to know whom to
  * contact without a second lookup.
  */
@@ -23,6 +23,10 @@ class ExternalListingResource extends JsonResource
         $user = $agent?->user;
 
         return ExternalAgentResource::mapListing($this->resource, $siteUrl) + [
+            // active | sold | rented | leased, and when it last changed (the
+            // deal date for a closed listing).
+            'status'              => $this->property?->status,
+            'status_changed_at'   => optional($this->property?->status_change_date)->format('Y-m-d'),
             'verification_status' => $this->verification_status,
             'agent' => $agent ? [
                 'id'        => $agent->id,

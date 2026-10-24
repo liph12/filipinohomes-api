@@ -37,6 +37,9 @@ class OwnerPulseService
     /** Rows in the dashboard's two city lists (they show ~5 and scroll for the rest). */
     private const CITY_ROWS = 20;
 
+    /** Rows in "Recent deals" (shows ~5, scrolls for the rest). */
+    private const DEAL_ROWS = 20;
+
     public function __construct(private AgentInsightsService $agents) {}
 
     public function pulse(): array
@@ -219,7 +222,7 @@ class OwnerPulseService
             ->whereNull('properties.deleted_at')->whereNull('listings.deleted_at')
             ->whereIn('properties.status', self::DEALS)->whereNotNull('properties.status_change_date')
             ->orderByDesc('properties.status_change_date')->orderByDesc('properties.id')
-            ->limit(6)
+            ->limit(self::DEAL_ROWS)
             ->get(['properties.status', 'properties.status_change_date as date', 'listings.name', 'listings.slug', 'listings.price', 'categories.name as category', 'agents.first_name', 'agents.last_name'])
             ->map(fn ($r) => [
                 'status' => $r->status,
