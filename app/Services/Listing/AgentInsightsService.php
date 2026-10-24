@@ -43,6 +43,9 @@ class AgentInsightsService
                 DB::raw('COALESCE(di.n, 0) as direct_inquiries'),
                 DB::raw('COALESCE(di.profile, 0) as direct_profile'),
                 DB::raw('COALESCE(di.website, 0) as direct_website'),
+                DB::raw('COALESCE(li.replied, 0) as listing_replied'),
+                DB::raw('COALESCE(di.profile_replied, 0) as direct_profile_replied'),
+                DB::raw('COALESCE(di.website_replied, 0) as direct_website_replied'),
             )
             ->orderByDesc('listings')
             ->orderBy('agents.first_name')
@@ -70,6 +73,9 @@ class AgentInsightsService
                 'direct_inquiries' => (int) $r->direct_inquiries,
                 'direct_profile' => (int) $r->direct_profile,
                 'direct_website' => (int) $r->direct_website,
+                'listing_replied' => (int) $r->listing_replied,
+                'direct_profile_replied' => (int) $r->direct_profile_replied,
+                'direct_website_replied' => (int) $r->direct_website_replied,
                 'last_online_at' => $r->last_online_at,
                 'group' => (int) $r->listings === 0 ? 'none' : ($closed === 0 ? 'no_deal' : 'closed'),
             ];
@@ -267,14 +273,27 @@ class AgentInsightsService
             ->groupBy('team_agents.agent_id')
             ->selectRaw('team_agents.agent_id, MAX(teams.name) as team');
 
+        // An inquiry counts as RESPONDED when the agent has written at least one message in any of its
+        // conversations — removed messages (deleted / unsent) don't count. The same rule Chat Statistics
+        // uses for "agent replied"; {user} is the agent's users.id column for that subquery.
+        $replied = fn (string $user) => "EXISTS (
+            SELECT 1 FROM messages m
+            JOIN conversations cv ON cv.id = m.conversation_id
+            WHERE cv.chat_id = chats.id
+              AND m.user_id = {$user}
+              AND m.status NOT IN ('deleted', 'unsent')
+        )";
+
         // Inquiries on the agent's listings (chats type=listing, as Inquiry Analytics counts them).
         $listingInquiries = DB::table('chats')
             ->join('listings', 'listings.id', '=', 'chats.type_id')
+            ->join('agents as owner', 'owner.id', '=', 'listings.agent_id')
             ->whereNull('chats.deleted_at')
             ->whereNull('listings.deleted_at')
             ->where('chats.type', 'listing')
             ->groupBy('listings.agent_id')
-            ->selectRaw('listings.agent_id, COUNT(DISTINCT chats.id) as n');
+            ->selectRaw('listings.agent_id, COUNT(DISTINCT chats.id) as n,
+                SUM(CASE WHEN '.$replied('owner.user_id').' THEN 1 ELSE 0 END) as replied');
 
         // Inquiries straight to the agent — "Message me" on their profile or website (chats type=agent,
         // type_id = the agent's user id), from clients only, so agent-to-agent and staff DMs stay out.
@@ -289,7 +308,9 @@ class AgentInsightsService
             ->groupBy('target.id')
             ->selectRaw("target.id as agent_id, COUNT(DISTINCT chats.id) as n,
                 SUM(CASE WHEN chats.source = 'agent_profile' THEN 1 ELSE 0 END) as profile,
-                SUM(CASE WHEN chats.source = 'agent_page' THEN 1 ELSE 0 END) as website");
+                SUM(CASE WHEN chats.source = 'agent_page' THEN 1 ELSE 0 END) as website,
+                SUM(CASE WHEN chats.source = 'agent_profile' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as profile_replied,
+                SUM(CASE WHEN chats.source = 'agent_page' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as website_replied");
 
         return DB::table('agents')
             ->leftJoin('users', 'users.id', '=', 'agents.user_id')
