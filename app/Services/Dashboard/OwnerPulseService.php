@@ -34,6 +34,9 @@ class OwnerPulseService
 
     private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
 
+    /** Rows in the dashboard's two city lists (they show ~5 and scroll for the rest). */
+    private const CITY_ROWS = 20;
+
     public function __construct(private AgentInsightsService $agents) {}
 
     public function pulse(): array
@@ -366,14 +369,14 @@ class OwnerPulseService
 
         $allTime = $base()
             ->groupBy('cities.id', 'cities.name', 'provinces.name')
-            ->orderByDesc('views')->limit(5)
+            ->orderByDesc('views')->limit(self::CITY_ROWS)
             ->get([DB::raw('cities.id as id'), DB::raw('cities.name as city'), DB::raw('provinces.name as province'), DB::raw('SUM(listings.clicks) as views'), DB::raw('COUNT(*) as listings')]);
 
         $recent = Schema::hasTable('listing_view_days')
             ? $base()->join('listing_view_days as v', 'v.listing_id', '=', 'listings.id')
                 ->where('v.date', '>=', $from->toDateString())
                 ->groupBy('cities.id', 'cities.name', 'provinces.name')
-                ->orderByDesc('views')->limit(5)
+                ->orderByDesc('views')->limit(self::CITY_ROWS)
                 ->get([DB::raw('cities.id as id'), DB::raw('cities.name as city'), DB::raw('provinces.name as province'), DB::raw('SUM(v.views) as views'), DB::raw('COUNT(DISTINCT listings.id) as listings')])
             : collect();
 
@@ -399,7 +402,7 @@ class OwnerPulseService
         $known = (int) $base()->whereNotNull('visits.city')->where('visits.city', '!=', '')->distinct()->count('visits.visitor_id');
         $cities = $base()->whereNotNull('visits.city')->where('visits.city', '!=', '')
             ->groupBy('visits.city', 'visits.region', 'visits.country')
-            ->orderByDesc('visitors')->limit(5)
+            ->orderByDesc('visitors')->limit(self::CITY_ROWS)
             ->get(['visits.city', 'visits.region', 'visits.country', DB::raw('COUNT(DISTINCT visits.visitor_id) as visitors')])
             ->map(fn ($r) => ['city' => $r->city, 'region' => $r->region, 'country' => $r->country, 'visitors' => (int) $r->visitors])->all();
 
