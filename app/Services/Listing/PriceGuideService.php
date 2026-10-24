@@ -41,6 +41,11 @@ class PriceGuideService
 
     private const MIN_FLOOR_AREA_SQM = 10;
 
+    /** Gross yields outside this band come from mispriced or mismatched listings, not from the market; they are not shown. */
+    private const MIN_YIELD_PCT = 1.0;
+
+    private const MAX_YIELD_PCT = 15.0;
+
     private const CATEGORIES = ['For Sale', 'For Rent'];
 
     /** Types whose listings carry a meaningful bedroom count (the others get an "All" row only). */
@@ -240,6 +245,291 @@ class PriceGuideService
         });
     }
 
+    /**
+     * Where ONE listing sits against its own market, for ASA-GPT's cards and its "is this a good deal?"
+     * answer: the typical (median) asking price of its peers — same category, property type and unit
+     * size, in its barangay, widening to the city and then dropping the size until there are enough
+     * peers to mean anything — and how far this listing's price is from it. Null when the listing is
+     * not a live public one, or nothing comparable is listed anywhere in its city.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function contextForListing(int $listingId): ?array
+    {
+        $r = $this->baseQuery()
+            ->where('listings.id', $listingId)
+            ->select(
+                'cities.id as city_id',
+                'cities.name as city',
+                'eff_b.id as barangay_id',
+                'eff_b.name as barangay',
+                'categories.name as category',
+                'property_types.name as type',
+                'property_subtypes.name as subtype',
+                'property_attributes.bedroom_count',
+                'property_attributes.floor_area',
+                'listings.price',
+                'listings.created_at',
+            )
+            ->first();
+        if ($r === null) {
+            return null;
+        }
+        $city = $this->cityRows((int) $r->city_id);
+        if ($city === null) {
+            return null;
+        }
+
+        $price = (float) $r->price;
+        $area = (float) ($r->floor_area ?? 0);
+        $ppsqm = $area >= self::MIN_FLOOR_AREA_SQM ? $price / $area : null;
+        $tier = self::tierOf((string) $r->subtype, $r->bedroom_count === null ? null : (int) $r->bedroom_count);
+        $barangayId = $r->barangay_id === null ? null : (int) $r->barangay_id;
+
+        // Narrowest first: this barangay + this size, the city + this size, then without the size.
+        $tries = [];
+        if ($barangayId !== null) {
+            $tries[] = ['barangay', true];
+        }
+        $tries[] = ['city', true];
+        if ($tier !== null) {
+            if ($barangayId !== null) {
+                $tries[] = ['barangay', false];
+            }
+            $tries[] = ['city', false];
+        }
+
+        foreach ($tries as [$scope, $withTier]) {
+            $peers = array_values(array_filter($city['rows'], fn (array $x) => $x['category'] === $r->category
+                && $x['type'] === $r->type
+                && ($scope === 'city' || $x['barangay_id'] === $barangayId)
+                && (! $withTier || $tier === null || $x['tier'] === $tier)));
+            // The listing itself is one of the peers; a market of one is no market.
+            if (count($peers) < self::MIN_TIER_LISTINGS + 1) {
+                continue;
+            }
+            $stats = $this->stats($withTier && $tier !== null ? $tier : 'All sizes', $peers);
+            if ($stats === null) {
+                continue;
+            }
+            $median = (float) $stats['median'];
+            $diff = $median > 0 ? (int) round(($price - $median) / $median * 100) : null;
+
+            // Gross rental yield, for a For Sale listing: what the same kind of unit rents for here,
+            // times twelve, over the price. The area's own yield uses the typical sale price instead.
+            $rentMedian = null;
+            $yield = null;
+            $areaYield = null;
+            if ($r->category === 'For Sale') {
+                $rentPeers = array_values(array_filter($city['rows'], fn (array $x) => $x['category'] === 'For Rent'
+                    && $x['type'] === $r->type
+                    && ($scope === 'city' || $x['barangay_id'] === $barangayId)
+                    && (! $withTier || $tier === null || $x['tier'] === $tier)));
+                $rentStats = $this->stats('rent', $rentPeers);
+                if ($rentStats !== null && $price > 0 && $median > 0) {
+                    $rentMedian = (float) $rentStats['median'];
+                    $yield = round($rentMedian * 12 / $price * 100, 1);
+                    $areaYield = round($rentMedian * 12 / $median * 100, 1);
+                    // A ₱500K "studio" against ₱18K rents is a mispriced listing, not a 43% yield.
+                    if ($yield < self::MIN_YIELD_PCT || $yield > self::MAX_YIELD_PCT || $areaYield < self::MIN_YIELD_PCT || $areaYield > self::MAX_YIELD_PCT) {
+                        $rentMedian = $yield = $areaYield = null;
+                    }
+                }
+            }
+
+            return [
+                'scope' => $scope,
+                'area' => $scope === 'barangay' ? "{$r->barangay}, {$r->city}" : (string) $r->city,
+                'city' => (string) $r->city,
+                'barangay' => $scope === 'barangay' ? (string) $r->barangay : null,
+                'category' => (string) $r->category,
+                'type' => (string) $r->type,
+                'tier' => $stats['tier'],
+                'listings' => $stats['listings'],
+                'low' => $stats['low'],
+                'median' => $stats['median'],
+                'high' => $stats['high'],
+                'median_ppsqm' => $stats['median_ppsqm'],
+                'price' => round($price),
+                'ppsqm' => $ppsqm === null ? null : round($ppsqm),
+                'diff_pct' => $diff,
+                'verdict' => $diff === null ? 'near' : ($diff <= -8 ? 'below' : ($diff >= 8 ? 'above' : 'near')),
+                // Peers other than this listing, either side of its price.
+                'cheaper' => count(array_filter($peers, fn (array $x) => $x['price'] < $price)),
+                'pricier' => count(array_filter($peers, fn (array $x) => $x['price'] > $price)),
+                'listed_at' => (string) $r->created_at,
+                'rent_median' => $rentMedian === null ? null : round($rentMedian),
+                'yield_pct' => $yield,
+                'area_yield_pct' => $areaYield,
+                'demand' => $this->demand($listingId, $peers, (string) $r->created_at),
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * How much interest a listing draws against its peers: all-time views per day listed (listings.clicks)
+     * versus the peers' median rate, views in the last 30 days where the daily log has them, saves and
+     * inquiries. "hot" is twice the peers' rate, "quiet" is half of it after a month on the market.
+     *
+     * @param  array<int, array{listing_id:int, views_per_day:float}>  $peers
+     * @return array<string, mixed>
+     */
+    private function demand(int $listingId, array $peers, string $listedAt): array
+    {
+        return Cache::remember("price-guide:demand:v1:{$listingId}", 600, function () use ($listingId, $peers, $listedAt) {
+            $me = null;
+            $rates = [];
+            foreach ($peers as $p) {
+                if ($p['listing_id'] === $listingId) {
+                    $me = $p['views_per_day'];
+                } else {
+                    $rates[] = $p['views_per_day'];
+                }
+            }
+            sort($rates);
+            $peerRate = $rates === [] ? null : self::percentile($rates, 0.5);
+            $ratio = $me !== null && $peerRate !== null && $peerRate > 0 ? round($me / $peerRate, 1) : null;
+            $days = (int) Carbon::parse($listedAt)->diffInDays(now());
+
+            $views30 = (int) DB::table('listing_view_days')->where('listing_id', $listingId)->where('date', '>=', now()->subDays(30)->toDateString())->sum('views');
+            $favorites = (int) DB::table('favorites')->where('listing_id', $listingId)->count();
+            $inquiries30 = (int) DB::table('listing_inquiries')->where('listing_id', $listingId)->where('created_at', '>=', now()->subDays(30))->count();
+
+            $label = 'steady';
+            if ($ratio !== null && $ratio >= 2) {
+                $label = 'hot';
+            } elseif ($ratio !== null && $ratio <= 0.5 && $days >= 30) {
+                $label = 'quiet';
+            }
+
+            return [
+                'label' => $label,
+                'views_per_day' => $me === null ? null : round($me, 2),
+                'peer_views_per_day' => $peerRate === null ? null : round($peerRate, 2),
+                'ratio' => $ratio,
+                'views_30d' => $views30,
+                'favorites' => $favorites,
+                'inquiries_30d' => $inquiries30,
+                'days_listed' => $days,
+            ];
+        });
+    }
+
+    /**
+     * An area at a glance for ASA-GPT's "tell me about Lahug": the guide plus who lists most there.
+     *
+     * @return array{guide: array<string, mixed>, agents: array<int, array{id:int, name:string, listings:int}>}|null
+     */
+    public function snapshot(int $cityId, ?int $barangayId = null): ?array
+    {
+        $guide = $this->guide($cityId, $barangayId);
+        if ($guide === null || $guide['sections'] === []) {
+            return null;
+        }
+        $agents = Cache::remember("price-guide:agents:{$cityId}:".($barangayId ?? 'all'), self::TTL_SECONDS, function () use ($cityId, $barangayId) {
+            $q = $this->baseQuery()->where('cities.id', $cityId);
+            if ($barangayId !== null) {
+                $q->where('eff_b.id', $barangayId);
+            }
+
+            return $q->select('agents.id', 'agents.first_name', 'agents.last_name', DB::raw('COUNT(*) as listings'))
+                ->groupBy('agents.id', 'agents.first_name', 'agents.last_name')
+                ->orderByDesc('listings')
+                ->limit(3)
+                ->get()
+                ->map(fn ($a) => ['id' => (int) $a->id, 'name' => trim("{$a->first_name} {$a->last_name}"), 'listings' => (int) $a->listings])
+                ->values()
+                ->all();
+        });
+
+        return ['guide' => $guide, 'agents' => $agents, 'yields' => $this->yields($cityId, $barangayId)];
+    }
+
+    /**
+     * Gross rental yields from the guide's own numbers: per property type in the area (typical rent ×12
+     * over typical sale price), and — for a whole city — the barangays where condominiums yield most.
+     *
+     * @return array{types: array<int, array{type:string, yield_pct:float, sale_median:float, rent_median:float}>, barangays: array<int, array{barangay:string, yield_pct:float, sale_listings:int, rent_listings:int}>}
+     */
+    public function yields(int $cityId, ?int $barangayId = null): array
+    {
+        $city = $this->cityRows($cityId);
+        if ($city === null) {
+            return ['types' => [], 'barangays' => []];
+        }
+        $rows = $barangayId === null ? $city['rows'] : array_values(array_filter($city['rows'], fn (array $r) => $r['barangay_id'] === $barangayId));
+
+        // Like for like: a yield is computed per unit size (studios' rent over studios' price, never the
+        // rent of studios over the price of 3-bedrooms), then the sizes' yields are combined by their
+        // median. Sizes with too few listings on either side are skipped; implausible results are dropped.
+        $yieldOf = function (array $set): ?array {
+            $perTier = [];
+            $sales = 0;
+            $rents = 0;
+            foreach (array_merge(self::tierOrder(), [null]) as $tier) {
+                $inTier = array_values(array_filter($set, fn (array $r) => $r['tier'] === $tier));
+                $sale = $this->stats($tier ?? 'All sizes', array_values(array_filter($inTier, fn (array $r) => $r['category'] === 'For Sale')));
+                $rent = $this->stats($tier ?? 'All sizes', array_values(array_filter($inTier, fn (array $r) => $r['category'] === 'For Rent')));
+                if ($sale === null || $rent === null || $sale['median'] <= 0) {
+                    continue;
+                }
+                $y = $rent['median'] * 12 / $sale['median'] * 100;
+                if ($y < self::MIN_YIELD_PCT || $y > self::MAX_YIELD_PCT) {
+                    continue;
+                }
+                $perTier[] = ['yield' => $y, 'sale' => $sale, 'rent' => $rent];
+                $sales += $sale['listings'];
+                $rents += $rent['listings'];
+            }
+            if ($perTier === []) {
+                return null;
+            }
+            usort($perTier, fn (array $a, array $b) => $a['yield'] <=> $b['yield']);
+            $mid = $perTier[intdiv(count($perTier), 2)];
+            // The quoted buy/rent pair is the size that gives the middle yield, so the three numbers agree.
+            return [
+                'yield_pct' => round(self::percentile(array_column($perTier, 'yield'), 0.5), 1),
+                'sale_median' => $mid['sale']['median'],
+                'rent_median' => $mid['rent']['median'],
+                'tier' => $mid['sale']['tier'],
+                'sale_listings' => $sales,
+                'rent_listings' => $rents,
+            ];
+        };
+
+        $types = [];
+        foreach (array_unique(array_column($rows, 'type')) as $type) {
+            $y = $yieldOf(array_values(array_filter($rows, fn (array $r) => $r['type'] === $type)));
+            if ($y !== null) {
+                $types[] = ['type' => $type] + $y;
+            }
+        }
+        usort($types, fn (array $a, array $b) => $b['sale_listings'] <=> $a['sale_listings']);
+
+        $barangays = [];
+        if ($barangayId === null) {
+            $byB = [];
+            foreach ($city['rows'] as $r) {
+                if ($r['barangay_id'] !== null && $r['type'] === 'Condominium') {
+                    $byB[$r['barangay_id']][] = $r;
+                }
+            }
+            foreach ($byB as $set) {
+                $y = $yieldOf($set);
+                // A ranking needs more than a handful on each side, or one odd listing tops the list.
+                if ($y !== null && $y['sale_listings'] >= 5 && $y['rent_listings'] >= 5) {
+                    $barangays[] = ['barangay' => $set[0]['barangay']] + $y;
+                }
+            }
+            usort($barangays, fn (array $a, array $b) => $b['yield_pct'] <=> $a['yield_pct']);
+            $barangays = array_slice($barangays, 0, 5);
+        }
+
+        return ['types' => $types, 'barangays' => $barangays];
+    }
+
     /** The unit-size tiers, smallest first. */
     public static function tierOrder(): array
     {
@@ -298,7 +588,7 @@ class PriceGuideService
      */
     private function cityRows(int $cityId): ?array
     {
-        return Cache::remember("price-guide:city:v2:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
+        return Cache::remember("price-guide:city:v3:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
             $rows = $this->baseQuery()
                 ->where('cities.id', $cityId)
                 ->select(
@@ -313,6 +603,9 @@ class PriceGuideService
                     'property_attributes.garage_count',
                     'properties.amenities',
                     'listings.price',
+                    'listings.id as listing_id',
+                    'listings.clicks',
+                    'listings.created_at',
                     'eff_b.id as barangay_id',
                     'eff_b.name as barangay',
                 )
@@ -328,6 +621,9 @@ class PriceGuideService
                 $price = (float) $r->price;
                 $area = (float) ($r->floor_area ?? 0);
                 $slim[] = [
+                    'listing_id' => (int) $r->listing_id,
+                    // All-time views per day listed — the demand rate a listing is compared on.
+                    'views_per_day' => round(((int) ($r->clicks ?? 0)) / max(1, Carbon::parse($r->created_at)->diffInDays(now())), 3),
                     'category' => (string) $r->category,
                     'type' => (string) $r->type,
                     'tier' => self::tierOf((string) $r->subtype, $r->bedroom_count === null ? null : (int) $r->bedroom_count),

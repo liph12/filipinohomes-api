@@ -8,6 +8,8 @@ use App\Services\OpenAI\CacheService;
 use App\Services\OpenAI\DataLayerService;
 use App\Services\OpenAI\ListingCommandService;
 use App\Services\OpenAI\PriceCommandService;
+use App\Services\OpenAI\DealCommandService;
+use App\Services\OpenAI\AreaCommandService;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
 use App\Models\AiSearchLog;
@@ -20,14 +22,18 @@ class OpenAIController extends Controller
     private $dataService;
     private $listingService;
     private $priceService;
+    private $dealService;
+    private $areaService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area)
     {
         $this->sqService = $s;
         $this->cacheService = $c;
         $this->dataService = $d;
         $this->listingService = $l;
         $this->priceService = $p;
+        $this->dealService = $deal;
+        $this->areaService = $area;
     }
 
     public function getDailyLimit(Request $request)
@@ -76,6 +82,13 @@ class OpenAIController extends Controller
         }
 
         $this->cacheService->appendMessages($request, $newMessages);
+
+        // "Is this a good deal? listing #123" — the card's button. Deterministic: no classifier, no model.
+        $last = collect($thread)->where('role', 'user')->last();
+        if (is_array($last) && preg_match('/\blisting\s*#\s*(\d+)/i', (string) ($last['content'] ?? ''), $m)) {
+            return $this->dealService->replyStream((int) $m[1], $thread, $request);
+        }
+
         $classification = $this->sqService->classifyMessage($thread);
         $isNormal = $classification === "normal";
     
@@ -91,6 +104,11 @@ class OpenAIController extends Controller
             // "How much is a studio in Lahug?" — the Price Guide, in chat (numbers from our listings, never the model).
             if ($classification === 'price') {
                 return $this->priceService->replyStream($thread, $request);
+            }
+
+            // "Tell me about Lahug" — the area at a glance, from our listings.
+            if ($classification === 'area') {
+                return $this->areaService->replyStream($thread, $request);
             }
         }
     
@@ -125,7 +143,7 @@ class OpenAIController extends Controller
 
             foreach($inquiredAgents as $l)
             {
-                if($l['id'] === $suggestedAgents['suggested'])
+                if((string) $l['id'] === (string) $suggestedAgents['suggested'])
                 {
                     $suggested = $l;
                 }
@@ -137,7 +155,7 @@ class OpenAIController extends Controller
                 {
                     foreach($inquiredAgents as $l)
                     {
-                        if($l['id'] === $key)
+                        if((string) $l['id'] === (string) $key)
                         {
                             $others[] = $l;
                         }
@@ -177,7 +195,7 @@ class OpenAIController extends Controller
 
             foreach($inquiredListings as $l)
             {
-                if($l['id'] === $suggestedListings['suggested'])
+                if((string) $l['id'] === (string) $suggestedListings['suggested'])
                 {
                     $suggested = $l;
                 }
@@ -189,7 +207,7 @@ class OpenAIController extends Controller
                 {
                     foreach($inquiredListings as $l)
                     {
-                        if($l['id'] === $key)
+                        if((string) $l['id'] === (string) $key)
                         {
                             $others[] = $l;
                         }

@@ -424,6 +424,7 @@ class CommandService extends CacheService
             RULES:
             - Always focus ONLY on the MOST RECENT user intent.
             - Ignore previous messages if they conflict with the latest message.
+            - Each agent carries PROVEN PERFORMANCE facts from Filipino Homes' own records: `area_listings` (live listings in the area the user asked about), `rating` (average stars and review count), `response` (median first-reply minutes, % answered within an hour, % left unanswered), `awards`, `years_active`. Rank by these — most area listings and best responsiveness first, then rating and awards — not by name order. Say WHY the pick is best using those numbers (e.g. "12 live listings in Lahug, replies in about 20 minutes, 4.9★ from 32 reviews"). Never invent a number that is not in the data; skip a fact that is null.
             SYSTEM
         ];
 
@@ -440,7 +441,7 @@ class CommandService extends CacheService
                                 'type' => 'string',
                                 'description' => <<<DESC
                                 A concise but informative message describing the selected agent. 
-                                Include key details: name, location/address, number of listings, and contact info (email + mobile). 
+                                Include key details: name, location/address, number of listings (and listings in the asked area), rating, reply speed and awards when present, and contact info (email + mobile). 
                                 Keep tone natural, helpful, and conversational. 
                                 Use under 3-4 sentences for normal messages. 
 
@@ -553,6 +554,7 @@ class CommandService extends CacheService
         
         INTENT:
         - price → user asks what properties COST in an area: price range, average/typical price, going rate, "magkano", "how much is a studio in Lahug", rent levels — a market question, not a request to see specific listings
+        - area → user asks ABOUT a place in general: "tell me about Lahug", "what's it like in BGC", "is IT Park a good area to invest", "overview of Mandaue", "which barangays in Cebu City have the most listings", rental yield / ROI / "where do condos yield the most in Cebu" — an area or investment question, not a price-only question and not a request for listings
         - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
         - agent → user shows intent to find, search, contact, or inquire about a real estate agent (explicit or implied)
         - normal → greetings, small talk, or anything NOT related to Filipino Homes real estate
@@ -562,12 +564,13 @@ class CommandService extends CacheService
         - If unsure or off-topic, return: normal
         - If the user asks for a person (agent, broker, realtor), classify as: agent
         - If the user asks how much properties cost / the price range / average price / rate in a place, classify as: price
+        - If the user asks what a place is like, for an overview / snapshot / profile of an area or neighbourhood, or whether an area is good, classify as: area
         - If the user asks for property (house, condo, lot, rent, location) or to see/find/show listings, classify as: listing
         - A stated budget while looking for property ("condo in Makati under 5M") is: listing — not price
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: price OR listing OR agent OR normal
+        - Return EXACTLY one word: price OR area OR listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -588,7 +591,7 @@ class CommandService extends CacheService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'listing', 'agent', 'price'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area'])) {
             return 'normal';
         }
     
@@ -635,6 +638,7 @@ class CommandService extends CacheService
         • "old", "earliest" → prioritize older listings → set date_to to an older date (e.g. 1–2 years ago), date_from = ""
         • specific dates → convert to Y-m-d
         - If no date mentioned → return empty string ""
+        12. If the user wants to be NEAR a specific place — a mall, business park, school, hospital, office, church, beach, a named building or development ("near IT Park", "walking distance to Ayala Center Cebu", "close to SM Seaside", "beside Cebu Doctors") — put that place's name in `near` (just the place, no "near"), and the distance in `radius_km` when they say one ("within 2 km" → 2; "walking distance" → 1; otherwise 0). Do NOT put the place in query_words or address; the city still goes in address when named.
         SYSTEM
         ];
     
@@ -697,6 +701,14 @@ class CommandService extends CacheService
                                 'type' => 'string',
                                 'description' => 'City or location in the Philippines. Return empty string if not specified.'
                             ],
+                            'near' => [
+                                'type' => 'string',
+                                'description' => 'A specific place the user wants to be near — mall, business park, school, hospital, office, named building/development (e.g. "IT Park", "Ayala Center Cebu", "SM Seaside", "Avida Towers Riala"). Just the place name. Empty string "" if none.'
+                            ],
+                            'radius_km' => [
+                                'type' => 'number',
+                                'description' => 'How close, in km, when the user says ("within 2 km" → 2, "walking distance" → 1). 0 if not said.'
+                            ],
                             'agent_name' => [
                                 'type' => 'string',
                                 'description' => 'Name of the agent associated with this property request. Leave it blank if not specified.',
@@ -737,7 +749,9 @@ class CommandService extends CacheService
                             'agent_name', 
                             'listings_count',
                             'date_from',
-                            'date_to'
+                            'date_to',
+                            'near',
+                            'radius_km'
                         ],
                     ],
                 ],
@@ -754,6 +768,8 @@ class CommandService extends CacheService
                     'property_type' => '',
                     'property_subtype' => '',
                     'address' => '',
+                    'near' => '',
+                    'radius_km' => 0,
                     'agent_name' => '',
                     'date_from' => '',
                     'date_to' => '',

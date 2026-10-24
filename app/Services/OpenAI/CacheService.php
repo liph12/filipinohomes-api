@@ -202,18 +202,25 @@ class CacheService extends DataLayerService
             if (isset($msg['metaData']['listing'])) {
                 $listingMeta = $msg['metaData']['listing'];
     
+                $suggested = isset($listingMeta['suggested']['id'])
+                    ? $listingMap->get($listingMeta['suggested']['id'])
+                    : null;
+                $others = isset($listingMeta['others'])
+                    ? collect($listingMeta['others'])
+                        ->map(fn ($l) => $listingMap->get($l['id']))
+                        ->filter()
+                        ->values()
+                        ->toArray()
+                    : [];
+                // The featured listing can be gone by the time history is read
+                // (delisted, or stored against another database); promote the
+                // first alternative rather than hand the page a null card.
+                if ($suggested === null && $others !== []) {
+                    $suggested = array_shift($others);
+                }
                 $msg['metaData']['listing'] = [
-                    'suggested' => isset($listingMeta['suggested']['id'])
-                        ? $listingMap->get($listingMeta['suggested']['id'])
-                        : null,
-    
-                    'others' => isset($listingMeta['others'])
-                        ? collect($listingMeta['others'])
-                            ->map(fn ($l) => $listingMap->get($l['id']))
-                            ->filter()
-                            ->values()
-                            ->toArray()
-                        : [],
+                    'suggested' => $suggested,
+                    'others' => $others,
                 ];
             }
     
@@ -221,18 +228,22 @@ class CacheService extends DataLayerService
             if (isset($msg['metaData']['agent'])) {
                 $agentMeta = $msg['metaData']['agent'];
     
+                $suggested = isset($agentMeta['suggested']['id'])
+                    ? $agentMap->get($agentMeta['suggested']['id'])
+                    : null;
+                $others = isset($agentMeta['others'])
+                    ? collect($agentMeta['others'])
+                        ->map(fn ($a) => $agentMap->get($a['id']))
+                        ->filter()
+                        ->values()
+                        ->toArray()
+                    : [];
+                if ($suggested === null && $others !== []) {
+                    $suggested = array_shift($others);
+                }
                 $msg['metaData']['agent'] = [
-                    'suggested' => isset($agentMeta['suggested']['id'])
-                        ? $agentMap->get($agentMeta['suggested']['id'])
-                        : null,
-    
-                    'others' => isset($agentMeta['others'])
-                        ? collect($agentMeta['others'])
-                            ->map(fn ($a) => $agentMap->get($a['id']))
-                            ->filter()
-                            ->values()
-                            ->toArray()
-                        : [],
+                    'suggested' => $suggested,
+                    'others' => $others,
                 ];
             }
     

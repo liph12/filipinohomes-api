@@ -3,7 +3,6 @@
 namespace App\Services\OpenAI;
 
 use App\Services\Listing\PriceGuideService;
-use Illuminate\Support\Str;
 use OpenAI;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -33,43 +32,75 @@ class PriceCommandService extends CacheService
         $this->client = OpenAI::client(config('services.openai.key'));
     }
 
+    use InsightStream;
+
     public function replyStream(array $thread, $req): StreamedResponse
     {
-        return new StreamedResponse(function () use ($thread, $req) {
-            echo 'data: '.json_encode(['type' => 'mode', 'mode' => 'price'])."\n\n";
-            ob_flush();
-            flush();
+        $asked = $this->extract($thread);
+        $place = $this->resolvePlace($asked);
+        $insight = $place === null ? null : $this->insight($place, $asked);
 
-            $asked = $this->extract($thread);
-            $place = $this->resolvePlace($asked);
+        if ($insight === null) {
             $text = $place === null ? $this->notFoundText($asked) : $this->answerText($place, $asked);
 
-            // Stream line by line so the bubble fills the way the other replies do.
-            foreach (preg_split('/(\n)/', $text, -1, PREG_SPLIT_DELIM_CAPTURE) as $piece) {
-                if ($piece === '') {
+            return $this->streamInsight('price', 'price', ['empty' => true], $text, [], $req);
+        }
+
+        $spot = $place['barangay'] ?: $place['city'];
+        $text = sprintf('Typical asking prices in **%s**, from %d live listings on Filipino Homes.', $insight['area']['label'], $insight['totals']['listings']);
+        $followUps = [
+            ['label' => "Listings in {$spot}", 'prompt' => "Show me properties for sale in {$spot}"],
+            ['label' => "About {$spot}", 'prompt' => "Tell me about {$spot} as an area"],
+            ['label' => 'Agents who work here', 'prompt' => "Find me the best agent for condos in {$spot}"],
+        ];
+
+        return $this->streamInsight('price', 'price', $insight, $text, $followUps, $req);
+    }
+
+    /**
+     * The guide, narrowed to what was asked, as data for the page's table: per category, per type,
+     * the size rows with low / typical / high. Null when nothing matches.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function insight(array $place, array $asked): ?array
+    {
+        $guide = $this->guide->guide($place['city_id'], $place['barangay_id']);
+        if ($guide === null || $guide['sections'] === []) {
+            return null;
+        }
+        $where = $place['barangay'] ? "{$place['barangay']}, {$place['city']}" : "{$place['city']}, {$place['province']}";
+        $sections = [];
+        foreach ($guide['sections'] as $s) {
+            if ($asked['category'] !== '' && $s['category'] !== $asked['category']) {
+                continue;
+            }
+            $types = [];
+            foreach ($s['types'] as $t) {
+                if (! $this->typeMatches($t['type'], $asked['property_type'])) {
                     continue;
                 }
-                echo 'data: '.json_encode(['type' => 'text', 'text' => $piece])."\n\n";
-                ob_flush();
-                flush();
-                usleep(12000);
+                $sized = array_values(array_filter($t['tiers'], fn ($x) => $x['tier'] !== 'All sizes'));
+                $rows = $asked['tier'] !== '' ? array_values(array_filter($sized, fn ($x) => $x['tier'] === $asked['tier'])) : ($sized !== [] ? $sized : $t['tiers']);
+                if ($rows === []) {
+                    continue;
+                }
+                $types[] = ['type' => $t['type'], 'listings' => $t['listings'], 'rows' => array_values(array_map(fn (array $x) => array_intersect_key($x, array_flip(['tier', 'listings', 'low', 'median', 'high', 'median_ppsqm'])), $rows))];
             }
+            if ($types !== []) {
+                $sections[] = ['category' => $s['category'], 'listings' => $s['listings'], 'types' => $types];
+            }
+        }
+        if ($sections === []) {
+            return null;
+        }
 
-            $this->appendMessages($req, [[
-                'id' => Str::uuid(),
-                'role' => 'assistant',
-                'content' => $text,
-            ]]);
-
-            echo "data: [DONE]\n\n";
-            ob_flush();
-            flush();
-        }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'Connection' => 'keep-alive',
-            'X-Accel-Buffering' => 'no',
-        ]);
+        return [
+            'area' => ['label' => $where, 'city' => $place['city'], 'barangay' => $place['barangay'], 'province' => $place['province']],
+            'totals' => $guide['totals'],
+            'asked' => $asked,
+            'sections' => $sections,
+        ];
     }
 
     /**
