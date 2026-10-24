@@ -17,6 +17,7 @@ use App\Http\Controllers\AppVersionController;
 use App\Http\Controllers\AiVisibilityController;
 use App\Http\Controllers\AudienceInsightsController;
 use App\Http\Controllers\ExternalListingController;
+use App\Http\Controllers\PartnerFeedSettingsController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\BackgroundJobController;
 use App\Http\Controllers\BlockedUserController;
@@ -668,6 +669,11 @@ Route::middleware('strip.tags')->group(function () {
             // GET /admin/inquiries/{id}     → single inquiry with thread
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class.':admin')->group(function () {
+                // Partner Listings Feed — what GET /fh-agent/listings hands to
+                // other websites (System Settings card; PartnerFeedService).
+                Route::get('/admin/partner-feed', [PartnerFeedSettingsController::class, 'show']);
+                Route::put('/admin/partner-feed', [PartnerFeedSettingsController::class, 'update']);
+
                 // ── NATCON 2026 campaign admin ──────────────────────────────
                 // ⚠️ /send-invites does NOT send. It writes natcon_outbox rows
                 //    and returns; natcon:drain-outbox does the sending, paced by

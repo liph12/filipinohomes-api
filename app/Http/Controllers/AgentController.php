@@ -17,6 +17,7 @@ use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\IndexNowService;
 use Carbon\Carbon;
+use App\Services\Listing\PartnerFeedService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -866,8 +867,20 @@ class AgentController extends Controller
         return new AgentResource($agent);
     }
 
-    public function showByEmail(Request $request, string $email)
+    /**
+     * GET /fh-agent/{email} — partner lookup of one agent and their listings.
+     * Which listings go out (and whether the lookup answers at all) is set
+     * in System Settings → Partner Listings Feed (PartnerFeedService,
+     * `agent_lookup`).
+     */
+    public function showByEmail(Request $request, string $email, PartnerFeedService $feed)
     {
+        $settings = $feed->feed('agent_lookup');
+        if (! $settings['enabled']) {
+            // "error" key, not "message" — see VerifyGuestToken's convention.
+            return response()->json(['error' => 'The agent lookup is currently turned off.'], 503);
+        }
+
         $email = trim(urldecode($email));
         if ($email === '') {
             return response()->json(['message' => 'The email path segment is required.'], 422);
@@ -882,13 +895,14 @@ class AgentController extends Controller
             return response()->json(['message' => 'Agent not found.'], 404);
         }
 
-        $listingsQuery = $agent->listings()
-            ->where('visibility', 'public')
-            // Only active listings whose ATS is approved (filters on the related
-            // properties table — dot notation in where() does NOT do this).
-            ->whereHas('property', fn ($q) => $q
-                ->where('status', 'active')
-                ->where('ats_status', 'approve'))
+        // Audit results / statuses switched on in the settings, with the
+        // feed's ATS rule (approved on the market; approved or expired for a
+        // closed deal).
+        $listingsQuery = $feed->applyFilters(
+            $agent->listings()->where('visibility', 'public'),
+            $settings['audit'],
+            $settings['statuses'],
+        )
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',

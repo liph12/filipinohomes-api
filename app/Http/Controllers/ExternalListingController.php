@@ -3,53 +3,53 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\ExternalListingResource;
-use App\Models\Listing;
+use App\Services\Listing\PartnerFeedService;
 use Illuminate\Http\Request;
 
 /**
- * Partner feed of every audited public listing (X-FH-Agent-Token, same as
- * GET /fh-agent/{email}).
+ * Partner feed of our listings for other websites (X-FH-Agent-Token, same as
+ * GET /fh-agent/{email}). WHAT goes out is controlled from System Settings →
+ * Partner Listings Feed (PartnerFeedService); partners can only narrow it.
  */
 class ExternalListingController extends Controller
 {
-    /** Audit results a partner may receive. */
-    private const VERIFIED = ['fully_verified', 'verified'];
-
-    /** Property statuses in the feed: on the market, plus closed deals. */
-    private const STATUSES = ['active', 'sold', 'rented', 'leased'];
+    public function __construct(private PartnerFeedService $feed) {}
 
     /**
      * GET /fh-agent/listings?page=&per_page=&verification=&status=
      *
-     * Public listings of active agents (publiclyListed()) whose audit is
-     * fully_verified or verified, and whose property is active (ATS
-     * approved) or a closed deal — sold, rented or leased (ATS approved or
-     * expired).
-     * `verification` narrows to one audit result; `status` to one or more
-     * statuses (comma-separated, e.g. status=sold,rented).
+     * Public listings of active agents whose audit result and property status
+     * are switched on in the feed settings (see PartnerFeedService::query()
+     * for the ATS rule). `verification` and `status` (comma-separated, e.g.
+     * status=sold,rented) narrow within what the settings allow; asking for
+     * something that is switched off simply returns nothing for it.
      */
     public function index(Request $request)
     {
+        $settings = $this->feed->feed('listings');
+        if (! $settings['enabled']) {
+            // "error" key, not "message" — the web's axios interceptor treats
+            // a message-keyed 401 as a dead session; keep the convention.
+            return response()->json(['error' => 'The listings feed is currently turned off.'], 503);
+        }
+
+        $audit = implode('|', array_keys(PartnerFeedService::AUDIT));
+        $statuses = implode('|', array_keys(PartnerFeedService::STATUSES));
         $data = $request->validate([
             'page'         => 'nullable|integer|min:1',
             'per_page'     => 'nullable|integer|min:1|max:100',
-            'verification' => 'nullable|in:'.implode(',', self::VERIFIED),
-            'status'       => ['nullable', 'string', 'regex:/^('.implode('|', self::STATUSES).')(,('.implode('|', self::STATUSES).'))*$/'],
+            'verification' => ['nullable', 'string', "regex:/^({$audit})(,({$audit}))*$/"],
+            'status'       => ['nullable', 'string', "regex:/^({$statuses})(,({$statuses}))*$/"],
         ]);
 
-        $statuses = isset($data['verification']) ? [$data['verification']] : self::VERIFIED;
-        $propertyStatuses = isset($data['status']) ? array_unique(explode(',', $data['status'])) : self::STATUSES;
+        $allowedAudit = isset($data['verification'])
+            ? array_values(array_intersect($settings['audit'], explode(',', $data['verification'])))
+            : $settings['audit'];
+        $allowedStatuses = isset($data['status'])
+            ? array_values(array_intersect($settings['statuses'], explode(',', $data['status'])))
+            : $settings['statuses'];
 
-        $listings = Listing::publiclyListed()
-            ->whereIn('verification_status', $statuses)
-            // On the market: ATS must be approved. Closed deals: approved or
-            // expired — the authority to sell naturally lapses after a sale;
-            // rejected / pending never qualify.
-            ->whereHas('property', fn ($q) => $q
-                ->whereIn('status', $propertyStatuses)
-                ->where(fn ($q) => $q
-                    ->where(fn ($q) => $q->where('status', 'active')->where('ats_status', 'approve'))
-                    ->orWhere(fn ($q) => $q->where('status', '!=', 'active')->whereIn('ats_status', ['approve', 'expired']))))
+        $listings = $this->feed->query($allowedAudit, $allowedStatuses)
             ->with([
                 'property.propertyAttribute.subtype.type',
                 'property.furnishing',
