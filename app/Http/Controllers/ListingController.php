@@ -1729,6 +1729,8 @@ class ListingController extends Controller
         $validated = $request->validate([
             'date_start' => 'nullable|date',
             'date_end' => 'nullable|date|after_or_equal:date_start',
+            // Optional: one agent status (Agent Insights' "All agents" dropdown). Omitted = every agent.
+            'status' => 'nullable|in:active,resigned,deactivated',
         ]);
 
         $start = $validated['date_start'] ?? '2000-01-01';
@@ -1736,6 +1738,7 @@ class ListingController extends Controller
 
         $agents = Agent::query()
             ->whereBetween('created_at', [$start.' 00:00:00', $end.' 23:59:59'])
+            ->when(! empty($validated['status']), fn ($q) => $q->where('status', $validated['status']))
             ->get(['id', 'gender', 'birthdate', 'region']);
 
         $agg = $this->aggregateDemographics($agents);
@@ -2755,6 +2758,14 @@ class ListingController extends Controller
     public function insightsAgentsSummary(Request $request, AgentInsightsService $insights): JsonResponse
     {
         return response()->json($insights->summary($this->insightsAgentParams($request), $this->resolveInsightsAgentScope($request)));
+    }
+
+    /** Agent Insights: headcount + close rate by gender and age, for one agent status (default active). */
+    public function insightsAgentsDemographics(Request $request, AgentInsightsService $insights): JsonResponse
+    {
+        $status = in_array($request->query('status'), ['all', 'active', 'resigned', 'deactivated'], true) ? $request->query('status') : 'active';
+
+        return response()->json($insights->demographics($this->insightsAgentParams($request), $this->resolveInsightsAgentScope($request), $status));
     }
 
     /** Agent Insights: distinct active agents per week or month. */

@@ -130,6 +130,90 @@ class AgentInsightsService
     }
 
     /**
+     * Agent Insights → "Agent Demographics & Closing": for agents of one status (or every status), the
+     * headcount by gender and age bracket together with each group's close rate — one payload so both
+     * halves of the card always describe the same agents.
+     *
+     * @param  'all'|'active'|'resigned'|'deactivated'  $status
+     */
+    public function demographics(array $params, ?array $agentIds, string $status): array
+    {
+        $rows = $this->agents(['status' => $status] + $params, $agentIds)['data'];
+
+        return ['status' => $status] + $this->closersByDemographic($rows);
+    }
+
+    /**
+     * Who closes deals, by gender and age bracket (same brackets as the demographics cards). For each
+     * group: active agents, how many have listings, and how many of those closed at least one sold /
+     * rented / leased. The close rate is closers ÷ agents WITH listings — an agent who never listed
+     * can't close, so counting them would just measure who lists. Gender/age come from the agent profile;
+     * missing ones land in `not_provided`.
+     *
+     * @param  list<array<string, mixed>>  $rows  active agents, as agents() returns them
+     */
+    private function closersByDemographic(array $rows): array
+    {
+        $profiles = DB::table('agents')->whereIn('id', array_column($rows, 'id'))->get(['id', 'gender', 'birthdate'])->keyBy('id');
+        $brackets = ['under_18', '18-24', '25-34', '35-44', '45-54', '55+', 'not_provided'];
+        $genders = ['male', 'female', 'not_provided'];
+        $blank = fn () => ['agents' => 0, 'listers' => 0, 'closers' => 0];
+
+        $byGender = array_fill_keys($genders, null);
+        foreach ($genders as $g) {
+            $byGender[$g] = $blank();
+        }
+        $byAge = [];
+        foreach ($brackets as $b) {
+            $byAge[$b] = $blank() + ['male' => $blank(), 'female' => $blank()];
+        }
+
+        $now = now();
+        $withGender = 0;
+        $withAge = 0;
+        $ageSum = 0;
+        foreach ($rows as $a) {
+            $p = $profiles->get($a['id']);
+            $g = strtolower(trim((string) ($p->gender ?? '')));
+            $g = in_array($g, ['male', 'female'], true) ? $g : 'not_provided';
+            $years = ! empty($p?->birthdate) ? \Illuminate\Support\Carbon::parse($p->birthdate)->diffInYears($now) : null;
+            $b = $years === null ? 'not_provided'
+                : ($years < 18 ? 'under_18' : ($years < 25 ? '18-24' : ($years < 35 ? '25-34' : ($years < 45 ? '35-44' : ($years < 55 ? '45-54' : '55+')))));
+
+            $withGender += $g !== 'not_provided' ? 1 : 0;
+            if ($years !== null) {
+                $withAge++;
+                $ageSum += $years;
+            }
+
+            $lister = $a['listings'] > 0 ? 1 : 0;
+            $closer = $a['closed'] > 0 ? 1 : 0;
+            foreach ([&$byGender[$g], &$byAge[$b]] as &$cell) {
+                $cell['agents']++;
+                $cell['listers'] += $lister;
+                $cell['closers'] += $closer;
+            }
+            unset($cell);
+            if ($g !== 'not_provided') {
+                $byAge[$b][$g]['agents']++;
+                $byAge[$b][$g]['listers'] += $lister;
+                $byAge[$b][$g]['closers'] += $closer;
+            }
+        }
+
+        return [
+            'totals' => [
+                'agents' => count($rows),
+                'with_gender' => $withGender,
+                'with_age' => $withAge,
+                'avg_age' => $withAge > 0 ? (int) round($ageSum / $withAge) : null,
+            ],
+            'by_gender' => array_map(fn ($g) => ['key' => $g] + $byGender[$g], $genders),
+            'by_age' => array_map(fn ($b) => ['key' => $b] + $byAge[$b], $brackets),
+        ];
+    }
+
+    /**
      * Active agents over time: per week (last 26) or month (last 12), how many distinct agents
      *   - were active at all: logged in, did anything recorded in the audit log, or created a listing;
      *   - logged in (login_logs + the auth audit's logged_in rows);

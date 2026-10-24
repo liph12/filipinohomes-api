@@ -579,6 +579,7 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/listings/insights/prices/by-type', [ListingController::class, 'insightsPricesByType']);
             Route::get('/listings/insights/agents', [ListingController::class, 'insightsAgents']);
             Route::get('/listings/insights/agents/summary', [ListingController::class, 'insightsAgentsSummary']);
+            Route::get('/listings/insights/agents/demographics', [ListingController::class, 'insightsAgentsDemographics']);
             Route::get('/listings/insights/agents/activity', [ListingController::class, 'insightsAgentsActivity']);
             Route::get('/listings/insights/by-status', [ListingController::class, 'insightsByStatus']);
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
