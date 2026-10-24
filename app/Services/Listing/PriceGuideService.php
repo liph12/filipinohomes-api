@@ -393,9 +393,17 @@ class PriceGuideService
             $ratio = $me !== null && $peerRate !== null && $peerRate > 0 ? round($me / $peerRate, 1) : null;
             $days = (int) Carbon::parse($listedAt)->diffInDays(now());
 
-            $views30 = (int) DB::table('listing_view_days')->where('listing_id', $listingId)->where('date', '>=', now()->subDays(30)->toDateString())->sum('views');
-            $favorites = (int) DB::table('favorites')->where('listing_id', $listingId)->count();
-            $inquiries30 = (int) DB::table('listing_inquiries')->where('listing_id', $listingId)->where('created_at', '>=', now()->subDays(30))->count();
+            // Each of these tables is newer than the core schema; a missing one costs its number, not the card.
+            $count = function (callable $q): int {
+                try {
+                    return (int) $q();
+                } catch (\Throwable) {
+                    return 0;
+                }
+            };
+            $views30 = $count(fn () => DB::table('listing_view_days')->where('listing_id', $listingId)->where('date', '>=', now()->subDays(30)->toDateString())->sum('views'));
+            $favorites = $count(fn () => DB::table('favorites')->where('listing_id', $listingId)->count());
+            $inquiries30 = $count(fn () => DB::table('listing_inquiries')->where('listing_id', $listingId)->where('created_at', '>=', now()->subDays(30))->count());
 
             $label = 'steady';
             if ($ratio !== null && $ratio >= 2) {
@@ -528,6 +536,80 @@ class PriceGuideService
         }
 
         return ['types' => $types, 'barangays' => $barangays];
+    }
+
+    /**
+     * The listing's latest price CUT, from the audit log — "₱500K off, 12 days ago" on the card and
+     * in the deal verdict. Null when the last change was a rise, older than the window, or there is
+     * none. The log stores the old and new price as JSON on each `updated` row.
+     *
+     * @return array{old: float, new: float, drop: float, drop_pct: int, at: string, days_ago: int}|null
+     */
+    public function priceChangeFor(int $listingId, int $withinDays = 180): ?array
+    {
+        return Cache::remember("price-guide:change:v1:{$listingId}", 600, function () use ($listingId, $withinDays) {
+            $row = DB::table('audits')
+                ->where('auditable_type', 'App\\Models\\Listing')
+                ->where('auditable_id', $listingId)
+                ->where('event', 'updated')
+                ->where('new_values', 'like', '%"price"%')
+                ->orderByDesc('id')
+                ->first(['old_values', 'new_values', 'created_at']);
+            if ($row === null) {
+                return null;
+            }
+            $old = (float) (json_decode((string) $row->old_values, true)['price'] ?? 0);
+            $new = (float) (json_decode((string) $row->new_values, true)['price'] ?? 0);
+            $days = (int) Carbon::parse($row->created_at)->diffInDays(now());
+            if ($old <= 0 || $new <= 0 || $new >= $old || $days > $withinDays) {
+                return null;
+            }
+
+            return [
+                'old' => round($old),
+                'new' => round($new),
+                'drop' => round($old - $new),
+                'drop_pct' => (int) round(($old - $new) / $old * 100),
+                'at' => Carbon::parse($row->created_at)->toDateString(),
+                'days_ago' => $days,
+            ];
+        });
+    }
+
+    /**
+     * Listings whose price was cut in the last N days, biggest cut first — "show me listings that
+     * dropped price this month". Reads the window of `updated` audit rows (indexed by event +
+     * created_at) and keeps the ones whose price went down.
+     *
+     * @return array<int, int> listing ids
+     */
+    public function priceDropListingIds(int $days): array
+    {
+        $days = max(1, min(365, $days));
+
+        return Cache::remember("price-guide:drops:v1:{$days}", 600, function () use ($days) {
+            $rows = DB::table('audits')
+                ->where('event', 'updated')
+                ->where('created_at', '>=', now()->subDays($days))
+                ->where('auditable_type', 'App\\Models\\Listing')
+                ->where('new_values', 'like', '%"price"%')
+                ->orderByDesc('id')
+                ->get(['auditable_id', 'old_values', 'new_values']);
+            $best = [];
+            foreach ($rows as $r) {
+                $id = (int) $r->auditable_id;
+                if (isset($best[$id])) {
+                    continue; // newest change per listing decides
+                }
+                $old = (float) (json_decode((string) $r->old_values, true)['price'] ?? 0);
+                $new = (float) (json_decode((string) $r->new_values, true)['price'] ?? 0);
+                $best[$id] = $old > 0 && $new > 0 && $new < $old ? ($old - $new) / $old : -1;
+            }
+            $drops = array_filter($best, fn (float $pct) => $pct > 0);
+            arsort($drops);
+
+            return array_keys($drops);
+        });
     }
 
     /** The unit-size tiers, smallest first. */
@@ -665,7 +747,7 @@ class PriceGuideService
     }
 
     /** "Studio" from the subtype; otherwise the bedroom count, 4 and up folded together; null = not sized. */
-    private static function tierOf(string $subtype, ?int $bedrooms): ?string
+    public static function tierOf(string $subtype, ?int $bedrooms): ?string
     {
         if (strcasecmp(trim($subtype), 'Studio') === 0) {
             return 'Studio';

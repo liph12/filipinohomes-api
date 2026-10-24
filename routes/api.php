@@ -182,6 +182,8 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/resolve-properties-keywords', [ListingController::class, 'resolveByKeywordsAndSlug']);
         });
         Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
+        // ASA-GPT "Ask the agent" / "Book a viewing" — a lead for the listing's agent with the chat attached.
+        Route::post('/openai/lead', [OpenAIController::class, 'lead'])->middleware('throttle:10,1');
         Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);
         Route::post('/openai/search-agents', [OpenAIController::class, 'searchAgents']);
         Route::post('/openai/stream-message', [OpenAIController::class, 'streamMessageRequest']);

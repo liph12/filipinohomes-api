@@ -554,6 +554,7 @@ class CommandService extends CacheService
         
         INTENT:
         - price → user asks what properties COST in an area: price range, average/typical price, going rate, "magkano", "how much is a studio in Lahug", rent levels — a market question, not a request to see specific listings
+        - project → user asks about a specific BUILDING, development or condo project by name ("tell me about Avida Towers Riala", "is 38 Park Avenue a good buy", "what's listed in Mivesa"), or to COMPARE two named developments ("Riala vs 38 Park Avenue")
         - area → user asks ABOUT a place in general: "tell me about Lahug", "what's it like in BGC", "is IT Park a good area to invest", "overview of Mandaue", "which barangays in Cebu City have the most listings", rental yield / ROI / "where do condos yield the most in Cebu" — an area or investment question, not a price-only question and not a request for listings
         - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
         - agent → user shows intent to find, search, contact, or inquire about a real estate agent (explicit or implied)
@@ -565,12 +566,13 @@ class CommandService extends CacheService
         - If the user asks for a person (agent, broker, realtor), classify as: agent
         - If the user asks how much properties cost / the price range / average price / rate in a place, classify as: price
         - If the user asks what a place is like, for an overview / snapshot / profile of an area or neighbourhood, or whether an area is good, classify as: area
+        - If the user names a specific building / development / condo project (not a city or barangay) and asks about it or compares two of them, classify as: project
         - If the user asks for property (house, condo, lot, rent, location) or to see/find/show listings, classify as: listing
         - A stated budget while looking for property ("condo in Makati under 5M") is: listing — not price
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: price OR area OR listing OR agent OR normal
+        - Return EXACTLY one word: price OR area OR project OR listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -591,11 +593,48 @@ class CommandService extends CacheService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area', 'project'])) {
             return 'normal';
         }
     
         return $classification;
+    }
+
+    /**
+     * The developments a project question names — one, or two to compare — and the city if said.
+     *
+     * @return array{projects: array<int, string>, city: string}
+     */
+    public function extractProjects(array $thread): array
+    {
+        try {
+            $response = $this->client->chat()->create([
+                'model' => 'gpt-5.4-mini',
+                'messages' => array_merge([[
+                    'role' => 'system',
+                    'content' => 'You extract the names of specific real-estate developments (condo towers, subdivisions, projects) from the MOST RECENT user message for Filipino Homes, Philippines. Return each name as the user wrote it, without the city. Up to two names (two means a comparison). Leave the city empty unless named.',
+                ]], $thread),
+                'functions' => [[
+                    'name' => 'extract_projects',
+                    'description' => 'The named developments and optional city.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'projects' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Development names, e.g. ["Avida Towers Riala", "38 Park Avenue"]. Empty if none.'],
+                            'city' => ['type' => 'string', 'description' => 'City if named, else "".'],
+                        ],
+                        'required' => ['projects', 'city'],
+                    ],
+                ]],
+                'function_call' => ['name' => 'extract_projects'],
+            ]);
+            $args = json_decode($response->choices[0]->message->functionCall->arguments ?? '{}', true) ?: [];
+            $names = array_values(array_filter(array_map(fn ($n) => is_string($n) ? trim($n) : '', (array) ($args['projects'] ?? []))));
+
+            return ['projects' => array_slice($names, 0, 2), 'city' => is_string($args['city'] ?? null) ? trim($args['city']) : ''];
+        } catch (\Throwable) {
+            return ['projects' => [], 'city' => ''];
+        }
     }
 
     public function parsePropertyQuery(array $thread)
@@ -638,6 +677,7 @@ class CommandService extends CacheService
         • "old", "earliest" → prioritize older listings → set date_to to an older date (e.g. 1–2 years ago), date_from = ""
         • specific dates → convert to Y-m-d
         - If no date mentioned → return empty string ""
+        13. If the user asks for listings whose price was REDUCED / dropped / cut / discounted ("price drops this month", "reduced price condos", "nagbaba ang presyo") set `price_dropped_days` to the window in days (this week → 7, this month → 30, otherwise 30). 0 when not asked.
         12. If the user wants to be NEAR a specific place — a mall, business park, school, hospital, office, church, beach, a named building or development ("near IT Park", "walking distance to Ayala Center Cebu", "close to SM Seaside", "beside Cebu Doctors") — put that place's name in `near` (just the place, no "near"), and the distance in `radius_km` when they say one ("within 2 km" → 2; "walking distance" → 1; otherwise 0). Do NOT put the place in query_words or address; the city still goes in address when named.
         SYSTEM
         ];
@@ -709,6 +749,10 @@ class CommandService extends CacheService
                                 'type' => 'number',
                                 'description' => 'How close, in km, when the user says ("within 2 km" → 2, "walking distance" → 1). 0 if not said.'
                             ],
+                            'price_dropped_days' => [
+                                'type' => 'number',
+                                'description' => 'When the user asks for listings whose price was reduced/dropped/cut: the window in days (this week → 7, this month → 30; default 30). 0 if not asked.'
+                            ],
                             'agent_name' => [
                                 'type' => 'string',
                                 'description' => 'Name of the agent associated with this property request. Leave it blank if not specified.',
@@ -751,7 +795,8 @@ class CommandService extends CacheService
                             'date_from',
                             'date_to',
                             'near',
-                            'radius_km'
+                            'radius_km',
+                            'price_dropped_days'
                         ],
                     ],
                 ],
@@ -770,6 +815,7 @@ class CommandService extends CacheService
                     'address' => '',
                     'near' => '',
                     'radius_km' => 0,
+                    'price_dropped_days' => 0,
                     'agent_name' => '',
                     'date_from' => '',
                     'date_to' => '',
@@ -786,9 +832,22 @@ class CommandService extends CacheService
             ];
         }
     
+        $args = json_decode($fn->arguments, true) ?: [];
+
+        // The two newest filters are easy for the model to over-apply, and either one empties the
+        // results when wrong — so each needs the user's own words in the latest message.
+        $latest = mb_strtolower((string) (collect($thread)->where('role', 'user')->last()['content'] ?? ''));
+        if (! preg_match('/\b(drop|dropped|reduc|cut|discount|lower(ed)?|slash|bawas|baba|mura)\w*/u', $latest)) {
+            $args['price_dropped_days'] = 0;
+        }
+        if (! preg_match('/\b(near|close to|beside|next to|walking|within|around|by the|malapit|tabi)\b/u', $latest)) {
+            $args['near'] = '';
+            $args['radius_km'] = 0;
+        }
+
         return [
             'function' => $fn->name,
-            'arguments' => json_decode($fn->arguments, true),
+            'arguments' => $args,
         ];
     }
 

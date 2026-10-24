@@ -18,6 +18,21 @@ class DataLayerService
     {
     }
 
+    /** Whether a table exists, asked once per request — the production schema can trail local. */
+    private static function hasTable(string $table): bool
+    {
+        static $known = [];
+        if (! array_key_exists($table, $known)) {
+            try {
+                $known[$table] = \Illuminate\Support\Facades\Schema::hasTable($table);
+            } catch (\Throwable) {
+                $known[$table] = false;
+            }
+        }
+
+        return $known[$table];
+    }
+
     /** The listing against its market (see PriceGuideService::contextForListing); never lets a card fail. */
     private function priceContext(int $listingId): ?array
     {
@@ -26,6 +41,23 @@ class DataLayerService
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function priceChange(int $listingId): ?array
+    {
+        try {
+            return $this->priceGuide->priceChangeFor($listingId);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** One listing as the chat draws it (the same shape the search returns), or null when not public. */
+    public function cardFor(int $listingId): ?array
+    {
+        $l = Listing::publiclyListed()->with(['property.propertyAttribute.subtype.type', 'property.furnishing', 'category', 'agent.user'])->find($listingId);
+
+        return $l === null ? null : $this->extractListing($l);
     }
 
     protected function extractListing($l)
@@ -57,6 +89,8 @@ class DataLayerService
             'price' => $l->price ?? 0,
             // "12% below typical for a 2 Bedroom Condominium in Lahug" — the card's one line of market context.
             'priceContext' => $this->priceContext((int) $l->id),
+            // "₱500K off · 12 days ago" — the latest price cut from the audit log, when recent.
+            'priceChange' => $this->priceChange((int) $l->id),
             // "650 m from IT Park" — set only on a near-a-place search (see getListingsByArguments).
             'distance' => isset($l->distance_m) && isset($l->near_label)
                 ? ['landmark' => (string) $l->near_label, 'meters' => (int) round((float) $l->distance_m)]
@@ -94,17 +128,30 @@ class DataLayerService
         $reviews = (int) ($a->total_reviews ?? 0);
         $sample = (int) ($a->response_sample_size ?? 0);
         $medianSec = $a->median_first_response_seconds;
-        $awards = \Illuminate\Support\Facades\DB::table('agent_awards')->where('agent_id', $a->id)->orderByDesc('granted_at')->limit(3)->get(['title', 'tier'])
-            ->map(fn ($w) => ['title' => (string) $w->title, 'tier' => $w->tier === null ? null : (string) $w->tier])->values()->all();
+        // Production may trail local on migrations (awards, response metrics): a missing table or
+        // column must cost the badge, never the whole agent search.
+        $awards = [];
+        try {
+            if (self::hasTable('agent_awards')) {
+                $awards = DB::table('agent_awards')->where('agent_id', $a->id)->orderByDesc('granted_at')->limit(3)->get(['title', 'tier'])
+                    ->map(fn ($w) => ['title' => (string) $w->title, 'tier' => $w->tier === null ? null : (string) $w->tier])->values()->all();
+            }
+        } catch (\Throwable) {
+            $awards = [];
+        }
         $areaListings = null;
         if ($this->areaWords !== []) {
-            $words = $this->areaWords;
-            $areaListings = (int) Listing::publiclyListed()->where('agent_id', $a->id)
-                ->whereHas('property', function ($q) use ($words) {
-                    foreach ($words as $w) {
-                        $q->where('address', 'LIKE', "%{$w}%");
-                    }
-                })->count();
+            try {
+                $words = $this->areaWords;
+                $areaListings = (int) Listing::publiclyListed()->where('agent_id', $a->id)
+                    ->whereHas('property', function ($q) use ($words) {
+                        foreach ($words as $w) {
+                            $q->where('properties.address', 'LIKE', "%{$w}%");
+                        }
+                    })->count();
+            } catch (\Throwable) {
+                $areaListings = null;
+            }
         }
 
         return [
@@ -144,6 +191,13 @@ class DataLayerService
         $near = $args['near'] ?? '';
         $point = $near !== '' ? $this->landmarks->locate((string) $near, (string) $address) : null;
         $radiusM = ((float) ($args['radius_km'] ?? 0) > 0 ? (float) $args['radius_km'] : 1.5) * 1000;
+
+        // "Listings that dropped price this month": only ids with a recent cut, biggest cut first.
+        $dropDays = (int) ($args['price_dropped_days'] ?? 0);
+        $dropIds = $dropDays > 0 ? $this->priceGuide->priceDropListingIds($dropDays) : null;
+        if ($dropIds !== null && $dropIds === []) {
+            return [];
+        }
 
         $listings = Listing::publiclyListed()->whereHas('category', function($q) use($args){
             if($args['category'] !== "")
@@ -188,7 +242,8 @@ class DataLayerService
                 }
             })->having('listings_count', '>=', $args['listings_count']);
         })->whereHas('property', function($q) use($args, $address, $attr, $array_words, $point){    
-            $addr = explode(' ', $address);
+            // "Lahug, Cebu City" → lahug / cebu / city: the comma must not ride along into the LIKE.
+            $addr = array_values(array_filter(preg_split('/[\s,]+/', (string) $address)));
 
             // Measuring from a known point, the pin decides the place — the typed address need not
             // name it (a listing 400 m from IT Park may say "Apas", not "Lahug").
@@ -245,6 +300,10 @@ class DataLayerService
             });
         })->with(['property.propertyAttribute.subtype.type', 'category']);
 
+        if ($dropIds !== null) {
+            $listings = $listings->whereIn('listings.id', array_slice($dropIds, 0, 200));
+        }
+
         if ($point !== null) {
             // Haversine on the property's JSON pin, in metres; plain trig so it runs on any MySQL/MariaDB.
             $lat = DB::raw("CAST(JSON_UNQUOTE(JSON_EXTRACT(near_p.geo_coordinates, '$.lat')) AS DECIMAL(11,8))");
@@ -260,6 +319,10 @@ class DataLayerService
                 ->having('distance_m', '<=', $radiusM)
                 ->orderBy('distance_m')
                 ->limit(8);
+        } elseif ($dropIds !== null) {
+            // Biggest cut first, as priceDropListingIds ordered them.
+            $order = implode(',', array_map('intval', array_slice($dropIds, 0, 200)));
+            $listings = $listings->orderByRaw("FIELD(listings.id, {$order})")->limit(8);
         } else {
             $listings = $listings->orderBy('created_at', 'DESC')->limit(5);
         }

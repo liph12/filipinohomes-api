@@ -10,6 +10,9 @@ use App\Services\OpenAI\ListingCommandService;
 use App\Services\OpenAI\PriceCommandService;
 use App\Services\OpenAI\DealCommandService;
 use App\Services\OpenAI\AreaCommandService;
+use App\Services\OpenAI\CompareCommandService;
+use App\Services\OpenAI\ProjectCommandService;
+use App\Services\OpenAI\LeadService;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
 use App\Models\AiSearchLog;
@@ -24,8 +27,11 @@ class OpenAIController extends Controller
     private $priceService;
     private $dealService;
     private $areaService;
+    private $compareService;
+    private $projectService;
+    private $leadService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead)
     {
         $this->sqService = $s;
         $this->cacheService = $c;
@@ -34,6 +40,33 @@ class OpenAIController extends Controller
         $this->priceService = $p;
         $this->dealService = $deal;
         $this->areaService = $area;
+        $this->compareService = $compare;
+        $this->projectService = $project;
+        $this->leadService = $lead;
+    }
+
+    /**
+     * "Ask the agent" / "Book a viewing" from a card: a lead for the listing's agent with the
+     * conversation attached. Guest-token route; the device id scopes the thread like the chat.
+     */
+    public function lead(Request $request)
+    {
+        $data = $request->validate([
+            'listing_id' => 'required|integer',
+            'name' => 'required|string|max:120',
+            'email' => 'nullable|email|max:255',
+            'mobile' => 'nullable|string|max:40',
+            'kind' => 'required|string|in:viewing,question',
+            'preferred_at' => 'nullable|string|max:120',
+            'note' => 'nullable|string|max:1000',
+            'device_id' => 'nullable|string|max:120',
+        ]);
+        if (empty($data['email']) && empty($data['mobile'])) {
+            return response()->json(['message' => 'Leave a mobile number or an email so the agent can reach you.'], 422);
+        }
+        $data += ['email' => null, 'mobile' => null, 'preferred_at' => null, 'note' => null];
+
+        return response()->json($this->leadService->create($request, $data), 201);
     }
 
     public function getDailyLimit(Request $request)
@@ -83,10 +116,16 @@ class OpenAIController extends Controller
 
         $this->cacheService->appendMessages($request, $newMessages);
 
-        // "Is this a good deal? listing #123" — the card's button. Deterministic: no classifier, no model.
+        // Card buttons speak in listing ids and are routed on them — no classifier, no model:
+        // "Compare listing #12 and listing #34" (two or more ids) or "Is this a good deal? listing #123".
         $last = collect($thread)->where('role', 'user')->last();
-        if (is_array($last) && preg_match('/\blisting\s*#\s*(\d+)/i', (string) ($last['content'] ?? ''), $m)) {
-            return $this->dealService->replyStream((int) $m[1], $thread, $request);
+        if (is_array($last) && preg_match_all('/\blisting\s*#\s*(\d+)/i', (string) ($last['content'] ?? ''), $mm) && $mm[1] !== []) {
+            $ids = array_values(array_unique(array_map('intval', $mm[1])));
+            if (count($ids) >= 2) {
+                return $this->compareService->replyStream($ids, $thread, $request);
+            }
+
+            return $this->dealService->replyStream($ids[0], $thread, $request);
         }
 
         $classification = $this->sqService->classifyMessage($thread);
@@ -109,6 +148,11 @@ class OpenAIController extends Controller
             // "Tell me about Lahug" — the area at a glance, from our listings.
             if ($classification === 'area') {
                 return $this->areaService->replyStream($thread, $request);
+            }
+
+            // "Tell me about Avida Towers Riala" / "Riala vs 38 Park Avenue" — a development, from its listings.
+            if ($classification === 'project') {
+                return $this->projectService->replyStream($thread, $request);
             }
         }
     
