@@ -424,7 +424,7 @@ class CommandService extends CacheService
             RULES:
             - Always focus ONLY on the MOST RECENT user intent.
             - Ignore previous messages if they conflict with the latest message.
-            - Each agent carries PROVEN PERFORMANCE facts from Filipino Homes' own records: `area_listings` (live listings in the area the user asked about), `rating` (average stars and review count), `response` (median first-reply minutes, % answered within an hour, % left unanswered), `awards`, `years_active`. Rank by these — most area listings and best responsiveness first, then rating and awards — not by name order. Say WHY the pick is best using those numbers (e.g. "12 live listings in Lahug, replies in about 20 minutes, 4.9★ from 32 reviews"). Never invent a number that is not in the data; skip a fact that is null.
+            - Each agent carries PROVEN PERFORMANCE facts from Filipino Homes' own records: `area_listings` (live listings in the area the user asked about), `rating` (average stars and review count), `response` (median first-reply minutes, % answered within an hour, % left unanswered), `natcon` (years the agent was a NATCON awardee — Leuterio Realty's annual top-performer recognition — with the award segment when known), `awards`, `years_active`. Rank by these — most area listings and best responsiveness first, then rating and awards — not by name order. Say WHY the pick is best using those numbers (e.g. "12 live listings in Lahug, replies in about 20 minutes, NATCON 2026 awardee"). Never invent a number that is not in the data; skip a fact that is null.
             SYSTEM
         ];
 

@@ -14,6 +14,9 @@ class DataLayerService
 
     private string $areaLabel = '';
 
+    /** NATCON awardee records by lower-cased email, loaded once per agent search (read-only). */
+    private array $natconByEmail = [];
+
     public function __construct(private readonly PriceGuideService $priceGuide, private readonly LandmarkLocator $landmarks)
     {
     }
@@ -154,6 +157,10 @@ class DataLayerService
             }
         }
 
+        // NATCON awardee years, matched by the agent's email — Leuterio Realty's own recognition,
+        // read from the convention's list and never written to.
+        $natcon = $this->natconByEmail[mb_strtolower(trim((string) ($a->user->email ?? '')))] ?? [];
+
         return [
             'id' => $a->id,
             'name' => $agentName,
@@ -174,7 +181,43 @@ class DataLayerService
             'years_active' => $a->member_since ? max(0, (int) \Illuminate\Support\Carbon::parse($a->member_since)->diffInYears(now())) : null,
             'area_listings' => $areaListings,
             'area_label' => $areaListings === null ? null : $this->areaLabel,
+            'natcon' => $natcon,
         ];
+    }
+
+    /**
+     * NATCON awardee records for a set of emails: [{year, segment, team}] per lower-cased email,
+     * newest convention first. Read-only; an unavailable table simply means no badges.
+     *
+     * @param  array<int, string>  $emails
+     * @return array<string, array<int, array{year:int, segment:?string, team:?string}>>
+     */
+    private function natconAwards(array $emails): array
+    {
+        $emails = array_values(array_unique(array_filter(array_map(fn ($e) => mb_strtolower(trim((string) $e)), $emails))));
+        if ($emails === [] || ! self::hasTable('natcon_recipients') || ! self::hasTable('natcon_events')) {
+            return [];
+        }
+        try {
+            $rows = DB::table('natcon_recipients')
+                ->join('natcon_events', 'natcon_events.id', '=', 'natcon_recipients.natcon_event_id')
+                ->whereNull('natcon_recipients.deleted_at')
+                ->whereIn(DB::raw('LOWER(natcon_recipients.email)'), $emails)
+                ->orderByDesc('natcon_events.year')
+                ->get(['natcon_recipients.email', 'natcon_recipients.award_segment', 'natcon_recipients.team', 'natcon_events.year']);
+            $byEmail = [];
+            foreach ($rows as $r) {
+                $byEmail[mb_strtolower((string) $r->email)][] = [
+                    'year' => (int) $r->year,
+                    'segment' => $r->award_segment !== null && $r->award_segment !== '' ? (string) $r->award_segment : null,
+                    'team' => $r->team !== null && $r->team !== '' ? (string) $r->team : null,
+                ];
+            }
+
+            return $byEmail;
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     public function getListingsByArguments($args): array
@@ -401,6 +444,8 @@ class DataLayerService
         ->limit(25)
         ->get();
 
+        $this->natconByEmail = $this->natconAwards($agents->map(fn ($a) => $a->user->email ?? '')->all());
+
         foreach($agents as $a)
         {
             $inquiredAgents[] = $this->extractAgent($a);
@@ -427,6 +472,8 @@ class DataLayerService
             $score += $weight * (0.15 * (float) ($a['response']['within_1h_pct'] ?? 0) - 0.15 * (float) ($a['response']['unanswered_pct'] ?? 0));
         }
         $score += 5.0 * count($a['awards'] ?? []);
+        // A NATCON awardee year is the company's own top-performer recognition; two years count, more is the same signal.
+        $score += 8.0 * min(2, count($a['natcon'] ?? []));
 
         return $score;
     }
