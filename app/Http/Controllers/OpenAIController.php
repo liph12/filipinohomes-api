@@ -146,6 +146,17 @@ class OpenAIController extends Controller
         }
 
         $classification = $this->sqService->classifyMessage($thread);
+
+        // "What house can I afford with a 5M budget in Lahug" is a listing search under ₱5M, not the
+        // monthly-payment calculator: the calculator needs a monthly amount or a salary, and a rent
+        // question with a monthly figure is a listing search too.
+        if ($classification === 'afford') {
+            $monthlyCue = preg_match('/\b(a month|per month|monthly|\/mo\b|salary|income|sahod|kita|amortiz)/iu', $question);
+            $rentCue = preg_match('/\b(rent|rental|renting|upa)\b/iu', $question);
+            if (! $monthlyCue || $rentCue) {
+                $classification = 'listing';
+            }
+        }
         AsaQuestionLog::start($request, $question, $classification);
         $isNormal = $classification === "normal";
     
