@@ -470,7 +470,17 @@ class PriceGuideService
         if ($guide === null || $guide['sections'] === []) {
             return null;
         }
-        $agents = Cache::remember("price-guide:agents:{$cityId}:".($barangayId ?? 'all'), self::TTL_SECONDS, function () use ($cityId, $barangayId) {
+        return ['guide' => $guide, 'agents' => $this->topAgents($cityId, $barangayId), 'yields' => $this->yields($cityId, $barangayId)];
+    }
+
+    /**
+     * The agents with the most live public listings in an area (a city, or one barangay of it).
+     *
+     * @return array<int, array{id:int, name:string, listings:int}>
+     */
+    public function topAgents(int $cityId, ?int $barangayId = null, int $limit = 3): array
+    {
+        return Cache::remember("price-guide:agents:{$cityId}:".($barangayId ?? 'all').":{$limit}", self::TTL_SECONDS, function () use ($cityId, $barangayId, $limit) {
             $q = $this->baseQuery()->where('cities.id', $cityId);
             if ($barangayId !== null) {
                 $q->where('eff_b.id', $barangayId);
@@ -479,14 +489,89 @@ class PriceGuideService
             return $q->select('agents.id', 'agents.first_name', 'agents.last_name', DB::raw('COUNT(*) as listings'))
                 ->groupBy('agents.id', 'agents.first_name', 'agents.last_name')
                 ->orderByDesc('listings')
-                ->limit(3)
+                ->limit($limit)
                 ->get()
                 ->map(fn ($a) => ['id' => (int) $a->id, 'name' => trim("{$a->first_name} {$a->last_name}"), 'listings' => (int) $a->listings])
                 ->values()
                 ->all();
         });
+    }
 
-        return ['guide' => $guide, 'agents' => $agents, 'yields' => $this->yields($cityId, $barangayId)];
+    /**
+     * The city's slim listing rows (see cityRows), for callers that compute their own statistics —
+     * the valuation and the rent-or-buy comparison. Empty when the city has no public listings.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function rows(int $cityId): array
+    {
+        return $this->cityRows($cityId)['rows'] ?? [];
+    }
+
+    /**
+     * The typical sale price and the typical rent of the SAME kind of unit in an area — the pair a
+     * rent-or-buy comparison needs. Narrowest scope first: the barangay and the unit size, then the
+     * barangay at any size, then the city at the size, then the city; each side needs $min listings.
+     *
+     * @return array{scope:'barangay'|'city', tier:string, sale:array<string,mixed>, rent:array<string,mixed>}|null
+     */
+    public function pairFor(int $cityId, ?int $barangayId, string $type, ?string $tier, int $min = 5): ?array
+    {
+        $rows = array_values(array_filter($this->rows($cityId), fn (array $r) => $r['type'] === $type));
+        if ($rows === []) {
+            return null;
+        }
+        $attempts = [];
+        if ($barangayId !== null) {
+            if ($tier !== null) {
+                $attempts[] = ['barangay', $tier];
+            }
+            $attempts[] = ['barangay', null];
+        }
+        if ($tier !== null) {
+            $attempts[] = ['city', $tier];
+        }
+        $attempts[] = ['city', null];
+
+        foreach ($attempts as [$scope, $t]) {
+            $set = array_values(array_filter($rows, fn (array $r) => ($scope === 'city' || $r['barangay_id'] === $barangayId) && ($t === null || $r['tier'] === $t)));
+            $sale = array_values(array_filter($set, fn (array $r) => $r['category'] === 'For Sale'));
+            $rent = array_values(array_filter($set, fn (array $r) => $r['category'] === 'For Rent'));
+            if (count($sale) < $min || count($rent) < $min) {
+                continue;
+            }
+            $s = $this->stats($t ?? 'All sizes', $sale);
+            $r = $this->stats($t ?? 'All sizes', $rent);
+            if ($s === null || $r === null || $s['median'] <= 0 || $r['median'] <= 0) {
+                continue;
+            }
+            $y = $r['median'] * 12 / $s['median'] * 100;
+            if ($y < self::MIN_YIELD_PCT || $y > self::MAX_YIELD_PCT) {
+                continue; // mismatched sizes or placeholder prices, not a market
+            }
+
+            return ['scope' => $scope, 'tier' => $t ?? 'All sizes', 'sale' => $s, 'rent' => $r];
+        }
+
+        return null;
+    }
+
+    /** Low / typical / high of a caller's own row set (same rules as the guide's tiers). */
+    public function statsOf(string $label, array $rows): ?array
+    {
+        return $this->stats($label, $rows);
+    }
+
+    /** Linear-interpolated percentile of a list (sorted here). */
+    public static function percentileOf(array $values, float $p): ?float
+    {
+        $values = array_values(array_filter($values, fn ($v) => $v !== null));
+        if ($values === []) {
+            return null;
+        }
+        sort($values);
+
+        return self::percentile($values, $p);
     }
 
     /**
@@ -704,7 +789,7 @@ class PriceGuideService
      */
     private function cityRows(int $cityId): ?array
     {
-        return Cache::remember("price-guide:city:v3:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
+        return Cache::remember("price-guide:city:v4:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
             $rows = $this->baseQuery()
                 ->where('cities.id', $cityId)
                 ->select(
@@ -716,6 +801,7 @@ class PriceGuideService
                     'property_subtypes.name as subtype',
                     'property_attributes.bedroom_count',
                     'property_attributes.floor_area',
+                    'property_attributes.lot_area',
                     'property_attributes.garage_count',
                     'properties.amenities',
                     'listings.price',
@@ -735,7 +821,11 @@ class PriceGuideService
             $slim = [];
             foreach ($rows as $r) {
                 $price = (float) $r->price;
+                // The size a ₱/sqm is measured on: floor area, or the lot for land and lot-only listings.
                 $area = (float) ($r->floor_area ?? 0);
+                if ($area < self::MIN_FLOOR_AREA_SQM && in_array((string) $r->type, ['Land', 'Commercial'], true)) {
+                    $area = (float) ($r->lot_area ?? 0);
+                }
                 $slim[] = [
                     'listing_id' => (int) $r->listing_id,
                     // All-time views per day listed — the demand rate a listing is compared on.
@@ -744,6 +834,7 @@ class PriceGuideService
                     'type' => (string) $r->type,
                     'tier' => self::tierOf((string) $r->subtype, $r->bedroom_count === null ? null : (int) $r->bedroom_count),
                     'price' => $price,
+                    'sqm' => $area >= self::MIN_FLOOR_AREA_SQM ? $area : null,
                     'ppsqm' => $area >= self::MIN_FLOOR_AREA_SQM ? $price / $area : null,
                     'barangay_id' => $r->barangay_id === null ? null : (int) $r->barangay_id,
                     'barangay' => $r->barangay === null ? null : (string) $r->barangay,

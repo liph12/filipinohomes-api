@@ -2,6 +2,7 @@
 
 namespace App\Services\OpenAI;
 
+use App\Models\Agent;
 use App\Models\Inquiry;
 use App\Models\Listing;
 use App\Models\ListingInquiry;
@@ -110,6 +111,86 @@ class LeadService extends CacheService
             'channel' => $channel,
             'agent' => ['name' => $agentName, 'mobile' => $agent->user->mobile_no ?? $agent->mobile_no ?? null, 'avatar' => $agent->user->avatar ?? null],
         ];
+    }
+
+    /**
+     * "List it with an agent" from the valuation panel: an owner's lead for the agent who sells most
+     * in their area, with ASA's estimate attached. Always the admin inquiry inbox (there is no listing
+     * to hang a listing-inquiry on) plus a direct email to the agent.
+     *
+     * @param  array{agent_id:int, name:string, email:?string, mobile:?string, note:?string}  $in
+     * @return array<string, mixed>
+     */
+    public function createSellerLead(Request $request, array $in): array
+    {
+        $agent = Agent::with('user')->findOrFail($in['agent_id']);
+        $agentName = trim("{$agent->first_name} {$agent->last_name}");
+        $agentEmail = $agent->user->email ?? null;
+
+        $worth = $this->latestWorth($request);
+        $lines = [
+            'ASA-GPT lead — Owner wants to list a property',
+            'Owner: '.$in['name'].($in['mobile'] ? " · {$in['mobile']}" : '').($in['email'] ? " · {$in['email']}" : ''),
+        ];
+        if ($worth !== null) {
+            $lines[] = sprintf('Property: %s in %s', $worth['what'], $worth['scope_label']);
+            $lines[] = sprintf('ASA\'s estimate from %d comparable listings: %s (%s – %s)%s', $worth['peers'], PriceCommandService::peso((float) $worth['estimate']), PriceCommandService::peso((float) $worth['low']), PriceCommandService::peso((float) $worth['high']), ($worth['category'] ?? '') === 'For Rent' ? ' per month' : '');
+        }
+        if (! empty($in['note'])) {
+            $lines[] = 'Message: '.$in['note'];
+        }
+        $message = implode("\n", $lines);
+
+        Inquiry::create([
+            'name' => $in['name'],
+            'email' => $in['email'] ?: 'no-email@asa-lead.filipinohomes.com',
+            'message' => $message,
+            'source' => 'asa_gpt_seller',
+            'device' => ['device_id' => $request->input('device_id'), 'agent' => $request->userAgent(), 'agent_id' => $agent->id],
+        ]);
+        if ($agentEmail) {
+            try {
+                Mail::raw($message."\n\nReply to the owner directly. — ASA-GPT, Filipino Homes", function ($m) use ($agentEmail, $agentName, $in) {
+                    $m->to($agentEmail, $agentName)->subject("[ASA-GPT] Owner wants to list: {$in['name']}");
+                    if (! empty($in['email'])) {
+                        $m->replyTo($in['email'], $in['name']);
+                    }
+                });
+            } catch (\Throwable $e) {
+                Log::warning('ASA seller lead mail failed', ['agent' => $agent->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        $reply = "Your property is with **{$agentName}**. They'll reach you".($in['mobile'] ? " at {$in['mobile']}" : '').($in['email'] ? ($in['mobile'] ? ' or ' : ' at ')."{$in['email']}" : '').' to talk about listing it.';
+        $this->appendMessages($request, [[
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'role' => 'assistant',
+            'content' => $reply,
+        ]]);
+
+        return [
+            'message' => $reply,
+            'channel' => 'inbox',
+            'agent' => ['name' => $agentName, 'mobile' => $agent->user->mobile_no ?? $agent->mobile_no ?? null, 'avatar' => $agent->user->avatar ?? null],
+        ];
+    }
+
+    /** The most recent valuation panel in this thread, if any. */
+    private function latestWorth(Request $request): ?array
+    {
+        try {
+            $found = null;
+            foreach ($this->getDailyMessages($request) as $m) {
+                $w = $m['metaData']['worth'] ?? null;
+                if (is_array($w) && empty($w['empty']) && isset($w['estimate'])) {
+                    $found = $w;
+                }
+            }
+
+            return $found;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

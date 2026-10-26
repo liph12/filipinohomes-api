@@ -646,6 +646,47 @@ class DataLayerService
         return array_slice($inquiredAgents, 0, 10);
     }
 
+    /**
+     * The cards for given agents, in the given order — the valuation panel's "list it with one of
+     * these" — with their live listings in the area and the NATCON badge, as the agent search draws them.
+     *
+     * @param  array<int, int>  $agentIds
+     * @param  array<int, int>  $areaCounts  agent id → live listings in the area
+     * @return array<int, array<string, mixed>>
+     */
+    public function agentCards(array $agentIds, array $areaCounts, string $areaLabel): array
+    {
+        $agentIds = array_values(array_unique(array_map('intval', $agentIds)));
+        if ($agentIds === []) {
+            return [];
+        }
+        try {
+            $agents = Agent::withCount('listings')
+                ->where('status', 'active')
+                ->whereIn('id', $agentIds)
+                ->with(['user', 'listings' => function ($q) {
+                    $q->publiclyListed()->with(['property.propertyAttribute.subtype.type', 'category'])
+                        ->orderBy('clicks', 'DESC')
+                        ->limit(6);
+                }])
+                ->get()
+                ->keyBy('id');
+            $this->areaLabel = $areaLabel;
+            $this->natconByEmail = $this->natconAwards($agents->map(fn ($a) => $a->user->email ?? '')->all());
+            $cards = [];
+            foreach ($agentIds as $id) {
+                $a = $agents->get($id);
+                if ($a !== null) {
+                    $cards[] = $this->extractAgent($a, (int) ($areaCounts[$id] ?? 0));
+                }
+            }
+
+            return $cards;
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
     /** A ranking score from an agent's facts; higher is better. Tuned to put area presence first. */
     private static function agentScore(array $a): float
     {

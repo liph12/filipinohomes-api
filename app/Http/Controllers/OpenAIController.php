@@ -14,6 +14,9 @@ use App\Services\OpenAI\CompareCommandService;
 use App\Services\OpenAI\ProjectCommandService;
 use App\Services\OpenAI\LeadService;
 use App\Services\OpenAI\AffordCommandService;
+use App\Services\OpenAI\WorthCommandService;
+use App\Services\OpenAI\CostCommandService;
+use App\Services\OpenAI\RentBuyCommandService;
 use App\Services\OpenAI\AsaQuestionLog;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
@@ -33,10 +36,16 @@ class OpenAIController extends Controller
     private $projectService;
     private $leadService;
     private $affordService;
+    private $worthService;
+    private $costService;
+    private $rentBuyService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy)
     {
         $this->affordService = $afford;
+        $this->worthService = $worth;
+        $this->costService = $cost;
+        $this->rentBuyService = $rentBuy;
         $this->sqService = $s;
         $this->cacheService = $c;
         $this->dataService = $d;
@@ -56,11 +65,12 @@ class OpenAIController extends Controller
     public function lead(Request $request)
     {
         $data = $request->validate([
-            'listing_id' => 'required|integer',
+            'listing_id' => 'nullable|integer|required_unless:kind,sell',
+            'agent_id' => 'nullable|integer|required_if:kind,sell',
             'name' => 'required|string|max:120',
             'email' => 'nullable|email|max:255',
             'mobile' => 'nullable|string|max:40',
-            'kind' => 'required|string|in:viewing,question',
+            'kind' => 'required|string|in:viewing,question,sell',
             'preferred_at' => 'nullable|string|max:120',
             'note' => 'nullable|string|max:1000',
             'device_id' => 'nullable|string|max:120',
@@ -68,7 +78,10 @@ class OpenAIController extends Controller
         if (empty($data['email']) && empty($data['mobile'])) {
             return response()->json(['message' => 'Leave a mobile number or an email so the agent can reach you.'], 422);
         }
-        $data += ['email' => null, 'mobile' => null, 'preferred_at' => null, 'note' => null];
+        $data += ['listing_id' => null, 'agent_id' => null, 'email' => null, 'mobile' => null, 'preferred_at' => null, 'note' => null];
+        if ($data['kind'] === 'sell') {
+            return response()->json($this->leadService->createSellerLead($request, $data), 201);
+        }
 
         return response()->json($this->leadService->create($request, $data), 201);
     }
@@ -140,6 +153,12 @@ class OpenAIController extends Controller
 
                 return $this->compareService->replyStream($ids, $thread, $request);
             }
+            // "What will it really cost to buy listing #123?" — the cost breakdown, not the verdict.
+            if (preg_match('/\b(cost|fees?|taxes?|closing|up ?front|upfront|all[- ]in|amortiz|monthly|installment)/i', $question)) {
+                AsaQuestionLog::start($request, $question, 'cost');
+
+                return $this->costService->replyStreamForListing($ids[0], $thread, $request);
+            }
             AsaQuestionLog::start($request, $question, 'deal');
 
             return $this->dealService->replyStream($ids[0], $thread, $request);
@@ -187,6 +206,21 @@ class OpenAIController extends Controller
             // "What can I afford at 25k a month?" — a budget turned into a price ceiling, by arithmetic.
             if ($classification === 'afford') {
                 return $this->affordService->replyStream($thread, $request);
+            }
+
+            // "What is my condo in Lahug worth?" — a seller's estimate from comparable live listings.
+            if ($classification === 'worth') {
+                return $this->worthService->replyStream($thread, $request);
+            }
+
+            // "What are the fees when buying a 5M condo?" — cash up front, fees, taxes, monthly.
+            if ($classification === 'cost') {
+                return $this->costService->replyStream($thread, $request);
+            }
+
+            // "Should I rent or buy in Lahug?" — the area's rent and sale prices through a break-even model.
+            if ($classification === 'rentbuy') {
+                return $this->rentBuyService->replyStream($thread, $request);
             }
         }
     
