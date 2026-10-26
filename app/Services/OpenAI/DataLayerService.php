@@ -507,6 +507,26 @@ class DataLayerService
         // inquiries, then stars and awards. The model picks from the top ten of this order.
         usort($inquiredAgents, fn (array $x, array $y) => self::agentScore($y) <=> self::agentScore($x));
 
+        // Variety at the top: agents within 10% of the best score are equally "best", so the one
+        // shown first rotates by day rather than the same name topping every search in an area.
+        if (count($inquiredAgents) > 1) {
+            $top = self::agentScore($inquiredAgents[0]);
+            $tied = [];
+            foreach ($inquiredAgents as $i => $a) {
+                if ($top > 0 && self::agentScore($a) >= $top * 0.9) {
+                    $tied[] = $i;
+                }
+            }
+            if (count($tied) > 1) {
+                $pick = $tied[(int) now()->format('z') % count($tied)];
+                if ($pick !== 0) {
+                    $first = $inquiredAgents[$pick];
+                    array_splice($inquiredAgents, $pick, 1);
+                    array_unshift($inquiredAgents, $first);
+                }
+            }
+        }
+
         return array_slice($inquiredAgents, 0, 10);
     }
 

@@ -184,6 +184,8 @@ Route::middleware('strip.tags')->group(function () {
         Route::post('/openai/stream-reply', [OpenAIController::class, 'streamChat']);
         // ASA-GPT "Ask the agent" / "Book a viewing" — a lead for the listing's agent with the chat attached.
         Route::post('/openai/lead', [OpenAIController::class, 'lead'])->middleware('throttle:10,1');
+        // "Forget my preferences" — clears the remembered buyer profile (category, type, area, budget).
+        Route::post('/openai/clear-profile', [OpenAIController::class, 'clearProfile']);
         Route::post('/openai/search-listings', [OpenAIController::class, 'searchListings']);
         Route::post('/openai/search-agents', [OpenAIController::class, 'searchAgents']);
         Route::post('/openai/stream-message', [OpenAIController::class, 'streamMessageRequest']);
@@ -672,6 +674,9 @@ Route::middleware('strip.tags')->group(function () {
             // GET /admin/inquiries/{id}     → single inquiry with thread
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class.':admin')->group(function () {
+                // "What people ask ASA" — questions, intents, places, outcomes, the unanswered ones.
+                Route::get('/admin/asa/insights', [\App\Http\Controllers\AsaInsightsController::class, 'index']);
+
                 // Partner Listings Feed — what GET /fh-agent/listings hands to
                 // other websites (System Settings card; PartnerFeedService).
                 Route::get('/admin/partner-feed', [PartnerFeedSettingsController::class, 'show']);

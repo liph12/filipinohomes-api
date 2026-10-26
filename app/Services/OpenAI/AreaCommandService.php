@@ -31,6 +31,7 @@ class AreaCommandService extends CacheService
         if ($insight === null) {
             $text = $place === null ? $this->notFoundText($asked) : $this->answerText($place);
 
+            AsaQuestionLog::outcome($req, 'no_data');
             return $this->streamInsight('area', 'area', ['empty' => true], $text, [], $req);
         }
 
@@ -44,6 +45,8 @@ class AreaCommandService extends CacheService
         if ($place['barangay']) {
             $followUps[] = ['label' => "All of {$place['city']}", 'prompt' => "Tell me about {$place['city']} as an area"];
         }
+
+        AsaQuestionLog::outcome($req, 'answered', $insight['area']['label']);
 
         return $this->streamInsight('area', 'area', $insight, $text, $followUps, $req);
     }

@@ -29,6 +29,7 @@ class DealCommandService extends CacheService
     {
         $insight = $this->insight($listingId);
         if ($insight === null) {
+            AsaQuestionLog::outcome($req, 'no_data');
             return $this->streamInsight('deal', 'deal', ['empty' => true], $this->answerText($listingId), [], $req);
         }
 

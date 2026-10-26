@@ -265,6 +265,81 @@ class CacheService extends DataLayerService
         cache()->forget($sessionKey);
     }
 
+    /** Who is asking: the signed-in user, else the device. The same identity the chat thread uses. */
+    private function profileKey(Request $request): string
+    {
+        $deviceId = $request->input('device_id') ?? 'unknown';
+        $user = Auth::guard('sanctum')->user();
+
+        return 'asa_profile_'.($user ? 'user_'.$user->id : 'guest_'.$deviceId);
+    }
+
+    /**
+     * The buyer's remembered preferences — category, type, area, budget, bedrooms — kept for 30 days
+     * across chats, so "show me 2-bedroom ones" after "condos in Lahug under 5M" still means Lahug
+     * condos under 5M. Empty array when nothing is remembered.
+     *
+     * @return array<string, mixed>
+     */
+    public function getProfile(Request $request): array
+    {
+        return (array) cache()->get($this->profileKey($request), []);
+    }
+
+    /**
+     * Fill what the latest search left unsaid from the profile, then remember what it did say.
+     * The latest message always wins; memory only fills blanks.
+     *
+     * @return array{args: array<string, mixed>, profile: array<string, mixed>}
+     */
+    public function applyProfile(Request $request, array $args): array
+    {
+        $profile = $this->getProfile($request);
+        $attr = (array) ($args['attributes'] ?? []);
+
+        if (($args['category'] ?? '') === '' && ! empty($profile['category'])) {
+            $args['category'] = $profile['category'];
+        }
+        if (($args['property_type'] ?? '') === '' && ! empty($profile['property_type'])) {
+            $args['property_type'] = $profile['property_type'];
+        }
+        if (($args['address'] ?? '') === '' && ($args['near'] ?? '') === '' && ! empty($profile['address'])) {
+            $args['address'] = $profile['address'];
+        }
+        if ((float) ($attr['price_max'] ?? 0) <= 0 && (float) ($attr['price_min'] ?? 0) <= 0 && ! empty($profile['price_max'])) {
+            $attr['price_max'] = (float) $profile['price_max'];
+            $attr['price_min'] = (float) ($profile['price_min'] ?? 0);
+        }
+        if ((int) ($attr['beds'] ?? 0) <= 0 && ! empty($profile['beds'])) {
+            $attr['beds'] = (int) $profile['beds'];
+        }
+        $args['attributes'] = $attr;
+
+        // Remember what was said this time.
+        $next = $profile;
+        foreach (['category', 'property_type', 'address'] as $k) {
+            if (($args[$k] ?? '') !== '') {
+                $next[$k] = $args[$k];
+            }
+        }
+        if ((float) ($attr['price_max'] ?? 0) > 0) {
+            $next['price_max'] = (float) $attr['price_max'];
+            $next['price_min'] = (float) ($attr['price_min'] ?? 0);
+        }
+        if ((int) ($attr['beds'] ?? 0) > 0) {
+            $next['beds'] = (int) $attr['beds'];
+        }
+        $next['updated_at'] = now()->toIso8601String();
+        cache()->put($this->profileKey($request), $next, now()->addDays(30));
+
+        return ['args' => $args, 'profile' => $next];
+    }
+
+    public function clearProfile(Request $request): void
+    {
+        cache()->forget($this->profileKey($request));
+    }
+
     public function appendMessages(Request $request, $newMessages)
     {
         $deviceId = $request->input('device_id') ?? 'unknown';

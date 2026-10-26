@@ -47,6 +47,7 @@ class ProjectCommandService extends CacheService
             $named = $missing !== [] ? ' **'.implode('** or **', $missing).'**' : ' that development';
             $text = "I can't find{$named} among the developments with live listings on Filipino Homes. Check the spelling, or name the city it is in.";
 
+            AsaQuestionLog::outcome($req, 'no_data');
             return $this->streamInsight('project', 'project', ['empty' => true], $text, [], $req);
         }
 

@@ -554,6 +554,7 @@ class CommandService extends CacheService
         
         INTENT:
         - price → user asks what properties COST in an area: price range, average/typical price, going rate, "magkano", "how much is a studio in Lahug", rent levels — a market question, not a request to see specific listings
+        - afford → user asks what they can AFFORD or what price range fits a monthly payment, salary or budget ("what can I afford at 25k a month", "my salary is 60k, what house can I buy", "magkano ang kaya ko", "how much house for 30k monthly amortization") — a budget-to-price question, not a request for listings
         - project → user asks about a specific BUILDING, development or condo project by name ("tell me about Avida Towers Riala", "is 38 Park Avenue a good buy", "what's listed in Mivesa"), or to COMPARE two named developments ("Riala vs 38 Park Avenue")
         - area → user asks ABOUT a place in general: "tell me about Lahug", "what's it like in BGC", "is IT Park a good area to invest", "overview of Mandaue", "which barangays in Cebu City have the most listings", rental yield / ROI / "where do condos yield the most in Cebu" — an area or investment question, not a price-only question and not a request for listings
         - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
@@ -569,10 +570,11 @@ class CommandService extends CacheService
         - If the user names a specific building / development / condo project (not a city or barangay) and asks about it or compares two of them, classify as: project
         - If the user asks for property (house, condo, lot, rent, location) or to see/find/show listings, classify as: listing
         - A stated budget while looking for property ("condo in Makati under 5M") is: listing — not price
+        - A MONTHLY amount or a salary asked against what they can buy ("at 25k a month", "my income is 60k") is: afford
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: price OR area OR project OR listing OR agent OR normal
+        - Return EXACTLY one word: price OR area OR project OR afford OR listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -593,7 +595,7 @@ class CommandService extends CacheService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area', 'project'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area', 'project', 'afford'])) {
             return 'normal';
         }
     

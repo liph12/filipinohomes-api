@@ -43,6 +43,7 @@ class PriceCommandService extends CacheService
         if ($insight === null) {
             $text = $place === null ? $this->notFoundText($asked) : $this->answerText($place, $asked);
 
+            AsaQuestionLog::outcome($req, 'no_data');
             return $this->streamInsight('price', 'price', ['empty' => true], $text, [], $req);
         }
 
@@ -53,6 +54,8 @@ class PriceCommandService extends CacheService
             ['label' => "About {$spot}", 'prompt' => "Tell me about {$spot} as an area"],
             ['label' => 'Agents who work here', 'prompt' => "Find me the best agent for condos in {$spot}"],
         ];
+
+        AsaQuestionLog::outcome($req, 'answered', $insight['area']['label']);
 
         return $this->streamInsight('price', 'price', $insight, $text, $followUps, $req);
     }

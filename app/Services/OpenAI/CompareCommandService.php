@@ -26,6 +26,7 @@ class CompareCommandService extends CacheService
     {
         $insight = $this->insight($ids);
         if ($insight === null) {
+            AsaQuestionLog::outcome($req, 'no_data');
             return $this->streamInsight('compare', 'compare', ['empty' => true], "I could only find one of those listings — the other may have been taken down. Pick another card to compare with.", [], $req);
         }
 
