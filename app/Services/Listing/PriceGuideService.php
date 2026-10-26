@@ -35,9 +35,9 @@ class PriceGuideService
     /** A city needs this many public listings to get a guide. */
     public const MIN_AREA_LISTINGS = 10;
 
-    private const SALE_PRICE_FLOOR = 100_000;
+    public const SALE_PRICE_FLOOR = 100_000;
 
-    private const RENT_PRICE_FLOOR = 1_000;
+    public const RENT_PRICE_FLOOR = 1_000;
 
     private const MIN_FLOOR_AREA_SQM = 10;
 
@@ -123,6 +123,40 @@ class PriceGuideService
 
             return array_merge($cities, $barangays);
         });
+    }
+
+    /**
+     * What a typed place is — a barangay ("Lahug" → Cebu City, Cebu) or a city ("Cebu City") — with the
+     * ids a search can widen to. Null when unknown. "Lahug, Cebu City" is tried whole, then piece by piece.
+     *
+     * @return array{kind: 'barangay'|'city', city_id: int, city: string, province: string}|null
+     */
+    public function placeOf(string $place): ?array
+    {
+        $norm = fn (string $s) => trim(preg_replace('/\s+/', ' ', preg_replace('/\b(city|municipality)\b/', '', preg_replace('/[^a-z0-9ñ ]/u', ' ', mb_strtolower($s)))));
+        $candidates = array_values(array_unique(array_filter(array_map($norm, array_merge([$place], explode(',', $place))))));
+        if ($candidates === []) {
+            return null;
+        }
+        $places = $this->places();
+        // Whole string first, then each comma piece; at each, a city wins over a barangay of the same name.
+        foreach ($candidates as $want) {
+            foreach ($places as $p) {
+                if ($p['barangay'] === null && $norm($p['city']) === $want) {
+                    return ['kind' => 'city', 'city_id' => $p['city_id'], 'city' => $p['city'], 'province' => $p['province']];
+                }
+            }
+            $hits = array_values(array_filter($places, fn ($p) => $p['barangay'] !== null && (
+                $norm($p['barangay']) === $want || $norm(preg_replace('/\(.*?\)/', '', $p['barangay'])) === $want
+            )));
+            if ($hits !== []) {
+                usort($hits, fn ($a, $b) => $b['listings'] <=> $a['listings']);
+
+                return ['kind' => 'barangay', 'city_id' => $hits[0]['city_id'], 'city' => $hits[0]['city'], 'province' => $hits[0]['province']];
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -738,7 +738,7 @@ class CommandService extends CacheService
                             ],
                             'category' => [
                                 'type' => 'string',
-                                'description' => 'Property for rent or for sale. Return an empty "" as default, otherwise if Specify (For Sale or For Rent) values.'
+                                'description' => 'One of "For Sale", "For Rent", "Foreclosure" — "Foreclosure" when the user says foreclosed, foreclosure, bank-acquired or pasalo-free bank property; "For Sale" when they say buy, purchase, budget to buy; "For Rent" when they say rent, lease, monthly. Return "" when the message does not say which.'
                             ],
                             'address' => [
                                 'type' => 'string',

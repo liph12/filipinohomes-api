@@ -264,12 +264,17 @@ class OpenAIController extends Controller
         $profile = $applied['profile'];
         $inquiredListings = $this->dataService->getListingsByArguments($args);
 
-        // return response()->json([
-        //     'args' => $args,
-        //     'res' => $inquiredListings,
-        // ]);
+        // Results from the wider city: the reply opens with that fact, and the picker is told so it
+        // describes them as such instead of repeating or contradicting it.
+        $searchNote = $this->dataService->searchNote;
+        if ($searchNote !== null) {
+            $thread[] = ['role' => 'system', 'content' => "The reply already opens with this sentence, so do not repeat it: \"{$searchNote}\" Describe the listings by their own location."];
+        }
 
         $suggestedListings = $this->sqService->suggestedListings($thread, $inquiredListings, $request);
+        if ($searchNote !== null && isset($suggestedListings['message'])) {
+            $suggestedListings['message'] = "**{$searchNote}**\n\n".$suggestedListings['message'];
+        }
 
         if(isset($suggestedListings['suggested']) && !empty($suggestedListings['suggested']))
         {

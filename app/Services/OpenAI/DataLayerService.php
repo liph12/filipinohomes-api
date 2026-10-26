@@ -248,7 +248,92 @@ class DataLayerService
         }
     }
 
+    /** Set by getListingsByArguments when the results come from a wider place than asked. */
+    public ?string $searchNote = null;
+
+    /** How many listings a search aims to hand the picker. */
+    private const SEARCH_TARGET = 5;
+
+    /**
+     * The listings a search asks for. The strict search runs first; when it finds too few, it is relaxed
+     * one notch at a time — keywords, then subtype, then the barangay → its city → its province — so
+     * "commercial lot in Davao" still finds Davao's lots when no title says "commercial lot", and "house
+     * in Lahug under ₱5M" shows the rest of Cebu City when Lahug has none. The budget, property type and
+     * category never relax, and widening the place is announced in $searchNote.
+     */
     public function getListingsByArguments($args): array
+    {
+        $this->searchNote = null;
+        $rows = $this->runListingSearch($args);
+        if (count($rows) >= self::SEARCH_TARGET) {
+            return $rows;
+        }
+
+        // Keywords are the loosest part of a search ("commercial lot" in the title): top up without them.
+        $relaxed = $args;
+        if (trim((string) ($relaxed['query_words'] ?? '')) !== '') {
+            $relaxed['query_words'] = '';
+            $rows = self::mergeRows($rows, $this->runListingSearch($relaxed));
+        }
+        if ($rows !== []) {
+            return $rows;
+        }
+        if (trim((string) ($relaxed['property_subtype'] ?? '')) !== '') {
+            $relaxed['property_subtype'] = '';
+            $rows = $this->runListingSearch($relaxed);
+            if ($rows !== []) {
+                return $rows;
+            }
+        }
+
+        // Nothing in the place itself: the city it belongs to, then the province.
+        $asked = trim((string) ($relaxed['address'] ?? ''));
+        if ($asked === '' || trim((string) ($relaxed['near'] ?? '')) !== '') {
+            return [];
+        }
+        $place = $this->priceGuide->placeOf($asked);
+        if ($place === null) {
+            return [];
+        }
+        $askedLabel = self::PLACE_ALIASES[mb_strtolower($asked)] ?? ucwords(mb_strtolower($asked));
+        if ($place['kind'] === 'barangay') {
+            $rows = $this->runListingSearch(['city_id' => $place['city_id'], 'address' => ''] + $relaxed);
+            if ($rows !== []) {
+                $this->searchNote = sprintf('Nothing matched in %s itself, so these are from the rest of %s.', $askedLabel, $place['city']);
+
+                return $rows;
+            }
+        }
+        if (mb_strtolower($place['province']) !== mb_strtolower($asked)) {
+            $rows = $this->runListingSearch(['city_id' => 0, 'address' => $place['province']] + $relaxed);
+            if ($rows !== []) {
+                $this->searchNote = sprintf('Nothing matched in %s itself, so these are from elsewhere in %s.', $askedLabel, $place['province']);
+
+                return $rows;
+            }
+        }
+
+        return [];
+    }
+
+    /** Rows of $a, then those of $b not already in it, up to the search target. */
+    private static function mergeRows(array $a, array $b): array
+    {
+        $seen = array_flip(array_map(fn ($r) => (string) $r['id'], $a));
+        foreach ($b as $r) {
+            if (count($a) >= self::SEARCH_TARGET) {
+                break;
+            }
+            if (! isset($seen[(string) $r['id']])) {
+                $a[] = $r;
+                $seen[(string) $r['id']] = true;
+            }
+        }
+
+        return $a;
+    }
+
+    private function runListingSearch(array $args): array
     {
         $address = $args['address'];
         $attr = $args['attributes'];
@@ -270,19 +355,34 @@ class DataLayerService
             return [];
         }
 
-        $listings = Listing::publiclyListed()->whereHas('category', function($q) use($args){
+        // No category said: a budget in the millions is a purchase (sale or foreclosure), a budget of a
+        // few thousand a month is a rental — so a ₱30k rental never answers "house with a ₱5M budget".
+        $priceMax = (float) ($attr['price_max'] ?? 0);
+        $listings = Listing::publiclyListed()->whereHas('category', function($q) use($args, $priceMax){
             if($args['category'] !== "")
             {
                 $q->where('categories.name', $args['category']);
+            } elseif ($priceMax >= 300000) {
+                $q->where('categories.name', '!=', 'For Rent');
+            } elseif ($priceMax > 0 && $priceMax <= 100000) {
+                $q->where('categories.name', 'For Rent');
             }
         })->where(function ($q) use ($array_words) {
-            $q->where(function ($sub) use ($array_words) {
-                foreach ($array_words as $w) {
-                    $lower = strtolower($w);
-                    $sub->where('listings.name', 'LIKE', "%{$lower}%");
+            // Each keyword in the title OR the description ("beachfront" is rarely in both).
+            foreach ($array_words as $w) {
+                $lower = trim(strtolower($w));
+                if ($lower === '') {
+                    continue;
                 }
-            });
-        });
+                $q->where(function ($sub) use ($lower) {
+                    $sub->where('listings.name', 'LIKE', "%{$lower}%")
+                        ->orWhereHas('property', fn ($p) => $p->where('properties.description', 'LIKE', "%{$lower}%"));
+                });
+            }
+        })
+        // A ₱990 house or a ₱100 condo is a placeholder, not a price: never offer one. Same floors as
+        // the market statistics.
+        ->whereRaw('listings.price >= CASE WHEN listings.category_id = ? THEN ? ELSE ? END', [2, PriceGuideService::RENT_PRICE_FLOOR, PriceGuideService::SALE_PRICE_FLOOR]);
 
         if($args['date_from'] !== "" && $args["date_to"] !== "")
         {
@@ -312,13 +412,25 @@ class DataLayerService
                     });
                 }
             })->having('listings_count', '>=', $args['listings_count']);
-        })->whereHas('property', function($q) use($args, $address, $attr, $array_words, $point){    
+        })->whereHas('property', function($q) use($args, $address, $attr, $point){    
             // "Lahug, Cebu City" → lahug / cebu; "CDO" → cagayan / oro (see placeWords).
             $addr = self::placeWords((string) $address);
 
+            // Widened to a city: the property's effective city (its pin, else its typed barangay's city).
+            $cityId = (int) ($args['city_id'] ?? 0);
+            if ($cityId > 0) {
+                $q->where(function ($q) use ($cityId) {
+                    $q->where('properties.geo_city_id', $cityId)
+                        ->orWhere(function ($q) use ($cityId) {
+                            $q->whereNull('properties.geo_city_id')
+                                ->whereHas('barangay', fn ($b) => $b->where('barangays.city_id', $cityId));
+                        });
+                });
+            }
+
             // Measuring from a known point, the pin decides the place — the typed address need not
             // name it (a listing 400 m from IT Park may say "Apas", not "Lahug").
-            if ($point === null) {
+            if ($point === null && $cityId === 0) {
                 $q->where(function ($q) use ($addr) {
                     foreach ($addr as $w) {
                         $q->where(function ($sub) use ($w) {
@@ -327,14 +439,7 @@ class DataLayerService
                     }
                 });
             }
-            $q->where(function ($q) use ($array_words) {
-                foreach ($array_words as $w) {
-                    $q->where(function ($sub) use ($w) {
-                        $sub->where('properties.description', 'LIKE', "%{$w}%");
-                    });
-                }
-            })
-            ->whereHas('propertyAttribute', function($q) use($attr, $args){
+            $q->whereHas('propertyAttribute', function($q) use($attr, $args){
                 $q->whereHas('subtype', function($q) use($args){
                     $q->whereHas('type', function($q) use($args){
                         if(!empty($args['property_type']))
