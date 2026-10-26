@@ -155,17 +155,18 @@ class DataLayerService
     protected function extractAgent($a, ?int $areaListings = null)
     {
         $agentName = $a->first_name . " " . $a->last_name;
-        $listings = $a->listings;
         $topListings = [];
 
-        foreach($listings as $l)
-        {
-            $listing = $this->extractListing($l);
+        // A light summary of the agent's most-viewed listings, straight from the eager-loaded
+        // relations. The full card builder (market context, price change, lazy agent/category
+        // loads) ran here before — thousands of queries for a ten-agent answer on production.
+        foreach ($a->listings as $l) {
+            $sub = $l->property?->propertyAttribute?->subtype;
             $topListings[] = [
-                'type' => $listing['propertyType'],
-                'subType' => $listing['propertySubType'],
-                'views' => $listing['views'],
-                'category' => $listing['category']
+                'type' => $sub?->type?->name ?? '',
+                'subType' => $sub?->name ?? '',
+                'views' => (int) ($l->clicks ?? 0),
+                'category' => $l->category?->name ?? '',
             ];
         }
         
@@ -477,9 +478,9 @@ class DataLayerService
             // already gated by publiclyListed() in the eager-load below).
             ->where('status', 'active')
             ->with(['user', 'listings' => function ($q) {
-                $q->publiclyListed()->with('property.propertyAttribute.subtype.type')
+                $q->publiclyListed()->with(['property.propertyAttribute.subtype.type', 'category'])
                     ->orderBy('clicks', 'DESC')
-                    ->limit(10);
+                    ->limit(6);
             }]);
 
         if ($this->areaWords !== []) {
