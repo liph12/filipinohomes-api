@@ -28,7 +28,7 @@ class AffordCommandService extends CacheService
 
     private $client;
 
-    public function __construct()
+    public function __construct(private readonly DataLayerService $data)
     {
         $this->client = OpenAI::client(config('services.openai.key'));
     }
@@ -46,6 +46,10 @@ class AffordCommandService extends CacheService
 
         $insight = $this->insight($monthly, $asked);
         $spot = $asked['city'] !== '' ? $asked['city'] : null;
+
+        // Listings within the ceiling, right under the working — and the ceiling becomes the
+        // remembered budget, so "show me 2-bedroom ones" next stays inside it.
+        $insight['listings'] = $this->withinCeiling($req, $insight['max_price'], $asked);
         $what = $asked['property_type'] !== '' ? strtolower($asked['property_type']).'s' : 'properties';
         $text = sprintf('With **%s a month** for the loan, you can look at homes up to about **%s**. The full working is below.', PriceCommandService::peso($monthly), PriceCommandService::peso($insight['max_price']));
         $cap = PriceCommandService::peso($insight['max_price']);
@@ -96,6 +100,41 @@ class AffordCommandService extends CacheService
             'city' => $asked['city'] ?: null,
             'property_type' => $asked['property_type'] ?: null,
         ];
+    }
+
+    /**
+     * Up to eight live listings for sale under the ceiling, in the named city and type when given,
+     * as the cards the chat draws. Never fails the reply.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function withinCeiling($req, float $maxPrice, array $asked): array
+    {
+        try {
+            $args = [
+                'property_type' => $asked['property_type'],
+                'property_subtype' => '',
+                'query_words' => '',
+                'category' => 'For Sale',
+                'address' => $asked['city'],
+                'near' => '',
+                'radius_km' => 0,
+                'price_dropped_days' => 0,
+                'agent_name' => '',
+                'listings_count' => 0,
+                'date_from' => '',
+                'date_to' => '',
+                'attributes' => ['price_min' => 100000, 'price_max' => round($maxPrice), 'lot_area' => 0, 'floor_area' => 0, 'beds' => 0, 'baths' => 0, 'parking' => 0],
+            ];
+            $applied = $this->applyProfile($req, $args);
+            $rows = $this->data->getListingsByArguments($applied['args']);
+            // Closest to the ceiling first: the most home the budget buys.
+            usort($rows, fn (array $a, array $b) => (float) $b['price'] <=> (float) $a['price']);
+
+            return array_slice($rows, 0, 8);
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /** The loan a monthly payment carries at an annual rate over a term — the ordinary annuity. */
