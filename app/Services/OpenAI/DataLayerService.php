@@ -428,31 +428,47 @@ class DataLayerService
         // as "general santos".) Agents BASED there are added so a newcomer with no listings yet still
         // appears. The counts double as `area_listings`, so extractAgent runs no query for them.
         $areaCounts = [];
+        $basedIds = [];
         if ($this->areaWords !== []) {
+            // Both lookups scan addresses with LIKE, which is the slow part on the production
+            // database — so each area's answer is kept for ten minutes.
+            $key = md5(implode('|', $this->areaWords).'|'.$propertyType);
             try {
-                $q = DB::table('listings')
-                    ->join('properties', 'properties.id', '=', 'listings.property_id')
-                    ->join('agents', fn ($j) => $j->on('agents.id', '=', 'listings.agent_id')->where('agents.status', 'active')->whereNull('agents.deleted_at'))
-                    ->whereNull('listings.deleted_at')->whereNull('properties.deleted_at')
-                    ->where('listings.visibility', 'public')
-                    ->where(fn ($w) => $w->whereNull('listings.verification_status')->orWhere('listings.verification_status', '!=', 'flagged'));
-                foreach ($this->areaWords as $w) {
-                    $q->where('properties.address', 'LIKE', "%{$w}%");
-                }
-                if ($propertyType !== '') {
-                    $q->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
-                        ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
-                        ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
-                        ->where('property_types.name', $propertyType);
-                }
-                $areaCounts = $q->groupBy('listings.agent_id')
-                    ->orderByDesc('n')
-                    ->limit(40)
-                    ->pluck(DB::raw('COUNT(*) as n'), 'listings.agent_id')
-                    ->map(fn ($n) => (int) $n)
-                    ->all();
+                $areaCounts = \Illuminate\Support\Facades\Cache::remember("asa:area-agents:v1:{$key}", 600, function () use ($propertyType) {
+                    $q = DB::table('listings')
+                        ->join('properties', 'properties.id', '=', 'listings.property_id')
+                        ->join('agents', fn ($j) => $j->on('agents.id', '=', 'listings.agent_id')->where('agents.status', 'active')->whereNull('agents.deleted_at'))
+                        ->whereNull('listings.deleted_at')->whereNull('properties.deleted_at')
+                        ->where('listings.visibility', 'public')
+                        ->where(fn ($w) => $w->whereNull('listings.verification_status')->orWhere('listings.verification_status', '!=', 'flagged'));
+                    foreach ($this->areaWords as $w) {
+                        $q->where('properties.address', 'LIKE', "%{$w}%");
+                    }
+                    if ($propertyType !== '') {
+                        $q->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+                            ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+                            ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+                            ->where('property_types.name', $propertyType);
+                    }
+
+                    return $q->groupBy('listings.agent_id')
+                        ->orderByDesc('n')
+                        ->limit(40)
+                        ->pluck(DB::raw('COUNT(*) as n'), 'listings.agent_id')
+                        ->map(fn ($n) => (int) $n)
+                        ->all();
+                });
+                $basedIds = \Illuminate\Support\Facades\Cache::remember("asa:area-based:v1:{$key}", 600, function () {
+                    $q = DB::table('agents')->where('status', 'active')->whereNull('deleted_at');
+                    foreach ($this->areaWords as $w) {
+                        $q->where('address', 'LIKE', "%{$w}%");
+                    }
+
+                    return $q->orderByDesc('id')->limit(20)->pluck('id')->map(fn ($id) => (int) $id)->all();
+                });
             } catch (\Throwable) {
                 $areaCounts = [];
+                $basedIds = [];
             }
         }
 
@@ -467,18 +483,12 @@ class DataLayerService
             }]);
 
         if ($this->areaWords !== []) {
-            $words = $this->areaWords;
-            $ids = array_keys($areaCounts);
-            $query->where(function ($or) use ($ids, $words) {
-                if ($ids !== []) {
-                    $or->whereIn('id', $ids);
-                }
-                $or->orWhere(function ($based) use ($words) {
-                    foreach ($words as $w) {
-                        $based->where('address', 'LIKE', "%{$w}%");
-                    }
-                });
-            });
+            // Candidates by id only — never a LIKE over every agent while listings are being counted.
+            $ids = array_values(array_unique(array_merge(array_keys($areaCounts), $basedIds)));
+            if ($ids === []) {
+                return [];
+            }
+            $query->whereIn('id', $ids);
         }
         foreach ($nameWords as $w) {
             $query->where(function ($sub) use ($w) {
