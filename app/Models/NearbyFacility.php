@@ -20,18 +20,20 @@ class NearbyFacility extends Model
         'mall',
         'park',
         'attraction',
+        'transport_station',
     ];
 
     protected $casts = [
-        'school'         => 'array',
-        'hospital'       => 'array',
-        'clinic'         => 'array',
-        'pharmacy'       => 'array',
-        'fire_station'   => 'array',
+        'school' => 'array',
+        'hospital' => 'array',
+        'clinic' => 'array',
+        'pharmacy' => 'array',
+        'fire_station' => 'array',
         'police_station' => 'array',
-        'mall'           => 'array',
-        'park'           => 'array',
-        'attraction'     => 'array',
+        'mall' => 'array',
+        'park' => 'array',
+        'attraction' => 'array',
+        'transport_station' => 'array',
     ];
 
     public function property()

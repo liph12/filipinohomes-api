@@ -164,6 +164,8 @@ class ListingService
             // Popular-place keys — surfaced to the listing AI so it can mention
             // recognizable landmarks (Ayala Center, Ayala Triangle, etc.).
             'mall', 'park', 'attraction',
+            // Transport (MRT/LRT, bus and jeepney terminals) — new listings only, no backfill.
+            'transport_station',
         ];
 
         // New flexible format handling under 'nearby_facilities'
