@@ -171,14 +171,22 @@ class ListingPriceInsightsService extends ListingInsightsService
      * admin main dashboard's "Prices by Type". One category at a time (a sale price and a monthly rent
      * do not average together); same hygiene and ₱/sqm rule as byPlace().
      *
+     * Optional: a place scope (city_id / province_id — the public listing page's "prices in Naga City"),
+     * and `type` to build only that one type, without the card photo (the listing page shows one table),
+     * optionally narrowed to one `subtype` (a listing has exactly one — its page compares within it).
+     *
      * @return array{category: string, types: list<array<string, mixed>>}
      */
     public function byType(array $params, ?array $agentIds = null): array
     {
-        $this->bindScope([], $agentIds);
+        $this->bindScope(array_intersect_key($params, array_flip(['city_id', 'province_id'])), $agentIds);
         $category = in_array($params['category'] ?? null, self::CATEGORIES, true) ? $params['category'] : 'For Sale';
+        $only = isset(self::TYPE_VIEWS[$params['type'] ?? '']) ? $params['type'] : null;
 
-        $rows = $this->pricedQuery($category, '')
+        $subtype = $only !== null ? trim((string) ($params['subtype'] ?? '')) : '';
+
+        $rows = $this->pricedQuery($category, $only ?? '')
+            ->when($subtype !== '', fn ($q) => $q->where('property_subtypes.name', $subtype))
             ->leftJoin('furnishings', 'furnishings.id', '=', 'properties.furnishing_id')
             ->select('listings.price', 'property_types.name as type', 'property_subtypes.name as subtype',
                 'furnishings.name as furnishing', 'property_attributes.floor_area', 'property_attributes.lot_area',
@@ -194,10 +202,14 @@ class ListingPriceInsightsService extends ListingInsightsService
             $area = $ppsqm !== null ? self::area($type, $r->floor_area, $r->lot_area) : null;
             $furn = (string) ($r->furnishing ?: 'Not specified');
             // The ways a type can be cut: by subtype, and by room counts (bucketed; land has no rooms).
+            $beds = self::roomBucket($r->bedroom_count, self::BED_LABELS);
+            $baths = self::roomBucket($r->bathroom_count, self::BATH_LABELS);
             $dims = [
                 'subtypes' => (string) ($r->subtype ?: 'Other'),
-                'bedrooms' => self::roomBucket($r->bedroom_count, ['Studio / 0', '1', '2', '3', '4', '5+']),
-                'bathrooms' => self::roomBucket($r->bathroom_count, ['None', '1', '2', '3', '4+']),
+                'bedrooms' => $beds,
+                'bathrooms' => $baths,
+                // Both together, "3|2" — the frontend spells it "3 bedrooms · 2 bathrooms".
+                'bed_bath' => $beds.'|'.$baths,
                 'garage' => self::roomBucket($r->garage_count, ['None', '1', '2+']),
                 'lot_area' => self::areaBucket($r->lot_area, self::LOT_BUCKETS),
                 'floor_area' => self::areaBucket($r->floor_area, self::FLOOR_BUCKETS),
@@ -231,7 +243,7 @@ class ListingPriceInsightsService extends ListingInsightsService
         };
 
         $out = [];
-        foreach (['House', 'Condominium', 'Land', 'Commercial'] as $t) {
+        foreach ($only !== null ? [$only] : ['House', 'Condominium', 'Land', 'Commercial'] as $t) {
             $b = $types[$t] ?? ['all' => $bucket(), 'furnishing' => [], 'dims' => []];
             // Each row carries its own furnishing split: "House and Lot · Finish", "3 bedrooms · Finish" …
             $cut = function (string $dim, ?array $order) use ($b, $row, $list) {
@@ -251,10 +263,16 @@ class ListingPriceInsightsService extends ListingInsightsService
             // The cuts that mean something for each type (the owner's call): rooms for homes, lot area
             // for land, lot and floor area for commercial.
             $views = self::TYPE_VIEWS[$t];
+            // The public listing page (one type) also gets bedrooms × bathrooms together; the admin
+            // dashboard's response stays as it was.
+            if ($only !== null && in_array('bathrooms', $views, true)) {
+                array_splice($views, array_search('bathrooms', $views, true) + 1, 0, ['bed_bath']);
+            }
             $order = [
                 'subtypes' => null,
-                'bedrooms' => ['Studio / 0', '1', '2', '3', '4', '5+'],
-                'bathrooms' => ['None', '1', '2', '3', '4+'],
+                'bedrooms' => self::BED_LABELS,
+                'bathrooms' => self::BATH_LABELS,
+                'bed_bath' => array_merge(...array_map(fn ($b) => array_map(fn ($t) => $b.'|'.$t, self::BATH_LABELS), self::BED_LABELS)),
                 'garage' => ['None', '1', '2+'],
                 'lot_area' => array_merge(array_column(self::LOT_BUCKETS, 1), ['Not specified']),
                 'floor_area' => array_merge(array_column(self::FLOOR_BUCKETS, 1), ['Not specified']),
@@ -263,7 +281,7 @@ class ListingPriceInsightsService extends ListingInsightsService
             foreach ($views as $v) {
                 $cuts[$v] = $cut($v, $order[$v]);
             }
-            $out[] = $row($t, $b['all']) + $cuts + ['views' => $views, 'furnishing' => $list($b['furnishing']), 'photo' => $this->typePhoto($category, $t)];
+            $out[] = $row($t, $b['all']) + $cuts + ['views' => $views, 'furnishing' => $list($b['furnishing']), 'photo' => $only !== null ? null : $this->typePhoto($category, $t)];
         }
 
         return ['category' => $category, 'types' => $out];
@@ -338,6 +356,10 @@ class ListingPriceInsightsService extends ListingInsightsService
     {
         return strcasecmp(trim($type), 'Land') === 0 ? (float) ($lotArea ?? 0) : (float) ($floorArea ?? 0);
     }
+
+    private const BED_LABELS = ['Studio / 0', '1', '2', '3', '4', '5+'];
+
+    private const BATH_LABELS = ['None', '1', '2', '3', '4+'];
 
     private const TYPE_VIEWS = [
         'House' => ['subtypes', 'bedrooms', 'bathrooms', 'garage'],

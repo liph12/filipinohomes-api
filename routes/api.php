@@ -163,6 +163,8 @@ Route::middleware('strip.tags')->group(function () {
             // registered here — before `/listings/{slug}` — so the literal
             // "audit-queue" segment is never bound as a {slug} and 404'd by show().
             Route::get('/listings/audit-queue', [ListingController::class, 'auditFeed'])->middleware(['auth:sanctum', 'agent.active']);
+            // Before `/listings/{slug}`, or "price-context" would bind as a slug.
+            Route::get('/listings/price-context', [ListingController::class, 'priceContext']);
             Route::get('/listings/{slug}', [ListingController::class, 'show']);
             Route::get('/listings', [ListingController::class, 'index']);
             Route::get('/categories', [CategoryController::class, 'index']);

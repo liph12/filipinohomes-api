@@ -48,6 +48,9 @@ use OwenIt\Auditing\Events\AuditCustom;
 
 class ListingController extends Controller
 {
+    /** Fewest priced listings of a type before the listing page's price table widens its scope. */
+    private const PRICE_CONTEXT_MIN = 10;
+
     private function dashboardBucketLabel(string $bucketStart, string $granularity): string
     {
         return match ($granularity) {
@@ -59,7 +62,7 @@ class ListingController extends Controller
 
     public function __construct()
     {
-        $this->middleware('auth:sanctum')->except(['index', 'show', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug', 'listingsByLocationAll', 'listingByCityAll', 'sitemapSearchLocations']);
+        $this->middleware('auth:sanctum')->except(['index', 'show', 'featured', 'listingsByLocation', 'resolveByKeywordsAndSlug', 'listingsByLocationAll', 'listingByCityAll', 'sitemapSearchLocations', 'priceContext']);
         $this->middleware(RoleMiddleware::class.':agent,admin')->only(['store']);
         $this->middleware(RoleMiddleware::class.':admin')->only(['updateIsFeatured']);
     }
@@ -2782,6 +2785,65 @@ class ListingController extends Controller
         $date = fn (string $k) => is_string($request->query($k)) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $request->query($k)) ? $request->query($k) : null;
 
         return ['date_start' => $date('date_start'), 'date_end' => $date('date_end')];
+    }
+
+    /**
+     * Public listing page: the "Prices by Type" table for ONE type, subtype and category, in the listing's
+     * city — falling back to its province, then nationwide, when the city has fewer than PRICE_CONTEXT_MIN
+     * priced listings of that subtype (a two-listing "average" would mislead a buyer). Cached 6h per scope.
+     */
+    public function priceContext(Request $request, ListingPriceInsightsService $insights): JsonResponse
+    {
+        $data = $request->validate([
+            'category' => 'required|string|in:'.implode(',', ListingPriceInsightsService::CATEGORIES),
+            'type' => 'required|string|in:House,Condominium,Land,Commercial',
+            'subtype' => 'nullable|string|max:100',
+            'city_id' => 'nullable|integer',
+            'province_id' => 'nullable|integer',
+        ]);
+
+        $scopes = array_filter([
+            'city' => isset($data['city_id']) ? ['city_id' => (int) $data['city_id']] : null,
+            'province' => isset($data['province_id']) ? ['province_id' => (int) $data['province_id']] : null,
+        ]) + ['all' => []];
+
+        $key = 'price-context:'.md5(json_encode([$data['category'], $data['type'], $data['subtype'] ?? null, $data['city_id'] ?? null, $data['province_id'] ?? null]));
+
+        return response()->json(Cache::remember($key, now()->addHours(6), function () use ($insights, $scopes, $data) {
+            foreach ($scopes as $level => $scope) {
+                $type = $insights->byType($scope + ['category' => $data['category'], 'type' => $data['type'], 'subtype' => $data['subtype'] ?? null])['types'][0] ?? null;
+                if ($type && ($type['listings'] >= self::PRICE_CONTEXT_MIN || $level === 'all')) {
+                    return ['category' => $data['category'], 'scope' => $level, 'type' => self::trimPriceContext($type, ! empty($data['subtype']))];
+                }
+            }
+
+            return ['category' => $data['category'], 'scope' => 'all', 'type' => null];
+        }));
+    }
+
+    /**
+     * Only what the public listing page draws — it ships inside every listing page's HTML, so every byte
+     * counts: name, count, average price and ₱/sqm (rounded) per row; furnishing columns for homes only
+     * (land and commercial are almost all "unfurnished"); no Subtype cut when the data is one subtype.
+     */
+    private static function trimPriceContext(array $type, bool $oneSubtype): array
+    {
+        $homes = in_array($type['name'], ['House', 'Condominium'], true);
+        $row = fn (array $r) => [
+            'name' => $r['name'],
+            'listings' => $r['listings'],
+            'avg_price' => $r['avg_price'] !== null ? (int) round($r['avg_price']) : null,
+            'avg_ppsqm' => $r['avg_ppsqm'] !== null ? (int) round($r['avg_ppsqm']) : null,
+        ];
+        $withFurnishing = fn (array $r) => $row($r) + ($homes ? ['furnishing' => array_map($row, $r['furnishing'] ?? [])] : []);
+
+        $views = array_values(array_filter($type['views'] ?? [], fn ($v) => ! ($oneSubtype && $v === 'subtypes')));
+        $out = $withFurnishing($type) + ['views' => $views];
+        foreach ($views as $v) {
+            $out[$v] = array_map($withFurnishing, $type[$v] ?? []);
+        }
+
+        return $out;
     }
 
     /** Prices by Type (admin main dashboard): average price per type, subtype and furnishing. */
