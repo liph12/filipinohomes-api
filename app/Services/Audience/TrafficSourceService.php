@@ -142,9 +142,21 @@ class TrafficSourceService extends AudienceInsightsService
             ->count('visits.visitor_id');
         $perChannelSum = (int) $visitors->sum();
 
+        // Anonymous = devices with no logged-in visit in the range (never signed in on that device while
+        // browsing), a subset of the unique devices above.
+        $anonymousDevices = DB::query()->fromSub(
+            $this->audienceVisits()
+                ->whereNotNull('visits.visitor_id')
+                ->groupBy('visits.visitor_id')
+                ->havingRaw('MAX(visits.user_id) IS NULL')
+                ->select('visits.visitor_id'),
+            't'
+        )->count();
+
         return [
             'channels'              => $channels,
             'unique_visitors'       => $uniqueDevices,
+            'anonymous_visitors'    => $anonymousDevices,
             'multi_source_devices'  => $this->multiSourceDevices(),
             'referrers'             => $this->referrers(),
             'multi_source_overcount' => max(0, $perChannelSum - $uniqueDevices),

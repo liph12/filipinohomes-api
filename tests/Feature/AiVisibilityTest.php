@@ -247,5 +247,14 @@ class AiVisibilityTest extends TestCase
         $this->assertSame(['name' => 'lamudi.com.ph', 'kind' => 'site', 'people' => 2, 'visits' => 2], $refs['lamudi.com.ph']);
         $this->assertSame('app', $refs['LinkedIn app']['kind']);
         $this->assertSame('tag', $refs['partnersite']['kind']);
+
+        // One of the four devices also browsed logged in → 3 anonymous out of 4 unique.
+        DB::table('roles')->insert(['id' => 1, 'name' => 'client']);
+        DB::table('users')->insert(['id' => 99, 'role_id' => 1, 'created_at' => now()->subYear()]);
+        DB::table('visits')->insert(['visitor_id' => 'r-4', 'channel' => 'direct', 'user_id' => 99, 'created_at' => now()]);
+        $acq = app(\App\Services\Audience\TrafficSourceService::class)
+            ->range(now()->subDay()->toDateString(), now()->toDateString())->channels();
+        $this->assertSame(4, $acq['unique_visitors']);
+        $this->assertSame(3, $acq['anonymous_visitors']);
     }
 }
