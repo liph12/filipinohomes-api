@@ -67,7 +67,7 @@
                                         <td align="left" valign="top" style="{{ $sectionPad }}">
                                             <span style="{{ $sectionTitle }}">🎁 Today&rsquo;s Birthday Posters</span>
                                             <span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#667085;display:block;margin:-6px 0 12px;">
-                                                Also attached to this email. Click a poster to download it.
+                                                Click a poster to download the full-size file.
                                             </span>
                                             <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
                                                 <tbody>
@@ -76,7 +76,7 @@
                                                             @foreach ($pair as $p)
                                                                 <td align="center" valign="top" width="50%" style="padding:0 6px 16px;">
                                                                     <a href="{{ $p['url'] }}" style="text-decoration:none;display:block;">
-                                                                        <img alt="Happy Birthday, {{ $p['name'] }}!" src="{{ $p['url'] }}" width="270"
+                                                                        <img alt="Happy Birthday, {{ $p['name'] }}!" src="{{ $p['preview_url'] ?? $p['url'] }}" width="270"
                                                                             style="width:100%;max-width:270px;display:block;border:0;height:auto;border-radius:12px;" />
                                                                     </a>
                                                                     <span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#344054;display:block;margin-top:8px;">

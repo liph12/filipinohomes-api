@@ -54,6 +54,9 @@ class BirthdayPosterService
 
     private const SHADOW = [0x0A, 0x08, 0x03];
 
+    /** Width of the small copy the admin digest shows inline (shown at 270px; 2× for retina). */
+    private const PREVIEW_WIDTH = 540;
+
     /**
      * Render the poster for one celebrant.
      *
@@ -130,12 +133,15 @@ class BirthdayPosterService
      * 07:00 greeting job and the admin digest share a single render/upload:
      * whichever runs first uploads, the other reuses the object.
      *
+     * Also returns `preview_url`: a 540px copy beside the poster ({slug}-preview.jpg, ~90 KB vs ~355 KB)
+     * for emails that show it small; null if that copy couldn't be made (fall back to `url`).
+     *
      * @param  int|string  $id  agents.id, or a celebrant `poster_key`
      *                          ("agent-123" / "user-456" for staff without an
      *                          agents row). Ints keep the historical key.
      *                          `$fresh` skips the cached object and re-renders over it — for when the
      *                          avatar or name changed after the day's poster was first made.
-     * @return array{url:string, jpeg:string, filename:string}|null
+     * @return array{url:string, preview_url:?string, jpeg:string, filename:string}|null
      */
     public function forAgent(int|string $id, string $fullName, ?string $photoUrl, string $date, bool $fresh = false): ?array
     {
@@ -147,6 +153,7 @@ class BirthdayPosterService
             if (! $fresh && $disk->exists($key) && ($jpeg = $disk->get($key)) !== null) {
                 return [
                     'url' => self::publicUrl($key, $jpeg),
+                    'preview_url' => $this->previewFor($key, $jpeg, false),
                     'jpeg' => $jpeg,
                     'filename' => self::downloadFilename($fullName),
                 ];
@@ -155,7 +162,47 @@ class BirthdayPosterService
             Log::info('Birthday poster: S3 lookup failed, re-rendering', ['key' => $key, 'error' => $e->getMessage()]);
         }
 
-        return $this->renderToS3($fullName, $photoUrl, dirname($key), basename($key));
+        $p = $this->renderToS3($fullName, $photoUrl, dirname($key), basename($key));
+
+        // A new render always gets a new preview — the old one would show the previous photo/name.
+        return $p ? $p + ['preview_url' => $this->previewFor($key, $p['jpeg'], true)] : null;
+    }
+
+    /**
+     * Public URL of the small copy of the poster at $key, making it when missing (or $regenerate).
+     * Versioned by the FULL poster's hash, so a re-render also changes the preview's URL.
+     */
+    private function previewFor(string $key, string $jpeg, bool $regenerate): ?string
+    {
+        $previewKey = preg_replace('/\.jpg$/', '-preview.jpg', $key);
+        $disk = Storage::disk('s3');
+
+        try {
+            if ($regenerate || ! $disk->exists($previewKey)) {
+                $full = imagecreatefromstring($jpeg);
+                if ($full === false) {
+                    return null;
+                }
+                // imagecopyresampled, not imagescale(IMG_BICUBIC) — the latter returns false on some GD builds.
+                $w = self::PREVIEW_WIDTH;
+                $h = (int) round(imagesy($full) * $w / imagesx($full));
+                $small = imagecreatetruecolor($w, $h);
+                imagecopyresampled($small, $full, 0, 0, 0, 0, $w, $h, imagesx($full), imagesy($full));
+                ob_start();
+                imagejpeg($small, null, 75);
+                $bytes = (string) ob_get_clean();
+
+                if (! $disk->put($previewKey, $bytes, ['visibility' => 'public', 'ContentType' => 'image/jpeg'])) {
+                    return null;
+                }
+            }
+
+            return self::publicUrl($previewKey, $jpeg);
+        } catch (\Throwable $e) {
+            Log::info('Birthday poster preview failed', ['key' => $previewKey, 'error' => $e->getMessage()]);
+
+            return null;
+        }
     }
 
     /**

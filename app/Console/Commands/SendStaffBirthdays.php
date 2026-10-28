@@ -35,16 +35,14 @@ class SendStaffBirthdays extends Command
         $label = $ref->format('M j, Y');
         $data = $birthdays->build($today);
 
-        // Today's posters (rendered once per agent/day, shared with the
-        // agent's own greeting). Attached to the digest so admins can grab them.
+        // Every celebrant's poster today (rendered once per agent/day, shared with
+        // the agent's own greeting) — shown as a small preview linking to the full
+        // file. Only the URLs go into the mailable; the image bytes stay out.
         $posters = [];
         foreach ($data['today'] as $b) {
-            if (count($posters) >= StaffBirthdaysMailer::MAX_POSTERS) {
-                break;
-            }
             $p = $poster->forAgent($b['poster_key'], $b['poster_name'], $b['avatar'], $today, (bool) $this->option('fresh'));
             if ($p) {
-                $posters[] = $p + ['name' => $b['poster_name']];
+                $posters[] = ['name' => $b['poster_name'], 'url' => $p['url'], 'preview_url' => $p['preview_url'] ?? null];
             }
         }
 

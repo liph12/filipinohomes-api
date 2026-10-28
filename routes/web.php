@@ -305,8 +305,6 @@ if (config('app.debug')) {
                 posters: collect(['Michael Angelo Joaquin', 'Ana Cruz', 'Maria Christina Villanueva-Santos'])->map(fn ($n) => [
                     'name' => $n,
                     'url' => url('/preview/birthday-poster.jpg?'.http_build_query(['name' => $n])),
-                    'jpeg' => null,
-                    'filename' => \App\Services\Birthday\BirthdayPosterService::downloadFilename($n),
                 ])->all(),
             ),
 
