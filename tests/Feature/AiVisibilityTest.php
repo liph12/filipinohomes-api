@@ -272,5 +272,10 @@ class AiVisibilityTest extends TestCase
             ->range(now()->subDay()->toDateString(), now()->toDateString())->channels();
         $this->assertSame(4, $acq['unique_visitors']);
         $this->assertSame(3, $acq['anonymous_visitors']);
+
+        // A device saved on an account at signup isn't anonymous, even with no logged-in visit (old rows).
+        DB::table('users')->insert(['id' => 100, 'role_id' => 1, 'visitor_id' => 'r-1', 'created_at' => now()->subYear()]);
+        $this->assertSame(2, app(\App\Services\Audience\TrafficSourceService::class)
+            ->range(now()->subDay()->toDateString(), now()->toDateString())->channels()['anonymous_visitors']);
     }
 }

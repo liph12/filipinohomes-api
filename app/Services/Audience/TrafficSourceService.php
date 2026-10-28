@@ -142,11 +142,13 @@ class TrafficSourceService extends AudienceInsightsService
             ->count('visits.visitor_id');
         $perChannelSum = (int) $visitors->sum();
 
-        // Anonymous = devices with no logged-in visit in the range (never signed in on that device while
-        // browsing), a subset of the unique devices above.
+        // Anonymous = devices with no logged-in visit in the range AND not tied to any account (signup stamps
+        // users.visitor_id). The account check also covers visits stored before user_id was recorded.
         $anonymousDevices = DB::query()->fromSub(
             $this->audienceVisits()
                 ->whereNotNull('visits.visitor_id')
+                ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('users as acct')
+                    ->whereColumn('acct.visitor_id', 'visits.visitor_id'))
                 ->groupBy('visits.visitor_id')
                 ->havingRaw('MAX(visits.user_id) IS NULL')
                 ->select('visits.visitor_id'),
