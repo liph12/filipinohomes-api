@@ -18,6 +18,7 @@ use App\Services\OpenAI\WorthCommandService;
 use App\Services\OpenAI\CostCommandService;
 use App\Services\OpenAI\RentBuyCommandService;
 use App\Services\OpenAI\InvestCommandService;
+use App\Services\OpenAI\MapCommandService;
 use App\Services\OpenAI\AsaQuestionLog;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
@@ -41,14 +42,16 @@ class OpenAIController extends Controller
     private $costService;
     private $rentBuyService;
     private $investService;
+    private $mapService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map)
     {
         $this->affordService = $afford;
         $this->worthService = $worth;
         $this->costService = $cost;
         $this->rentBuyService = $rentBuy;
         $this->investService = $invest;
+        $this->mapService = $map;
         $this->sqService = $s;
         $this->cacheService = $c;
         $this->dataService = $d;
@@ -156,6 +159,12 @@ class OpenAIController extends Controller
 
                 return $this->compareService->replyStream($ids, $thread, $request);
             }
+            // "Where is this? listing #123" / "How far is listing #123 from Ayala?" — the map, no model.
+            if (preg_match('/\b(where|map|direction|how far|get there|located|location|route)/i', $question)) {
+                AsaQuestionLog::start($request, $question, 'locate');
+
+                return $this->mapService->replyStream($thread, $request);
+            }
             // "Is this a good investment? listing #123" — yield and cash flow, not the price verdict.
             if (preg_match('/\b(invest|investment|yield|cash ?flow|rental income|roi|return on)/i', $question)) {
                 AsaQuestionLog::start($request, $question, 'invest');
@@ -235,6 +244,11 @@ class OpenAIController extends Controller
             // "Is a 1BR in Lahug a good investment?" — yield, cash flow and break-even, from the area's rents.
             if ($classification === 'invest') {
                 return $this->investService->replyStream($thread, $request);
+            }
+
+            // "Where is that?" — the listings just shown, on a map, with the way there.
+            if ($classification === 'locate') {
+                return $this->mapService->replyStream($thread, $request);
             }
         }
     
