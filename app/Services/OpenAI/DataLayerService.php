@@ -264,56 +264,96 @@ class DataLayerService
     public function getListingsByArguments($args): array
     {
         $this->searchNote = null;
-        $rows = $this->runListingSearch($args);
+        $asked = trim((string) ($args['address'] ?? ''));
+        $near = trim((string) ($args['near'] ?? '')) !== '';
+        $expanded = self::PLACE_ALIASES[mb_strtolower($asked)] ?? $asked;
+        $place = ($asked !== '' && ! $near && (int) ($args['city_id'] ?? 0) === 0) ? $this->priceGuide->placeOf($expanded) : null;
+        $askedLabel = ucwords(mb_strtolower($expanded));
+
+        // A named city means that city — matched by its id, not by the word "Cebu", which every town
+        // in the province carries. "Lahug, Cebu City" keeps the barangay words and adds the city id.
+        // A bare "Cebu" stays province-wide: it names the province as much as the city.
+        $strict = $args;
+        if ($place !== null && $place['kind'] === 'city' && self::namesCityStrictly($expanded, $place)) {
+            $strict['city_id'] = $place['city_id'];
+            $strict['address'] = self::withoutCityPiece($expanded, $place);
+        }
+
+        $rows = $this->runListingSearch($strict);
         if (count($rows) >= self::SEARCH_TARGET) {
             return $rows;
         }
 
         // Keywords are the loosest part of a search ("commercial lot" in the title): top up without them.
-        $relaxed = $args;
+        $relaxed = $strict;
         if (trim((string) ($relaxed['query_words'] ?? '')) !== '') {
             $relaxed['query_words'] = '';
             $rows = self::mergeRows($rows, $this->runListingSearch($relaxed));
         }
-        if ($rows !== []) {
-            return $rows;
-        }
-        if (trim((string) ($relaxed['property_subtype'] ?? '')) !== '') {
+        if ($rows === [] && trim((string) ($relaxed['property_subtype'] ?? '')) !== '') {
             $relaxed['property_subtype'] = '';
             $rows = $this->runListingSearch($relaxed);
-            if ($rows !== []) {
-                return $rows;
-            }
+        }
+        if (count($rows) >= self::SEARCH_TARGET || $place === null) {
+            return $rows;
         }
 
-        // Nothing in the place itself: the city it belongs to, then the province.
-        $asked = trim((string) ($relaxed['address'] ?? ''));
-        if ($asked === '' || trim((string) ($relaxed['near'] ?? '')) !== '') {
-            return [];
-        }
-        $place = $this->priceGuide->placeOf($asked);
-        if ($place === null) {
-            return [];
-        }
-        $askedLabel = self::PLACE_ALIASES[mb_strtolower($asked)] ?? ucwords(mb_strtolower($asked));
+        // Too few in the place itself: the city it belongs to, then the province — and say so.
+        $inPlace = count($rows);
+        $wider = [];
         if ($place['kind'] === 'barangay') {
-            $rows = $this->runListingSearch(['city_id' => $place['city_id'], 'address' => ''] + $relaxed);
-            if ($rows !== []) {
-                $this->searchNote = sprintf('Nothing matched in %s itself, so these are from the rest of %s.', $askedLabel, $place['city']);
-
-                return $rows;
+            $more = $this->runListingSearch(['city_id' => $place['city_id'], 'address' => ''] + $relaxed);
+            $merged = self::mergeRows($rows, $more);
+            if (count($merged) > count($rows)) {
+                $wider[] = "the rest of {$place['city']}";
             }
+            $rows = $merged;
         }
-        if (mb_strtolower($place['province']) !== mb_strtolower($asked)) {
-            $rows = $this->runListingSearch(['city_id' => 0, 'address' => $place['province']] + $relaxed);
-            if ($rows !== []) {
-                $this->searchNote = sprintf('Nothing matched in %s itself, so these are from elsewhere in %s.', $askedLabel, $place['province']);
-
-                return $rows;
+        if (count($rows) < self::SEARCH_TARGET && mb_strtolower($place['province']) !== mb_strtolower($expanded)) {
+            $more = $this->runListingSearch(['city_id' => 0, 'address' => $place['province']] + $relaxed);
+            $merged = self::mergeRows($rows, $more);
+            if (count($merged) > count($rows)) {
+                $wider[] = "elsewhere in {$place['province']}";
             }
+            $rows = $merged;
+        }
+        if ($wider !== []) {
+            $this->searchNote = $inPlace === 0
+                ? sprintf('Nothing matched in %s itself, so these are from %s.', $askedLabel, implode(' and ', $wider))
+                : sprintf('Only %d matched in %s itself; the rest are from %s.', $inPlace, $askedLabel, implode(' and ', $wider));
         }
 
-        return [];
+        return $rows;
+    }
+
+    /** "Cebu City", "Davao", "Mandaue" name a city; a bare "Cebu" could mean the province too. */
+    private static function namesCityStrictly(string $asked, array $place): bool
+    {
+        $norm = fn (string $s) => trim(preg_replace('/\s+/', ' ', preg_replace('/[^a-z0-9ñ ]/u', ' ', mb_strtolower($s))));
+        $bare = fn (string $s) => trim(preg_replace('/\b(city|municipality)\b/', '', $norm($s)));
+        if (preg_match('/\bcity\b/i', $asked)) {
+            return true;
+        }
+
+        return $bare($place['city']) !== $bare($place['province']);
+    }
+
+    /** "Lahug, Cebu City" → "Lahug"; "Cebu City" → "" (the id carries the city). */
+    private static function withoutCityPiece(string $asked, array $place): string
+    {
+        $norm = fn (string $s) => trim(preg_replace('/\s+/', ' ', preg_replace('/[^a-z0-9ñ ]/u', ' ', mb_strtolower($s))));
+        $bare = fn (string $s) => trim(preg_replace('/\b(city|municipality)\b/', '', $norm($s)));
+        $cityForms = [$norm($place['city']), $bare($place['city'])];
+        $kept = [];
+        foreach (explode(',', $asked) as $piece) {
+            $piece = trim($piece);
+            if ($piece === '' || in_array($norm($piece), $cityForms, true) || in_array($bare($piece), $cityForms, true)) {
+                continue;
+            }
+            $kept[] = $piece;
+        }
+
+        return implode(', ', $kept);
     }
 
     /** Rows of $a, then those of $b not already in it, up to the search target. */
@@ -429,8 +469,9 @@ class DataLayerService
             }
 
             // Measuring from a known point, the pin decides the place — the typed address need not
-            // name it (a listing 400 m from IT Park may say "Apas", not "Lahug").
-            if ($point === null && $cityId === 0) {
+            // name it (a listing 400 m from IT Park may say "Apas", not "Lahug"). With a city id the
+            // remaining words (a barangay) still narrow within that city.
+            if ($point === null && $addr !== []) {
                 $q->where(function ($q) use ($addr) {
                     foreach ($addr as $w) {
                         $q->where(function ($sub) use ($w) {
