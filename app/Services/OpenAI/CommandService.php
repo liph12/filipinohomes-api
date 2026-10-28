@@ -376,6 +376,9 @@ class CommandService extends CacheService
                     'landmark' => isset($l['distance']['landmark']) ? (string) $l['distance']['landmark'] : null,
                 ], $left), $extra['more']);
                 $res['more'] = $extra['more'];
+                // What is actually on the page, so "6 of 42 shown" and the next page's numbering are exact.
+                $extra['shown'] = count($listings) - count($left);
+                $res['shown'] = $extra['shown'];
             }
 
             if(isset($res['others']))

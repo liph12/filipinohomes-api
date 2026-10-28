@@ -393,6 +393,7 @@ class OpenAIController extends Controller
                 'suggested' => $suggested,
                 'others' => $others,
                 'total' => $total,
+                'shown' => $suggestedListings['shown'] ?? (count($others) + ($suggested !== null ? 1 : 0)),
                 'more' => $suggestedListings['more'] ?? $moreRows,
                 'ranked' => $rankedBy,
                 'follow_up' => $suggestedListings['follow_up'],

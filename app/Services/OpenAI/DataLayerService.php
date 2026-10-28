@@ -282,7 +282,7 @@ class DataLayerService
     public const SEARCH_PAGE = 6;
 
     /** How many matches a search ranks and keeps for paging. */
-    private const SEARCH_POOL = 40;
+    public const SEARCH_POOL = 60;
 
     /** What the last runListingSearch counted before its limit. */
     private int $stepTotal = 0;

@@ -21,13 +21,19 @@ class MoreListingsCommandService extends CacheService
     public const PATTERN = '/^\s*(?:(?:please\s+)?(?:show|see|give|load|view|get|display)\s+(?:me\s+)?(?:the\s+)?(?:\d+\s+)?(?:more|next|other|remaining|rest)(?:\s+(?:of\s+(?:the|them)\s*)?(?:options?|listings?|properties|results?|homes?|houses?|condos?|units?|lots?|matches|choices?|ones?|please))?|(?:\d+\s+)?more(?:\s+(?:options?|listings?|properties|results?|please|homes?|houses?|condos?|units?|lots?))?|next(?:\s+(?:\d+|page|batch|ones?))?|what\s+else(?:\s+(?:do\s+you\s+have|is\s+there|have\s+you\s+got))?|any(?:thing)?\s+(?:more|else|others?)|others?)\s*[.!?]*\s*$/iu';
 
     /**
-     * The latest search in this thread and what it has not shown yet, or null when the thread holds no
-     * search at all (then the question is not about paging and the classifier decides).
+     * The latest search and what it has not shown yet: from the request's `page` (the chat sends the
+     * latest search's paging state with every message, so paging survives a thread cache that is not
+     * shared between app servers), else from the day's thread. Null when there is no search at all —
+     * then the question is not about paging and the classifier decides.
      *
-     * @return array{total: int, more: array<int, array{id: int, meters: int|null, landmark: string|null}>, ranked: string}|null
+     * @return array{total: int, shown: int, more: array<int, array{id: int, meters: int|null, landmark: string|null}>, ranked: string}|null
      */
     public function nextPage(Request $req): ?array
     {
+        $sent = $req->input('page');
+        if (is_array($sent) && is_array($sent['more'] ?? null)) {
+            return self::pageFrom($sent);
+        }
         try {
             $messages = $this->getDailyMessages($req);
         } catch (\Throwable) {
@@ -38,21 +44,48 @@ class MoreListingsCommandService extends CacheService
             if (! is_array($meta)) {
                 continue;
             }
-            $more = is_array($meta['more'] ?? null) ? array_values($meta['more']) : [];
 
-            return ['total' => (int) ($meta['total'] ?? 0), 'more' => $more, 'ranked' => (string) ($meta['ranked'] ?? 'fit')];
+            return self::pageFrom($meta);
         }
 
         return null;
     }
 
     /**
-     * @param  array{total: int, more: array<int, array{id: int, meters: int|null, landmark: string|null}>, ranked?: string}  $page
+     * Paging state from stored or sent metadata, sanitised: ids are integers, at most the pool, and the
+     * cards are drawn afresh from public listings, so a tampered list can show nothing it should not.
+     *
+     * @return array{total: int, shown: int, more: array<int, array{id: int, meters: int|null, landmark: string|null}>, ranked: string}
+     */
+    private static function pageFrom(array $meta): array
+    {
+        $more = [];
+        foreach (array_slice(array_values((array) ($meta['more'] ?? [])), 0, DataLayerService::SEARCH_POOL) as $ref) {
+            $id = (int) (is_array($ref) ? ($ref['id'] ?? 0) : $ref);
+            if ($id <= 0) {
+                continue;
+            }
+            $more[] = [
+                'id' => $id,
+                'meters' => is_array($ref) && isset($ref['meters']) && is_numeric($ref['meters']) ? (int) $ref['meters'] : null,
+                'landmark' => is_array($ref) && isset($ref['landmark']) && is_string($ref['landmark']) ? mb_substr($ref['landmark'], 0, 120) : null,
+            ];
+        }
+        $total = max(0, (int) ($meta['total'] ?? 0));
+        $shown = isset($meta['shown']) && is_numeric($meta['shown']) ? max(0, (int) $meta['shown']) : max(0, min($total, $total - count($more)));
+        $ranked = in_array($meta['ranked'] ?? null, ['fit', 'nearest', 'drop'], true) ? $meta['ranked'] : 'fit';
+
+        return ['total' => $total, 'shown' => $shown, 'more' => $more, 'ranked' => $ranked];
+    }
+
+    /**
+     * @param  array{total: int, shown?: int, more: array<int, array{id: int, meters: int|null, landmark: string|null}>, ranked?: string}  $page
      */
     public function replyStream(array $page, Request $req): StreamedResponse
     {
         $total = max(0, (int) $page['total']);
         $more = $page['more'];
+        $shownBefore = isset($page['shown']) ? max(0, (int) $page['shown']) : max(0, $total - count($more));
         $ranked = (string) ($page['ranked'] ?? 'fit');
         $order = ['nearest' => 'nearest first', 'drop' => 'biggest price cut first'][$ranked] ?? 'most complete first, then the best-priced for their area, then the newest';
         $batch = array_slice($more, 0, DataLayerService::SEARCH_PAGE);
@@ -69,27 +102,32 @@ class MoreListingsCommandService extends CacheService
                 $cards[] = $card;
             }
         }
-        $shownBefore = max(0, $total - count($more));
 
         if ($cards === []) {
             AsaQuestionLog::outcome($req, 'no_data');
-            $text = $total > 0
-                ? sprintf("Those were all **%d** that matched. Change the budget, the area or the type — for example **\"house and lot in Mandaue under ₱6M\"** — and I'll search again.", $total)
-                : "There's nothing left to show from the last search. Tell me what you're after — budget, area and type — and I'll search again.";
+            $text = $total > $shownBefore && $shownBefore > 0
+                ? sprintf("You have seen the **%d** best-ranked of the **%d** that matched; the rest are not ranked. Narrow the search — a barangay, a tighter budget or a bedroom count — and I'll rank them again.", $shownBefore, $total)
+                : ($total > 0
+                    ? sprintf("Those were all **%d** that matched. Change the budget, the area or the type — for example **\"house and lot in Mandaue under ₱6M\"** — and I'll search again.", $total)
+                    : "There's nothing left to show from the last search. Tell me what you're after — budget, area and type — and I'll search again.");
 
-            return $this->streamInsight('more', 'listing', ['suggested' => null, 'others' => [], 'total' => $total, 'more' => [], 'ranked' => $ranked], $text, [], $req);
+            return $this->streamInsight('more', 'listing', ['suggested' => null, 'others' => [], 'total' => $total, 'shown' => $shownBefore, 'more' => [], 'ranked' => $ranked], $text, [], $req);
         }
 
         $from = $shownBefore + 1;
         $to = $shownBefore + count($cards);
-        $text = $rest === []
-            ? sprintf('Here are the last **%d** of the **%d** matches (%d–%d). That is all of them — change the budget, the area or the type and I will search again.', count($cards), $total, $from, $to)
-            : sprintf('Here are the next **%d** of the **%d** matches (%d–%d), in the same order — %s. **%d** more after these.', count($cards), $total, $from, $to, $order, count($rest));
-        if ($rest === [] && count($cards) === 1) {
+        if ($rest !== []) {
+            $text = sprintf('Here are the next **%d** of the **%d** matches (%d–%d), in the same order — %s. **%d** more after these.', count($cards), $total, $from, $to, $order, count($rest));
+        } elseif ($total > $to) {
+            // The ranked pool ran out before the matches did: say so instead of "that is all".
+            $text = sprintf('Here are the last of the **%d** best-ranked (%d–%d); **%d** more matched beyond them. Narrow the search — a barangay, a tighter budget or a bedroom count — and I will rank them again.', $to, $from, $to, $total - $to);
+        } elseif (count($cards) === 1) {
             $text = sprintf('Here is the last of the **%d** matches. That is all of them — change the budget, the area or the type and I will search again.', $total);
+        } else {
+            $text = sprintf('Here are the last **%d** of the **%d** matches (%d–%d). That is all of them — change the budget, the area or the type and I will search again.', count($cards), $total, $from, $to);
         }
         AsaQuestionLog::outcome($req, 'answered');
 
-        return $this->streamInsight('more', 'listing', ['suggested' => null, 'others' => $cards, 'total' => $total, 'more' => $rest, 'ranked' => $ranked], $text, [], $req);
+        return $this->streamInsight('more', 'listing', ['suggested' => null, 'others' => $cards, 'total' => $total, 'shown' => $to, 'more' => $rest, 'ranked' => $ranked], $text, [], $req);
     }
 }

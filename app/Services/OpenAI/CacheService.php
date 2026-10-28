@@ -224,6 +224,7 @@ class CacheService extends DataLayerService
                     // "Show more" pages through the ranked rest of the latest search.
                     'total' => isset($listingMeta['total']) ? (int) $listingMeta['total'] : null,
                     'more' => is_array($listingMeta['more'] ?? null) ? array_values($listingMeta['more']) : [],
+                    'shown' => isset($listingMeta['shown']) ? (int) $listingMeta['shown'] : null,
                     'ranked' => isset($listingMeta['ranked']) ? (string) $listingMeta['ranked'] : null,
                 ];
             }
