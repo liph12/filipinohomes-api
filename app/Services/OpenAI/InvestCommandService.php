@@ -88,12 +88,20 @@ class InvestCommandService extends CacheService
         } else {
             $place = ($asked['city'] !== '' || $asked['barangay'] !== '') ? $this->price->resolvePlace(['city' => $asked['city'], 'barangay' => $asked['barangay']]) : null;
             if ($asked['price'] > 0 && $asked['rent'] > 0) {
-                $insight = $this->insight($asked['price'], $asked['rent'], 'you', null, $asked, $place === null ? null : ['place' => $place, 'scope' => 'city', 'tier' => null, 'type' => self::dbType($asked['property_type'])]);
+                $type = self::dbType($asked['property_type']);
+                $scope = $place === null
+                    ? ['place' => null, 'scope' => null, 'tier' => $asked['tier'] ?: null, 'type' => $type, 'area_label' => null, 'area_yield_pct' => null]
+                    : ['place' => ['city' => $place['city'], 'barangay' => $place['barangay'], 'province' => $place['province']], 'scope' => $place['barangay'] ? 'barangay' : 'city', 'tier' => $asked['tier'] ?: null, 'type' => $type, 'area_label' => $place['barangay'] ? "{$place['barangay']}, {$place['city']}" : $place['city'], 'area_yield_pct' => null];
+                $insight = $this->insight($asked['price'], $asked['rent'], 'you', null, $asked, $scope);
+                $insight['name'] = sprintf('A %s%s', strtolower(str_replace('Condominium', 'condo', $insight['what'])), $scope['area_label'] ? " in {$scope['area_label']}" : '');
             } elseif ($place !== null) {
                 $insight = $this->insightForArea($place, $asked);
             }
             if ($insight === null) {
-                AsaQuestionLog::outcome($req, 'no_data');
+                AsaQuestionLog::outcome($req, 'no_data', $place['barangay'] ?? null ?: ($place['city'] ?? null));
+                if ($place !== null) {
+                    return $this->streamInsight('invest', 'invest', ['empty' => true], $this->thinAreaText($place, $asked), [], $req);
+                }
 
                 return $this->streamInsight('invest', 'invest', ['empty' => true], "Tell me the property and where it is — **\"Is a 1-bedroom condo in Lahug a good investment?\"** — or a price and the rent you expect — **\"a ₱4M condo that rents for ₱22,000\"** — and I'll work out the yield, the cash flow and the break-even.", [], $req);
             }
@@ -328,6 +336,30 @@ class InvestCommandService extends CacheService
                 'selling_cost_pct' => self::SELLING_COST_PCT,
             ],
         ] + $main;
+    }
+
+    /**
+     * A place we know but with too few rentals of the asked kind: say how many there are, give the
+     * typical sale price when there are enough sales, and the exact question that completes the sum.
+     */
+    private function thinAreaText(array $place, array $asked): string
+    {
+        $type = self::dbType($asked['property_type']);
+        $plural = strtolower($type === 'Condominium' ? 'condos' : ($type === 'Land' ? 'lots' : $type.'s'));
+        $where = $place['barangay'] ? "{$place['barangay']}, {$place['city']}" : $place['city'];
+        $rows = array_values(array_filter($this->guide->rows($place['city_id']), fn (array $r) => $r['type'] === $type));
+        $rents = count(array_filter($rows, fn (array $r) => $r['category'] === 'For Rent'));
+        $sales = array_values(array_filter($rows, fn (array $r) => $r['category'] === 'For Sale'));
+        $saleMedian = count($sales) >= 5 ? PriceGuideService::percentileOf(array_column($sales, 'price'), 0.5) : null;
+
+        $lead = $rents === 0
+            ? sprintf('There are no **%s for rent in %s** on Filipino Homes', $plural, $place['city'])
+            : sprintf('Only **%d %s %s for rent in %s** on Filipino Homes', $rents, $plural, $rents === 1 ? 'is' : 'are', $place['city']);
+        $ask = $saleMedian !== null
+            ? sprintf('%s typically ask **%s** there. Tell me the rent you expect and I\'ll run the full numbers — for example **"Is a %s %s in %s that rents for %s a month a good investment?"**', ucfirst($plural), PriceCommandService::peso($saleMedian), PriceCommandService::peso($saleMedian), strtolower($type === 'Condominium' ? 'condo' : $type), $where, PriceCommandService::peso(round($saleMedian * 0.005, -2)))
+            : sprintf('Tell me the price and the rent you expect and I\'ll run the full numbers — for example **"Is a ₱4M %s in %s that rents for ₱20,000 a month a good investment?"**', strtolower($type === 'Condominium' ? 'condo' : $type), $where);
+
+        return "{$lead}, too few to say what one earns without guessing. {$ask}";
     }
 
     /** The area's gross yield for the same type, from the guide, when the listing context did not carry one. */
