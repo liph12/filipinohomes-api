@@ -17,6 +17,7 @@ use App\Services\OpenAI\AffordCommandService;
 use App\Services\OpenAI\WorthCommandService;
 use App\Services\OpenAI\CostCommandService;
 use App\Services\OpenAI\RentBuyCommandService;
+use App\Services\OpenAI\InvestCommandService;
 use App\Services\OpenAI\AsaQuestionLog;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
@@ -39,13 +40,15 @@ class OpenAIController extends Controller
     private $worthService;
     private $costService;
     private $rentBuyService;
+    private $investService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest)
     {
         $this->affordService = $afford;
         $this->worthService = $worth;
         $this->costService = $cost;
         $this->rentBuyService = $rentBuy;
+        $this->investService = $invest;
         $this->sqService = $s;
         $this->cacheService = $c;
         $this->dataService = $d;
@@ -153,6 +156,12 @@ class OpenAIController extends Controller
 
                 return $this->compareService->replyStream($ids, $thread, $request);
             }
+            // "Is this a good investment? listing #123" — yield and cash flow, not the price verdict.
+            if (preg_match('/\b(invest|investment|yield|cash ?flow|rental income|roi|return on)/i', $question)) {
+                AsaQuestionLog::start($request, $question, 'invest');
+
+                return $this->investService->replyStreamForListing($ids[0], $thread, $request);
+            }
             // "What will it really cost to buy listing #123?" — the cost breakdown, not the verdict.
             if (preg_match('/\b(cost|fees?|taxes?|closing|up ?front|upfront|all[- ]in|amortiz|monthly|installment)/i', $question)) {
                 AsaQuestionLog::start($request, $question, 'cost');
@@ -221,6 +230,11 @@ class OpenAIController extends Controller
             // "Should I rent or buy in Lahug?" — the area's rent and sale prices through a break-even model.
             if ($classification === 'rentbuy') {
                 return $this->rentBuyService->replyStream($thread, $request);
+            }
+
+            // "Is a 1BR in Lahug a good investment?" — yield, cash flow and break-even, from the area's rents.
+            if ($classification === 'invest') {
+                return $this->investService->replyStream($thread, $request);
             }
         }
     

@@ -678,6 +678,7 @@ Route::middleware('strip.tags')->group(function () {
             Route::middleware(RoleMiddleware::class.':admin')->group(function () {
                 // "What people ask ASA" — questions, intents, places, outcomes, the unanswered ones.
                 Route::get('/admin/asa/insights', [\App\Http\Controllers\AsaInsightsController::class, 'index']);
+                Route::get('/admin/asa/data-quality', [\App\Http\Controllers\AsaDataQualityController::class, 'index']);
 
                 // Partner Listings Feed — what GET /fh-agent/listings hands to
                 // other websites (System Settings card; PartnerFeedService).

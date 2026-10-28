@@ -376,6 +376,8 @@ class PriceGuideService
                 'area' => $scope === 'barangay' ? "{$r->barangay}, {$r->city}" : (string) $r->city,
                 'city' => (string) $r->city,
                 'barangay' => $scope === 'barangay' ? (string) $r->barangay : null,
+                'city_id' => (int) $r->city_id,
+                'barangay_id' => $scope === 'barangay' ? $barangayId : null,
                 'category' => (string) $r->category,
                 'type' => (string) $r->type,
                 'tier' => $stats['tier'],

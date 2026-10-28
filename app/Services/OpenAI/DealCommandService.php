@@ -42,6 +42,8 @@ class DealCommandService extends CacheService
         };
         $text = sprintf('**%s** is %s. The full comparison is below.', $insight['name'], $verdictLine);
         $followUps = [
+            ['label' => 'Total cost to buy', 'prompt' => "What will it really cost to buy listing #{$listingId}?"],
+            ['label' => 'As an investment', 'prompt' => "Is this a good investment? listing #{$listingId}"],
             ['label' => "Cheaper {$what}s in {$spot}", 'prompt' => "Show me {$what}s for sale in {$spot} under ".PriceCommandService::peso($insight['context']['median'])],
             ['label' => 'Similar ones nearby', 'prompt' => "Show me {$what}s for sale near {$spot}"],
             ['label' => "About {$spot}", 'prompt' => "Tell me about {$spot} as an area"],

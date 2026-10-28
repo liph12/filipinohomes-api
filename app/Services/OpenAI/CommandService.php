@@ -557,6 +557,7 @@ class CommandService extends CacheService
         - afford → user asks what they can AFFORD or what price range fits a monthly payment, salary or budget ("what can I afford at 25k a month", "my salary is 60k, what house can I buy", "magkano ang kaya ko", "how much house for 30k monthly amortization") — a budget-to-price question, not a request for listings
         - worth → user asks the VALUE of a property THEY OWN or want to sell / rent out ("what is my condo worth", "how much can I sell my house in Lahug for", "magkano mabenta ang bahay ko", "appraise my 200 sqm lot in Mandaue", "how much could I rent out my 2BR for") — a valuation, not a search
         - cost → user asks the TOTAL or true COST, fees, taxes, closing costs, cash needed up front, or the monthly payment OF BUYING a specific property or a stated price ("what are the fees when buying a 5M condo", "total cost of buying listing #123", "how much cash do I need upfront for a 4M house", "monthly amortization for a 3M condo over 20 years") — arithmetic on a price, not a budget question and not a search
+        - invest → user asks whether a property, a price or a typical unit in a place is a good INVESTMENT / rental: yield, ROI, cash flow, rental income, "will it pay for itself", "is a 4M condo that rents for 22k worth it", "is a 1BR in Lahug a good investment" — an investor's question, not a search and not a buy-vs-rent for living in
         - rentbuy → user asks whether to RENT OR BUY in a place ("should I rent or buy in Lahug", "rent vs buy a condo in Cebu", "is it better to rent or to buy", "mag-rent o bumili") — a comparison of the two, not a search
         - project → user asks about a specific BUILDING, development or condo project by name ("tell me about Avida Towers Riala", "is 38 Park Avenue a good buy", "what's listed in Mivesa"), or to COMPARE two named developments ("Riala vs 38 Park Avenue")
         - area → user asks ABOUT a place in general: "tell me about Lahug", "what's it like in BGC", "is IT Park a good area to invest", "overview of Mandaue", "which barangays in Cebu City have the most listings", rental yield / ROI / "where do condos yield the most in Cebu" — an area or investment question, not a price-only question and not a request for listings
@@ -577,10 +578,11 @@ class CommandService extends CacheService
         - "What is MY property worth" / what they could sell or rent THEIRS for is: worth — not price (price is what OTHER listings cost)
         - Fees, taxes, closing costs, cash up front or the monthly payment for a GIVEN price or listing is: cost — not afford
         - "Rent or buy" in a place is: rentbuy — not area and not listing
+        - Investment, yield, ROI, cash flow or rental income on a property or price is: invest — not price, not area, not rentbuy
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: price OR area OR project OR afford OR worth OR cost OR rentbuy OR listing OR agent OR normal
+        - Return EXACTLY one word: price OR area OR project OR afford OR worth OR cost OR rentbuy OR invest OR listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -601,7 +603,7 @@ class CommandService extends CacheService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area', 'project', 'afford', 'worth', 'cost', 'rentbuy'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area', 'project', 'afford', 'worth', 'cost', 'rentbuy', 'invest'])) {
             return 'normal';
         }
     
