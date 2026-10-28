@@ -183,7 +183,7 @@ class AiVisibilityTest extends TestCase
             ->assertJsonPath('top_pages.0.path', '/page-7');
     }
 
-    public function test_visit_channel_is_the_assistant_itself(): void
+    private function createVisitsTable(): void
     {
         Schema::create('visits', function (Blueprint $table) {
             $table->id();
@@ -201,9 +201,51 @@ class AiVisibilityTest extends TestCase
             $table->string('city', 96)->nullable();
             $table->timestamp('created_at')->nullable();
         });
+    }
+
+    public function test_visit_channel_is_the_assistant_itself(): void
+    {
+        $this->createVisitsTable();
 
         $this->postJson('/api/track/visit', ['utm_source' => 'chatgpt.com'])->assertJson(['channel' => 'chatgpt']);
         $this->postJson('/api/track/visit', ['referrer' => 'https://gemini.google.com/app'])->assertJson(['channel' => 'gemini']);
         $this->postJson('/api/track/visit', ['referrer' => 'https://www.google.com/'])->assertJson(['channel' => 'google']);
+        $this->postJson('/api/track/visit', ['referrer' => 'https://l.messenger.com/'])->assertJson(['channel' => 'facebook']);
+
+        // One row per visitor per channel per day: a second source the same day counts, a repeat doesn't.
+        $this->postJson('/api/track/visit', ['visitor_id' => 'dev-1', 'referrer' => 'https://www.google.com/'])->assertJson(['channel' => 'google']);
+        $this->postJson('/api/track/visit', ['visitor_id' => 'dev-1', 'utm_source' => 'chatgpt.com'])->assertJson(['channel' => 'chatgpt']);
+        $this->postJson('/api/track/visit', ['visitor_id' => 'dev-1', 'referrer' => 'https://www.google.com/'])->assertJson(['deduped' => true]);
+        $this->assertSame(2, DB::table('visits')->where('visitor_id', 'dev-1')->count());
+    }
+
+    public function test_referral_breakdown_names_sites_apps_and_tags(): void
+    {
+        $this->createVisitsTable();
+        Schema::create('roles', fn (Blueprint $t) => $t->id() && $t->string('name'));
+        Schema::create('users', function (Blueprint $t) {
+            $t->id();
+            $t->foreignId('role_id')->nullable();
+            $t->string('visitor_id', 64)->nullable();
+            $t->timestamps();
+        });
+        Schema::create('login_logs', function (Blueprint $t) {
+            $t->id();
+            $t->foreignId('user_id');
+            $t->timestamp('logged_in_at')->nullable();
+        });
+
+        $this->postJson('/api/track/visit', ['visitor_id' => 'r-1', 'referrer' => 'https://www.lamudi.com.ph/listing/1'])->assertJson(['channel' => 'referral']);
+        $this->postJson('/api/track/visit', ['visitor_id' => 'r-2', 'referrer' => 'https://lamudi.com.ph/'])->assertJson(['channel' => 'referral']);
+        $this->postJson('/api/track/visit', ['visitor_id' => 'r-3', 'referrer' => 'android-app://com.linkedin.android/'])->assertJson(['channel' => 'referral']);
+        $this->postJson('/api/track/visit', ['visitor_id' => 'r-4', 'utm_source' => 'partnersite'])->assertJson(['channel' => 'referral']);
+
+        $refs = collect(app(\App\Services\Audience\TrafficSourceService::class)
+            ->range(now()->subDay()->toDateString(), now()->toDateString())
+            ->channels()['referrers'])->keyBy('name');
+
+        $this->assertSame(['name' => 'lamudi.com.ph', 'kind' => 'site', 'people' => 2, 'visits' => 2], $refs['lamudi.com.ph']);
+        $this->assertSame('app', $refs['LinkedIn app']['kind']);
+        $this->assertSame('tag', $refs['partnersite']['kind']);
     }
 }

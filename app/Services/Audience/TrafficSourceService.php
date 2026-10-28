@@ -29,6 +29,27 @@ class TrafficSourceService extends AudienceInsightsService
             ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
             ->pluck('c', 'channel');
 
+        // Visits = visitor-days per channel (one visits row per device per channel per day), so a device
+        // that came from Google on 5 days is 1 visitor and 5 visits.
+        $visits = $this->audienceVisits()
+            ->whereNotNull('visits.visitor_id')
+            ->groupBy('visits.channel')
+            ->select('visits.channel as channel', DB::raw('COUNT(*) as c'))
+            ->pluck('c', 'channel');
+
+        // First source IN RANGE per device — the channel of its earliest visit row in the range. Each
+        // device lands in exactly one channel, so these add up to the unique-visitor total (the
+        // "First source" view); `value` above counts a device in every channel it used.
+        $firstInRangeIds = $this->audienceVisits()
+            ->whereNotNull('visits.visitor_id')
+            ->groupBy('visits.visitor_id')
+            ->select('visits.visitor_id', DB::raw('MIN(visits.id) as first_id'));
+        $firstInRange = DB::table('visits')
+            ->joinSub($firstInRangeIds, 'fr', fn ($j) => $j->on('visits.id', '=', 'fr.first_id'))
+            ->groupBy('visits.channel')
+            ->select('visits.channel as channel', DB::raw('COUNT(*) as c'))
+            ->pluck('c', 'channel');
+
         // First-touch channel per visitor_id = the channel of that device's
         // earliest visit row (ids are monotonic with insert time, so MIN(id)
         // is the first visit). Joined to clients via users.visitor_id below.
@@ -84,6 +105,8 @@ class TrafficSourceService extends AudienceInsightsService
             ->map(fn ($channel) => [
                 'channel'   => $channel,
                 'value'     => (int) ($visitors[$channel] ?? 0),
+                'visits'    => (int) ($visits[$channel] ?? 0),
+                'first'     => (int) ($firstInRange[$channel] ?? 0),
                 'new'       => (int) ($newByChannel[$channel] ?? 0),
                 'returning' => (int) ($returningByChannel[$channel] ?? 0),
             ])
@@ -103,6 +126,8 @@ class TrafficSourceService extends AudienceInsightsService
             $channels[] = [
                 'channel'   => 'unknown',
                 'value'     => 0, // no anonymous visitors here — every visit carries a channel
+                'visits'    => 0,
+                'first'     => 0,
                 'new'       => $unknownNew,
                 'returning' => $unknownReturning,
             ];
@@ -119,9 +144,80 @@ class TrafficSourceService extends AudienceInsightsService
 
         return [
             'channels'              => $channels,
+            'unique_visitors'       => $uniqueDevices,
             'multi_source_devices'  => $this->multiSourceDevices(),
+            'referrers'             => $this->referrers(),
             'multi_source_overcount' => max(0, $perChannelSum - $uniqueDevices),
         ];
+    }
+
+    /** Android package names → readable app names for the referrer list. */
+    private const APP_NAMES = [
+        'com.linkedin.android'      => 'LinkedIn app',
+        'com.google.android.gm'     => 'Gmail app',
+        'com.microsoft.office.outlook' => 'Outlook app',
+        'com.slack'                 => 'Slack app',
+        'org.telegram.messenger'    => 'Telegram app',
+        'com.viber.voip'            => 'Viber app',
+        'com.whatsapp'              => 'WhatsApp app',
+        'com.reddit.frontpage'      => 'Reddit app',
+        'com.pinterest'             => 'Pinterest app',
+        'jp.naver.line.android'     => 'LINE app',
+        'com.discord'               => 'Discord app',
+    ];
+
+    /**
+     * What's inside the "referral" channel: the site, app or utm tag each referral visit came from,
+     * with people (distinct devices) and visits (rows) per name, biggest first. Mirrors
+     * VisitController::resolveChannel — a utm_source decided the channel when present, so it names
+     * the row; otherwise the referrer host (android-app://<package> for Android apps).
+     */
+    private function referrers(): array
+    {
+        $groups = [];
+        $this->audienceVisits()
+            ->where('visits.channel', 'referral')
+            ->select('visits.id', 'visits.visitor_id', 'visits.referrer', 'visits.utm_source')
+            ->orderBy('visits.id')
+            ->chunk(2000, function ($rows) use (&$groups) {
+                foreach ($rows as $row) {
+                    [$name, $kind] = $this->referrerName($row->utm_source, $row->referrer);
+                    $g = &$groups[$kind . '|' . $name];
+                    $g ??= ['name' => $name, 'kind' => $kind, 'visits' => 0, 'ids' => []];
+                    $g['visits']++;
+                    if ($row->visitor_id) {
+                        $g['ids'][$row->visitor_id] = true;
+                    }
+                    unset($g);
+                }
+            });
+
+        return collect($groups)
+            ->map(fn ($g) => ['name' => $g['name'], 'kind' => $g['kind'], 'people' => count($g['ids']), 'visits' => $g['visits']])
+            ->sortBy([['people', 'desc'], ['visits', 'desc']])
+            ->values()
+            ->take(50)
+            ->all();
+    }
+
+    /** @return array{0: string, 1: 'site'|'app'|'tag'|'unknown'} */
+    private function referrerName(?string $utmSource, ?string $referrer): array
+    {
+        $tag = strtolower(trim((string) $utmSource));
+        if ($tag !== '') {
+            return [$tag, 'tag'];
+        }
+
+        $ref = trim((string) $referrer);
+        $host = strtolower((string) parse_url($ref, PHP_URL_HOST));
+        if ($host === '') {
+            return ['Unknown', 'unknown'];
+        }
+        if (str_starts_with(strtolower($ref), 'android-app://')) {
+            return [self::APP_NAMES[$host] ?? $host, 'app'];
+        }
+
+        return [preg_replace('/^www\./', '', $host), 'site'];
     }
 
     /**

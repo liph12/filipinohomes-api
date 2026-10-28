@@ -13,7 +13,7 @@ class VisitController extends Controller
     /**
      * Public acquisition ping. The web fires this once per session with the
      * referrer + utm params; we resolve a channel and store one row. Throttled
-     * to one row per visitor per day so retries / extra mounts don't inflate.
+     * to one row per visitor per channel per day so retries / extra mounts don't inflate.
      */
     public function store(Request $request): JsonResponse
     {
@@ -33,18 +33,21 @@ class VisitController extends Controller
 
         $visitorId = $data['visitor_id'] ?? null;
 
-        if ($visitorId) {
-            $key = 'visit:' . $visitorId . ':' . now()->toDateString();
-            if (!Cache::add($key, 1, now()->addDay())) {
-                return response()->json(['ok' => true, 'deduped' => true]);
-            }
-        }
-
         $channel = $this->resolveChannel(
             $data['utm_source'] ?? null,
             $data['click_id'] ?? null,
             $data['referrer'] ?? null,
         );
+
+        // One row per visitor per CHANNEL per day: a device that arrives from Google in the morning and
+        // from ChatGPT in the afternoon is credited to both (the multi-source card shows the overlap),
+        // while repeat arrivals from the same channel that day still count once.
+        if ($visitorId) {
+            $key = 'visit:' . $visitorId . ':' . $channel . ':' . now()->toDateString();
+            if (!Cache::add($key, 1, now()->addDay())) {
+                return response()->json(['ok' => true, 'deduped' => true]);
+            }
+        }
 
         Visit::create([
             'visitor_id'   => $visitorId,
@@ -122,7 +125,7 @@ class VisitController extends Controller
     private function matchChannel(string $haystack): ?string
     {
         $map = [
-            'facebook'  => ['facebook', 'fb', 'm.facebook', 'l.facebook', 'lm.facebook'],
+            'facebook'  => ['facebook', 'fb', 'm.facebook', 'l.facebook', 'lm.facebook', 'messenger'], // messenger: l.messenger.com link shim on desktop
             'instagram' => ['instagram', 'ig', 'l.instagram'],
             'tiktok'    => ['tiktok'],
             'twitter'   => ['twitter', 'x.com', 't.co'],
