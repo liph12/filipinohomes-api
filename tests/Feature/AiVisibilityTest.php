@@ -219,6 +219,22 @@ class AiVisibilityTest extends TestCase
         $this->assertSame(2, DB::table('visits')->where('visitor_id', 'dev-1')->count());
     }
 
+    public function test_visit_records_the_logged_in_user_from_the_bearer_token(): void
+    {
+        $this->createVisitsTable();
+        $this->actingAsAdmin();
+        // A real bearer token on a public route, as the browser sends it — not actingAs, which also
+        // switches the default guard and would hide the bug.
+        $token = User::first()->createToken('t')->plainTextToken;
+        config(['auth.defaults.guard' => 'web']); // actingAs set it to sanctum; prod's public route uses web
+        app('auth')->forgetGuards();
+
+        $this->withToken($token)
+            ->postJson('/api/track/visit', ['visitor_id' => 'dev-auth', 'referrer' => 'https://www.google.com/'])->assertOk();
+
+        $this->assertNotNull(DB::table('visits')->where('visitor_id', 'dev-auth')->value('user_id'));
+    }
+
     public function test_referral_breakdown_names_sites_apps_and_tags(): void
     {
         $this->createVisitsTable();

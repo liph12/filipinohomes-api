@@ -57,7 +57,9 @@ class VisitController extends Controller
             'utm_campaign' => $data['utm_campaign'] ?? null,
             'referrer'     => $data['referrer'] ?? null,
             'landing_path' => $data['landing_path'] ?? null,
-            'user_id'      => $request->user()?->id,
+            // Public route (no auth middleware), so $request->user() reads the empty session guard — resolve
+            // the bearer token explicitly or logged-in clients and staff are stored as anonymous.
+            'user_id'      => auth('sanctum')->id(),
             'ip'           => $request->ip(),
             'country'      => $data['country'] ?? null,
             'region'       => $data['region'] ?? null,
