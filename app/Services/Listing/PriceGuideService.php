@@ -129,7 +129,7 @@ class PriceGuideService
      * What a typed place is — a barangay ("Lahug" → Cebu City, Cebu) or a city ("Cebu City") — with the
      * ids a search can widen to. Null when unknown. "Lahug, Cebu City" is tried whole, then piece by piece.
      *
-     * @return array{kind: 'barangay'|'city', city_id: int, city: string, province: string}|null
+     * @return array{kind: 'barangay'|'city', city_id: int, city: string, province: string, barangay_id: int|null, barangay: string|null}|null
      */
     public function placeOf(string $place): ?array
     {
@@ -143,7 +143,7 @@ class PriceGuideService
         foreach ($candidates as $want) {
             foreach ($places as $p) {
                 if ($p['barangay'] === null && $norm($p['city']) === $want) {
-                    return ['kind' => 'city', 'city_id' => $p['city_id'], 'city' => $p['city'], 'province' => $p['province']];
+                    return ['kind' => 'city', 'city_id' => $p['city_id'], 'city' => $p['city'], 'province' => $p['province'], 'barangay_id' => null, 'barangay' => null];
                 }
             }
             $hits = array_values(array_filter($places, fn ($p) => $p['barangay'] !== null && (
@@ -152,7 +152,7 @@ class PriceGuideService
             if ($hits !== []) {
                 usort($hits, fn ($a, $b) => $b['listings'] <=> $a['listings']);
 
-                return ['kind' => 'barangay', 'city_id' => $hits[0]['city_id'], 'city' => $hits[0]['city'], 'province' => $hits[0]['province']];
+                return ['kind' => 'barangay', 'city_id' => $hits[0]['city_id'], 'city' => $hits[0]['city'], 'province' => $hits[0]['province'], 'barangay_id' => $hits[0]['barangay_id'], 'barangay' => $hits[0]['barangay']];
             }
         }
 

@@ -17,6 +17,10 @@ use Illuminate\Support\Facades\Http;
  */
 class LandmarkLocator
 {
+    public function __construct(private readonly \App\Services\Listing\PriceGuideService $guide)
+    {
+    }
+
     /** @return array{lat: float, lng: float, label: string, source: string}|null */
     public function locate(string $name, string $cityHint = ''): ?array
     {
@@ -24,13 +28,20 @@ class LandmarkLocator
         if (mb_strlen($name) < 3) {
             return null;
         }
-        $key = 'landmark:v1:'.md5(mb_strtolower($name).'|'.mb_strtolower($cityHint));
+        // A city's name is not a landmark: "near Cebu City" must not resolve to a development
+        // that happens to carry the city in its name.
+        $isCity = false;
+        try {
+            $isCity = ($this->guide->placeOf($name)['kind'] ?? null) === 'city';
+        } catch (\Throwable) {
+        }
+        $key = 'landmark:v2:'.md5(mb_strtolower($name).'|'.mb_strtolower($cityHint));
         $hit = Cache::get($key);
         if ($hit !== null) {
             return $hit === false ? null : $hit;
         }
 
-        $found = $this->fromProjects($name) ?? $this->fromNominatim($name, $cityHint);
+        $found = ($isCity ? null : $this->fromProjects($name)) ?? $this->fromNominatim($name, $cityHint);
         if ($found === null) {
             Cache::put($key, false, 86400);
 
@@ -43,18 +54,43 @@ class LandmarkLocator
 
     private function fromProjects(string $name): ?array
     {
+        // Match the development's own name, not the city tacked on after the comma ("Vista
+        // Residences Kamputhaw, Cebu City" must not answer for "Cebu City").
         $row = DB::table('projects')
             ->whereNull('deleted_at')
             ->whereNotNull('latitude')->whereNotNull('longitude')
             ->where('latitude', '!=', '')->where('longitude', '!=', '')
-            ->where('name', 'LIKE', '%'.$name.'%')
+            ->whereRaw("SUBSTRING_INDEX(name, ',', 1) LIKE ?", ['%'.$name.'%'])
             ->orderByDesc('views')
             ->first(['name', 'latitude', 'longitude']);
         if ($row === null || ! is_numeric($row->latitude) || ! is_numeric($row->longitude)) {
             return null;
         }
+        $point = self::philippinePoint((float) $row->latitude, (float) $row->longitude);
+        if ($point === null) {
+            return null;
+        }
 
-        return ['lat' => (float) $row->latitude, 'lng' => (float) $row->longitude, 'label' => (string) $row->name, 'source' => 'projects'];
+        return $point + ['label' => (string) $row->name, 'source' => 'projects'];
+    }
+
+    /**
+     * A lat/lng inside the Philippines, swapping the pair when it was stored the other way round
+     * (some projects carry latitude 123.9, longitude 10.3); null when it is nowhere near.
+     *
+     * @return array{lat: float, lng: float}|null
+     */
+    public static function philippinePoint(float $lat, float $lng): ?array
+    {
+        $inside = fn (float $la, float $lo) => $la >= 4.0 && $la <= 22.0 && $lo >= 116.0 && $lo <= 127.5;
+        if ($inside($lat, $lng)) {
+            return ['lat' => $lat, 'lng' => $lng];
+        }
+        if ($inside($lng, $lat)) {
+            return ['lat' => $lng, 'lng' => $lat];
+        }
+
+        return null;
     }
 
     private function fromNominatim(string $name, string $cityHint): ?array
@@ -90,7 +126,12 @@ class LandmarkLocator
                 $pick = $pool[0];
                 $label = trim((string) ($pick['name'] ?? '')) ?: implode(', ', array_slice(array_map('trim', explode(',', (string) ($pick['display_name'] ?? $name))), 0, 2));
 
-                return ['lat' => (float) $pick['lat'], 'lng' => (float) $pick['lon'], 'label' => $label ?: $name, 'source' => 'osm'];
+                $point = self::philippinePoint((float) $pick['lat'], (float) $pick['lon']);
+                if ($point === null) {
+                    continue;
+                }
+
+                return $point + ['label' => $label ?: $name, 'source' => 'osm'];
             } catch (\Throwable) {
                 // fall through to the next query, then to null
             }

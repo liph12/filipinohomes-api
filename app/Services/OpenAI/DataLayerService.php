@@ -298,32 +298,100 @@ class DataLayerService
             return $rows;
         }
 
-        // Too few in the place itself: the city it belongs to, then the province — and say so.
+        // Too few in the place itself: the nearest listings around it by map distance (a barangay
+        // within ~8 km, a city within ~40 km), each card carrying "X km from …"; when the place
+        // cannot be pinned, the city it belongs to, then the province. The reply says which.
         $inPlace = count($rows);
         $wider = [];
         if ($place['kind'] === 'barangay') {
-            $more = $this->runListingSearch(['city_id' => $place['city_id'], 'address' => ''] + $relaxed);
+            $centre = $this->areaCentre('barangay', (int) $place['barangay_id'], (string) $place['barangay']);
+            $more = $centre ? $this->nearby($relaxed, $centre, 8) : [];
+            if ($more !== []) {
+                $label = 'the nearest ones around it';
+            } else {
+                $more = $this->runListingSearch(['city_id' => $place['city_id'], 'address' => ''] + $relaxed);
+                $label = "the rest of {$place['city']}";
+            }
             $merged = self::mergeRows($rows, $more);
             if (count($merged) > count($rows)) {
-                $wider[] = "the rest of {$place['city']}";
+                $wider[] = $label;
             }
             $rows = $merged;
         }
-        if (count($rows) < self::SEARCH_TARGET && mb_strtolower($place['province']) !== mb_strtolower($expanded)) {
-            $more = $this->runListingSearch(['city_id' => 0, 'address' => $place['province']] + $relaxed);
+        if (count($rows) < self::SEARCH_TARGET) {
+            $centre = $this->areaCentre('city', (int) $place['city_id'], (string) $place['city']);
+            $more = $centre ? $this->nearby($relaxed, $centre, 40) : [];
+            if ($more !== []) {
+                $label = $place['kind'] === 'barangay' ? "the nearest ones around {$place['city']}" : 'the nearest ones around it';
+            } elseif (mb_strtolower($place['province']) !== mb_strtolower($expanded)) {
+                $more = $this->runListingSearch(['city_id' => 0, 'address' => $place['province']] + $relaxed);
+                $label = "elsewhere in {$place['province']}";
+            } else {
+                $more = [];
+                $label = '';
+            }
             $merged = self::mergeRows($rows, $more);
-            if (count($merged) > count($rows)) {
-                $wider[] = "elsewhere in {$place['province']}";
+            if (count($merged) > count($rows) && $label !== '') {
+                $wider[] = $label;
             }
             $rows = $merged;
         }
         if ($wider !== []) {
             $this->searchNote = $inPlace === 0
-                ? sprintf('Nothing matched in %s itself, so these are from %s.', $askedLabel, implode(' and ', $wider))
-                : sprintf('Only %d matched in %s itself; the rest are from %s.', $inPlace, $askedLabel, implode(' and ', $wider));
+                ? sprintf('Nothing matched in %s itself, so these are %s.', $askedLabel, implode(', then ', $wider))
+                : sprintf('Only %d matched in %s itself; the rest are %s.', $inPlace, $askedLabel, implode(', then ', $wider));
         }
 
         return $rows;
+    }
+
+    /**
+     * The same search measured from a place instead of matched by address: nearest first, within
+     * the radius, each row carrying its distance. Empty when the place cannot be pinned.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function nearby(array $args, array $point, float $radiusKm): array
+    {
+        try {
+            return $this->runListingSearch(['near' => $point['label'], 'near_point' => $point, 'radius_km' => $radiusKm, 'address' => '', 'city_id' => 0] + $args);
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * The centre of an area, from the map pins of its own listings (a city by geo_city_id, a barangay
+     * by geo_barangay_id), cached; null when it has too few pins to mean anything.
+     *
+     * @return array{lat: float, lng: float, label: string}|null
+     */
+    private function areaCentre(string $kind, int $id, string $label): ?array
+    {
+        try {
+            return \Illuminate\Support\Facades\Cache::remember("asa:area-centre:v1:{$kind}:{$id}", 6 * 3600, function () use ($kind, $id, $label) {
+                // The effective city / barangay, as the price guide resolves them: the map pin's
+                // ids when geocoded, else the typed barangay (addr_b) and its city.
+                $q = DB::table('properties')
+                    ->leftJoin('barangays as addr_b', 'addr_b.id', '=', 'properties.address_id')
+                    ->whereNull('properties.deleted_at')
+                    ->whereRaw("JSON_EXTRACT(properties.geo_coordinates, '$.lat') IS NOT NULL")
+                    ->whereRaw("JSON_EXTRACT(properties.geo_coordinates, '$.lat') BETWEEN 4 AND 22");
+                if ($kind === 'barangay') {
+                    $q->whereRaw('COALESCE(properties.geo_barangay_id, CASE WHEN properties.geo_city_id IS NULL OR addr_b.city_id = properties.geo_city_id THEN properties.address_id END) = ?', [$id]);
+                } else {
+                    $q->whereRaw('COALESCE(properties.geo_city_id, addr_b.city_id) = ?', [$id]);
+                }
+                $r = $q->selectRaw("AVG(JSON_EXTRACT(properties.geo_coordinates, '$.lat')) as lat, AVG(JSON_EXTRACT(properties.geo_coordinates, '$.lng')) as lng, COUNT(*) as n")->first();
+                if ($r === null || (int) $r->n < 3 || $r->lat === null) {
+                    return null;
+                }
+
+                return ['lat' => (float) $r->lat, 'lng' => (float) $r->lng, 'label' => $label];
+            });
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /** "Cebu City", "Davao", "Mandaue" name a city; a bare "Cebu" could mean the province too. */
@@ -385,7 +453,10 @@ class DataLayerService
         // within the radius (1.5 km unless the user said otherwise), nearest first, each carrying its
         // distance. When it is not, the search runs as before, by text.
         $near = $args['near'] ?? '';
-        $point = $near !== '' ? $this->landmarks->locate((string) $near, (string) $address) : null;
+        // A point handed in directly (the centre of an area's own pins) beats a name lookup.
+        $point = is_array($args['near_point'] ?? null) && isset($args['near_point']['lat'], $args['near_point']['lng'])
+            ? $args['near_point']
+            : ($near !== '' ? $this->landmarks->locate((string) $near, (string) $address) : null);
         $radiusM = ((float) ($args['radius_km'] ?? 0) > 0 ? (float) $args['radius_km'] : 1.5) * 1000;
 
         // "Listings that dropped price this month": only ids with a recent cut, biggest cut first.
