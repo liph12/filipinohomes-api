@@ -118,6 +118,55 @@ class DataLayerService
         return $this->extractListing($l);
     }
 
+    /**
+     * "New this week" / "New this month" for a fresh listing, "Verified Sep 2026" when an audit came
+     * well after posting, "Updated Sep 2026" when the agent re-submitted it — each within the last
+     * twelve months — else nothing. A card never shows its posting date: "Listed on Feb 2021" on the
+     * photo reads as "gone" to a buyer, while the agent may well still be selling it. (updated_at is
+     * no use here: every page view bumps it.)
+     *
+     * @return array{kind: string, label: string, at: string}|null
+     */
+    private static function activityOf($l): ?array
+    {
+        $created = $l->created_at ? \Illuminate\Support\Carbon::parse($l->created_at) : null;
+        if ($created === null) {
+            return null;
+        }
+        $age = (int) $created->diffInDays(now());
+        if ($age < 7) {
+            return ['kind' => 'new', 'label' => 'New this week', 'at' => $created->toDateString()];
+        }
+        if ($age < 31) {
+            return ['kind' => 'new', 'label' => 'New this month', 'at' => $created->toDateString()];
+        }
+        $events = [];
+        // An audit within a month of posting is the listing's approval, not a later re-verification.
+        if ($l->audited_at && \Illuminate\Support\Carbon::parse($l->audited_at)->gt($created->copy()->addDays(30))) {
+            $events[] = ['kind' => 'verified', 'at' => \Illuminate\Support\Carbon::parse($l->audited_at)];
+        }
+        if ($l->re_submitted_at && \Illuminate\Support\Carbon::parse($l->re_submitted_at)->gt($created->copy()->addDay())) {
+            $events[] = ['kind' => 'updated', 'at' => \Illuminate\Support\Carbon::parse($l->re_submitted_at)];
+        }
+        if ($events === []) {
+            return null;
+        }
+        usort($events, fn ($a, $b) => $b['at'] <=> $a['at']);
+        $latest = $events[0];
+        if ($latest['at']->lt(now()->subMonths(12))) {
+            return null;
+        }
+
+        return [
+            'kind' => $latest['kind'],
+            'label' => ($latest['kind'] === 'verified' ? 'Verified ' : 'Updated ').$latest['at']->format('M Y'),
+            'at' => $latest['at']->toDateString(),
+        ];
+    }
+
+    /** When the listing last showed life: posted, re-verified by an audit, or re-submitted by its agent. */
+    private const ACTIVITY_AT_SQL = 'GREATEST(listings.created_at, COALESCE(listings.audited_at, listings.created_at), COALESCE(listings.re_submitted_at, listings.created_at))';
+
     protected function extractListing($l)
     {
         $agentName = $l->agent->first_name . " " . $l->agent->last_name;
@@ -155,6 +204,8 @@ class DataLayerService
                 : null,
             'views' => $l->clicks ?? 0,
             'listedAt' => date('M d, Y', strtotime($l->created_at)),
+            // The one dated badge the card wears, and only when it is good news (see activityOf).
+            'activity' => self::activityOf($l),
             'agent' => [
                 'name' => $agentName,
                 'avatar' => $userData->avatar ?? null,
@@ -423,7 +474,8 @@ class DataLayerService
     /**
      * Among equally complete rows, the ones priced below the typical ask for their type in their
      * area come first, then those around it, then those with no market context, then the pricier;
-     * newest first within a band. A price implausibly far below typical (half or less), or an
+     * most recent activity first within a band (posted, re-verified or re-submitted — not the
+     * updated_at that every page view bumps). A price implausibly far below typical (half or less), or an
      * "assume balance" offer whose figure is the cash-out rather than the home's price, is not a
      * bargain and is ranked as having no market context.
      *
@@ -440,7 +492,8 @@ class DataLayerService
             $diff = $this->priceContext((int) $l->id)['diff_pct'] ?? null;
             $assume = (bool) preg_match('/\b(assume|pasalo|assumption|takeover|take over)\b/i', (string) $l->name);
             $band = $diff === null || $diff <= -50 || ($assume && $diff < 0) ? 2 : ($diff <= -8 ? 0 : ($diff >= 8 ? 3 : 1));
-            $keyed[] = [(int) ($l->fit_score ?? 0), $band, (int) (strtotime((string) $l->created_at) ?: 0), $i, $l];
+            $seen = max(array_map(fn ($d) => $d ? (int) (strtotime((string) $d) ?: 0) : 0, [$l->created_at, $l->audited_at, $l->re_submitted_at]));
+            $keyed[] = [(int) ($l->fit_score ?? 0), $band, $seen, $i, $l];
         }
         usort($keyed, fn ($a, $b) => [$b[0], $a[1], $b[2], $a[3]] <=> [$a[0], $b[1], $a[2], $b[3]]);
 
@@ -724,7 +777,7 @@ class DataLayerService
             $order = implode(',', array_map('intval', array_slice($dropIds, 0, 200)));
             $listings = $listings->orderByRaw("FIELD(listings.id, {$order})");
         } else {
-            $listings = $listings->orderByDesc('fit_score')->orderBy('listings.created_at', 'DESC');
+            $listings = $listings->orderByDesc('fit_score')->orderByRaw(self::ACTIVITY_AT_SQL.' DESC');
         }
 
         // The whole count, before the pool limit: "23 matched" is said, not guessed.
