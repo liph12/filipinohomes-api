@@ -35,13 +35,16 @@ class LandmarkLocator
             $isCity = ($this->guide->placeOf($name)['kind'] ?? null) === 'city';
         } catch (\Throwable) {
         }
-        $key = 'landmark:v2:'.md5(mb_strtolower($name).'|'.mb_strtolower($cityHint));
+        $key = 'landmark:v3:'.md5(mb_strtolower($name).'|'.mb_strtolower($cityHint));
         $hit = Cache::get($key);
         if ($hit !== null) {
             return $hit === false ? null : $hit;
         }
 
-        $found = ($isCity ? null : $this->fromProjects($name)) ?? $this->fromNominatim($name, $cityHint);
+        // Generic landmarks (a park, mall, airport, hospital, school, church, terminal) are places on
+        // the map, not developments: a project called "… near IT Park" must not answer for IT Park.
+        $generic = (bool) preg_match('/\b(park|mall|center|centre|airport|hospital|school|university|college|church|cathedral|terminal|port|pier|plaza|market|city hall|capitol|stadium|station|bridge|beach|highway|road|avenue|street)\b/i', $name);
+        $found = ($isCity || $generic ? null : $this->fromProjects($name)) ?? $this->fromNominatim($name, $cityHint);
         if ($found === null) {
             Cache::put($key, false, 86400);
 
@@ -61,6 +64,8 @@ class LandmarkLocator
             ->whereNotNull('latitude')->whereNotNull('longitude')
             ->where('latitude', '!=', '')->where('longitude', '!=', '')
             ->whereRaw("SUBSTRING_INDEX(name, ',', 1) LIKE ?", ['%'.$name.'%'])
+            // "Mesavirre Residences near IT Park" names its neighbour, not itself.
+            ->whereRaw("SUBSTRING_INDEX(name, ',', 1) NOT REGEXP ?", ['(^|[^a-z])(near|beside|along|across|fronting|infront|in front|walking distance|minutes? (to|from)|close to)([^a-z]|$)'])
             ->orderByDesc('views')
             ->first(['name', 'latitude', 'longitude']);
         if ($row === null || ! is_numeric($row->latitude) || ! is_numeric($row->longitude)) {
@@ -93,50 +98,90 @@ class LandmarkLocator
         return null;
     }
 
+    /** How many live listings sit within about 3 km of a point — a cheap bounding-box count. */
+    private function listingsAround(float $lat, float $lng): int
+    {
+        $p = self::philippinePoint($lat, $lng);
+        if ($p === null) {
+            return 0;
+        }
+        try {
+            $d = 0.027; // ~3 km in degrees of latitude
+            return (int) DB::table('listings')
+                ->join('properties', 'properties.id', '=', 'listings.property_id')
+                ->whereNull('listings.deleted_at')
+                ->where('listings.visibility', 'public')
+                ->whereRaw("JSON_EXTRACT(properties.geo_coordinates, '$.lat') BETWEEN ? AND ?", [$p['lat'] - $d, $p['lat'] + $d])
+                ->whereRaw("JSON_EXTRACT(properties.geo_coordinates, '$.lng') BETWEEN ? AND ?", [$p['lng'] - $d, $p['lng'] + $d])
+                ->count();
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
     private function fromNominatim(string $name, string $cityHint): ?array
     {
-        $queries = array_values(array_unique(array_filter([
-            $cityHint !== '' ? "{$name}, {$cityHint}, Philippines" : null,
-            "{$name}, Philippines",
-        ])));
-        foreach ($queries as $q) {
+        // With no city named, "IT Park" alone finds Bacolod's and Nabua's but not Cebu's (OSM calls it
+        // "Cebu I.T. Park"), so the name is also tried in the cities with the most listings; the
+        // candidate with the most of our listings around it wins. One request a second, as OSM asks.
+        $queries = [$cityHint !== '' ? "{$name}, {$cityHint}, Philippines" : null, "{$name}, Philippines"];
+        if ($cityHint === '') {
+            foreach (array_slice($this->guide->areas(), 0, 5) as $area) {
+                $queries[] = "{$name}, {$area['city']}, Philippines";
+            }
+        }
+        $queries = array_values(array_unique(array_filter($queries)));
+        $words = array_filter(preg_split('/\W+/u', mb_strtolower($name)), fn ($w) => mb_strlen($w) > 2);
+        $candidates = [];
+        foreach ($queries as $i => $q) {
+            if ($i > 0) {
+                usleep(1100000);
+            }
             try {
                 $res = Http::withHeaders(['User-Agent' => 'FilipinoHomes-ASA/1.0 (https://filipinohomes.com)'])
                     ->timeout(4)
                     ->get('https://nominatim.openstreetmap.org/search', ['q' => $q, 'format' => 'jsonv2', 'limit' => 5, 'countrycodes' => 'ph', 'dedupe' => 1]);
                 $rows = $res->ok() ? array_values(array_filter((array) $res->json(), fn ($r) => is_array($r) && isset($r['lat'], $r['lon']))) : [];
-                if ($rows === []) {
-                    continue;
-                }
-                // Prefer the result that is actually named like the place ("Ayala Center Cebu" over a shop
-                // inside it); among those, the most important one. Fall back to the first.
-                $words = array_filter(preg_split('/\W+/u', mb_strtolower($name)), fn ($w) => mb_strlen($w) > 2);
-                $named = array_values(array_filter($rows, function (array $r) use ($words) {
-                    $hay = mb_strtolower((string) ($r['name'] ?? '')).' '.mb_strtolower((string) ($r['display_name'] ?? ''));
-                    foreach ($words as $w) {
-                        if (! str_contains($hay, $w)) {
-                            return false;
-                        }
-                    }
-
-                    return true;
-                }));
-                $pool = $named !== [] ? $named : $rows;
-                usort($pool, fn ($a, $b) => (float) ($b['importance'] ?? 0) <=> (float) ($a['importance'] ?? 0));
-                $pick = $pool[0];
-                $label = trim((string) ($pick['name'] ?? '')) ?: implode(', ', array_slice(array_map('trim', explode(',', (string) ($pick['display_name'] ?? $name))), 0, 2));
-
-                $point = self::philippinePoint((float) $pick['lat'], (float) $pick['lon']);
-                if ($point === null) {
-                    continue;
-                }
-
-                return $point + ['label' => $label ?: $name, 'source' => 'osm'];
             } catch (\Throwable) {
-                // fall through to the next query, then to null
+                $rows = [];
+            }
+            foreach ($rows as $r) {
+                $key = round((float) $r['lat'], 3).','.round((float) $r['lon'], 3);
+                $candidates[$key] ??= $r;
+            }
+            // A city hint that found the place is answer enough; the broad queries are for bare names.
+            if ($cityHint !== '' && $candidates !== []) {
+                break;
             }
         }
+        if ($candidates === []) {
+            return null;
+        }
+        $candidates = array_values($candidates);
 
-        return null;
+        // Prefer the results actually named like the place ("Ayala Center Cebu" over a shop inside it).
+        $named = array_values(array_filter($candidates, function (array $r) use ($words) {
+            $hay = mb_strtolower((string) ($r['name'] ?? '')).' '.mb_strtolower((string) ($r['display_name'] ?? ''));
+            foreach ($words as $w) {
+                if (! str_contains($hay, $w)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
+        $pool = $named !== [] ? $named : $candidates;
+        // Several places share a name: the one with the most of our own listings around it is the one
+        // a buyer here means; OSM's importance breaks ties.
+        $scored = array_map(fn (array $r) => ['row' => $r, 'n' => count($pool) > 1 ? $this->listingsAround((float) $r['lat'], (float) $r['lon']) : 0], $pool);
+        usort($scored, fn ($a, $b) => [$b['n'], (float) ($b['row']['importance'] ?? 0)] <=> [$a['n'], (float) ($a['row']['importance'] ?? 0)]);
+        $pick = $scored[0]['row'];
+        $point = self::philippinePoint((float) $pick['lat'], (float) $pick['lon']);
+        if ($point === null) {
+            return null;
+        }
+        $label = trim((string) ($pick['name'] ?? '')) ?: implode(', ', array_slice(array_map('trim', explode(',', (string) ($pick['display_name'] ?? $name))), 0, 2));
+
+        return $point + ['label' => $label ?: $name, 'source' => 'osm'];
     }
 }
