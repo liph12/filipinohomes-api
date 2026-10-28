@@ -2,6 +2,8 @@
 
 namespace App\Services\Dashboard;
 
+use App\Services\Audience\AiVisibilityService;
+use App\Services\Audience\TrafficSourceService;
 use App\Services\Listing\AgentInsightsService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
@@ -40,7 +42,11 @@ class OwnerPulseService
     /** Rows in "Recent deals" (shows ~5, scrolls for the rest). */
     private const DEAL_ROWS = 20;
 
-    public function __construct(private AgentInsightsService $agents) {}
+    public function __construct(
+        private AgentInsightsService $agents,
+        private TrafficSourceService $traffic,
+        private AiVisibilityService $ai,
+    ) {}
 
     public function pulse(): array
     {
@@ -90,6 +96,18 @@ class OwnerPulseService
                 'no_listings' => $split['no_listings'],
                 'closed' => $split['closed'],
             ],
+            // AI Visibility + Traffic Source cards (last 30 days) — in the pulse so the whole dashboard
+            // arrives in one cached request instead of those two waiting on the full Audience report.
+            'traffic' => [
+                'channels' => $this->traffic->range($from30->toDateString(), $today->toDateString())->visitorsByChannel()
+                    ->map(fn ($c, $channel) => ['channel' => $channel, 'value' => (int) $c])->values()->all(),
+            ],
+            'ai' => collect($this->ai->report(
+                \Illuminate\Support\Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
+                \Illuminate\Support\Carbon::parse($today->toDateString())->endOfDay(),
+                1,
+                1,
+            ))->only(['totals', 'trend', 'meta'])->all(),
             'shelf' => $this->shelf(),
             'recent_deals' => $this->recentDeals(),
             'most_active' => $this->mostActive($from30, $today),

@@ -20,14 +20,22 @@ use Illuminate\Support\Facades\DB;
  */
 class TrafficSourceService extends AudienceInsightsService
 {
-    public function channels(): array
+    /**
+     * Unique audience devices per channel (anonymous + clients) — channel => count. The light read the
+     * admin dashboard's Traffic Source / AI cards need; channels() builds the full report on top of it.
+     */
+    public function visitorsByChannel(): \Illuminate\Support\Collection
     {
-        // Unique audience devices per channel (anonymous + clients).
-        $visitors = $this->audienceVisits()
+        return $this->audienceVisits()
             ->whereNotNull('visits.visitor_id')
             ->groupBy('visits.channel')
             ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.visitor_id) as c'))
             ->pluck('c', 'channel');
+    }
+
+    public function channels(): array
+    {
+        $visitors = $this->visitorsByChannel();
 
         // Visits = visitor-days per channel (one visits row per device per channel per day), so a device
         // that came from Google on 5 days is 1 visitor and 5 visits.
