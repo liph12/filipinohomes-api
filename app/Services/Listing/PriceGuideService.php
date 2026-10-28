@@ -789,9 +789,17 @@ class PriceGuideService
      *
      * @return array{area: array, computed_at: string, rows: array<int, array>}|null
      */
+    /** @var array<int, array<string, mixed>|null> */
+    private array $cityMemo = [];
+
     private function cityRows(int $cityId): ?array
     {
-        return Cache::remember("price-guide:city:v4:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
+        // Ranking a page of search results asks for the same city forty times in one request.
+        if (array_key_exists($cityId, $this->cityMemo)) {
+            return $this->cityMemo[$cityId];
+        }
+
+        return $this->cityMemo[$cityId] = Cache::remember("price-guide:city:v4:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
             $rows = $this->baseQuery()
                 ->where('cities.id', $cityId)
                 ->select(

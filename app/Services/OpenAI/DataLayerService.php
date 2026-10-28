@@ -79,12 +79,18 @@ class DataLayerService
     }
 
     /** The listing against its market (see PriceGuideService::contextForListing); never lets a card fail. */
+    /** @var array<int, array<string, mixed>|null> */
+    private array $contextMemo = [];
+
     private function priceContext(int $listingId): ?array
     {
+        if (array_key_exists($listingId, $this->contextMemo)) {
+            return $this->contextMemo[$listingId];
+        }
         try {
-            return $this->priceGuide->contextForListing($listingId);
+            return $this->contextMemo[$listingId] = $this->priceGuide->contextForListing($listingId);
         } catch (\Throwable) {
-            return null;
+            return $this->contextMemo[$listingId] = null;
         }
     }
 
@@ -98,11 +104,18 @@ class DataLayerService
     }
 
     /** One listing as the chat draws it (the same shape the search returns), or null when not public. */
-    public function cardFor(int $listingId): ?array
+    public function cardFor(int $listingId, ?int $meters = null, ?string $landmark = null): ?array
     {
         $l = Listing::publiclyListed()->with(['property.propertyAttribute.subtype.type', 'property.furnishing', 'category', 'agent.user'])->find($listingId);
+        if ($l === null) {
+            return null;
+        }
+        if ($meters !== null && $landmark !== null && $landmark !== '') {
+            $l->distance_m = $meters;
+            $l->near_label = $landmark;
+        }
 
-        return $l === null ? null : $this->extractListing($l);
+        return $this->extractListing($l);
     }
 
     protected function extractListing($l)
@@ -251,8 +264,40 @@ class DataLayerService
     /** Set by getListingsByArguments when the results come from a wider place than asked. */
     public ?string $searchNote = null;
 
-    /** How many listings a search aims to hand the picker. */
+    /** Set by getListingsByArguments: how many listings matched in all. */
+    public int $matchTotal = 0;
+
+    /**
+     * Set by getListingsByArguments: the ranked matches beyond the first page, in order, each with
+     * its distance when the search measured from a place — "show more" pages through them.
+     *
+     * @var array<int, array{id: int, meters: int|null, landmark: string|null}>
+     */
+    public array $moreRows = [];
+
+    /** Enough in the place itself to answer without widening. */
     private const SEARCH_TARGET = 5;
+
+    /** Cards in one reply; the rest wait behind "show more". */
+    public const SEARCH_PAGE = 6;
+
+    /** How many matches a search ranks and keeps for paging. */
+    private const SEARCH_POOL = 40;
+
+    /** What the last runListingSearch counted before its limit. */
+    private int $stepTotal = 0;
+
+    /** How the last search ordered its rows: 'fit' (complete, value, newest), 'nearest' or 'drop' (biggest cut). */
+    public string $rankedBy = 'fit';
+
+    /**
+     * How complete a listing is, 0–4: a map pin, a size, bedrooms (or a lot area), and a real
+     * description. Ranked first, so a bare card never outranks a full one.
+     */
+    private const FIT_SCORE_SQL = "(CASE WHEN JSON_EXTRACT(fit_p.geo_coordinates, '$.lat') IS NOT NULL AND JSON_EXTRACT(fit_p.geo_coordinates, '$.lat') <> 0 THEN 1 ELSE 0 END)"
+        .' + (CASE WHEN COALESCE(fit_a.floor_area, 0) > 0 OR COALESCE(fit_a.lot_area, 0) > 0 THEN 1 ELSE 0 END)'
+        .' + (CASE WHEN COALESCE(fit_a.bedroom_count, 0) > 0 OR COALESCE(fit_a.lot_area, 0) > 0 THEN 1 ELSE 0 END)'
+        ." + (CASE WHEN CHAR_LENGTH(COALESCE(fit_p.description, '')) >= 120 THEN 1 ELSE 0 END)";
 
     /**
      * The listings a search asks for. The strict search runs first; when it finds too few, it is relaxed
@@ -260,10 +305,18 @@ class DataLayerService
      * "commercial lot in Davao" still finds Davao's lots when no title says "commercial lot", and "house
      * in Lahug under ₱5M" shows the rest of Cebu City when Lahug has none. The budget, property type and
      * category never relax, and widening the place is announced in $searchNote.
+     *
+     * Up to SEARCH_POOL matches are ranked — most complete first, then priced below the area's
+     * typical ask, then newest (nearest first when measuring from a place) — and the first $page
+     * come back as cards; $matchTotal and $moreRows carry the count and the rest.
      */
-    public function getListingsByArguments($args): array
+    public function getListingsByArguments($args, int $page = self::SEARCH_PAGE): array
     {
         $this->searchNote = null;
+        $this->matchTotal = 0;
+        $this->moreRows = [];
+        $this->stepTotal = 0;
+        $this->rankedBy = 'fit';
         $asked = trim((string) ($args['address'] ?? ''));
         $near = trim((string) ($args['near'] ?? '')) !== '';
         $expanded = self::PLACE_ALIASES[mb_strtolower($asked)] ?? $asked;
@@ -281,7 +334,7 @@ class DataLayerService
 
         $rows = $this->runListingSearch($strict);
         if (count($rows) >= self::SEARCH_TARGET) {
-            return $rows;
+            return $this->firstPage($rows, $page);
         }
 
         // Keywords are the loosest part of a search ("commercial lot" in the title): top up without them.
@@ -295,7 +348,7 @@ class DataLayerService
             $rows = $this->runListingSearch($relaxed);
         }
         if (count($rows) >= self::SEARCH_TARGET || $place === null) {
-            return $rows;
+            return $this->firstPage($rows, $page);
         }
 
         // Too few in the place itself: the nearest listings around it by map distance (a barangay
@@ -342,14 +395,63 @@ class DataLayerService
                 : sprintf('Only %d matched in %s itself; the rest are %s.', $inPlace, $askedLabel, implode(', then ', $wider));
         }
 
-        return $rows;
+        return $this->firstPage($rows, $page);
+    }
+
+    /**
+     * The first $page ranked rows as cards; the count and the rest are left in $matchTotal and
+     * $moreRows for "show more".
+     *
+     * @param  array<int, Listing>  $rows
+     */
+    private function firstPage(array $rows, int $page): array
+    {
+        $this->matchTotal = max(count($rows), $this->stepTotal);
+        $cards = [];
+        foreach (array_slice($rows, 0, max(1, $page)) as $l) {
+            $cards[] = $this->extractListing($l);
+        }
+        $this->moreRows = array_values(array_map(fn ($l) => [
+            'id' => (int) $l->id,
+            'meters' => isset($l->distance_m) ? (int) round((float) $l->distance_m) : null,
+            'landmark' => isset($l->near_label) ? (string) $l->near_label : null,
+        ], array_slice($rows, max(1, $page))));
+
+        return $cards;
+    }
+
+    /**
+     * Among equally complete rows, the ones priced below the typical ask for their type in their
+     * area come first, then those around it, then those with no market context, then the pricier;
+     * newest first within a band. A price implausibly far below typical (half or less), or an
+     * "assume balance" offer whose figure is the cash-out rather than the home's price, is not a
+     * bargain and is ranked as having no market context.
+     *
+     * @param  array<int, Listing>  $rows
+     * @return array<int, Listing>
+     */
+    private function rankByValue(array $rows): array
+    {
+        if (count($rows) < 2) {
+            return $rows;
+        }
+        $keyed = [];
+        foreach ($rows as $i => $l) {
+            $diff = $this->priceContext((int) $l->id)['diff_pct'] ?? null;
+            $assume = (bool) preg_match('/\b(assume|pasalo|assumption|takeover|take over)\b/i', (string) $l->name);
+            $band = $diff === null || $diff <= -50 || ($assume && $diff < 0) ? 2 : ($diff <= -8 ? 0 : ($diff >= 8 ? 3 : 1));
+            $keyed[] = [(int) ($l->fit_score ?? 0), $band, (int) (strtotime((string) $l->created_at) ?: 0), $i, $l];
+        }
+        usort($keyed, fn ($a, $b) => [$b[0], $a[1], $b[2], $a[3]] <=> [$a[0], $b[1], $a[2], $b[3]]);
+
+        return array_map(fn ($k) => $k[4], $keyed);
     }
 
     /**
      * The same search measured from a place instead of matched by address: nearest first, within
      * the radius, each row carrying its distance. Empty when the place cannot be pinned.
      *
-     * @return array<int, array<string, mixed>>
+     * @return array<int, Listing>
      */
     private function nearby(array $args, array $point, float $radiusKm): array
     {
@@ -427,25 +529,31 @@ class DataLayerService
     /** Rows of $a, then those of $b not already in it, up to the search target. */
     private static function mergeRows(array $a, array $b): array
     {
-        $seen = array_flip(array_map(fn ($r) => (string) $r['id'], $a));
+        $seen = array_flip(array_map(fn ($r) => (string) $r->id, $a));
         foreach ($b as $r) {
-            if (count($a) >= self::SEARCH_TARGET) {
+            if (count($a) >= self::SEARCH_POOL) {
                 break;
             }
-            if (! isset($seen[(string) $r['id']])) {
+            if (! isset($seen[(string) $r->id])) {
                 $a[] = $r;
-                $seen[(string) $r['id']] = true;
+                $seen[(string) $r->id] = true;
             }
         }
 
         return $a;
     }
 
+    /**
+     * One pass of the search: the matching rows, ranked, up to SEARCH_POOL, with the full count in
+     * $stepTotal. Nearest first when measuring from a place, biggest cut first for price drops,
+     * otherwise most complete first and then by value and recency (see rankByValue).
+     *
+     * @return array<int, Listing>
+     */
     private function runListingSearch(array $args): array
     {
         $address = $args['address'];
         $attr = $args['attributes'];
-        $inquiredListings = [];
         $words = strtolower($args['query_words']);
         $array_words = explode(' ', $words);
 
@@ -586,45 +694,54 @@ class DataLayerService
                     $q->where('lot_area', '>=', $attr['lot_area']);
                 }
             });
-        })->with(['property.propertyAttribute.subtype.type', 'category']);
+        })->with(['property.propertyAttribute.subtype.type', 'property.furnishing', 'category', 'agent.user']);
 
         if ($dropIds !== null) {
             $listings = $listings->whereIn('listings.id', array_slice($dropIds, 0, 200));
         }
 
+        // Every row carries its completeness score (FIT_SCORE_SQL) from the property and its attributes.
+        $listings = $listings
+            ->join('properties as fit_p', 'fit_p.id', '=', 'listings.property_id')
+            ->leftJoin('property_attributes as fit_a', 'fit_a.id', '=', 'fit_p.property_attribute_id')
+            ->select('listings.*')
+            ->selectRaw(self::FIT_SCORE_SQL.' as fit_score');
+
         if ($point !== null) {
             // Haversine on the property's JSON pin, in metres; plain trig so it runs on any MySQL/MariaDB.
-            $lat = DB::raw("CAST(JSON_UNQUOTE(JSON_EXTRACT(near_p.geo_coordinates, '$.lat')) AS DECIMAL(11,8))");
-            $lng = DB::raw("CAST(JSON_UNQUOTE(JSON_EXTRACT(near_p.geo_coordinates, '$.lng')) AS DECIMAL(11,8))");
+            $lat = DB::raw("CAST(JSON_UNQUOTE(JSON_EXTRACT(fit_p.geo_coordinates, '$.lat')) AS DECIMAL(11,8))");
+            $lng = DB::raw("CAST(JSON_UNQUOTE(JSON_EXTRACT(fit_p.geo_coordinates, '$.lng')) AS DECIMAL(11,8))");
             $listings = $listings
-                ->join('properties as near_p', 'near_p.id', '=', 'listings.property_id')
-                ->whereNotNull('near_p.geo_coordinates')
-                ->select('listings.*')
+                ->whereNotNull('fit_p.geo_coordinates')
                 ->selectRaw(
                     "(6371000 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS({$lat->getValue(DB::connection()->getQueryGrammar())})) * COS(RADIANS({$lng->getValue(DB::connection()->getQueryGrammar())}) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS({$lat->getValue(DB::connection()->getQueryGrammar())}))))) as distance_m",
                     [$point['lat'], $point['lng'], $point['lat']]
                 )
                 ->having('distance_m', '<=', $radiusM)
-                ->orderBy('distance_m')
-                ->limit(8);
+                ->orderBy('distance_m');
         } elseif ($dropIds !== null) {
             // Biggest cut first, as priceDropListingIds ordered them.
             $order = implode(',', array_map('intval', array_slice($dropIds, 0, 200)));
-            $listings = $listings->orderByRaw("FIELD(listings.id, {$order})")->limit(8);
+            $listings = $listings->orderByRaw("FIELD(listings.id, {$order})");
         } else {
-            $listings = $listings->orderBy('created_at', 'DESC')->limit(5);
+            $listings = $listings->orderByDesc('fit_score')->orderBy('listings.created_at', 'DESC');
         }
 
-        $listings = $listings->get();
-
-        foreach ($listings as $l) {
-            if ($point !== null) {
+        // The whole count, before the pool limit: "23 matched" is said, not guessed.
+        try {
+            $this->stepTotal = (int) $listings->toBase()->getCountForPagination();
+        } catch (\Throwable) {
+            $this->stepTotal = 0;
+        }
+        $this->rankedBy = $point !== null ? 'nearest' : ($dropIds !== null ? 'drop' : 'fit');
+        $rows = $listings->limit(self::SEARCH_POOL)->get()->all();
+        if ($point !== null) {
+            foreach ($rows as $l) {
                 $l->near_label = $point['label'];
             }
-            $inquiredListings[] = $this->extractListing($l);
         }
 
-        return $inquiredListings;
+        return $point === null && $dropIds === null ? $this->rankByValue($rows) : $rows;
     }
 
     public function getAgentsByArguments($args): array

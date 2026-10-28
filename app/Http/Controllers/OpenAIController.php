@@ -19,6 +19,7 @@ use App\Services\OpenAI\CostCommandService;
 use App\Services\OpenAI\RentBuyCommandService;
 use App\Services\OpenAI\InvestCommandService;
 use App\Services\OpenAI\MapCommandService;
+use App\Services\OpenAI\MoreListingsCommandService;
 use App\Services\OpenAI\AsaQuestionLog;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
@@ -43,9 +44,11 @@ class OpenAIController extends Controller
     private $rentBuyService;
     private $investService;
     private $mapService;
+    private $moreService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map, MoreListingsCommandService $more)
     {
+        $this->moreService = $more;
         $this->affordService = $afford;
         $this->worthService = $worth;
         $this->costService = $cost;
@@ -180,6 +183,16 @@ class OpenAIController extends Controller
             AsaQuestionLog::start($request, $question, 'deal');
 
             return $this->dealService->replyStream($ids[0], $thread, $request);
+        }
+
+        // "Show more" after a search: the next page of the same ranked matches — no model, no new search.
+        if ($question !== '' && preg_match(MoreListingsCommandService::PATTERN, $question)) {
+            $page = $this->moreService->nextPage($request);
+            if ($page !== null) {
+                AsaQuestionLog::start($request, $question, 'listing');
+
+                return $this->moreService->replyStream($page, $request);
+            }
         }
 
         $classification = $this->sqService->classifyMessage($thread);
@@ -325,6 +338,9 @@ class OpenAIController extends Controller
         $args = $applied['args'];
         $profile = $applied['profile'];
         $inquiredListings = $this->dataService->getListingsByArguments($args);
+        $total = $this->dataService->matchTotal;
+        $moreRows = $this->dataService->moreRows;
+        $rankedBy = $this->dataService->rankedBy;
 
         // Results from the wider city: the reply opens with that fact, and the picker is told so it
         // describes them as such instead of repeating or contradicting it.
@@ -332,8 +348,12 @@ class OpenAIController extends Controller
         if ($searchNote !== null) {
             $thread[] = ['role' => 'system', 'content' => "The reply already opens with this sentence, so do not repeat it: \"{$searchNote}\" Describe the listings by their own location."];
         }
+        // More matched than fit on one page: the picker says so, and the page offers the rest.
+        if ($total > count($inquiredListings)) {
+            $thread[] = ['role' => 'system', 'content' => sprintf('%d listings matched in all; the %d provided are the best fit (complete details, priced well for their area, newest). Say in one short clause that %d matched and these are the top picks. The page offers the rest with a "Show more" button, so do not list more and do not say there are no more.', $total, count($inquiredListings), $total)];
+        }
 
-        $suggestedListings = $this->sqService->suggestedListings($thread, $inquiredListings, $request);
+        $suggestedListings = $this->sqService->suggestedListings($thread, $inquiredListings, $request, ['total' => $total, 'more' => $moreRows, 'ranked' => $rankedBy]);
         if ($searchNote !== null && isset($suggestedListings['message'])) {
             $suggestedListings['message'] = "**{$searchNote}**\n\n".$suggestedListings['message'];
         }
@@ -372,6 +392,9 @@ class OpenAIController extends Controller
                 'message' => $suggestedListings['message'],
                 'suggested' => $suggested,
                 'others' => $others,
+                'total' => $total,
+                'more' => $suggestedListings['more'] ?? $moreRows,
+                'ranked' => $rankedBy,
                 'follow_up' => $suggestedListings['follow_up'],
             ]);
         }

@@ -127,7 +127,7 @@ class AffordCommandService extends CacheService
                 'attributes' => ['price_min' => 100000, 'price_max' => round($maxPrice), 'lot_area' => 0, 'floor_area' => 0, 'beds' => 0, 'baths' => 0, 'parking' => 0],
             ];
             $applied = $this->applyProfile($req, $args);
-            $rows = $this->data->getListingsByArguments($applied['args']);
+            $rows = $this->data->getListingsByArguments($applied['args'], 8);
             // Closest to the ceiling first: the most home the budget buys.
             usort($rows, fn (array $a, array $b) => (float) $b['price'] <=> (float) $a['price']);
 

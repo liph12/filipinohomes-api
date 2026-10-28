@@ -273,7 +273,10 @@ class CommandService extends CacheService
         ]);
     }
 
-    public function suggestedListings(array $thread, array $listings, $req)
+    /**
+     * @param  array<string, mixed>  $extra  Stored with the cards: `total` matched and `more` (the ranked rest) for "show more".
+     */
+    public function suggestedListings(array $thread, array $listings, $req, array $extra = [])
     {
         $systemMessage = [
             'role' => 'system',
@@ -362,6 +365,19 @@ class CommandService extends CacheService
             $res = json_decode($fn->arguments, true);
             $others = [];
 
+            // A candidate the picker left out is not shown: it goes back to the front of the
+            // "show more" queue, so "6 of 42 shown" counts what is actually on the page.
+            if (isset($extra['more']) && is_array($extra['more'])) {
+                $shown = array_map('strval', array_merge([(string) ($res['suggested'] ?? '')], array_map('strval', (array) ($res['others'] ?? []))));
+                $left = array_values(array_filter($listings, fn ($l) => ! in_array((string) ($l['id'] ?? ''), $shown, true)));
+                $extra['more'] = array_merge(array_map(fn ($l) => [
+                    'id' => (int) $l['id'],
+                    'meters' => isset($l['distance']['meters']) ? (int) $l['distance']['meters'] : null,
+                    'landmark' => isset($l['distance']['landmark']) ? (string) $l['distance']['landmark'] : null,
+                ], $left), $extra['more']);
+                $res['more'] = $extra['more'];
+            }
+
             if(isset($res['others']))
             {
                 foreach($res['others'] as $o)
@@ -387,7 +403,7 @@ class CommandService extends CacheService
                                     'id' => $res['suggested']
                                 ],
                                 'others' => $others
-                            ]
+                            ] + $extra
                         ]
                     ],
                     [

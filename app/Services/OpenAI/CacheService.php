@@ -221,6 +221,10 @@ class CacheService extends DataLayerService
                 $msg['metaData']['listing'] = [
                     'suggested' => $suggested,
                     'others' => $others,
+                    // "Show more" pages through the ranked rest of the latest search.
+                    'total' => isset($listingMeta['total']) ? (int) $listingMeta['total'] : null,
+                    'more' => is_array($listingMeta['more'] ?? null) ? array_values($listingMeta['more']) : [],
+                    'ranked' => isset($listingMeta['ranked']) ? (string) $listingMeta['ranked'] : null,
                 ];
             }
     
