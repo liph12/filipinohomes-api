@@ -37,7 +37,16 @@ class AgentReview extends Model implements Auditable
         'is_anonymous' => 'boolean',
         'hidden_at' => 'datetime',
         'edit_window_ends_at' => 'datetime',
+        'edited_at' => 'datetime',
     ];
+
+    /**
+     * What readers see. Only changes to these count as an "edit" — moderation
+     * (status / hidden_*), helpful votes, the anonymity toggle and
+     * edit-window bumps all touch updated_at too, so the public "edited" label
+     * keys on edited_at instead.
+     */
+    private const CONTENT_FIELDS = ['overall_rating', 'tags', 'comment'];
 
     public function agent()
     {
@@ -76,6 +85,11 @@ class AgentReview extends Model implements Auditable
      */
     protected static function booted(): void
     {
+        static::saving(function (self $review) {
+            if ($review->exists && $review->isDirty(self::CONTENT_FIELDS)) {
+                $review->edited_at = now();
+            }
+        });
         static::saved(fn (self $review) => self::syncAgent($review));
         static::deleted(fn (self $review) => self::syncAgent($review));
     }

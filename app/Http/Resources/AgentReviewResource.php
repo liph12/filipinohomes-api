@@ -151,6 +151,10 @@ class AgentReviewResource extends JsonResource
             }),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
+            // Drives the "· edited N ago" label. Null = never edited. Don't
+            // derive it from updated_at — admin approval and helpful votes
+            // move that too.
+            'edited_at' => $this->edited_at,
         ];
     }
 
