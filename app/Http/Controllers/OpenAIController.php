@@ -367,6 +367,21 @@ class OpenAIController extends Controller
         if ($searchNote !== null) {
             $thread[] = ['role' => 'system', 'content' => "The reply already opens with this sentence, so do not repeat it: \"{$searchNote}\" Describe the listings by their own location."];
         }
+        // "Near a mall", "a school for the kids": the pool was ordered by closeness to those kinds of
+        // place and each card names the nearest one; the picker is told so it speaks to that.
+        $wanted = $this->dataService->wantedFacilities;
+        if ($wanted !== [] && $inquiredListings !== []) {
+            $kinds = implode(' and ', array_map(fn ($k) => 'a '.\App\Services\Listing\FacilityIndex::SINGULAR[$k], $wanted));
+            $thread[] = ['role' => 'system', 'content' => "The buyer wants to be close to {$kinds}. The listings are ordered by that: each one's `nearby` field names the nearest such place and its distance in metres (a listing without it has none within 3 km). Say which place the suggested listing is near and how far, in plain words."];
+        }
+        $situation = trim((string) ($args['situation'] ?? ''));
+        if ($situation !== '') {
+            $thread[] = ['role' => 'system', 'content' => "The buyer's situation, in their words: {$situation}. Open with one short, warm, professional sentence that acknowledges it, then the facts."];
+        }
+        $unverifiable = array_values(array_filter(array_map('strval', (array) ($args['unverifiable'] ?? []))));
+        if ($unverifiable !== []) {
+            $thread[] = ['role' => 'system', 'content' => 'The buyer also wants: '.implode(', ', $unverifiable).'. None of these can be checked from the listing data; say so in one clause, without apologising, and that the agent can confirm them. Do not reject listings over them.'];
+        }
         // More matched than fit on one page: the picker says so, and the page offers the rest.
         if ($total > count($inquiredListings)) {
             $thread[] = ['role' => 'system', 'content' => sprintf('%d listings matched in all; the %d provided are the best fit (complete details, priced well for their area, newest). Say in one short clause that %d matched and these are the top picks. The page offers the rest with a "Show more" button, so do not list more and do not say there are no more.', $total, count($inquiredListings), $total)];

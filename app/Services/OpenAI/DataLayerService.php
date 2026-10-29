@@ -6,6 +6,7 @@ use App\Models\Agent;
 use App\Models\Listing;
 use App\Services\Listing\PriceGuideService;
 use Illuminate\Support\Facades\DB;
+use App\Services\Listing\FacilityIndex;
 
 class DataLayerService
 {
@@ -104,7 +105,7 @@ class DataLayerService
     }
 
     /** One listing as the chat draws it (the same shape the search returns), or null when not public. */
-    public function cardFor(int $listingId, ?int $meters = null, ?string $landmark = null): ?array
+    public function cardFor(int $listingId, ?int $meters = null, ?string $landmark = null, ?array $nearby = null): ?array
     {
         $l = Listing::publiclyListed()->with(['property.propertyAttribute.subtype.type', 'property.furnishing', 'category', 'agent.user'])->find($listingId);
         if ($l === null) {
@@ -113,6 +114,9 @@ class DataLayerService
         if ($meters !== null && $landmark !== null && $landmark !== '') {
             $l->distance_m = $meters;
             $l->near_label = $landmark;
+        }
+        if ($nearby !== null) {
+            $l->facility_hits = $nearby;
         }
 
         return $this->extractListing($l);
@@ -206,6 +210,8 @@ class DataLayerService
             'listedAt' => date('M d, Y', strtotime($l->created_at)),
             // The one dated badge the card wears, and only when it is good news (see activityOf).
             'activity' => self::activityOf($l),
+            // The nearest mall / school / hospital the search asked to be close to, with the distance.
+            'nearby' => isset($l->facility_hits) && is_array($l->facility_hits) ? $l->facility_hits : null,
             'agent' => [
                 'name' => $agentName,
                 'avatar' => $userData->avatar ?? null,
@@ -341,6 +347,11 @@ class DataLayerService
     /** How the last search ordered its rows: 'fit' (complete, value, newest), 'nearest' or 'drop' (biggest cut). */
     public string $rankedBy = 'fit';
 
+    /** Kinds of place the search asked to be close to ("near a mall", "school for the kids"): FacilityIndex categories. */
+    public array $wantedFacilities = [];
+
+    private ?FacilityIndex $facilityIndex = null;
+
     /**
      * How complete a listing is, 0–4: a map pin, a size, bedrooms (or a lot area), and a real
      * description. Ranked first, so a bare card never outranks a full one.
@@ -368,6 +379,7 @@ class DataLayerService
         $this->moreRows = [];
         $this->stepTotal = 0;
         $this->rankedBy = 'fit';
+        $this->wantedFacilities = array_slice(array_values(array_intersect(array_map('strval', (array) ($args['near_facilities'] ?? [])), FacilityIndex::CATEGORIES)), 0, 3);
         $asked = trim((string) ($args['address'] ?? ''));
         $near = trim((string) ($args['near'] ?? '')) !== '';
         $expanded = self::PLACE_ALIASES[mb_strtolower($asked)] ?? $asked;
@@ -457,6 +469,9 @@ class DataLayerService
      */
     private function firstPage(array $rows, int $page): array
     {
+        if ($this->wantedFacilities !== []) {
+            $rows = $this->rankByFacilities($rows);
+        }
         $this->matchTotal = max(count($rows), $this->stepTotal);
         $cards = [];
         foreach (array_slice($rows, 0, max(1, $page)) as $l) {
@@ -466,6 +481,7 @@ class DataLayerService
             'id' => (int) $l->id,
             'meters' => isset($l->distance_m) ? (int) round((float) $l->distance_m) : null,
             'landmark' => isset($l->near_label) ? (string) $l->near_label : null,
+            'nearby' => isset($l->facility_hits) && is_array($l->facility_hits) ? $l->facility_hits : null,
         ], array_slice($rows, max(1, $page))));
 
         return $cards;
@@ -482,6 +498,46 @@ class DataLayerService
      * @param  array<int, Listing>  $rows
      * @return array<int, Listing>
      */
+    /**
+     * "Near a mall" / "a school for the kids": every pinned listing in the pool is measured against
+     * the nearest saved place of each wanted kind (FacilityIndex, within 3 km) and carries the hits
+     * as `facility_hits` for its card; the pool is then ordered by how many of the wanted kinds it
+     * has close by, then by the summed distance, keeping the fit order among equals. Listings with
+     * no pin cannot be measured and go last. Announced through $rankedBy as "facilities:mall,school".
+     *
+     * @param  array<int, Listing>  $rows
+     * @return array<int, Listing>
+     */
+    private function rankByFacilities(array $rows): array
+    {
+        $index = $this->facilityIndex ??= app(FacilityIndex::class);
+        $scored = [];
+        foreach (array_values($rows) as $i => $l) {
+            $geo = $l->property?->geo_coordinates;
+            $geo = is_array($geo) ? $geo : (is_string($geo) ? (json_decode($geo, true) ?: []) : []);
+            $point = isset($geo['lat'], $geo['lng']) && is_numeric($geo['lat']) && is_numeric($geo['lng'])
+                ? LandmarkLocator::philippinePoint((float) $geo['lat'], (float) $geo['lng'])
+                : null;
+            $hits = [];
+            $sum = 0;
+            if ($point !== null) {
+                foreach ($this->wantedFacilities as $kind) {
+                    $hit = $index->nearest($kind, $point['lat'], $point['lng']);
+                    if ($hit !== null) {
+                        $hits[] = ['kind' => $kind, 'label' => FacilityIndex::SINGULAR[$kind], 'name' => $hit['name'], 'meters' => $hit['meters']];
+                        $sum += $hit['meters'];
+                    }
+                }
+            }
+            $l->facility_hits = $hits;
+            $scored[] = ['l' => $l, 'n' => count($hits), 'sum' => $sum, 'i' => $i];
+        }
+        usort($scored, fn ($a, $b) => [$b['n'], $a['sum'], $a['i']] <=> [$a['n'], $b['sum'], $b['i']]);
+        $this->rankedBy = 'facilities:'.implode(',', $this->wantedFacilities);
+
+        return array_map(fn ($s) => $s['l'], $scored);
+    }
+
     private function rankByValue(array $rows): array
     {
         if (count($rows) < 2) {

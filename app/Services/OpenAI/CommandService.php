@@ -2,6 +2,8 @@
 
 namespace App\Services\OpenAI;
 
+use App\Services\Listing\FacilityIndex;
+
 use OpenAI;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Str;
@@ -284,7 +286,9 @@ class CommandService extends CacheService
             You are a helpful, friendly assistant for Filipino Homes. 
             From the provided property listings, pick the single best listing as 'suggested' and 2-5 alternatives as 'others'. 
             Return ONLY JSON with IDs and a concise message. 
-            If no listings match, indicate it in the message and leave 'suggested' and 'others' empty.
+            The listings you are given are the search results: they already satisfy the place, type, budget and category that were asked for. When at least one listing is provided you MUST pick a 'suggested' and 'others' from them — never reject them because of a wish you cannot verify (safe, quiet, near malls, good neighbours); say instead what you can see and what the agent can confirm. Leave 'suggested' and 'others' empty ONLY when the list given to you is empty.
+            A listing's `nearby` field, when present, names the nearest place of the kind the buyer asked for and its distance in metres — mention it for the suggested listing in plain words ("about 850 m from JY Square Mall"). A listing's `distance` field is the same for a named landmark.
+            If a system note describes the buyer's situation, open with ONE short, warm, professional sentence that acknowledges it (no exclamation marks, no gushing), then the facts. Write like a seasoned broker: calm, specific, honest about limits.
             Include the date if necessary or if the user specify the date.
 
             RULES:
@@ -364,6 +368,28 @@ class CommandService extends CacheService
         if ($fn && isset($fn->arguments)) {
             $res = json_decode($fn->arguments, true);
             $others = [];
+            $byId = [];
+            foreach ($listings as $l) {
+                $byId[(string) ($l['id'] ?? '')] = $l;
+            }
+
+            // The picker was given results and still picked none (a wish it could not verify, usually):
+            // the ranked order stands in — the first is suggested, the next few are the alternatives —
+            // and the write-up says plainly that these are the closest matches on record.
+            $picked = array_values(array_filter(array_merge([(string) ($res['suggested'] ?? '')], array_map('strval', (array) ($res['others'] ?? []))), fn ($id) => $id !== '' && isset($byId[$id])));
+            if ($listings !== [] && $picked === []) {
+                $ids = array_keys($byId);
+                $res['suggested'] = (int) $ids[0];
+                $res['others'] = array_map('intval', array_slice($ids, 1, 4));
+                $first = $byId[$ids[0]];
+                $where = trim((string) ($first['address'] ?? ''));
+                $res['message'] = sprintf(
+                    'These are the closest matches on record to what you described — none can be confirmed on every point from the listing alone, so the details that matter most to you are worth checking with the agent. The strongest fit is **%s**%s.',
+                    (string) ($first['name'] ?? 'the first one'),
+                    $where !== '' ? ' in '.$where : ''
+                );
+                $res['follow_up'] = 'Tap "What\'s nearby?" on a card to see the schools, hospitals and shops around it, or ask the agent about the area.';
+            }
 
             // A candidate the picker left out is not shown: it goes back to the front of the
             // "show more" queue, so "6 of 42 shown" counts what is actually on the page.
@@ -374,6 +400,7 @@ class CommandService extends CacheService
                     'id' => (int) $l['id'],
                     'meters' => isset($l['distance']['meters']) ? (int) $l['distance']['meters'] : null,
                     'landmark' => isset($l['distance']['landmark']) ? (string) $l['distance']['landmark'] : null,
+                    'nearby' => isset($l['nearby']) && is_array($l['nearby']) ? $l['nearby'] : null,
                 ], $left), $extra['more']);
                 $res['more'] = $extra['more'];
                 // What is actually on the page, so "6 of 42 shown" and the next page's numbering are exact.
@@ -385,9 +412,9 @@ class CommandService extends CacheService
             {
                 foreach($res['others'] as $o)
                 {
-                    $others[] = [
-                        'id' => $o
-                    ];
+                    // The search-time extras (nearest mall, distance from a landmark) ride along so
+                    // the card still shows them when the thread is reopened.
+                    $others[] = ['id' => $o] + array_intersect_key($byId[(string) $o] ?? [], array_flip(['nearby', 'distance']));
                 }
     
                 $messages = [
@@ -404,7 +431,7 @@ class CommandService extends CacheService
                             'listing' => [
                                 'suggested' => [
                                     'id' => $res['suggested']
-                                ],
+                                ] + array_intersect_key($byId[(string) $res['suggested']] ?? [], array_flip(['nearby', 'distance'])),
                                 'others' => $others
                             ] + $extra
                         ]
@@ -697,7 +724,7 @@ class CommandService extends CacheService
         7b. Write places as their full names, never abbreviations or parentheses: "CDO" → "Cagayan de Oro", "BGC" → "Taguig City", "QC" → "Quezon City", "GenSan" → "General Santos City", "MNL" → "Manila".
 
         ADDITIONAL RULES:
-        8. Generate a keyword (query_words) based ONLY on the latest user intent. Pick the most relevant word: property type or key feature. DO NOT USE THE LOCATION.
+        8. Generate a keyword (query_words) based ONLY on the latest user intent. Pick the most relevant word: property type or a feature a listing title would carry (furnished, parking, pool, beachfront). DO NOT USE THE LOCATION. NEVER put feelings, family situations, wishes or "near facilities / malls / schools" in query_words — those go in near_facilities, situation or unverifiable.
         9. Adjust the price range attributes if the user mentions a budget:
         - price_min = 0
         - price_max = the user’s stated budget
@@ -710,6 +737,9 @@ class CommandService extends CacheService
         • specific dates → convert to Y-m-d
         - If no date mentioned → return empty string ""
         13. If the user asks for listings whose price was REDUCED / dropped / cut / discounted ("price drops this month", "reduced price condos", "nagbaba ang presyo") set `price_dropped_days` to the window in days (this week → 7, this month → 30, otherwise 30). 0 when not asked.
+        14. People describe their lives, not filters. Read the need behind the words and fill `near_facilities` with the KINDS of place they want close by: kids / children / school-age / "may anak" → school; elderly parents, retiring, sick, maintenance medicine, "senior" → hospital (and pharmacy if medicine is mentioned); groceries, shopping, "near facilities", "malls" → mall; no car, commuting, jeep / bus / MRT, "walang sasakyan" → transport_station; jogging, dogs, kids to play → park; churchgoer, Sunday mass → church; nurse / doctor who works at a hospital → hospital. A SPECIFIC named place ("near SM City Cebu", "near Chong Hua") goes in `near`, not here. Leave near_facilities empty when nothing of the kind is said.
+        15. Put the buyer's human situation, when they share one, in `situation` as one neutral clause (e.g. "first-time buyer, nervous about the process, two small kids") — never a filter, never invented.
+        16. Wishes that cannot be checked against a listing's data go in `unverifiable`, as short phrases: safe area, quiet, flood-free, good neighbours, no traffic, pet-friendly building, good for investment. Do not turn them into filters or keywords.
         12. If the user wants to be NEAR a specific place — a mall, business park, school, hospital, office, church, beach, a named building or development ("near IT Park", "walking distance to Ayala Center Cebu", "close to SM Seaside", "beside Cebu Doctors") — put that place's name in `near` (just the place, no "near"), and the distance in `radius_km` when they say one ("within 2 km" → 2; "walking distance" → 1; otherwise 0). Do NOT put the place in query_words or address; the city still goes in address when named.
         SYSTEM
         ];
@@ -784,6 +814,20 @@ class CommandService extends CacheService
                             'price_dropped_days' => [
                                 'type' => 'number',
                                 'description' => 'When the user asks for listings whose price was reduced/dropped/cut: the window in days (this week → 7, this month → 30; default 30). 0 if not asked.'
+                            ],
+                            'near_facilities' => [
+                                'type' => 'array',
+                                'items' => ['type' => 'string', 'enum' => FacilityIndex::CATEGORIES],
+                                'description' => 'Kinds of place the user wants close by, read from their needs too (kids → school; elderly parents → hospital; groceries or "near malls/facilities" → mall; no car → transport_station; jogging or kids playing → park; Sunday mass → church). Empty array when none.'
+                            ],
+                            'situation' => [
+                                'type' => 'string',
+                                'description' => 'The buyer\'s own situation in one neutral clause when they share it ("first-time buyer, nervous, two kids under 5"). Empty string when they do not.'
+                            ],
+                            'unverifiable' => [
+                                'type' => 'array',
+                                'items' => ['type' => 'string'],
+                                'description' => 'Wishes that no listing field can confirm, as short phrases: "safe area", "quiet", "flood-free", "good neighbours". Empty array when none.'
                             ],
                             'agent_name' => [
                                 'type' => 'string',
@@ -876,6 +920,13 @@ class CommandService extends CacheService
             $args['near'] = '';
             $args['radius_km'] = 0;
         }
+        // The needs behind the words, kept only when the message actually voices a need of that
+        // kind — a bare "condo in Lahug" must not grow a mall requirement.
+        $kinds = array_values(array_unique(array_intersect(array_map('strval', (array) ($args['near_facilities'] ?? [])), FacilityIndex::CATEGORIES)));
+        $voiced = preg_match('/\b(near|close|nearby|malapit|school|hospital|mall|clinic|pharmac|church|mass|transport|terminal|commut|park|kid|child|anak|parent|elderly|senior|retir|medic|grocer|shopping|facilit|amenit|walk|station|bus|jeep|mrt|lrt|nurse|doctor|sick|maintenance|treatment|jog|dog|pet)/iu', $latest) === 1;
+        $args['near_facilities'] = $voiced ? array_slice($kinds, 0, 3) : [];
+        $args['situation'] = mb_substr(trim((string) ($args['situation'] ?? '')), 0, 160);
+        $args['unverifiable'] = array_slice(array_values(array_filter(array_map(fn ($w) => mb_substr(trim((string) $w), 0, 40), (array) ($args['unverifiable'] ?? [])))), 0, 4);
 
         return [
             'function' => $fn->name,

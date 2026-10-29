@@ -57,6 +57,20 @@ class MoreListingsCommandService extends CacheService
      *
      * @return array{total: int, shown: int, more: array<int, array{id: int, meters: int|null, landmark: string|null}>, ranked: string}
      */
+    /** A ranking label the search could have produced: fit, nearest, drop, or "facilities:mall,school". */
+    private static function rankedFrom($value): string
+    {
+        if (in_array($value, ['fit', 'nearest', 'drop'], true)) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/^facilities:([a-z_]+(?:,[a-z_]+){0,2})$/', $value, $m)
+            && array_diff(explode(',', $m[1]), \App\Services\Listing\FacilityIndex::CATEGORIES) === []) {
+            return $value;
+        }
+
+        return 'fit';
+    }
+
     private static function pageFrom(array $meta): array
     {
         $more = [];
@@ -69,11 +83,12 @@ class MoreListingsCommandService extends CacheService
                 'id' => $id,
                 'meters' => is_array($ref) && isset($ref['meters']) && is_numeric($ref['meters']) ? (int) $ref['meters'] : null,
                 'landmark' => is_array($ref) && isset($ref['landmark']) && is_string($ref['landmark']) ? mb_substr($ref['landmark'], 0, 120) : null,
+                'nearby' => is_array($ref) && is_array($ref['nearby'] ?? null) ? array_slice(array_values(array_filter($ref['nearby'], 'is_array')), 0, 3) : null,
             ];
         }
         $total = max(0, (int) ($meta['total'] ?? 0));
         $shown = isset($meta['shown']) && is_numeric($meta['shown']) ? max(0, (int) $meta['shown']) : max(0, min($total, $total - count($more)));
-        $ranked = in_array($meta['ranked'] ?? null, ['fit', 'nearest', 'drop'], true) ? $meta['ranked'] : 'fit';
+        $ranked = self::rankedFrom($meta['ranked'] ?? null);
 
         return ['total' => $total, 'shown' => $shown, 'more' => $more, 'ranked' => $ranked];
     }
@@ -87,7 +102,9 @@ class MoreListingsCommandService extends CacheService
         $more = $page['more'];
         $shownBefore = isset($page['shown']) ? max(0, (int) $page['shown']) : max(0, $total - count($more));
         $ranked = (string) ($page['ranked'] ?? 'fit');
-        $order = ['nearest' => 'nearest first', 'drop' => 'biggest price cut first'][$ranked] ?? 'most complete first, then the best-priced for their area, then the newest';
+        $order = ['nearest' => 'nearest first', 'drop' => 'biggest price cut first'][$ranked] ?? (str_starts_with($ranked, 'facilities:')
+            ? 'closest to '.implode(' and ', array_map(fn ($k) => 'a '.(\App\Services\Listing\FacilityIndex::SINGULAR[$k] ?? $k), explode(',', substr($ranked, 11)))).' first'
+            : 'most complete first, then the best-priced for their area, then the newest');
         $batch = array_slice($more, 0, DataLayerService::SEARCH_PAGE);
         $rest = array_values(array_slice($more, count($batch)));
 
@@ -97,7 +114,7 @@ class MoreListingsCommandService extends CacheService
             if ($id <= 0) {
                 continue;
             }
-            $card = $this->cardFor($id, isset($ref['meters']) ? (int) $ref['meters'] : null, isset($ref['landmark']) ? (string) $ref['landmark'] : null);
+            $card = $this->cardFor($id, isset($ref['meters']) ? (int) $ref['meters'] : null, isset($ref['landmark']) ? (string) $ref['landmark'] : null, isset($ref['nearby']) && is_array($ref['nearby']) ? $ref['nearby'] : null);
             if ($card !== null) {
                 $cards[] = $card;
             }

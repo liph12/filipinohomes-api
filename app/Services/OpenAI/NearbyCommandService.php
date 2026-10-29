@@ -4,6 +4,7 @@ namespace App\Services\OpenAI;
 
 use App\Models\Listing;
 use App\Models\NearbyFacility;
+use App\Services\Listing\FacilityIndex;
 use App\Services\Listing\NearbyFacilityCleaner;
 use App\Services\Listing\NearbyPlacesFinder;
 use Illuminate\Http\Request;
@@ -55,12 +56,6 @@ class NearbyCommandService extends CacheService
     /** Fewer borrowed places than this and OpenStreetMap is asked too. */
     private const BORROW_ENOUGH = 3;
 
-    /** A "park" or "hospital" from Google's nearby search must look like one; the rest is a shop or a street. */
-    private const MUST_LOOK_LIKE = [
-        'park' => '/\b(park|plaza|playground|garden|nature|eco|reserve|boulevard|baywalk|green|field|oval|sports|court|complex|grounds|promenade|walk|lagoon)\b/i',
-        'hospital' => '/hosp|medic|clinic|health|infirm|center|centre|doctor|dental|diagnost|lab|maternity|lying-in|ospital/i',
-    ];
-
     private const LABELS = [
         'school' => 'Schools',
         'hospital' => 'Hospitals',
@@ -89,7 +84,7 @@ class NearbyCommandService extends CacheService
         'attraction' => 'place to see',
     ];
 
-    public function __construct(private readonly DataLayerService $data, private readonly NearbyPlacesFinder $finder)
+    public function __construct(private readonly DataLayerService $data, private readonly NearbyPlacesFinder $finder, private readonly FacilityIndex $index)
     {
     }
 
@@ -184,12 +179,7 @@ class NearbyCommandService extends CacheService
             }
             $items = [];
             foreach ($places[$key] as $p) {
-                $pName = trim((string) ($p['name'] ?? ''));
-                // "Unnamed police_station" is Google's placeholder, not a place a buyer can look up.
-                if ($pName === '' || preg_match('/^unnamed\b/i', $pName)) {
-                    continue;
-                }
-                if (isset(self::MUST_LOOK_LIKE[$key]) && ! preg_match(self::MUST_LOOK_LIKE[$key], $pName)) {
+                if (! FacilityIndex::looksReal($key, (string) ($p['name'] ?? ''))) {
                     continue;
                 }
                 $m = (int) round((float) ($p['distance_meters'] ?? 0));
@@ -357,6 +347,12 @@ class NearbyCommandService extends CacheService
      * @return array<string, array<int, array<string, mixed>>>
      */
     private function borrowed(float $lat, float $lng): array
+    {
+        return $this->index->around($lat, $lng, NearbyPlacesFinder::RADIUS_M, NearbyPlacesFinder::PER_CATEGORY);
+    }
+
+    /** @deprecated the FacilityIndex answers this now; kept until the next cleanup. */
+    private function borrowedByQuery(float $lat, float $lng): array
     {
         $dLat = self::BORROW_M / 111000;
         $dLng = $dLat / max(cos(deg2rad($lat)), 0.2);

@@ -203,11 +203,11 @@ class CacheService extends DataLayerService
                 $listingMeta = $msg['metaData']['listing'];
     
                 $suggested = isset($listingMeta['suggested']['id'])
-                    ? $listingMap->get($listingMeta['suggested']['id'])
+                    ? self::withSearchExtras($listingMap->get($listingMeta['suggested']['id']), $listingMeta['suggested'])
                     : null;
                 $others = isset($listingMeta['others'])
                     ? collect($listingMeta['others'])
-                        ->map(fn ($l) => $listingMap->get($l['id']))
+                        ->map(fn ($l) => self::withSearchExtras($listingMap->get($l['id']), $l))
                         ->filter()
                         ->values()
                         ->toArray()
@@ -256,6 +256,28 @@ class CacheService extends DataLayerService
         })->toArray();
     
         return $messages;
+    }
+
+    /**
+     * A reopened card gets back what only its search knew: the nearest mall or school it was ranked
+     * by (`nearby`) and its distance from the landmark the search measured from (`distance`).
+     *
+     * @param  array<string, mixed>|null  $card
+     * @param  mixed  $ref  the stored {id, nearby?, distance?} entry
+     * @return array<string, mixed>|null
+     */
+    private static function withSearchExtras(?array $card, $ref): ?array
+    {
+        if ($card === null || ! is_array($ref)) {
+            return $card;
+        }
+        foreach (['nearby', 'distance'] as $k) {
+            if (isset($ref[$k]) && is_array($ref[$k])) {
+                $card[$k] = $ref[$k];
+            }
+        }
+
+        return $card;
     }
 
     public function clearMessages(Request $request)
