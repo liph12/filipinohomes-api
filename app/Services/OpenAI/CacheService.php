@@ -345,6 +345,56 @@ class CacheService extends DataLayerService
         cache()->forget($this->profileKey($request));
     }
 
+    /**
+     * The listings most recently shown in this thread, for a typed "where is that?" or "what's near
+     * it?": a search's picks, or the one a deal, cost, investment, map or nearby panel was about, or
+     * the cards under an affordability or valuation panel.
+     *
+     * @return array<int, int>
+     */
+    protected function recentListingIds(Request $req): array
+    {
+        try {
+            $messages = $this->getDailyMessages($req);
+        } catch (\Throwable) {
+            return [];
+        }
+        foreach (array_reverse($messages) as $m) {
+            $meta = $m['metaData'] ?? null;
+            if (! is_array($meta)) {
+                continue;
+            }
+            if (isset($meta['listing']) && is_array($meta['listing'])) {
+                $ids = [];
+                if (! empty($meta['listing']['suggested']['id'])) {
+                    $ids[] = (int) $meta['listing']['suggested']['id'];
+                }
+                foreach ($meta['listing']['others'] ?? [] as $o) {
+                    if (! empty($o['id'])) {
+                        $ids[] = (int) $o['id'];
+                    }
+                }
+                if ($ids !== []) {
+                    return array_values(array_unique($ids));
+                }
+            }
+            foreach (['deal', 'cost', 'invest', 'map', 'nearby'] as $k) {
+                $id = (int) ($meta[$k]['listing_id'] ?? $meta[$k]['focus_id'] ?? 0);
+                if ($id > 0) {
+                    return [$id];
+                }
+            }
+            foreach (['afford' => 'listings', 'worth' => 'comparables'] as $k => $field) {
+                $rows = $meta[$k][$field] ?? null;
+                if (is_array($rows) && $rows !== []) {
+                    return array_values(array_unique(array_map(fn ($r) => (int) ($r['id'] ?? 0), $rows)));
+                }
+            }
+        }
+
+        return [];
+    }
+
     public function appendMessages(Request $request, $newMessages)
     {
         $deviceId = $request->input('device_id') ?? 'unknown';

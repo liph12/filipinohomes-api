@@ -20,6 +20,7 @@ use App\Services\OpenAI\RentBuyCommandService;
 use App\Services\OpenAI\InvestCommandService;
 use App\Services\OpenAI\MapCommandService;
 use App\Services\OpenAI\MoreListingsCommandService;
+use App\Services\OpenAI\NearbyCommandService;
 use App\Services\OpenAI\AsaQuestionLog;
 use App\Models\Barangay;
 use Illuminate\Support\Facades\Http;
@@ -45,10 +46,12 @@ class OpenAIController extends Controller
     private $investService;
     private $mapService;
     private $moreService;
+    private $nearbyService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map, MoreListingsCommandService $more)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map, MoreListingsCommandService $more, NearbyCommandService $nearby)
     {
         $this->moreService = $more;
+        $this->nearbyService = $nearby;
         $this->affordService = $afford;
         $this->worthService = $worth;
         $this->costService = $cost;
@@ -162,6 +165,12 @@ class OpenAIController extends Controller
 
                 return $this->compareService->replyStream($ids, $thread, $request);
             }
+            // "What's nearby? listing #123" / "Any schools near listing #123?" — the places around it, no model.
+            if (preg_match('/\b(near ?by|nearby|around (?:it|this|that|there|here)|what(?:\'| i)?s around|close ?by|malapit|schools?|hospitals?|clinics?|pharmac|malls?|parks?|church|transport|terminal|station|police|fire station|supermarket|grocer)/iu', $question)) {
+                AsaQuestionLog::start($request, $question, 'nearby');
+
+                return $this->nearbyService->replyStream($thread, $request, $ids);
+            }
             // "Where is this? listing #123" / "How far is listing #123 from Ayala?" — the map, no model.
             if (preg_match('/\b(where|map|direction|how far|get there|located|location|route)/i', $question)) {
                 AsaQuestionLog::start($request, $question, 'locate');
@@ -192,6 +201,16 @@ class OpenAIController extends Controller
                 AsaQuestionLog::start($request, $question, 'listing');
 
                 return $this->moreService->replyStream($page, $request);
+            }
+        }
+
+        // "Any schools near it?" / "what's nearby" about a listing already on screen — no model, no search.
+        if ($question !== '' && preg_match(NearbyCommandService::PATTERN, $question) && NearbyCommandService::aboutShownListing($question)) {
+            $recent = $this->nearbyService->recentIds($request);
+            if ($recent !== []) {
+                AsaQuestionLog::start($request, $question, 'nearby');
+
+                return $this->nearbyService->replyStream($thread, $request, $recent);
             }
         }
 

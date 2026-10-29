@@ -32,7 +32,7 @@ class MapCommandService extends CacheService
         if (preg_match_all('/\blisting\s*#\s*(\d+)/i', $question, $mm) && $mm[1] !== []) {
             $ids = array_values(array_unique(array_map('intval', $mm[1])));
         } else {
-            $ids = $this->idsFromThread($req);
+            $ids = $this->recentListingIds($req);
         }
         if ($ids === []) {
             AsaQuestionLog::outcome($req, 'no_data');
@@ -106,6 +106,7 @@ class MapCommandService extends CacheService
         $followUps = array_values(array_filter([
             ['label' => 'How far from the city centre?', 'prompt' => sprintf('How far is listing #%d from %s city hall?', $focus['id'], self::cityOf($focus['address']) ?: 'the')],
             ['label' => 'Is it a good deal?', 'prompt' => "Is this a good deal? listing #{$focus['id']}"],
+            ['label' => "What's nearby?", 'prompt' => "What's nearby? listing #{$focus['id']}"],
             $barangay !== '' ? ['label' => "What's for sale near it", 'prompt' => sprintf('Show me %s for sale near %s', strtolower((string) ($card['propertyType'] ?? 'properties')).'s', $barangay)] : null,
             ['label' => 'Total cost to buy', 'prompt' => "What will it really cost to buy listing #{$focus['id']}?"],
         ]));
@@ -118,55 +119,6 @@ class MapCommandService extends CacheService
             'origin' => $origin,
             'unpinned' => $unpinned,
         ], $text, $followUps, $req);
-    }
-
-    /**
-     * The listings most recently shown in this thread: a search's picks, or the one a deal, cost or
-     * investment panel was about, or the cards under an affordability or valuation panel.
-     *
-     * @return array<int, int>
-     */
-    private function idsFromThread(Request $req): array
-    {
-        try {
-            $messages = $this->getDailyMessages($req);
-        } catch (\Throwable) {
-            return [];
-        }
-        foreach (array_reverse($messages) as $m) {
-            $meta = $m['metaData'] ?? null;
-            if (! is_array($meta)) {
-                continue;
-            }
-            if (isset($meta['listing']) && is_array($meta['listing'])) {
-                $ids = [];
-                if (! empty($meta['listing']['suggested']['id'])) {
-                    $ids[] = (int) $meta['listing']['suggested']['id'];
-                }
-                foreach ($meta['listing']['others'] ?? [] as $o) {
-                    if (! empty($o['id'])) {
-                        $ids[] = (int) $o['id'];
-                    }
-                }
-                if ($ids !== []) {
-                    return array_values(array_unique($ids));
-                }
-            }
-            foreach (['deal', 'cost', 'invest', 'map'] as $k) {
-                $id = (int) ($meta[$k]['listing_id'] ?? $meta[$k]['focus_id'] ?? 0);
-                if ($id > 0) {
-                    return [$id];
-                }
-            }
-            foreach (['afford' => 'listings', 'worth' => 'comparables'] as $k => $field) {
-                $rows = $meta[$k][$field] ?? null;
-                if (is_array($rows) && $rows !== []) {
-                    return array_values(array_unique(array_map(fn ($r) => (int) ($r['id'] ?? 0), $rows)));
-                }
-            }
-        }
-
-        return [];
     }
 
     /** "…, Lahug, Cebu City, Cebu, 6000, Philippines" → "Cebu City". */
