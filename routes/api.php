@@ -126,6 +126,13 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/fh-agent/{email}', [AgentController::class, 'showByEmail'])->where('email', '.*');
         });
 
+        // Leuterio Realty website writes — static shared secret in X-LR-Token (no public mint route,
+        // unlike /fh-agent: anyone can get that token, so it only guards reads).
+        //   PATCH /api/lr/listings/status   body: email, code, status[, status_change_date, status_remark]
+        Route::middleware('verify.lr.token')->group(function () {
+            Route::patch('/lr/listings/status', [ExternalListingController::class, 'updateStatus']);
+        });
+
         // Server-to-server reads for natcon-api-v2 (the registrations backend).
         // Static shared secret in X-FH-Service-Token — no public mint route,
         // unlike /fh-agent above; see VerifyServiceToken for why that pattern

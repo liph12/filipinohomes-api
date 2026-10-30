@@ -6,6 +6,7 @@ use App\Http\Resources\ExternalListingResource;
 use App\Models\Agent;
 use App\Models\Listing;
 use App\Services\Listing\PartnerFeedService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
@@ -90,23 +91,11 @@ class ExternalListingController extends Controller
             'email' => 'required|string|max:255',
             'code' => 'required|string|max:100',
         ]);
-        $email = strtolower(trim($data['email']));
-        $code = trim($data['code']);
-
-        // The same address can be one agent's FH email and another's LR email, so collect both.
-        $byFh = Agent::query()->whereHas('user', fn ($q) => $q->whereRaw('LOWER(email) = ?', [$email]))->pluck('id')->all();
-        $byLr = Agent::query()->whereRaw('LOWER(lr_email) = ?', [$email])->pluck('id')->all();
-        if (! $byFh && ! $byLr) {
-            return $this->noMatch('agent_not_found', 'No agent has this email (Filipinohomes or LR).');
+        $found = $this->findOwned($data['email'], $data['code']);
+        if (! is_array($found)) {
+            return $found;
         }
-
-        $listing = Listing::query()->where('code', $code)->first();
-        if (! $listing) {
-            return $this->noMatch('listing_not_found', 'No listing has this code.');
-        }
-        if (! in_array((int) $listing->agent_id, [...$byFh, ...$byLr], true)) {
-            return $this->noMatch('not_owner', 'This listing belongs to a different agent.');
-        }
+        [$listing, $matchedBy] = $found;
 
         $listing->load([
             'property.propertyAttribute.subtype.type',
@@ -117,8 +106,86 @@ class ExternalListingController extends Controller
 
         return (new ExternalListingResource($listing))->additional([
             'matched' => true,
-            'matched_by' => in_array((int) $listing->agent_id, $byFh, true) ? 'fh_email' : 'lr_email',
+            'matched_by' => $matchedBy,
         ]);
+    }
+
+    /**
+     * PATCH /lr/listings/status (X-LR-Token) — the Leuterio Realty site changes a listing's status:
+     * active, sold, rented or leased. Same ownership check as match() (the email must be the owning
+     * agent's FH or LR email), then the same update the agent dashboard makes
+     * (ListingController::updateStatus), recorded in the audit log as coming from the LR website.
+     * status_change_date defaults to today. Returns the listing as match() does.
+     */
+    public function updateStatus(Request $request)
+    {
+        $data = $request->validate([
+            'email' => 'required|string|max:255',
+            'code' => 'required|string|max:100',
+            'status' => 'required|in:active,sold,rented,leased',
+            'status_change_date' => 'nullable|date',
+            'status_remark' => 'nullable|string|max:1000',
+        ]);
+
+        $found = $this->findOwned($data['email'], $data['code']);
+        if (! is_array($found)) {
+            return $found;
+        }
+        [$listing, $matchedBy] = $found;
+
+        $property = $listing->property;
+        if (! $property) {
+            return response()->json(['matched' => true, 'error' => 'This listing has no property record to update.'], 409);
+        }
+        $previous = $property->status;
+        $property->auditSource = 'status_change';
+        $property->auditDescription = sprintf('Leuterio Realty website (%s) changed %s status to %s', strtolower(trim($data['email'])), $listing->name, $data['status']);
+        $property->update([
+            'status' => $data['status'],
+            'status_change_date' => $data['status_change_date'] ?? now()->toDateString(),
+            'status_remark' => $data['status_remark'] ?? null,
+        ]);
+
+        $listing->load([
+            'property.propertyAttribute.subtype.type',
+            'property.furnishing',
+            'category',
+            'agent.user',
+        ]);
+
+        return (new ExternalListingResource($listing))->additional([
+            'matched' => true,
+            'matched_by' => $matchedBy,
+            'previous_status' => $previous,
+        ]);
+    }
+
+    /**
+     * [listing, 'fh_email' | 'lr_email'] when the agent with this email (FH account email or
+     * agents.lr_email, case-insensitive) owns the listing with this code; otherwise the 404 response to
+     * return. The same address can be one agent's FH email and another's LR email, so
+     * both are collected.
+     */
+    /** @return array{0: Listing, 1: string}|JsonResponse */
+    private function findOwned(string $email, string $code): array|JsonResponse
+    {
+        $email = strtolower(trim($email));
+        $byFh = Agent::query()->whereHas('user', fn ($q) => $q->whereRaw('LOWER(email) = ?', [$email]))->pluck('id')->all();
+        $byLr = Agent::query()->whereRaw('LOWER(lr_email) = ?', [$email])->pluck('id')->all();
+        if (! $byFh && ! $byLr) {
+            return $this->noMatch('agent_not_found', 'No agent has this email (Filipinohomes or LR).');
+        }
+
+        $listing = Listing::query()->where('code', trim($code))->first();
+        if (! $listing) {
+            return $this->noMatch('listing_not_found', 'No listing has this code.');
+        }
+        $owner = (int) $listing->agent_id;
+        if (! in_array($owner, [...$byFh, ...$byLr], true)) {
+            return $this->noMatch('not_owner', 'This listing belongs to a different agent.');
+        }
+
+        return [$listing, in_array($owner, $byFh, true) ? 'fh_email' : 'lr_email'];
     }
 
     private function noMatch(string $reason, string $message)

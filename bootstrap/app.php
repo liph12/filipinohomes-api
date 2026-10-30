@@ -73,6 +73,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'verify.guest.token'   => \App\Http\Middleware\VerifyGuestToken::class,
             'verify.fh.agent.token' => \App\Http\Middleware\VerifyFhAgentToken::class,
             'verify.service.token' => \App\Http\Middleware\VerifyServiceToken::class,
+            'verify.lr.token'      => \App\Http\Middleware\VerifyLrToken::class,
             'agent.active'         => \App\Http\Middleware\EnsureAgentActive::class,
         ]);
     })

@@ -149,6 +149,10 @@ return [
     // App\Http\Middleware\VerifyServiceToken.
     'fh_service_token' => env('FH_SERVICE_API_TOKEN'),
 
+    // Static secret the Leuterio Realty website sends as X-LR-Token to change a listing's status
+    // (PATCH /api/lr/listings/status). See App\Http\Middleware\VerifyLrToken.
+    'lr_api_token' => env('LR_API_TOKEN'),
+
     'providers' => [
         /*
         * Laravel Framework Service Providers...
