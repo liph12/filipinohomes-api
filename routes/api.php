@@ -1064,6 +1064,7 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/dashboard/pulse', \App\Http\Controllers\Admin\DashboardPulseController::class);
                 Route::get('/admin/client-insights', \App\Http\Controllers\Admin\ClientInsightsController::class);
                 Route::get('/admin/client-insights/replies', [\App\Http\Controllers\Admin\ClientInsightsController::class, 'replies']);
+                Route::get('/admin/client-insights/missed-reply', [\App\Http\Controllers\Admin\ClientInsightsController::class, 'missedReply']);
                 Route::get('/admin/analytics/status', [AnalyticsController::class, 'status']);
                 Route::get('/admin/analytics/website', [AnalyticsController::class, 'website']);
                 Route::get('/admin/analytics/website/realtime', [AnalyticsController::class, 'realtime']);

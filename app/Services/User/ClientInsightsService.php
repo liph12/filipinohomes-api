@@ -106,6 +106,7 @@ class ClientInsightsService
             'inquiry_places' => $byPlace,
             'inquiry_buckets' => $buckets,
             'replies' => $this->replies($inquiries),
+            'missed_reply' => $this->missedReply($inquiries, $clients),
         ];
     }
 
@@ -118,15 +119,34 @@ class ClientInsightsService
      */
     /**
      * "Did the agent reply?" for inquiries sent between two Manila dates (inclusive) — the reply section's
-     * own date filter.
+     * own date filter — or all time when no dates are given (the main dashboard).
      */
-    public function repliesBetween(string $start, string $end): array
+    public function repliesBetween(?string $start, ?string $end): array
     {
         $ids = DB::table('users')->join('roles', 'roles.id', '=', 'users.role_id')->where('roles.name', 'client')->pluck('users.id')->all();
-        $from = now(self::TZ)->parse($start, self::TZ)->startOfDay()->utc();
-        $to = now(self::TZ)->parse($end, self::TZ)->endOfDay()->utc();
+        $between = $start && $end
+            ? [now(self::TZ)->parse($start, self::TZ)->startOfDay()->utc(), now(self::TZ)->parse($end, self::TZ)->endOfDay()->utc()]
+            : null;
 
-        return $this->replies($this->inquiryRows($ids, [$from, $to]));
+        $rows = $this->inquiryRows($ids, $between);
+
+        return [
+            'places' => $this->replies($rows),
+            'speed' => $this->replySpeed($rows),
+            'agents' => $this->unansweredAgents($rows),
+        ];
+    }
+
+    /** "What a missed reply costs" on its own (the main dashboard), all time. */
+    public function missedReplySummary(): array
+    {
+        $clients = DB::table('users')
+            ->join('roles', 'roles.id', '=', 'users.role_id')
+            ->where('roles.name', 'client')
+            ->get(['users.id', 'users.last_online_at'])
+            ->keyBy('id');
+
+        return $this->missedReply($this->inquiryRows($clients->keys()->all()), $clients);
     }
 
     /** @param  array{0: \DateTimeInterface, 1: \DateTimeInterface}|null  $between  chats.created_at range (UTC) */
@@ -147,11 +167,12 @@ class ClientInsightsService
             ->whereIn('chats.user_id', $ids)
             ->when($between, fn ($q) => $q->whereBetween('chats.created_at', $between))
             ->get([
-                'chats.user_id', 'chats.type', 'chats.source', 'chats.created_at',
-                'conversations.status',
+                'chats.user_id', 'chats.type', 'chats.type_id', 'chats.source', 'chats.created_at',
+                'conversations.status', 'conversations.reviewed_at',
                 DB::raw("{$agent} as agent_user_id"),
                 DB::raw("EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id = {$agent}) as agent_replied"),
                 DB::raw('EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id <> chats.user_id) as anyone_replied'),
+                DB::raw("(SELECT MIN(m.created_at) FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id = {$agent}) as agent_reply_at"),
                 'categories.name as category', 'property_types.name as ptype', 'property_subtypes.name as subtype',
                 'listings.price', 'property_attributes.bedroom_count as beds', 'property_attributes.bathroom_count as baths',
             ])
@@ -175,11 +196,93 @@ class ClientInsightsService
         $empty = ['replied' => 0, 'other_replied' => 0, 'no_reply' => 0, 'pending' => 0, 'other' => 0];
         $out = array_fill_keys(self::PLACES, $empty);
         foreach ($inquiries as $r) {
-            $reached = $r->status === 'accepted' && $r->agent_user_id;
+            $reached = self::reached($r);
             $key = $reached
                 ? ($r->agent_replied ? 'replied' : ($r->anyone_replied ? 'other_replied' : 'no_reply'))
                 : ($r->status === 'pending' ? 'pending' : 'other');
             $out[$r->place][$key]++;
+        }
+
+        return $out;
+    }
+
+    /** Whether an inquiry reached the agent (accepted) — the only ones a reply can be judged on. */
+    private static function reached($r): bool
+    {
+        return $r->status === 'accepted' && $r->agent_user_id;
+    }
+
+    /**
+     * How fast agents send their first reply, per place: median minutes and the share answered within
+     * an hour / a day — of the inquiries the agent did reply to. Timed from when it reached the agent
+     * (approved, for listing inquiries that wait for review), else from when it was sent.
+     */
+    private function replySpeed($inquiries): array
+    {
+        $out = [];
+        // 'all' = every place together (the main dashboard's single panel).
+        foreach ([...self::PLACES, 'all'] as $place) {
+            $mins = ($place === 'all' ? $inquiries : $inquiries->where('place', $place))
+                ->filter(fn ($r) => self::reached($r) && $r->agent_reply_at && $r->created_at)
+                ->map(fn ($r) => max(0, (strtotime($r->agent_reply_at.' UTC') - strtotime(($r->reviewed_at ?? $r->created_at).' UTC')) / 60))
+                ->sort()->values();
+            $n = $mins->count();
+            $out[$place] = [
+                'replied' => $n,
+                'median_minutes' => $n ? (int) round($n % 2 ? $mins[intdiv($n, 2)] : ($mins[$n / 2 - 1] + $mins[$n / 2]) / 2) : null,
+                'within_hour' => $mins->filter(fn ($m) => $m <= 60)->count(),
+                'within_day' => $mins->filter(fn ($m) => $m <= 1440)->count(),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Agents with the most inquiries left without a reply (reached them, nobody but the client wrote),
+     * with how many they received and answered themselves. Top 30.
+     */
+    private function unansweredAgents($inquiries): array
+    {
+        $per = [];
+        foreach ($inquiries->filter(fn ($r) => self::reached($r)) as $r) {
+            $a = &$per[$r->agent_user_id];
+            $a['received'] = ($a['received'] ?? 0) + 1;
+            $a['replied'] = ($a['replied'] ?? 0) + ($r->agent_replied ? 1 : 0);
+            $a['no_reply'] = ($a['no_reply'] ?? 0) + ($r->anyone_replied ? 0 : 1);
+            unset($a);
+        }
+        $per = array_filter($per, fn ($a) => $a['no_reply'] > 0);
+        uasort($per, fn ($x, $y) => [$y['no_reply'], $y['received']] <=> [$x['no_reply'], $x['received']]);
+        $per = array_slice($per, 0, 30, true);
+
+        $names = DB::table('agents')->whereIn('user_id', array_keys($per))
+            ->get(['user_id', 'first_name', 'last_name'])
+            ->mapWithKeys(fn ($a) => [$a->user_id => trim(preg_replace('/\s+/', ' ', ($a->first_name ?? '').' '.($a->last_name ?? '')))]);
+
+        return collect($per)->map(fn ($a, $id) => ['name' => ($names[$id] ?? '') ?: 'Agent #'.$id] + $a)->values()->all();
+    }
+
+    /**
+     * What a missed reply costs: clients grouped by whether their FIRST inquiry got a reply (anyone but
+     * the client wrote) or reached the agent and got none — and, per group, how many inquired again
+     * later and how many were back on the site a day or more after it.
+     */
+    private function missedReply($inquiries, $clients): array
+    {
+        $out = ['replied' => ['clients' => 0, 'inquired_again' => 0, 'came_back' => 0], 'no_reply' => ['clients' => 0, 'inquired_again' => 0, 'came_back' => 0]];
+        foreach ($inquiries->groupBy('user_id') as $userId => $rows) {
+            $rows = $rows->filter(fn ($r) => $r->created_at)->sortBy('created_at')->values();
+            $first = $rows->first();
+            if (! $first || ! self::reached($first)) {
+                continue;
+            }
+            $key = $first->anyone_replied ? 'replied' : 'no_reply';
+            $at = strtotime($first->created_at.' UTC');
+            $seen = $clients[$userId]->last_online_at ?? null;
+            $out[$key]['clients']++;
+            $out[$key]['inquired_again'] += $rows->count() > 1 ? 1 : 0;
+            $out[$key]['came_back'] += $seen && strtotime($seen.' UTC') >= $at + 86400 ? 1 : 0;
         }
 
         return $out;
