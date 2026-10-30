@@ -115,9 +115,13 @@ Route::middleware('strip.tags')->group(function () {
         //   GET  /api/fh-agent/{email}          (header: X-FH-Agent-Token)
         //   GET  /api/fh-agent/listings         every audited (fully verified /
         //                                       verified) public listing, paginated
+        //   GET  /api/fh-agent/listings/match?email=&code=
+        //                                       one listing, if the agent with that FH
+        //                                       or LR email owns it (Leuterio Realty site)
         Route::middleware('verify.fh.agent.token')->group(function () {
             // Registered BEFORE {email}: that route matches any path ('.*'),
             // so it would otherwise swallow /fh-agent/listings.
+            Route::get('/fh-agent/listings/match', [ExternalListingController::class, 'match']);
             Route::get('/fh-agent/listings', [ExternalListingController::class, 'index']);
             Route::get('/fh-agent/{email}', [AgentController::class, 'showByEmail'])->where('email', '.*');
         });
