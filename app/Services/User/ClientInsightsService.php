@@ -44,7 +44,7 @@ class ClientInsightsService
         $inquiries = $this->inquiryRows($ids);
         // One full pass over visits (~1.5 s on production-sized data) and slow-moving: kept an hour, apart
         // from the page's ten-minute cache.
-        $anonymous = Cache::remember('admin:client-insights:anonymous:v2', 3600, fn () => $this->anonymousStats());
+        $anonymous = Cache::remember('admin:client-insights:anonymous:v3', 3600, fn () => $this->anonymousStats());
         $saved = DB::table('favorites')->whereIn('user_id', $ids)->distinct()->pluck('user_id')->flip();
 
         // Per client: inquiries in total, and whether any were on a listing / direct to an agent.
@@ -95,6 +95,7 @@ class ClientInsightsService
                 'repeat' => $repeat,
             ],
             'journey_ranges' => $this->journeyRanges($clients, $per, $saved, $anonymous),
+            'journey_trend' => $this->journeyTrend($inquiries, $ids, $anonymous['monthly']),
             'signups' => $this->monthlySignups(),
             'returning' => $this->monthlyReturning(),
             'inquiries_monthly' => $this->monthlyInquiries($ids),
@@ -292,7 +293,58 @@ class ClientInsightsService
             ->selectRaw(implode(', ', $cols), $bindings)
             ->first();
 
-        return ['ranges' => ['30d' => (int) $row->r30d, '90d' => (int) $row->r90d, '12m' => (int) $row->r12m, 'all' => (int) $row->total]];
+        $from = now(self::TZ)->startOfMonth()->subMonths(11);
+        $monthly = DB::query()->fromSub($firsts, 't')
+            ->whereNotIn('t.visitor_id', fn ($q) => $q->select('visitor_id')->from('users')->whereNotNull('visitor_id'))
+            ->where('t.first', '>=', $from->copy()->utc())
+            ->groupBy('m')
+            ->selectRaw("DATE_FORMAT(CONVERT_TZ(t.first, '+00:00', '".self::OFFSET."'), '%Y-%m') as m, COUNT(*) as c")
+            ->pluck('c', 'm');
+
+        return [
+            'ranges' => ['30d' => (int) $row->r30d, '90d' => (int) $row->r90d, '12m' => (int) $row->r12m, 'all' => (int) $row->total],
+            'monthly' => $this->months($from, $monthly),
+        ];
+    }
+
+    /**
+     * The journey cards' trend lines: per step, how many people reached it each month, last 12 months
+     * (Manila) — anonymous devices first seen, sign-ups, first saved listing, first inquiry, second inquiry.
+     */
+    private function journeyTrend($inquiries, array $ids, array $anonymousMonthly): array
+    {
+        $from = now(self::TZ)->startOfMonth()->subMonths(11);
+        $month = fn (string $utc) => now(self::TZ)->parse($utc.' UTC')->setTimezone(self::TZ)->format('Y-m');
+
+        $inquired = $repeat = [];
+        foreach ($inquiries->groupBy('user_id') as $rows) {
+            $at = $rows->pluck('created_at')->filter()->sort()->values();
+            if ($at->isNotEmpty()) {
+                $m = $month($at[0]);
+                $inquired[$m] = ($inquired[$m] ?? 0) + 1;
+            }
+            if ($at->count() > 1) {
+                $m = $month($at[1]);
+                $repeat[$m] = ($repeat[$m] ?? 0) + 1;
+            }
+        }
+
+        $firstSave = DB::table('favorites')->whereIn('user_id', $ids)->groupBy('user_id')->selectRaw('user_id, MIN(created_at) as first');
+        $saved = DB::query()->fromSub($firstSave, 'f')
+            ->where('f.first', '>=', $from->copy()->utc())
+            ->groupBy('m')
+            ->selectRaw("DATE_FORMAT(CONVERT_TZ(f.first, '+00:00', '".self::OFFSET."'), '%Y-%m') as m, COUNT(*) as c")
+            ->pluck('c', 'm');
+
+        $values = fn (array $rows) => array_column($rows, 'value');
+
+        return [
+            'anonymous' => $values($anonymousMonthly),
+            'clients' => $values($this->monthlySignups()),
+            'saved' => $values($this->months($from, $saved)),
+            'inquired' => $values($this->months($from, $inquired)),
+            'repeat' => $values($this->months($from, $repeat)),
+        ];
     }
 
     /** New clients per month, last 12 months (Manila), zero-filled. */

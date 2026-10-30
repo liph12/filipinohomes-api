@@ -16,7 +16,7 @@ class ClientInsightsController extends Controller
 {
     public function __invoke(ClientInsightsService $clients): JsonResponse
     {
-        return response()->json(Cache::remember('admin:client-insights:v15', 600, fn () => $clients->summary()));
+        return response()->json(Cache::remember('admin:client-insights:v16', 600, fn () => $clients->summary()));
     }
 
     /** GET /admin/client-insights/replies?date_start=&date_end= — the reply section for a date range. */
