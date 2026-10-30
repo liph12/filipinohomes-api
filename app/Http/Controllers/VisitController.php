@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Visit;
-use App\Services\Audience\AiVisibilityService;
+use App\Support\ChannelMatcher;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -18,22 +18,22 @@ class VisitController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'visitor_id'   => 'nullable|string|max:64',
-            'utm_source'   => 'nullable|string|max:128',
-            'utm_medium'   => 'nullable|string|max:128',
+            'visitor_id' => 'nullable|string|max:64',
+            'utm_source' => 'nullable|string|max:128',
+            'utm_medium' => 'nullable|string|max:128',
             'utm_campaign' => 'nullable|string|max:191',
-            'click_id'     => 'nullable|string|max:32',
-            'referrer'     => 'nullable|string|max:512',
+            'click_id' => 'nullable|string|max:32',
+            'referrer' => 'nullable|string|max:512',
             'landing_path' => 'nullable|string|max:512',
             // Geo resolved client-side by ipinfo.io (same source as user_info).
-            'country'      => 'nullable|string|max:64',
-            'region'       => 'nullable|string|max:96',
-            'city'         => 'nullable|string|max:96',
+            'country' => 'nullable|string|max:64',
+            'region' => 'nullable|string|max:96',
+            'city' => 'nullable|string|max:96',
         ]);
 
         $visitorId = $data['visitor_id'] ?? null;
 
-        $channel = $this->resolveChannel(
+        $channel = ChannelMatcher::resolve(
             $data['utm_source'] ?? null,
             $data['click_id'] ?? null,
             $data['referrer'] ?? null,
@@ -43,108 +43,29 @@ class VisitController extends Controller
         // from ChatGPT in the afternoon is credited to both (the multi-source card shows the overlap),
         // while repeat arrivals from the same channel that day still count once.
         if ($visitorId) {
-            $key = 'visit:' . $visitorId . ':' . $channel . ':' . now()->toDateString();
-            if (!Cache::add($key, 1, now()->addDay())) {
+            $key = 'visit:'.$visitorId.':'.$channel.':'.now()->toDateString();
+            if (! Cache::add($key, 1, now()->addDay())) {
                 return response()->json(['ok' => true, 'deduped' => true]);
             }
         }
 
         Visit::create([
-            'visitor_id'   => $visitorId,
-            'channel'      => $channel,
-            'utm_source'   => $data['utm_source'] ?? null,
-            'utm_medium'   => $data['utm_medium'] ?? null,
+            'visitor_id' => $visitorId,
+            'channel' => $channel,
+            'utm_source' => $data['utm_source'] ?? null,
+            'utm_medium' => $data['utm_medium'] ?? null,
             'utm_campaign' => $data['utm_campaign'] ?? null,
-            'referrer'     => $data['referrer'] ?? null,
+            'referrer' => $data['referrer'] ?? null,
             'landing_path' => $data['landing_path'] ?? null,
             // Public route (no auth middleware), so $request->user() reads the empty session guard — resolve
             // the bearer token explicitly or logged-in clients and staff are stored as anonymous.
-            'user_id'      => auth('sanctum')->id(),
-            'ip'           => $request->ip(),
-            'country'      => $data['country'] ?? null,
-            'region'       => $data['region'] ?? null,
-            'city'         => $data['city'] ?? null,
+            'user_id' => auth('sanctum')->id(),
+            'ip' => $request->ip(),
+            'country' => $data['country'] ?? null,
+            'region' => $data['region'] ?? null,
+            'city' => $data['city'] ?? null,
         ]);
 
         return response()->json(['ok' => true, 'channel' => $channel]);
-    }
-
-    /**
-     * Resolve a marketing channel, in priority order:
-     *   1. utm_source — explicit tag the marketer added (wins).
-     *   2. click_id   — the tracking param the platform auto-appends even to a
-     *      bare shared link (fbclid, gclid, ttclid…), so a link pasted straight
-     *      into Facebook still attributes to Facebook without manual tagging.
-     *   3. referrer host — fallback when neither tag survives.
-     *   4. direct — no signal at all.
-     */
-    private function resolveChannel(?string $utmSource, ?string $clickId, ?string $referrer): string
-    {
-        // 1. Explicit utm_source wins. AI assistants are checked first so
-        //    utm_source=chatgpt.com reads as its own lowercase channel
-        //    ("chatgpt"), not "referral".
-        $ai = app(AiVisibilityService::class);
-        $src = strtolower(trim((string) $utmSource));
-        if ($src !== '') {
-            if ($assistant = $ai->classifyClick($src, null)) {
-                return $assistant;
-            }
-
-            return $this->matchChannel($src) ?? 'referral';
-        }
-
-        // 2. Platform click-id (auto-appended on bare shared links).
-        //    Note: fbclid covers all of Meta — a bare link can't tell Instagram
-        //    from Facebook, so it lands on facebook; tag utm_source=instagram to
-        //    separate them.
-        $clickChannel = match (strtolower(trim((string) $clickId))) {
-            'fbclid'                    => 'facebook',
-            'gclid', 'gbraid', 'wbraid' => 'google',
-            'ttclid'                    => 'tiktok',
-            'twclid'                    => 'twitter',
-            'msclkid'                   => 'bing',
-            default                     => null,
-        };
-        if ($clickChannel) {
-            return $clickChannel;
-        }
-
-        // 3. Referrer host. AI first, one channel per assistant:
-        //    gemini.google.com would otherwise match "google" and be
-        //    counted as Google search.
-        $host = strtolower((string) parse_url((string) $referrer, PHP_URL_HOST));
-        if ($host === '') {
-            return 'direct';
-        }
-        if ($assistant = $ai->classifyClick(null, $referrer)) {
-            return $assistant;
-        }
-
-        return $this->matchChannel($host) ?? 'referral';
-    }
-
-    /** Match a utm_source token or referrer host against the channel map. */
-    private function matchChannel(string $haystack): ?string
-    {
-        $map = [
-            'facebook'  => ['facebook', 'fb', 'm.facebook', 'l.facebook', 'lm.facebook', 'messenger'], // messenger: l.messenger.com link shim on desktop
-            'instagram' => ['instagram', 'ig', 'l.instagram'],
-            'tiktok'    => ['tiktok'],
-            'twitter'   => ['twitter', 'x.com', 't.co'],
-            'youtube'   => ['youtube', 'youtu.be'],
-            'google'    => ['google', 'googleads', 'adwords'],
-            'bing'      => ['bing'],
-            'email'     => ['email', 'newsletter', 'mail.', 'gmail', 'outlook', 'yahoo'],
-        ];
-
-        foreach ($map as $channel => $needles) {
-            foreach ($needles as $needle) {
-                if (str_contains($haystack, $needle)) {
-                    return $channel;
-                }
-            }
-        }
-
-        return null;
     }
 }
