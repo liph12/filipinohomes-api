@@ -62,6 +62,9 @@ class ListingResource extends JsonResource
             'agent_edited_fields'  => $this->when($canSeeAudit, $this->agent_edited_fields),
             'audit_edited_fields'  => $this->when($canSeeAudit, $this->audit_edited_fields),
             're_submitted_at'      => $this->when($canSeeAudit, $this->re_submitted_at?->toDateTimeString()),
+            // Leuterio Realty website activity — admins only (the "Used in LR" badges).
+            'lr_used_at'           => $this->when($isAdmin, $this->lr_used_at?->toDateTimeString()),
+            'lr_status_changed_at' => $this->when($isAdmin, $this->lr_status_changed_at?->toDateTimeString()),
             'property'            => new PropertyResource($this->property),
             'category'            => new CategoryResource($this->category),
             'agent'               => new AgentResource($this->agent)

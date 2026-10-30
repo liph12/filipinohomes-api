@@ -109,6 +109,9 @@ class Listing extends Model implements Auditable
         're_submitted_at' => 'datetime',
         'photos_variants_generated_at' => 'datetime',
         'youtube_video_uploaded_at' => 'datetime',
+        // Leuterio Realty website activity (/api/lr): first lookup, last real status change.
+        'lr_used_at' => 'datetime',
+        'lr_status_changed_at' => 'datetime',
     ];
 
     protected static function booted()

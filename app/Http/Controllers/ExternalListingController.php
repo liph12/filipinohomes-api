@@ -8,6 +8,7 @@ use App\Models\Listing;
 use App\Services\Listing\PartnerFeedService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Partner feed of our listings for other websites (X-FH-Agent-Token, same as
@@ -111,11 +112,44 @@ class ExternalListingController extends Controller
     }
 
     /**
+     * GET /lr/listings/match?email=&code= (X-LR-Token) — match() for the Leuterio Realty website, with
+     * its own secret instead of the public /fh-agent token, so every call is known to be LR. Not tied to
+     * the partner-feed switch. A found listing is logged as an LR lookup ("Used in LR").
+     */
+    public function lrMatch(Request $request)
+    {
+        $data = $request->validate([
+            'email' => 'required|string|max:255',
+            'code' => 'required|string|max:100',
+        ]);
+        $found = $this->findOwned($data['email'], $data['code']);
+        if (! is_array($found)) {
+            return $found;
+        }
+        [$listing, $matchedBy] = $found;
+
+        $this->logLr($listing, 'lookup', $data['email'], $matchedBy);
+        $listing->load([
+            'property.propertyAttribute.subtype.type',
+            'property.furnishing',
+            'category',
+            'agent.user',
+        ]);
+
+        return (new ExternalListingResource($listing))->additional([
+            'matched' => true,
+            'matched_by' => $matchedBy,
+        ]);
+    }
+
+    /**
      * PATCH /lr/listings/status (X-LR-Token) — the Leuterio Realty site changes a listing's status:
      * active, sold, rented or leased. Same ownership check as match() (the email must be the owning
      * agent's FH or LR email), then the same update the agent dashboard makes
      * (ListingController::updateStatus), recorded in the audit log as coming from the LR website.
-     * status_change_date defaults to today. Returns the listing as match() does.
+     * status_change_date defaults to today. Sending the status the listing already has changes nothing
+     * (so its real status date isn't overwritten) and is logged as "confirmed". Returns the listing as
+     * match() does, with `changed` and `previous_status`.
      */
     public function updateStatus(Request $request)
     {
@@ -138,13 +172,19 @@ class ExternalListingController extends Controller
             return response()->json(['matched' => true, 'error' => 'This listing has no property record to update.'], 409);
         }
         $previous = $property->status;
-        $property->auditSource = 'status_change';
-        $property->auditDescription = sprintf('Leuterio Realty website (%s) changed %s status to %s', strtolower(trim($data['email'])), $listing->name, $data['status']);
-        $property->update([
-            'status' => $data['status'],
-            'status_change_date' => $data['status_change_date'] ?? now()->toDateString(),
-            'status_remark' => $data['status_remark'] ?? null,
-        ]);
+        $changed = $previous !== $data['status'];
+        if (! $changed) {
+            $this->logLr($listing, 'confirmed', $data['email'], $matchedBy, $previous, $data['status']);
+        } else {
+            $property->auditSource = 'status_change';
+            $property->auditDescription = sprintf('Leuterio Realty website (%s) changed %s status to %s', strtolower(trim($data['email'])), $listing->name, $data['status']);
+            $property->update([
+                'status' => $data['status'],
+                'status_change_date' => $data['status_change_date'] ?? now()->toDateString(),
+                'status_remark' => $data['status_remark'] ?? null,
+            ]);
+            $this->logLr($listing, 'status', $data['email'], $matchedBy, $previous, $data['status']);
+        }
 
         $listing->load([
             'property.propertyAttribute.subtype.type',
@@ -156,6 +196,7 @@ class ExternalListingController extends Controller
         return (new ExternalListingResource($listing))->additional([
             'matched' => true,
             'matched_by' => $matchedBy,
+            'changed' => $changed,
             'previous_status' => $previous,
         ]);
     }
@@ -186,6 +227,30 @@ class ExternalListingController extends Controller
         }
 
         return [$listing, in_array($owner, $byFh, true) ? 'fh_email' : 'lr_email'];
+    }
+
+    /**
+     * Record an LR action (lr_listing_events) and stamp the listing's badge dates: lr_used_at on the
+     * first action of any kind, lr_status_changed_at on a real status change. Written with the query
+     * builder so it doesn't touch updated_at, the audit log or the listing observers.
+     */
+    private function logLr(Listing $listing, string $action, string $email, string $matchedBy, ?string $old = null, ?string $new = null): void
+    {
+        $now = now();
+        DB::table('lr_listing_events')->insert([
+            'listing_id' => $listing->id,
+            'action' => $action,
+            'email' => strtolower(trim($email)),
+            'matched_by' => $matchedBy,
+            'old_status' => $old,
+            'new_status' => $new,
+            'created_at' => $now,
+        ]);
+        $stamp = ['lr_used_at' => DB::raw('COALESCE(lr_used_at, '.DB::getPdo()->quote($now->toDateTimeString()).')')];
+        if ($action === 'status') {
+            $stamp['lr_status_changed_at'] = $now;
+        }
+        DB::table('listings')->where('id', $listing->id)->update($stamp);
     }
 
     private function noMatch(string $reason, string $message)

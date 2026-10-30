@@ -128,8 +128,11 @@ Route::middleware('strip.tags')->group(function () {
 
         // Leuterio Realty website writes — static shared secret in X-LR-Token (no public mint route,
         // unlike /fh-agent: anyone can get that token, so it only guards reads).
+        //   GET   /api/lr/listings/match?email=&code=   the listing, if that FH / LR email owns it
         //   PATCH /api/lr/listings/status   body: email, code, status[, status_change_date, status_remark]
+        // Both are logged (lr_listing_events) for the admin "Used in LR" badges.
         Route::middleware('verify.lr.token')->group(function () {
+            Route::get('/lr/listings/match', [ExternalListingController::class, 'lrMatch']);
             Route::patch('/lr/listings/status', [ExternalListingController::class, 'updateStatus']);
         });
 
