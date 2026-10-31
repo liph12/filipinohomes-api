@@ -2,6 +2,7 @@
 
 namespace App\Services\Listing;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -126,7 +127,62 @@ class AgentInsightsService
             'online_buckets' => $online,
             'top_listers' => $top('listings'),
             'top_closers' => $top('closed'),
+            'regions' => $this->regions($agentIds),
+            'signups' => $this->monthlySignups($agentIds),
         ];
+    }
+
+    /**
+     * Active agents by office region (agents.region, a slug like "metro-manila"), most agents first, and
+     * how many have no region on file yet (the backfill is partial). Moved here from the old
+     * Client & Agent Demographics page.
+     */
+    private function regions(?array $agentIds): array
+    {
+        $counts = DB::table('agents')
+            ->whereNull('deleted_at')
+            ->where('status', 'active')
+            ->when($agentIds !== null, fn ($q) => $q->whereIn('id', $agentIds))
+            ->selectRaw("NULLIF(TRIM(region), '') as region, COUNT(*) as n")
+            ->groupBy(DB::raw("NULLIF(TRIM(region), '')"))
+            ->pluck('n', 'region');
+        $missing = (int) ($counts[''] ?? 0);
+        $rows = [];
+        foreach ($counts as $region => $n) {
+            if ($region === '' || $region === null) {
+                continue;
+            }
+            $rows[] = ['label' => ucwords(str_replace(['-', '_'], ' ', $region)), 'value' => (int) $n];
+        }
+        usort($rows, fn ($a, $b) => $b['value'] <=> $a['value']);
+
+        return ['rows' => $rows, 'missing' => $missing];
+    }
+
+    /**
+     * New agent accounts per month, last 12 months (agents created, any status today — someone who has
+     * since resigned still joined then). Moved here from the old Client & Agent Demographics page.
+     *
+     * @return list<array{month: string, label: string, value: int}>
+     */
+    private function monthlySignups(?array $agentIds): array
+    {
+        $start = now()->startOfMonth()->subMonths(11);
+        $counts = DB::table('agents')
+            ->whereNull('deleted_at')
+            ->where('created_at', '>=', $start)
+            ->when($agentIds !== null, fn ($q) => $q->whereIn('id', $agentIds))
+            ->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as m, COUNT(*) as n")
+            ->groupBy('m')
+            ->pluck('n', 'm');
+
+        $months = [];
+        for ($i = 0; $i < 12; $i++) {
+            $d = $start->copy()->addMonths($i);
+            $months[] = ['month' => $d->format('Y-m'), 'label' => $d->format('M'), 'value' => (int) ($counts[$d->format('Y-m')] ?? 0)];
+        }
+
+        return $months;
     }
 
     /**
@@ -176,7 +232,7 @@ class AgentInsightsService
             $p = $profiles->get($a['id']);
             $g = strtolower(trim((string) ($p->gender ?? '')));
             $g = in_array($g, ['male', 'female'], true) ? $g : 'not_provided';
-            $years = ! empty($p?->birthdate) ? \Illuminate\Support\Carbon::parse($p->birthdate)->diffInYears($now) : null;
+            $years = ! empty($p?->birthdate) ? Carbon::parse($p->birthdate)->diffInYears($now) : null;
             $b = $years === null ? 'not_provided'
                 : ($years < 18 ? 'under_18' : ($years < 25 ? '18-24' : ($years < 35 ? '25-34' : ($years < 45 ? '35-44' : ($years < 55 ? '45-54' : '55+')))));
 
@@ -394,7 +450,7 @@ class AgentInsightsService
                 SUM(CASE WHEN chats.source = 'agent_profile' THEN 1 ELSE 0 END) as profile,
                 SUM(CASE WHEN chats.source = 'agent_page' THEN 1 ELSE 0 END) as website,
                 SUM(CASE WHEN chats.source = 'agent_profile' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as profile_replied,
-                SUM(CASE WHEN chats.source = 'agent_page' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as website_replied");
+                SUM(CASE WHEN chats.source = 'agent_page' AND ".$replied('target.user_id').' THEN 1 ELSE 0 END) as website_replied');
 
         return DB::table('agents')
             ->leftJoin('users', 'users.id', '=', 'agents.user_id')
