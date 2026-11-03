@@ -161,10 +161,18 @@ class User extends Authenticatable implements Auditable
 
     public const DORMANCY_POLICY_START = '2026-07-02';
 
+    /**
+     * Last heartbeat before $threshold — or, never online, signed up before
+     * it. The rule deactivateAgentIfDormant() applies at login (its policy-
+     * start floor stopped mattering once the 45-day window moved past that
+     * date); keep the two in step.
+     */
     public function scopeDormantSince($query, $threshold)
     {
-        return $query->where(fn ($q) => $q->whereNull('last_online_at')
-            ->orWhere('last_online_at', '<', $threshold));
+        return $query->where(fn ($q) => $q->where('last_online_at', '<', $threshold)
+            ->orWhere(fn ($q) => $q->whereNull('last_online_at')
+                ->where(fn ($q) => $q->whereNull('created_at')
+                    ->orWhere('created_at', '<', $threshold))));
     }
 
     public function deactivateAgentIfDormant(): void
@@ -174,9 +182,14 @@ class User extends Authenticatable implements Auditable
             return;
         }
 
+        // Never online → measured from signup. With the floor alone, a NULL
+        // heartbeat counted as "last seen on the policy start", so once that
+        // date fell DORMANT_DAYS behind, every brand-new agent was deactivated
+        // at its very first login. The floor still applies to both.
         $floor = \Illuminate\Support\Carbon::parse(self::DORMANCY_POLICY_START);
-        $lastSeen = $this->last_online_at
-            ? \Illuminate\Support\Carbon::parse($this->last_online_at)->max($floor)
+        $baseline = $this->last_online_at ?? $this->created_at;
+        $lastSeen = $baseline
+            ? \Illuminate\Support\Carbon::parse($baseline)->max($floor)
             : $floor;
 
         // Date-level threshold (today, not now) keeps the grace window exact:
@@ -192,6 +205,7 @@ class User extends Authenticatable implements Auditable
                 'agent_id' => $agent->id,
                 'user_id'  => $this->id,
                 'last_online_at' => $this->last_online_at,
+                'created_at' => $this->created_at,
             ]);
         }
     }

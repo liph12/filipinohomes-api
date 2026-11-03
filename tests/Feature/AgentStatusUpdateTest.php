@@ -13,8 +13,9 @@ use Tests\TestCase;
 
 /**
  * PATCH /api/agents/{id}/status — the manual "deactivated" guard: an agent
- * who logged in within the last 45 days can't be marked deactivated (that
- * status is reserved for dormancy); other statuses stay unrestricted.
+ * seen within the last 45 days (or, never online, who signed up within them)
+ * can't be marked deactivated (that status is reserved for dormancy); other
+ * statuses stay unrestricted.
  *
  * Builds its own minimal tables — the full migration suite is MySQL-only.
  */
@@ -89,21 +90,23 @@ class AgentStatusUpdateTest extends TestCase
         });
     }
 
-    private function makeUser(string $roleName): User
+    private function makeUser(string $roleName, ?string $createdAt = null): User
     {
         $roleId = \App\Models\Role::forceCreate(['name' => $roleName])->id;
 
         return User::forceCreate([
-            'name'     => ucfirst($roleName) . ' User',
-            'email'    => uniqid('', true) . '@example.com',
-            'password' => 'secret',
-            'role_id'  => $roleId,
+            'name'       => ucfirst($roleName) . ' User',
+            'email'      => uniqid('', true) . '@example.com',
+            'password'   => 'secret',
+            'role_id'    => $roleId,
+            // A never-online account counts as dormant from its signup date.
+            'created_at' => $createdAt ?? now(),
         ]);
     }
 
-    private function makeAgent(?string $lastLogin): Agent
+    private function makeAgent(?string $lastLogin, ?string $createdAt = null): Agent
     {
-        $user = $this->makeUser('agent');
+        $user = $this->makeUser('agent', $createdAt);
 
         if ($lastLogin !== null) {
             LoginLog::create([
@@ -120,10 +123,11 @@ class AgentStatusUpdateTest extends TestCase
         ]);
     }
 
-    public function test_cannot_deactivate_agent_with_recent_login(): void
+    public function test_cannot_deactivate_never_online_agent_who_signed_up_recently(): void
     {
+        // No heartbeat yet, but the account is only 10 days old — not dormant.
         Sanctum::actingAs($this->makeUser('admin'));
-        $agent = $this->makeAgent(Carbon::now()->subDays(10)->toDateTimeString());
+        $agent = $this->makeAgent(null, Carbon::now()->subDays(10)->toDateTimeString());
 
         $response = $this->patchJson("/api/agents/{$agent->id}/status", ['status' => 'deactivated']);
 
@@ -134,7 +138,10 @@ class AgentStatusUpdateTest extends TestCase
     public function test_can_deactivate_agent_whose_last_login_is_older_than_45_days(): void
     {
         Sanctum::actingAs($this->makeUser('admin'));
-        $agent = $this->makeAgent(Carbon::now()->subDays(60)->toDateTimeString());
+        $agent = $this->makeAgent(
+            Carbon::now()->subDays(60)->toDateTimeString(),
+            Carbon::now()->subDays(100)->toDateTimeString(),
+        );
 
         $this->patchJson("/api/agents/{$agent->id}/status", ['status' => 'deactivated'])
             ->assertOk();
@@ -145,7 +152,7 @@ class AgentStatusUpdateTest extends TestCase
     public function test_can_deactivate_agent_who_never_logged_in(): void
     {
         Sanctum::actingAs($this->makeUser('admin'));
-        $agent = $this->makeAgent(null);
+        $agent = $this->makeAgent(null, Carbon::now()->subDays(100)->toDateTimeString());
 
         $this->patchJson("/api/agents/{$agent->id}/status", ['status' => 'deactivated'])
             ->assertOk();
