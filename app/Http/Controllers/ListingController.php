@@ -441,18 +441,7 @@ class ListingController extends Controller
         };
 
         // ── Search (applied to everything) ───────────────────────────────────
-        if ($search = $request->input('search')) {
-            $query->where(function ($q) use ($search, $trashed) {
-                $q->where('listings.name', 'like', "%{$search}%")  // ← prefix with table
-                    ->orWhere('listings.code', 'like', "%{$search}%")  // ← prefix with table
-                    ->orWhereHas('property', function ($sub) use ($search, $trashed) {
-                        if ($trashed) {
-                            $sub->withTrashed();
-                        }
-                        $sub->where('address', 'like', "%{$search}%");
-                    });
-            });
-        }
+        $this->applyListingSearch($query, $request, $trashed);
 
         $status = $request->input('status');
         $visibility = $request->input('visibility');
@@ -1093,20 +1082,45 @@ class ListingController extends Controller
             });
         };
 
-        if ($search = $request->input('search')) {
-            $query->where(function ($q) use ($search, $trashed) {
-                $q->where('listings.name', 'like', "%{$search}%")
-                    ->orWhere('listings.code', 'like', "%{$search}%")
-                    ->orWhereHas('property', function ($sub) use ($search, $trashed) {
-                        if ($trashed) {
-                            $sub->withTrashed();
-                        }
-                        $sub->where('address', 'like', "%{$search}%");
-                    });
-            });
-        }
+        $this->applyListingSearch($query, $request, $trashed);
 
         return [$query, $trashed, $propHas];
+    }
+
+    /**
+     * The listings search box (My Listings, All Listings, Audit). `search_by=agent` matches the agent's
+     * name — first + last, with or without the middle name, every word in any order, deleted agent
+     * accounts included; anything else matches the listing name, code or address.
+     */
+    private function applyListingSearch($query, Request $request, bool $trashed): void
+    {
+        $search = trim((string) $request->input('search', ''));
+        if ($search === '') {
+            return;
+        }
+
+        if ($request->input('search_by') === 'agent') {
+            $words = preg_split('/\s+/', $search) ?: [];
+            $query->whereHas('agent', function ($a) use ($words) {
+                $a->withTrashed();
+                foreach ($words as $w) {
+                    $a->whereRaw("CONCAT_WS(' ', agents.first_name, agents.middle_name, agents.last_name) LIKE ?", ["%{$w}%"]);
+                }
+            });
+
+            return;
+        }
+
+        $query->where(function ($q) use ($search, $trashed) {
+            $q->where('listings.name', 'like', "%{$search}%")
+                ->orWhere('listings.code', 'like', "%{$search}%")
+                ->orWhereHas('property', function ($sub) use ($search, $trashed) {
+                    if ($trashed) {
+                        $sub->withTrashed();
+                    }
+                    $sub->where('address', 'like', "%{$search}%");
+                });
+        });
     }
 
     /**
