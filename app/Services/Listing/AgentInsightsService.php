@@ -2,6 +2,7 @@
 
 namespace App\Services\Listing;
 
+use App\Models\Agent;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -45,6 +46,8 @@ class AgentInsightsService
                 DB::raw('COALESCE(di.profile, 0) as direct_profile'),
                 DB::raw('COALESCE(di.website, 0) as direct_website'),
                 DB::raw('COALESCE(li.replied, 0) as listing_replied'),
+                DB::raw('COALESCE(li.agent_n, 0) as agent_listing_inquiries'),
+                DB::raw('COALESCE(di.agent_n, 0) as agent_direct_inquiries'),
                 DB::raw('COALESCE(di.profile_replied, 0) as direct_profile_replied'),
                 DB::raw('COALESCE(di.website_replied, 0) as direct_website_replied'),
             )
@@ -75,6 +78,10 @@ class AgentInsightsService
                 'direct_profile' => (int) $r->direct_profile,
                 'direct_website' => (int) $r->direct_website,
                 'listing_replied' => (int) $r->listing_replied,
+                // Agent-to-agent: inquiries from other agents, on this agent's listings and straight to them.
+                'agent_listing_inquiries' => (int) $r->agent_listing_inquiries,
+                'agent_direct_inquiries' => (int) $r->agent_direct_inquiries,
+                'agent_inquiries' => (int) $r->agent_listing_inquiries + (int) $r->agent_direct_inquiries,
                 'direct_profile_replied' => (int) $r->direct_profile_replied,
                 'direct_website_replied' => (int) $r->direct_website_replied,
                 'last_online_at' => $r->last_online_at,
@@ -123,6 +130,9 @@ class AgentInsightsService
         return [
             'split' => $active['meta'],
             'by_status' => array_combine(self::STATUSES, array_map(fn ($st) => (int) ($byStatus[$st] ?? 0), self::STATUSES)),
+            'reactivated' => $this->reactivated($agentIds),
+            'direct_senders' => $this->directSenders($agentIds),
+            'listing_senders' => $this->listingSenders($agentIds),
             'listing_buckets' => $buckets,
             'online_buckets' => $online,
             'top_listers' => $top('listings'),
@@ -183,6 +193,82 @@ class AgentInsightsService
         }
 
         return $months;
+    }
+
+    /**
+     * How many different people inquired on active agents' listings: distinct clients and distinct
+     * fellow agents (an agent on their own listing doesn't count). The inquiry totals are
+     * split.listing_inquiries / agent_listing_inquiries; this is the people behind them.
+     *
+     * @return array{clients: int, agents: int}
+     */
+    private function listingSenders(?array $agentIds): array
+    {
+        $rows = DB::table('chats')
+            ->join('listings', 'listings.id', '=', 'chats.type_id')
+            ->join('agents as owner', 'owner.id', '=', 'listings.agent_id')
+            ->join('users as sender', 'sender.id', '=', 'chats.user_id')
+            ->join('roles as sender_role', 'sender_role.id', '=', 'sender.role_id')
+            ->whereNull('chats.deleted_at')
+            ->whereNull('listings.deleted_at')
+            ->where('chats.type', 'listing')
+            ->whereNull('owner.deleted_at')
+            ->where('owner.status', 'active')
+            ->when($agentIds !== null, fn ($q) => $q->whereIn('owner.id', $agentIds))
+            ->whereIn('sender_role.name', ['client', 'agent'])
+            ->whereColumn('chats.user_id', '<>', 'owner.user_id')
+            ->selectRaw('sender_role.name as role, COUNT(DISTINCT chats.user_id) as n')
+            ->groupBy('sender_role.name')
+            ->pluck('n', 'role');
+
+        return ['clients' => (int) ($rows['client'] ?? 0), 'agents' => (int) ($rows['agent'] ?? 0)];
+    }
+
+    /**
+     * How many different people messaged active agents straight (profile / website "Message me"):
+     * distinct clients and distinct fellow agents (an agent writing to themselves doesn't count). The
+     * inquiry totals are split.direct_inquiries / agent_direct_inquiries; this is the people behind them.
+     *
+     * @return array{clients: int, agents: int}
+     */
+    private function directSenders(?array $agentIds): array
+    {
+        $rows = DB::table('chats')
+            ->join('users as sender', 'sender.id', '=', 'chats.user_id')
+            ->join('roles as sender_role', 'sender_role.id', '=', 'sender.role_id')
+            ->join('agents as target', 'target.user_id', '=', 'chats.type_id')
+            ->whereNull('chats.deleted_at')
+            ->where('chats.type', 'agent')
+            ->whereNull('target.deleted_at')
+            ->where('target.status', 'active')
+            ->when($agentIds !== null, fn ($q) => $q->whereIn('target.id', $agentIds))
+            ->whereIn('sender_role.name', ['client', 'agent'])
+            ->whereColumn('chats.user_id', '<>', 'target.user_id')
+            ->selectRaw('sender_role.name as role, COUNT(DISTINCT chats.user_id) as n')
+            ->groupBy('sender_role.name')
+            ->pluck('n', 'role');
+
+        return ['clients' => (int) ($rows['client'] ?? 0), 'agents' => (int) ($rows['agent'] ?? 0)];
+    }
+
+    /**
+     * Active agents who were deactivated and later set back to active — read from the audit log (an
+     * Agent update whose old status was deactivated and new status active), so nothing new is stored.
+     * The log starts 2026-05-22; earlier reactivations aren't known. A subset of by_status.active.
+     */
+    private function reactivated(?array $agentIds): int
+    {
+        return DB::table('agents')
+            ->whereNull('deleted_at')
+            ->where('status', 'active')
+            ->when($agentIds !== null, fn ($q) => $q->whereIn('id', $agentIds))
+            ->whereIn('id', DB::table('audits')
+                ->where('auditable_type', Agent::class)
+                ->where('event', 'updated')
+                ->where('old_values', 'like', '%"status":"deactivated"%')
+                ->where('new_values', 'like', '%"status":"active"%')
+                ->select('auditable_id'))
+            ->count();
     }
 
     /**
@@ -270,7 +356,7 @@ class AgentInsightsService
     }
 
     /**
-     * Active agents over time: per week (last 26) or month (last 12), how many distinct agents
+     * Active agents over time: per week or month (the last 12 of either), how many distinct agents
      *   - were active at all: logged in, did anything recorded in the audit log, or created a listing;
      *   - logged in (login_logs + the auth audit's logged_in rows);
      *   - created at least one listing.
@@ -283,7 +369,8 @@ class AgentInsightsService
     public function activityTrend(array $params, ?array $agentIds = null): array
     {
         $monthly = ($params['granularity'] ?? 'week') === 'month';
-        $count = $monthly ? 12 : 26;
+        // Twelve periods either way: the last 12 months, or the last 12 weeks.
+        $count = 12;
         $start = $monthly
             ? now()->startOfMonth()->subMonths($count - 1)
             : now()->startOfWeek()->subWeeks($count - 1);
@@ -338,6 +425,13 @@ class AgentInsightsService
             'change_pct' => $prev > 0 ? round(($last - $prev) / $prev * 100) : null,
             // Logins are only recorded from this date; before it the "active" line is listings only.
             'logins_tracked_since' => DB::table('login_logs')->min('logged_in_at'),
+            // Distinct agents over the whole range (not the sum of the bars — an agent active in ten
+            // weeks counts once).
+            'totals' => [
+                'active' => count(array_replace([], ...array_values($logins), ...array_values($actions), ...array_values($listed))),
+                'logged_in' => count(array_replace([], ...array_values($logins))),
+                'listed' => count(array_replace([], ...array_values($listed))),
+            ],
         ]];
     }
 
@@ -367,9 +461,11 @@ class AgentInsightsService
             'listed_this_month' => count(array_filter($data, fn ($a) => $a['this_month'] > 0)),
             'listings' => array_sum(array_column($data, 'listings')),
             'deals' => array_sum(array_column($data, 'closed')),
-            // Inquiries: on their listings, and straight to them (profile / website "Message me").
+            // Client inquiries: on their listings, and straight to them (profile / website "Message me").
             'listed_with_inquiry' => count(array_filter($data, fn ($a) => $a['listings'] > 0 && $a['listing_inquiries'] > 0)),
             'listed_no_inquiry' => count(array_filter($data, fn ($a) => $a['listings'] > 0 && $a['listing_inquiries'] === 0)),
+            // Of listed_no_inquiry: agents whose listings got inquiries, but only from other agents.
+            'listed_only_agent_inquiry' => count(array_filter($data, fn ($a) => $a['listings'] > 0 && $a['listing_inquiries'] === 0 && $a['agent_listing_inquiries'] > 0)),
             'with_direct' => count(array_filter($data, fn ($a) => $a['direct_inquiries'] > 0)),
             'direct_only' => count(array_filter($data, fn ($a) => $a['direct_inquiries'] > 0 && $a['listing_inquiries'] === 0)),
             // Agents per channel (an agent messaged on both counts in both).
@@ -380,6 +476,12 @@ class AgentInsightsService
             'direct_inquiries' => array_sum(array_column($data, 'direct_inquiries')),
             'direct_profile' => array_sum(array_column($data, 'direct_profile')),
             'direct_website' => array_sum(array_column($data, 'direct_website')),
+            // Agent-to-agent (everything above is client inquiries only).
+            'agent_listing_inquiries' => array_sum(array_column($data, 'agent_listing_inquiries')),
+            'agent_direct_inquiries' => array_sum(array_column($data, 'agent_direct_inquiries')),
+            'agents_with_agent_inquiries' => count(array_filter($data, fn ($a) => $a['agent_inquiries'] > 0)),
+            // Agents fellow agents messaged straight (profile / website), like agents_profile for clients.
+            'agents_fellow_direct' => count(array_filter($data, fn ($a) => $a['agent_direct_inquiries'] > 0)),
         ];
     }
 
@@ -424,33 +526,44 @@ class AgentInsightsService
               AND m.status NOT IN ('deleted', 'unsent')
         )";
 
-        // Inquiries on the agent's listings (chats type=listing, as Inquiry Analytics counts them).
+        // Inquiries on the agent's listings (chats type=listing, as Inquiry Analytics counts them), split by
+        // who sent them: n / replied = from clients (what the page reports, like Client Insights);
+        // agent_n = from other agents (agent-to-agent, counted separately). Staff and the owner's own
+        // test chats are in neither.
         $listingInquiries = DB::table('chats')
             ->join('listings', 'listings.id', '=', 'chats.type_id')
             ->join('agents as owner', 'owner.id', '=', 'listings.agent_id')
+            ->join('users as sender', 'sender.id', '=', 'chats.user_id')
+            ->join('roles as sender_role', 'sender_role.id', '=', 'sender.role_id')
             ->whereNull('chats.deleted_at')
             ->whereNull('listings.deleted_at')
             ->where('chats.type', 'listing')
             ->groupBy('listings.agent_id')
-            ->selectRaw('listings.agent_id, COUNT(DISTINCT chats.id) as n,
-                SUM(CASE WHEN '.$replied('owner.user_id').' THEN 1 ELSE 0 END) as replied');
+            ->selectRaw("listings.agent_id,
+                COUNT(DISTINCT CASE WHEN sender_role.name = 'client' THEN chats.id END) as n,
+                SUM(CASE WHEN sender_role.name = 'client' AND ".$replied('owner.user_id')." THEN 1 ELSE 0 END) as replied,
+                COUNT(DISTINCT CASE WHEN sender_role.name = 'agent' AND chats.user_id <> owner.user_id THEN chats.id END) as agent_n");
 
         // Inquiries straight to the agent — "Message me" on their profile or website (chats type=agent,
-        // type_id = the agent's user id), from clients only, so agent-to-agent and staff DMs stay out.
+        // type_id = the agent's user id). n and the profile / website splits are from clients only;
+        // agent_n = messages from other agents (agent-to-agent), counted separately; staff DMs in neither.
         // chats.source is only stored from 2026-10-20; older rows count in n but in neither split.
+        $client = "sender_role.name = 'client'";
         $directInquiries = DB::table('chats')
             ->join('users as sender', 'sender.id', '=', 'chats.user_id')
             ->join('roles as sender_role', 'sender_role.id', '=', 'sender.role_id')
             ->join('agents as target', 'target.user_id', '=', 'chats.type_id')
             ->whereNull('chats.deleted_at')
             ->where('chats.type', 'agent')
-            ->where('sender_role.name', 'client')
+            ->whereIn('sender_role.name', ['client', 'agent'])
             ->groupBy('target.id')
-            ->selectRaw("target.id as agent_id, COUNT(DISTINCT chats.id) as n,
-                SUM(CASE WHEN chats.source = 'agent_profile' THEN 1 ELSE 0 END) as profile,
-                SUM(CASE WHEN chats.source = 'agent_page' THEN 1 ELSE 0 END) as website,
-                SUM(CASE WHEN chats.source = 'agent_profile' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as profile_replied,
-                SUM(CASE WHEN chats.source = 'agent_page' AND ".$replied('target.user_id').' THEN 1 ELSE 0 END) as website_replied');
+            ->selectRaw("target.id as agent_id,
+                COUNT(DISTINCT CASE WHEN {$client} THEN chats.id END) as n,
+                SUM(CASE WHEN {$client} AND chats.source = 'agent_profile' THEN 1 ELSE 0 END) as profile,
+                SUM(CASE WHEN {$client} AND chats.source = 'agent_page' THEN 1 ELSE 0 END) as website,
+                SUM(CASE WHEN {$client} AND chats.source = 'agent_profile' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as profile_replied,
+                SUM(CASE WHEN {$client} AND chats.source = 'agent_page' AND ".$replied('target.user_id')." THEN 1 ELSE 0 END) as website_replied,
+                COUNT(DISTINCT CASE WHEN sender_role.name = 'agent' AND chats.user_id <> target.user_id THEN chats.id END) as agent_n");
 
         return DB::table('agents')
             ->leftJoin('users', 'users.id', '=', 'agents.user_id')
