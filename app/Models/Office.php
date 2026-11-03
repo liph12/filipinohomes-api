@@ -22,6 +22,9 @@ class Office extends Model implements Auditable
         'contact',
         'phone',
         'address',
+        'description',
+        'email',
+        'opening_hours',
         'photo',
         'geo_coordinates',
     ];

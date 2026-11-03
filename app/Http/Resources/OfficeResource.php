@@ -22,6 +22,9 @@ class OfficeResource extends JsonResource
             'contact' => $this->contact,
             'phone' => $this->phone,
             'address' => $this->address,
+            'description' => $this->description,
+            'email' => $this->email,
+            'opening_hours' => $this->opening_hours,
             'photo' => $this->photo,
             'geo_coordinates' => $this->geo_coordinates,
         ];
