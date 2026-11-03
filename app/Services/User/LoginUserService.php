@@ -44,7 +44,8 @@ class LoginUserService
         LoginLog::record($user->id, $ipAddress, $userAgent);
 
         return [
-            'user'  => $user,
+            // The web routes a fresh login by user.role.name (/admin, /agent, …).
+            'user'  => $user->loadMissing('role'),
             'token' => $token,
         ];
     }
