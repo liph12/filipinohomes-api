@@ -73,6 +73,9 @@ class User extends Authenticatable implements Auditable
     protected $hidden = [
         'password',
         'remember_token',
+        // Holds the live login code while a sign-in is pending, and raw User
+        // models reach JSON in several places (e.g. /client-logins).
+        'verification',
     ];
     /**
      * Get the attributes that should be cast.

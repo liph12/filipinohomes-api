@@ -11,6 +11,7 @@ use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -55,8 +56,12 @@ class AppServiceProvider extends ServiceProvider
 
         // Optional: auth limiter
         RateLimiter::for('auth', function (Request $request) {
+            // Normalised: MySQL matches emails case-insensitively, so a raw
+            // key gave every case variant of one address its own bucket.
+            $email = $request->input('email');
+
             return Limit::perMinute(5)->by(
-                $request->input('email').'|'.$request->ip()
+                (is_string($email) ? Str::lower(trim($email)) : '').'|'.$request->ip()
             );
         });
 

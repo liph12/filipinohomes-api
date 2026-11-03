@@ -336,10 +336,7 @@ class UserController extends Controller
             'otp' => 'required|string'
         ]);
 
-        $verified = User::where([
-            ['email', $validated['email']],
-            ['verification', $validated['otp']]
-        ])->first();
+        $verified = $this->findUserByLoginCode($validated['email'], $validated['otp']);
 
         if (!$verified) {
             return response()->json([
@@ -597,8 +594,20 @@ class UserController extends Controller
         return new UserResource($user->refresh());
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        // Admins only, and never their own account. This route sits in the
+        // plain auth:sanctum group, so without the check any signed-in
+        // account could delete any user. Checked before the lookup so a
+        // non-admin gets the same 403 whether or not the id exists.
+        $actor = $request->user();
+        if (! $actor->isAdmin()) {
+            abort(403, 'Only admins can delete accounts.');
+        }
+        if ((int) $actor->id === (int) $id) {
+            abort(403, "You can't delete your own account.");
+        }
+
         User::findOrFail($id)->delete();
     }
 
@@ -734,8 +743,14 @@ class UserController extends Controller
 
     public function authRequestVerifyOtp(Request $request)
     {
+        $validated = $request->validate([
+            'email'     => 'required|email',
+            'otp'       => 'required|string|max:64',
+            'user_info' => 'nullable|array',
+        ]);
+
         $userInfo = $request->input('user_info');
-        $verified = User::where([['email', $request->email], ['verification', $request->otp]])->first();
+        $verified = $this->findUserByLoginCode($validated['email'], $validated['otp']);
 
         if (!$verified) {
             return response()->json([
@@ -780,6 +795,28 @@ class UserController extends Controller
             'user' => $verified,
             'token' => $token
         ]);
+    }
+
+    /**
+     * The user this login code was issued to, or null.
+     *
+     * `users.verification` holds the live code only while a sign-in is
+     * pending; the rest of the time it's a status word ('pending' /
+     * 'verified') or NULL. Matching the raw column let "otp":"verified" sign
+     * in as anyone who had ever finished a login, so only a value shaped like
+     * an issued code (Str::upper(Str::random(6)) — see authWithOtp) can match.
+     * Case-insensitive like the old MySQL comparison: codes are stored upper.
+     */
+    private function findUserByLoginCode(string $email, string $code): ?User
+    {
+        $user = User::where('email', $email)->first();
+        $stored = (string) $user?->verification;
+
+        if (! $user || preg_match('/^[A-Z0-9]{6}$/', $stored) !== 1) {
+            return null;
+        }
+
+        return hash_equals($stored, strtoupper(trim($code))) ? $user : null;
     }
 
     public function devLogin(Request $request)
