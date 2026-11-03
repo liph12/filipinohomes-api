@@ -10,8 +10,8 @@ use Illuminate\Support\Facades\DB;
  *   - visitors  : unique anonymous devices from that channel (DISTINCT visitor_id)
  *   - new       : clients (role=client) registered within the range whose
  *                 first-touch channel is this one
- *   - returning : clients registered before the range who logged in during it,
- *                 whose first-touch channel is this one (came back)
+ *   - returning : clients who logged in during the range on a later day than they
+ *                 signed up (came back), whose first-touch channel is this one
  * New/returning use FIRST-TOUCH attribution: a client carries the visitor_id of
  * the device they signed up on (users.visitor_id, stamped at signup), and we
  * map that to the channel of their earliest visit — i.e. how they were actually
@@ -98,14 +98,14 @@ class TrafficSourceService extends AudienceInsightsService
                 // New = registered within the range.
                 $query->whereBetween('users.created_at', [$this->startDt, $this->endDt]);
             } else {
-                // Returning = registered before the range AND logged in during it.
-                $query->where('users.created_at', '<', $this->startDt)
-                    ->whereExists(function ($q) {
-                        $q->select(DB::raw(1))
-                            ->from('login_logs')
-                            ->whereColumn('login_logs.user_id', 'users.id')
-                            ->whereBetween('login_logs.logged_in_at', [$this->startDt, $this->endDt]);
-                    });
+                // Returning = logged in during the range on a later day than they signed up (returningRule()).
+                $query->whereExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('login_logs')
+                        ->whereColumn('login_logs.user_id', 'users.id')
+                        ->whereBetween('login_logs.logged_in_at', [$this->startDt, $this->endDt]);
+                    $this->returningRule($q);
+                });
             }
 
             return $query
@@ -259,14 +259,14 @@ class TrafficSourceService extends AudienceInsightsService
                 ->count('users.id');
         }
 
-        // Returning = registered before the range AND logged in during it.
+        // Returning = logged in during the range on a later day than they signed up (returningRule()).
         return $query
-            ->where('users.created_at', '<', $this->startDt)
             ->whereExists(function ($q) {
                 $q->select(DB::raw(1))
                     ->from('login_logs')
                     ->whereColumn('login_logs.user_id', 'users.id')
                     ->whereBetween('login_logs.logged_in_at', [$this->startDt, $this->endDt]);
+                $this->returningRule($q);
             })
             ->distinct('users.id')
             ->count('users.id');

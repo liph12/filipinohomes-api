@@ -56,6 +56,19 @@ abstract class AudienceInsightsService
     }
 
     /**
+     * The "returning client" condition, for a query that has `users` and `login_logs` (a join or an
+     * EXISTS on login_logs): the client logged in on a later day than they signed up — they came back.
+     * It used to be "signed up before the range", but almost every client account dates from 2026
+     * (April on), so any range starting earlier — "This year", or the cleared filter (all time) —
+     * showed ~0. A client who signs up and comes back inside the same range now counts as both new and
+     * returning. Logins are only recorded from 2026-05-06, so earlier comebacks aren't counted.
+     */
+    protected function returningRule($query): void
+    {
+        $query->whereRaw('DATE(login_logs.logged_in_at) > DATE(users.created_at)');
+    }
+
+    /**
      * Visits that count as "audience": anonymous OR made by a client account.
      * Agent/admin browsing is excluded. Used for every Visitors count so the
      * number is consistent across the page.

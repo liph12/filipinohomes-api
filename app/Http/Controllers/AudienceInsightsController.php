@@ -34,7 +34,7 @@ class AudienceInsightsController extends Controller
         // A range that ended before today can't change, so it keeps longer.
         $ttl = $end < now()->toDateString() ? now()->addHours(6) : now()->addMinutes(10);
 
-        return response()->json(Cache::remember("admin:audience-insights:{$start}:{$end}", $ttl, function () use ($overview, $trafficSource, $sourceBreakdown, $start, $end) {
+        return response()->json(Cache::remember("admin:audience-insights:v2:{$start}:{$end}", $ttl, function () use ($overview, $trafficSource, $sourceBreakdown, $start, $end) {
             $overview->range($start, $end);
 
             return [

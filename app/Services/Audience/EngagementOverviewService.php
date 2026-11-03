@@ -22,13 +22,13 @@ class EngagementOverviewService extends AudienceInsightsService
             ->whereBetween('users.created_at', [$this->startDt, $this->endDt])
             ->count();
 
-        // Returning = client logged in during the range AND registered before it.
+        // Returning = client logged in during the range on a later day than they signed up (returningRule()).
         $returning = DB::table('login_logs')
             ->join('users', 'users.id', '=', 'login_logs.user_id')
             ->join('roles', 'roles.id', '=', 'users.role_id')
             ->where('roles.name', 'client')
             ->whereBetween('login_logs.logged_in_at', [$this->startDt, $this->endDt])
-            ->where('users.created_at', '<', $this->startDt)
+            ->where(fn ($q) => $this->returningRule($q))
             ->distinct('login_logs.user_id')
             ->count('login_logs.user_id');
 
@@ -50,7 +50,7 @@ class EngagementOverviewService extends AudienceInsightsService
      * Per-day series so the card can chart whether the audience is rising or
      * falling: unique visitors per day (DISTINCT visitor_id), new clients per
      * day (registrations), and returning clients per day (logged in that day
-     * but registered before the range start). Zero-filled across the range for
+     * on a later day than they signed up). Zero-filled across the range for
      * a continuous line; capped at ~1500 points to keep wide ranges sane.
      */
     public function trend(): array
@@ -69,13 +69,13 @@ class EngagementOverviewService extends AudienceInsightsService
             ->select(DB::raw('DATE(users.created_at) as d'), DB::raw('COUNT(*) as c'))
             ->pluck('c', 'd');
 
-        // Returning = client logged in that day, registered before the range.
+        // Returning = client logged in that day, a later day than they signed up (returningRule()).
         $returningByDay = DB::table('login_logs')
             ->join('users', 'users.id', '=', 'login_logs.user_id')
             ->join('roles', 'roles.id', '=', 'users.role_id')
             ->where('roles.name', 'client')
             ->whereBetween('login_logs.logged_in_at', [$this->startDt, $this->endDt])
-            ->where('users.created_at', '<', $this->startDt)
+            ->where(fn ($q) => $this->returningRule($q))
             ->groupBy(DB::raw('DATE(login_logs.logged_in_at)'))
             ->select(DB::raw('DATE(login_logs.logged_in_at) as d'), DB::raw('COUNT(DISTINCT login_logs.user_id) as c'))
             ->pluck('c', 'd');
