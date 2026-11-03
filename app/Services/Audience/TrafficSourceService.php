@@ -35,28 +35,42 @@ class TrafficSourceService extends AudienceInsightsService
 
     public function channels(): array
     {
-        $visitors = $this->visitorsByChannel();
-
-        // Visits = visitor-days per channel (one visits row per device per channel per day), so a device
-        // that came from Google on 5 days is 1 visitor and 5 visits.
-        $visits = $this->audienceVisits()
+        // One pass per channel: people (distinct devices) and visits (visitor-days — one visits row per
+        // device per channel per day, so a device that came from Google on 5 days is 1 person, 5 visits).
+        $perChannel = $this->audienceVisits()
             ->whereNotNull('visits.visitor_id')
             ->groupBy('visits.channel')
-            ->select('visits.channel as channel', DB::raw('COUNT(*) as c'))
-            ->pluck('c', 'channel');
+            ->select('visits.channel as channel', DB::raw('COUNT(DISTINCT visits.visitor_id) as people'), DB::raw('COUNT(*) as visits'))
+            ->get();
+        $visitors = $perChannel->pluck('people', 'channel');
+        $visits   = $perChannel->pluck('visits', 'channel');
 
-        // First source IN RANGE per device — the channel of its earliest visit row in the range. Each
-        // device lands in exactly one channel, so these add up to the unique-visitor total (the
-        // "First source" view); `value` above counts a device in every channel it used.
-        $firstInRangeIds = $this->audienceVisits()
+        // One pass per device, grouped by the channel of its earliest visit row IN RANGE. Each device lands
+        // in exactly one channel, so `first` adds up to the unique-visitor total (the "First source" view;
+        // `value` counts a device in every channel it used). The same pass counts devices that used more
+        // than one channel, and anonymous devices: no logged-in visit in the range AND not tied to any
+        // account (signup stamps users.visitor_id — that also covers visits stored before user_id was).
+        // Was six separate scans of the range; a long range ("This year") took ~16s and could time out.
+        $perDevice = $this->audienceVisits()
             ->whereNotNull('visits.visitor_id')
             ->groupBy('visits.visitor_id')
-            ->select('visits.visitor_id', DB::raw('MIN(visits.id) as first_id'));
-        $firstInRange = DB::table('visits')
-            ->joinSub($firstInRangeIds, 'fr', fn ($j) => $j->on('visits.id', '=', 'fr.first_id'))
+            ->select(
+                'visits.visitor_id',
+                DB::raw('MIN(visits.id) as first_id'),
+                DB::raw('COUNT(DISTINCT visits.channel) as sources'),
+                DB::raw('MAX(visits.user_id) as user_id')
+            );
+        $byFirst = DB::table('visits')
+            ->joinSub($perDevice, 'd', fn ($j) => $j->on('visits.id', '=', 'd.first_id'))
             ->groupBy('visits.channel')
-            ->select('visits.channel as channel', DB::raw('COUNT(*) as c'))
-            ->pluck('c', 'channel');
+            ->select(
+                'visits.channel as channel',
+                DB::raw('COUNT(*) as devices'),
+                DB::raw('SUM(d.sources > 1) as multi'),
+                DB::raw('SUM(d.user_id IS NULL AND NOT EXISTS (SELECT 1 FROM users acct WHERE acct.visitor_id = d.visitor_id)) as anonymous')
+            )
+            ->get();
+        $firstInRange = $byFirst->pluck('devices', 'channel');
 
         // First-touch channel per visitor_id = the channel of that device's
         // earliest visit row (ids are monotonic with insert time, so MIN(id)
@@ -144,30 +158,14 @@ class TrafficSourceService extends AudienceInsightsService
         // Over-count = (per-channel visitor sum) − (unique devices). This is the
         // total EXTRA counting the multi-source devices cause: a device on 3
         // channels adds 2 here. So unique visitors = per-channel sum − overcount.
-        $uniqueDevices = $this->audienceVisits()
-            ->whereNotNull('visits.visitor_id')
-            ->distinct('visits.visitor_id')
-            ->count('visits.visitor_id');
+        $uniqueDevices = (int) $firstInRange->sum();
         $perChannelSum = (int) $visitors->sum();
-
-        // Anonymous = devices with no logged-in visit in the range AND not tied to any account (signup stamps
-        // users.visitor_id). The account check also covers visits stored before user_id was recorded.
-        $anonymousDevices = DB::query()->fromSub(
-            $this->audienceVisits()
-                ->whereNotNull('visits.visitor_id')
-                ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('users as acct')
-                    ->whereColumn('acct.visitor_id', 'visits.visitor_id'))
-                ->groupBy('visits.visitor_id')
-                ->havingRaw('MAX(visits.user_id) IS NULL')
-                ->select('visits.visitor_id'),
-            't'
-        )->count();
 
         return [
             'channels'              => $channels,
             'unique_visitors'       => $uniqueDevices,
-            'anonymous_visitors'    => $anonymousDevices,
-            'multi_source_devices'  => $this->multiSourceDevices(),
+            'anonymous_visitors'    => (int) $byFirst->sum('anonymous'),
+            'multi_source_devices'  => (int) $byFirst->sum('multi'),
             'referrers'             => $this->referrers(),
             'multi_source_overcount' => max(0, $perChannelSum - $uniqueDevices),
         ];
@@ -240,23 +238,6 @@ class TrafficSourceService extends AudienceInsightsService
         }
 
         return [preg_replace('/^www\./', '', $host), 'site'];
-    }
-
-    /**
-     * Devices that reached the site through MORE THAN ONE channel within the
-     * range (e.g. Facebook one day, Google another). This is exactly the gap
-     * between the per-channel visitor sum and the unique-device total — surfaced
-     * as its own number so the overlap is visible instead of implied.
-     */
-    private function multiSourceDevices(): int
-    {
-        $sub = $this->audienceVisits()
-            ->whereNotNull('visits.visitor_id')
-            ->groupBy('visits.visitor_id')
-            ->havingRaw('COUNT(DISTINCT visits.channel) > 1')
-            ->select('visits.visitor_id');
-
-        return DB::query()->fromSub($sub, 't')->count();
     }
 
     /**

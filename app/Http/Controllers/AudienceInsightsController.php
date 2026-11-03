@@ -10,6 +10,7 @@ use App\Services\Audience\SourceBreakdownService;
 use App\Services\Audience\TrafficSourceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Thin controller for the admin "Audience Insights" page. Resolves the date
@@ -27,15 +28,23 @@ class AudienceInsightsController extends Controller
         SourceBreakdownService $sourceBreakdown
     ): JsonResponse {
         [$start, $end] = $this->range($request, $overview);
-        $overview->range($start, $end);
 
-        return response()->json([
-            'size'         => $overview->size(),
-            'acquisition'  => $trafficSource->range($start, $end)->channels(),
-            'trend'        => $overview->trend(),
-            'source_trend' => $sourceBreakdown->range($start, $end)->build(),
-            'meta'         => ['from' => $start, 'to' => $end],
-        ]);
+        // Long ranges ("This year") take several seconds to build, so each range is cached briefly: a
+        // repeat open or switching back to a range is instant, and admins don't pile slow queries up.
+        // A range that ended before today can't change, so it keeps longer.
+        $ttl = $end < now()->toDateString() ? now()->addHours(6) : now()->addMinutes(10);
+
+        return response()->json(Cache::remember("admin:audience-insights:{$start}:{$end}", $ttl, function () use ($overview, $trafficSource, $sourceBreakdown, $start, $end) {
+            $overview->range($start, $end);
+
+            return [
+                'size'         => $overview->size(),
+                'acquisition'  => $trafficSource->range($start, $end)->channels(),
+                'trend'        => $overview->trend(),
+                'source_trend' => $sourceBreakdown->range($start, $end)->build(),
+                'meta'         => ['from' => $start, 'to' => $end],
+            ];
+        }));
     }
 
     /**
