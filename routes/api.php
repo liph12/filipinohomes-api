@@ -553,6 +553,9 @@ Route::middleware('strip.tags')->group(function () {
             // (enforced in the controller); `stop` is called by the impersonated
             // session itself, so it only requires auth:sanctum.
             Route::post('/admin/agents/{agent}/impersonate', [ImpersonationController::class, 'start']);
+            // Open ANY user's account by id (System Users "Open account"). Also
+            // admin-only in the controller; not limited to agents.
+            Route::post('/admin/users/{user}/impersonate', [ImpersonationController::class, 'startForUser']);
             Route::post('/admin/impersonate/stop', [ImpersonationController::class, 'stop']);
             Route::get('/my-listings', [ListingController::class, 'myListings']);
             Route::get('/all-listings', [ListingController::class, 'allListings']);

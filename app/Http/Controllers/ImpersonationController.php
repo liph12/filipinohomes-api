@@ -43,21 +43,54 @@ class ImpersonationController extends Controller
             abort(422, 'Only agent accounts can be impersonated.');
         }
 
-        // Mint a per-device Sanctum token for the agent, name-marked so
-        // presence writes recognise it. Stamp the originating IP and a short
-        // expiry as a safety net.
-        $newToken = $agentUser->createToken(Impersonation::tokenName($admin->id));
+        return $this->issueImpersonation($admin, $agentUser, $request);
+    }
+
+    /**
+     * Admin-only: open ANY user's account by user id (System Users "Open
+     * account"). Same impersonation session as `start`, but the target is a
+     * user of any non-admin role — not just an agent.
+     */
+    public function startForUser(Request $request, User $user)
+    {
+        $admin = $request->user();
+        if ($admin->role?->name !== 'admin') {
+            abort(403, 'Only administrators can open another account.');
+        }
+
+        // The agent-only path never had to guard these — the role === 'agent'
+        // check did it incidentally. For an arbitrary target they're explicit:
+        // never open your own account, and never step into another admin's.
+        if ((int) $user->id === (int) $admin->id) {
+            abort(422, "You can't open your own account.");
+        }
+        if ($user->role?->name === 'admin') {
+            abort(403, "Admin accounts can't be opened this way.");
+        }
+
+        return $this->issueImpersonation($admin, $user, $request);
+    }
+
+    /**
+     * Mint the impersonation session for $target and hand it to the frontend.
+     * Token is NAME-marked (App\Support\Impersonation) so presence writes keep
+     * the target offline; IP + a short expiry are stamped as a safety net; the
+     * start is recorded in Activity Logs (actor = the admin). Returns the same
+     * { token, user } shape as the login endpoints.
+     */
+    private function issueImpersonation(User $admin, User $target, Request $request)
+    {
+        $newToken = $target->createToken(Impersonation::tokenName($admin->id));
         $newToken->accessToken->forceFill([
             'ip_address' => $request->ip(),
             'expires_at' => now()->addHours(self::TOKEN_TTL_HOURS),
         ])->save();
 
-        // Traceability — who impersonated whom (actor = the admin).
-        app(AuditAuthService::class)->recordImpersonation($admin, $agentUser, $request);
+        app(AuditAuthService::class)->recordImpersonation($admin, $target, $request);
 
         return response()->json([
             'token' => $newToken->plainTextToken,
-            'user'  => new UserResource($agentUser->load('role', 'agent')),
+            'user'  => new UserResource($target->load('role', 'agent')),
         ]);
     }
 
