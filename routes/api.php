@@ -24,6 +24,7 @@ use App\Http\Controllers\BlockedUserController;
 use App\Http\Controllers\BlogCategoryController;
 use App\Http\Controllers\BoundaryController;
 use App\Http\Controllers\BuyerFormController;
+use App\Http\Controllers\BriefLinkController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CityController;
@@ -168,6 +169,13 @@ Route::middleware('strip.tags')->group(function () {
 
         // Guest-token-protected public routes
         Route::middleware('verify.guest.token')->group(function () {
+            // Buyers & Sellers Link: a client's brief (no login; honeypot in the
+            // controller, five per IP per ten minutes here) and the city search
+            // the brief's area picker uses.
+            Route::post('/brief-links/{code}/briefs', [BriefLinkController::class, 'store'])
+                ->where('code', '[a-z0-9]{8}')
+                ->middleware('throttle:5,10');
+            Route::get('/cities/search', [CityController::class, 'search']);
             Route::get('/search-by-location', [ListingController::class, 'listingsByLocation']);
             Route::get('/group-by-location', [ListingController::class, 'listingsByLocationAll']);
             Route::get('/group-by-city', [ListingController::class, 'listingByCityAll']);
@@ -229,6 +237,12 @@ Route::middleware('strip.tags')->group(function () {
         Route::post('/page/agents/{slug}/click', [PageBuilderController::class, 'trackClick']);
         // Buyer Form (Open House): public fetch by share slug for the client registration page
         Route::get('/buyer-forms/{slug}', [BuyerFormController::class, 'show']);
+        // Buyers & Sellers Link: the brief definitions and an agent's link for the
+        // public /buy-with/{slug} and /sell-with/{slug} pages, which the site
+        // renders server-side without a token.
+        Route::get('/briefs/questions', [BriefLinkController::class, 'questions']);
+        Route::get('/brief-links/{slug}', [BriefLinkController::class, 'show'])
+            ->where('slug', '[a-z0-9-]+');
 
         // Company events' PUBLIC pages (/events, /events/{slug} on the site):
         // facts, photos and the seat count — never the sign-ups. Token-less
@@ -667,6 +681,12 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/buyer-forms/{id}/registrations', [BuyerFormController::class, 'registrations']);
             Route::delete('/buyer-forms/{id}', [BuyerFormController::class, 'destroy']);
             Route::post('/buyer-forms/{slug}/register', [BuyerFormController::class, 'register']);
+
+            // Buyers & Sellers Link — the agent's own link (created on first use)
+            // and the briefs sent through it; admins read every agent's.
+            Route::post('/agent/brief-link', [BriefLinkController::class, 'myLink']);
+            Route::get('/agent/briefs', [BriefLinkController::class, 'myBriefs']);
+            Route::get('/admin/briefs', [BriefLinkController::class, 'adminBriefs']);
 
             // Convention gallery READS + face search — agents too: the FH
             // agent dashboard (/agent/natcon/gallery) shows the same album
