@@ -567,6 +567,8 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/user/users-by-date', [UserController::class, 'dashboardUsersByDate']);
             Route::get('/user/profile', [UserController::class, 'profile']);
             Route::get('/user/settings', [UserController::class, 'userSettings']);
+            // Top 10 certificate templates (agent / team) — read by every certificate drawn in the browser.
+            Route::get('/certificate-templates', [\App\Http\Controllers\CertificateTemplateController::class, 'show']);
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             // Agent-facing rankings: public-safe top board + the caller's own
@@ -698,6 +700,13 @@ Route::middleware('strip.tags')->group(function () {
                 // other websites (System Settings card; PartnerFeedService).
                 Route::get('/admin/partner-feed', [PartnerFeedSettingsController::class, 'show']);
                 Route::put('/admin/partner-feed', [PartnerFeedSettingsController::class, 'update']);
+                // Top Listing Creators → Certificate Template: a library of templates per kind (agent / team) and
+                // the one in use. Upload the image, add / save / delete a template, pick the active one.
+                Route::post('/admin/certificate-templates/upload', [\App\Http\Controllers\CertificateTemplateController::class, 'upload']);
+                Route::put('/admin/certificate-templates/{kind}/schedule', [\App\Http\Controllers\CertificateTemplateController::class, 'schedule'])->where('kind', 'agent|team');
+                Route::post('/admin/certificate-templates/{kind}', [\App\Http\Controllers\CertificateTemplateController::class, 'store'])->where('kind', 'agent|team');
+                Route::put('/admin/certificate-templates/{kind}/{id}', [\App\Http\Controllers\CertificateTemplateController::class, 'update'])->where('kind', 'agent|team');
+                Route::delete('/admin/certificate-templates/{kind}/{id}', [\App\Http\Controllers\CertificateTemplateController::class, 'destroy'])->where('kind', 'agent|team');
 
                 // ── NATCON 2026 campaign admin ──────────────────────────────
                 // ⚠️ /send-invites does NOT send. It writes natcon_outbox rows
