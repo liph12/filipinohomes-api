@@ -59,6 +59,8 @@ class UserResource extends JsonResource
             // Per-admin email mute (System Users mute button) — drives the
             // muted-envelope badge on admin rows.
             'admin_emails_muted' => (bool) $this->admin_emails_muted,
+            // Admin-only "appear offline" switch — drives the Profile toggle.
+            'hide_online_presence' => (bool) $this->hide_online_presence,
             // Office region (from the agent profile) — lets the frontend show a
             // secretary's region and gate region-scoped UI. Null for users with
             // no agent profile / no region.

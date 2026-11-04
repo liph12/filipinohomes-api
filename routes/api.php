@@ -514,6 +514,8 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/announcements/{announcement}', [AnnouncementController::class, 'showForRecipient']);
 
             Route::post('/user/session-ping', [UserController::class, 'sessionPing']);
+            // Admin-only self toggle: hide me from the Online now staff list.
+            Route::patch('/user/presence-visibility', [UserController::class, 'updatePresenceVisibility']);
             // Everyone online across all roles (chat/messaging strip).
             Route::get('/online-users', [UserController::class, 'onlineUsers']);
             Route::get('/users/search', [UserController::class, 'searchUsers']);

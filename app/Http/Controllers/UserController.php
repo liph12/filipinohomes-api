@@ -1008,7 +1008,31 @@ class UserController extends Controller
 
         return response()->json(['ok' => true]);
     }
-    
+
+    /**
+     * Admin-only "appear offline" switch. Flips the caller's own
+     * hide_online_presence so they drop out of the Online now staff list (and
+     * the chat presence endpoint). Self-scoped — never touches another user —
+     * and gated to admins so only staff who appear in the list can opt out.
+     */
+    public function updatePresenceVisibility(Request $request)
+    {
+        $actor = $request->user();
+        if ($actor?->role?->name !== 'admin') {
+            abort(403, 'Only admins can change their online visibility.');
+        }
+
+        $validated = $request->validate([
+            'hide_online_presence' => 'required|boolean',
+        ]);
+
+        $actor->update(['hide_online_presence' => $validated['hide_online_presence']]);
+
+        return response()->json([
+            'hide_online_presence' => (bool) $actor->hide_online_presence,
+        ]);
+    }
+
     /**
      * Everyone currently online (last_online_at within the 5-min presence
      * window), across ALL roles — powers the chat/messaging "Online Users"
@@ -1022,7 +1046,15 @@ class UserController extends Controller
         $viewerId = optional($request->user())->id;
 
         $base = User::where('last_online_at', '>=', $threshold)
-            ->when($viewerId, fn ($q) => $q->where('id', '!=', $viewerId));
+            // Admins who switched "appear offline" on never show in the list.
+            ->where('hide_online_presence', false)
+            ->when($viewerId, fn ($q) => $q->where('id', '!=', $viewerId))
+            // ?staff=1 → the dashboard "Online now" panel (staff only, no
+            // clients). Omitted by the top-bar popover, which still lists all.
+            ->when($request->boolean('staff'), fn ($q) => $q->whereHas(
+                'role',
+                fn ($r) => $r->whereIn('name', ['admin', 'agent', 'secretary', 'editor'])
+            ));
 
         $total = (clone $base)->count();
 

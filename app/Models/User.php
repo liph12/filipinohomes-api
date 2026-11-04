@@ -25,6 +25,7 @@ class User extends Authenticatable implements Auditable
         'last_online_at',
         'updated_at',
         'active_at',
+        'hide_online_presence',
     ];
 
     /**
@@ -57,6 +58,9 @@ class User extends Authenticatable implements Auditable
         // System Users). Only meaningful for admins; kept on users so it
         // survives role changes.
         'admin_emails_muted',
+        // Admin-only "appear offline" switch (Profile page). Drops the admin
+        // from the Online now staff list / chat presence endpoint.
+        'hide_online_presence',
         'verification',
         'active_at',
         'inquiry_notify_channel',
@@ -99,6 +103,7 @@ class User extends Authenticatable implements Auditable
             'notify_status_change' => 'boolean',
             'role_locked' => 'boolean',
             'admin_emails_muted' => 'boolean',
+            'hide_online_presence' => 'boolean',
         ];
     }
 
