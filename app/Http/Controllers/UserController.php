@@ -421,7 +421,7 @@ class UserController extends Controller
 
     public function index(Request $request)
     {
-        // Signup window for the dashboard's "Newly Signed Up Users" panel.
+        // Signup window for Client Insights' "Newly Signed Up Clients" panel.
         // days=N is a calendar-day window (1 = today, 2 = since yesterday, …;
         // default 10 preserves the original behavior). An explicit
         // date_from/date_to custom range wins over days when provided.
@@ -444,6 +444,11 @@ class UserController extends Controller
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%");
             });
+        }
+
+        // Client Insights asks for role=client only; without it every role is listed.
+        if ($role = $request->query('role')) {
+            $query->whereHas('role', fn ($q) => $q->where('name', $role));
         }
 
         $perPage = (int) $request->query('per_page', 10);
