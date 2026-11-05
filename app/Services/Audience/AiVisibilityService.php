@@ -125,26 +125,31 @@ class AiVisibilityService
     /**
      * Paths no real page has, so whoever asked for them was a vulnerability
      * scanner sending an AI user-agent, not an assistant (secrets files,
-     * server internals, admin panels, encoded-path tricks). MySQL LIKE
-     * patterns against the stored lowercase path; `\` escapes % and _.
+     * server internals, admin panels, encoded-path tricks). LIKE patterns
+     * against the stored lowercase path; `!` escapes a literal % or _.
      * Legacy pages that only look odd (/detail/…%3d, /blogs/wp-content
      * images, magazine PDFs) are real and deliberately not matched.
      */
     private const SUSPICIOUS_PATHS = [
-        '/\\%%',          // starts with an encoded char: /%2eenv, /%2fadmin, /%26
+        '/!%%',  // starts with an encoded char: /%2eenv, /%2fadmin, /%26
         '%.env%',
-        '%/.%',               // dotfiles: /.git, /agents/.env
+        '%/.%',  // dotfiles: /.git, /agents/.env
         '%../%',
-        '%\\%2e\\%2e%',
+        '%!%2e!%2e%',
         '/proc/%',
         '/@fs/%',
-        '/\\_\\_vite%',
+        '/!_!_vite%',
         '%/etc/passwd%',
         '/admin', '/admin/%',
         '/dashboard', '/dashboard/%',
         '/settings', '/settings/%',
         '%wp-admin%', '%wp-login%', '%xmlrpc%', '%phpmyadmin%', '%phpinfo%',
         '%/cgi-bin/%', '/actuator%', '/server-status%', '/vendor/%',
+        '/id!_%',  // SSH private keys: /id_rsa, /id_ed25519
+        '%dockerfile%', '%docker-compose%',
+        '%.sql', '%.bak', '%.pem', '%.key', '%htaccess%', '%web.config%',
+        '/!_image',  // another framework's image endpoint
+        '/userfiles', '/userfiles/%',  // old upload-folder probe; no such page here
     ];
 
     /** Narrow an ai_events query to one report category. */
@@ -152,7 +157,7 @@ class AiVisibilityService
     {
         $match = function ($q) {
             foreach (self::SUSPICIOUS_PATHS as $pattern) {
-                $q->orWhere('path', 'like', $pattern);
+                $q->orWhereRaw("ai_events.path LIKE ? ESCAPE '!'", [$pattern]);
             }
         };
 

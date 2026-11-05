@@ -278,4 +278,23 @@ class AiVisibilityTest extends TestCase
         $this->assertSame(2, app(\App\Services\Audience\TrafficSourceService::class)
             ->range(now()->subDay()->toDateString(), now()->toDateString())->channels()['anonymous_visitors']);
     }
+
+    public function test_report_splits_real_pages_from_pretending_to_be_ai(): void
+    {
+        $this->actingAsAdmin();
+        // An id-like slug and old blog images must not read as probes.
+        foreach (['/real-page', '/idaho-house', '/blogs/wp-content/uploads/a.jpg', '/%2eenv', '/id_rsa', '/proc/self/environ'] as $path) {
+            DB::table('ai_events')->insert(['kind' => 'crawl', 'source' => 'chatgpt', 'agent' => 'OAI-SearchBot', 'path' => $path, 'created_at' => now()]);
+        }
+
+        $paths = fn (string $category) => collect($this->getJson("/api/admin/ai-visibility?category={$category}")->assertOk()->json('top_pages'))
+            ->pluck('path')->sort()->values()->all();
+
+        $this->assertSame(['/blogs/wp-content/uploads/a.jpg', '/idaho-house', '/real-page'], $paths('pages'));
+        $this->assertSame(['/%2eenv', '/id_rsa', '/proc/self/environ'], $paths('suspicious'));
+
+        $this->getJson('/api/admin/ai-visibility')->assertOk()
+            ->assertJsonPath('totals.crawl', 3)
+            ->assertJsonPath('suspicious_total', 3);
+    }
 }
