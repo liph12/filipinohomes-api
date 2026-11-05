@@ -369,11 +369,12 @@ class AgentInsightsService
     public function activityTrend(array $params, ?array $agentIds = null): array
     {
         $monthly = ($params['granularity'] ?? 'week') === 'month';
-        // Twelve periods either way: the last 12 months, or the last 12 weeks.
+        // Twelve periods either way: the last 12 months, or the last 12 weeks. Weeks run Sunday to
+        // Saturday (as AI Visibility's weekly chart and the calendars people here read).
         $count = 12;
         $start = $monthly
             ? now()->startOfMonth()->subMonths($count - 1)
-            : now()->startOfWeek()->subWeeks($count - 1);
+            : now()->startOfWeek(Carbon::SUNDAY)->subWeeks($count - 1);
         $startStr = $start->toDateTimeString();
 
         $agents = DB::table('agents')->whereNull('deleted_at')
@@ -382,7 +383,7 @@ class AgentInsightsService
 
         $bucket = fn (string $col) => $monthly
             ? "DATE_FORMAT({$col}, '%Y-%m-01')"
-            : "DATE(DATE_SUB({$col}, INTERVAL WEEKDAY({$col}) DAY))";
+            : "DATE(DATE_SUB({$col}, INTERVAL DAYOFWEEK({$col}) - 1 DAY))"; // the week's Sunday
 
         // [period => [agent_id => true]] per source
         $logins = [];
