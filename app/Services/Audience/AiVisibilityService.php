@@ -119,16 +119,60 @@ class AiVisibilityService
     /** Top-pages sort keys (each an aggregate column of the query). */
     public const SORTS = ['views', 'clicks', 'crawls'];
 
+    /** Report categories: real pages, or requests from scanners posing as AI bots. */
+    public const CATEGORIES = ['pages', 'suspicious'];
+
+    /**
+     * Paths no real page has, so whoever asked for them was a vulnerability
+     * scanner sending an AI user-agent, not an assistant (secrets files,
+     * server internals, admin panels, encoded-path tricks). MySQL LIKE
+     * patterns against the stored lowercase path; `\` escapes % and _.
+     * Legacy pages that only look odd (/detail/…%3d, /blogs/wp-content
+     * images, magazine PDFs) are real and deliberately not matched.
+     */
+    private const SUSPICIOUS_PATHS = [
+        '/\\%%',          // starts with an encoded char: /%2eenv, /%2fadmin, /%26
+        '%.env%',
+        '%/.%',               // dotfiles: /.git, /agents/.env
+        '%../%',
+        '%\\%2e\\%2e%',
+        '/proc/%',
+        '/@fs/%',
+        '/\\_\\_vite%',
+        '%/etc/passwd%',
+        '/admin', '/admin/%',
+        '/dashboard', '/dashboard/%',
+        '/settings', '/settings/%',
+        '%wp-admin%', '%wp-login%', '%xmlrpc%', '%phpmyadmin%', '%phpinfo%',
+        '%/cgi-bin/%', '/actuator%', '/server-status%', '/vendor/%',
+    ];
+
+    /** Narrow an ai_events query to one report category. */
+    private function inCategory($query, string $category)
+    {
+        $match = function ($q) {
+            foreach (self::SUSPICIOUS_PATHS as $pattern) {
+                $q->orWhere('path', 'like', $pattern);
+            }
+        };
+
+        return $category === 'suspicious' ? $query->where($match) : $query->whereNot($match);
+    }
+
     /**
      * The admin "AI Visibility" report for [from, to] (inclusive days).
      * Top pages are paginated ($perPage a page) and sorted by `$sort`.
+     * `$category` picks real pages (default) or scanners posing as AI bots;
+     * everything in the report is scoped to it.
      *
      * @return array<string, mixed>
      */
-    public function report(Carbon $from, Carbon $to, int $page = 1, int $perPage = 50, string $sort = 'views'): array
+    public function report(Carbon $from, Carbon $to, int $page = 1, int $perPage = 50, string $sort = 'views', string $category = 'pages'): array
     {
         $sort = in_array($sort, self::SORTS, true) ? $sort : 'views';
-        $base = fn () => DB::table('ai_events')->whereBetween('created_at', [$from, $to]);
+        $category = in_array($category, self::CATEGORIES, true) ? $category : 'pages';
+        $range = fn () => DB::table('ai_events')->whereBetween('created_at', [$from, $to]);
+        $base = fn () => $this->inCategory($range(), $category);
 
         $countsBy = fn (string $column) => $base()
             ->select($column, 'kind', DB::raw('COUNT(*) as c'))
@@ -217,7 +261,8 @@ class AiVisibilityService
                 'last_page' => $lastPage,
                 'sort' => $sort,
             ],
-            'meta' => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
+            'suspicious_total' => $this->inCategory($range(), 'suspicious')->count(),
+            'meta' => ['from' => $from->toDateString(), 'to' => $to->toDateString(), 'category' => $category],
         ];
     }
 
