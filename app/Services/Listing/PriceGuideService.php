@@ -799,7 +799,7 @@ class PriceGuideService
             return $this->cityMemo[$cityId];
         }
 
-        return $this->cityMemo[$cityId] = Cache::remember("price-guide:city:v4:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
+        return $this->cityMemo[$cityId] = Cache::remember("price-guide:city:v5:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
             $rows = $this->baseQuery()
                 ->where('cities.id', $cityId)
                 ->select(
@@ -838,6 +838,8 @@ class PriceGuideService
                 }
                 $slim[] = [
                     'listing_id' => (int) $r->listing_id,
+                    // When it was posted, for "how many were listed in the last 30 days".
+                    'listed_at' => (string) $r->created_at,
                     // All-time views per day listed — the demand rate a listing is compared on.
                     'views_per_day' => round(((int) ($r->clicks ?? 0)) / max(1, Carbon::parse($r->created_at)->diffInDays(now())), 3),
                     'category' => (string) $r->category,

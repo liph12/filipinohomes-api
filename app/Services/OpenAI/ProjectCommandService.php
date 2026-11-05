@@ -54,7 +54,7 @@ class ProjectCommandService extends CacheService
         $names = array_map(fn (array $p) => $p['name'], $profiles);
         $text = count($profiles) > 1
             ? sprintf('**%s** side by side, from the live listings in each.', implode('** vs **', $names))
-            : sprintf('**%s** at a glance, from %d live listings in the development.', $names[0], $profiles[0]['totals']['listings']);
+            : self::mixSentence($profiles[0]);
         if ($missing !== []) {
             $text .= ' I could not find **'.implode('**, **', $missing).'**.';
         }
@@ -66,6 +66,52 @@ class ProjectCommandService extends CacheService
         ]));
 
         return $this->streamInsight('project', 'project', ['projects' => $profiles, 'compare' => count($profiles) > 1], $text, $followUps, $req);
+    }
+
+    /**
+     * Every listing counted by category and unit size — unlike the price sections, a size with one
+     * listing still counts — for "how many studios for rent are there in Mivesa?".
+     *
+     * @param  array<int, array{category: string, tier: ?string, price: float}>  $slim
+     * @return array<int, array{category: string, listings: int, tiers: array<int, array{tier: string, listings: int, low: float, high: float}>}>
+     */
+    public static function unitMix(array $slim): array
+    {
+        $mix = [];
+        foreach (['For Sale', 'For Rent'] as $cat) {
+            $in = array_values(array_filter($slim, fn (array $r) => $r['category'] === $cat));
+            if ($in === []) {
+                continue;
+            }
+            $tiers = [];
+            foreach (array_merge(PriceGuideService::tierOrder(), [null]) as $tier) {
+                $set = array_values(array_filter($in, fn (array $r) => ($r['tier'] ?? null) === $tier));
+                if ($set === []) {
+                    continue;
+                }
+                $prices = array_column($set, 'price');
+                $tiers[] = ['tier' => $tier ?? 'Other', 'listings' => count($set), 'low' => (float) min($prices), 'high' => (float) max($prices)];
+            }
+            $mix[] = ['category' => $cat, 'listings' => count($in), 'tiers' => $tiers];
+        }
+
+        return $mix;
+    }
+
+    /**
+     * "**Mivesa Garden Residences** has **21 live listings** right now: **10 for sale** (4 studios,
+     * 5 one-bedroom, 1 two-bedroom) and **11 for rent** (6 studios, 5 one-bedroom)."
+     */
+    public static function mixSentence(array $profile): string
+    {
+        $t = $profile['totals'];
+        $parts = [];
+        foreach ($profile['mix'] ?? [] as $m) {
+            $sizes = CountCommandService::sizesPhrase($m['tiers']);
+            $parts[] = sprintf('**%d %s**%s', $m['listings'], $m['category'] === 'For Rent' ? 'for rent' : 'for sale', $sizes !== '' ? " ({$sizes})" : '');
+        }
+
+        return sprintf('**%s** has **%d live %s** right now%s.', $profile['name'], $t['listings'], $t['listings'] === 1 ? 'listing' : 'listings', $parts !== [] ? ': '.implode(' and ', $parts) : '');
     }
 
     /** The project row a typed name points at — the best-known match with live listings. */
@@ -91,7 +137,7 @@ class ProjectCommandService extends CacheService
      */
     public function profile(int $projectId): ?array
     {
-        return Cache::remember("project-insight:v1:{$projectId}", 1800, function () use ($projectId) {
+        return Cache::remember("project-insight:v2:{$projectId}", 1800, function () use ($projectId) {
             $p = DB::table('projects')->where('id', $projectId)->first();
             if ($p === null) {
                 return null;
@@ -173,6 +219,9 @@ class ProjectCommandService extends CacheService
                 $sections[] = ['category' => $cat, 'listings' => count($in), 'low' => $all['low'] ?? null, 'median' => $all['median'] ?? null, 'high' => $all['high'] ?? null, 'median_ppsqm' => $all['median_ppsqm'] ?? null, 'tiers' => $tiers];
             }
 
+            // Every listing by size, one is enough: "how many studios for rent?" (the sections above need two).
+            $mix = self::unitMix($slim);
+
             // Gross yield like for like: per unit size with both sides present, combined by median.
             $yields = [];
             foreach (PriceGuideService::tierOrder() as $tier) {
@@ -221,6 +270,7 @@ class ProjectCommandService extends CacheService
                     'agents' => count($byAgent),
                 ],
                 'sections' => $sections,
+                'mix' => $mix,
                 'yield' => $yield,
                 'agents' => array_slice($byAgent, 0, 3),
                 'newest_listing_at' => $newest,

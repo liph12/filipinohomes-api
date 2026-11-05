@@ -607,6 +607,7 @@ class CommandService extends CacheService
         - locate → user asks WHERE a property they were already shown is, to see it on a map, how far it is from them or from a landmark, or how to get there ("where is that?", "where is it located", "show me on the map", "how far is it from me", "how do I get there", "saan yan", "asa na dapit") — about a listing already shown, not a search for new listings
         - rentbuy → user asks whether to RENT OR BUY in a place ("should I rent or buy in Lahug", "rent vs buy a condo in Cebu", "is it better to rent or to buy", "mag-rent o bumili") — a comparison of the two, not a search
         - project → user asks about a specific BUILDING, development or condo project by name ("tell me about Avida Towers Riala", "is 38 Park Avenue a good buy", "what's listed in Mivesa"), or to COMPARE two named developments ("Riala vs 38 Park Avenue")
+        - count → user asks HOW MANY listings / units / properties there are in a place, or whether we have any there: "how many condos for sale in Lahug", "ilan ang for rent sa Mabolo", "how many 2 bedroom units for rent in Cebu City", "do you have houses in Talisay?", "number of listings in Mandaue" — a question about the NUMBER, not a request to see them
         - area → user asks ABOUT a place in general: "tell me about Lahug", "what's it like in BGC", "is IT Park a good area to invest", "overview of Mandaue", "which barangays in Cebu City have the most listings", rental yield / ROI / "where do condos yield the most in Cebu" — an area or investment question, not a price-only question and not a request for listings
         - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
         - agent → user shows intent to find, search, contact, or inquire about a real estate agent (explicit or implied)
@@ -625,12 +626,13 @@ class CommandService extends CacheService
         - "What is MY property worth" / what they could sell or rent THEIRS for is: worth — not price (price is what OTHER listings cost)
         - Fees, taxes, closing costs, cash up front or the monthly payment for a GIVEN price or listing is: cost — not afford
         - "Rent or buy" in a place is: rentbuy — not area and not listing
+        - "How many" / "ilan" / "number of" / "do you have any" about a city, barangay or area is: count — not listing and not area; the same question about a NAMED building or development is: project
         - Investment, yield, ROI, cash flow or rental income on a property or price is: invest — not price, not area, not rentbuy
         - "Where is it / show me the map / how far / how do I get there" about something already shown is: locate — not listing and not area
         - Ignore emojis, filler words, repeated characters
         
         OUTPUT:
-        - Return EXACTLY one word: price OR area OR project OR afford OR worth OR cost OR rentbuy OR invest OR locate OR listing OR agent OR normal
+        - Return EXACTLY one word: price OR count OR area OR project OR afford OR worth OR cost OR rentbuy OR invest OR locate OR listing OR agent OR normal
         - No explanation
         - No punctuation
         - No extra text
@@ -651,7 +653,7 @@ class CommandService extends CacheService
     
         $classification = trim(strtolower($response->choices[0]->message->content ?? ''));
     
-        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'area', 'project', 'afford', 'worth', 'cost', 'rentbuy', 'invest', 'locate'])) {
+        if (!in_array($classification, ['normal', 'listing', 'agent', 'price', 'count', 'area', 'project', 'afford', 'worth', 'cost', 'rentbuy', 'invest', 'locate'])) {
             return 'normal';
         }
     

@@ -10,6 +10,7 @@ use App\Services\OpenAI\ListingCommandService;
 use App\Services\OpenAI\PriceCommandService;
 use App\Services\OpenAI\DealCommandService;
 use App\Services\OpenAI\AreaCommandService;
+use App\Services\OpenAI\CountCommandService;
 use App\Services\OpenAI\CompareCommandService;
 use App\Services\OpenAI\ProjectCommandService;
 use App\Services\OpenAI\LeadService;
@@ -36,6 +37,7 @@ class OpenAIController extends Controller
     private $priceService;
     private $dealService;
     private $areaService;
+    private $countService;
     private $compareService;
     private $projectService;
     private $leadService;
@@ -48,7 +50,7 @@ class OpenAIController extends Controller
     private $moreService;
     private $nearbyService;
 
-    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map, MoreListingsCommandService $more, NearbyCommandService $nearby)
+    public function __construct(CommandService $s, CacheService $c, DataLayerService $d, ListingCommandService $l, PriceCommandService $p, DealCommandService $deal, AreaCommandService $area, CountCommandService $count, CompareCommandService $compare, ProjectCommandService $project, LeadService $lead, AffordCommandService $afford, WorthCommandService $worth, CostCommandService $cost, RentBuyCommandService $rentBuy, InvestCommandService $invest, MapCommandService $map, MoreListingsCommandService $more, NearbyCommandService $nearby)
     {
         $this->moreService = $more;
         $this->nearbyService = $nearby;
@@ -65,6 +67,7 @@ class OpenAIController extends Controller
         $this->priceService = $p;
         $this->dealService = $deal;
         $this->areaService = $area;
+        $this->countService = $count;
         $this->compareService = $compare;
         $this->projectService = $project;
         $this->leadService = $lead;
@@ -241,6 +244,11 @@ class OpenAIController extends Controller
             // "How much is a studio in Lahug?" — the Price Guide, in chat (numbers from our listings, never the model).
             if ($classification === 'price') {
                 return $this->priceService->replyStream($thread, $request);
+            }
+
+            // "How many condos are for sale in Lahug?" — the numbers first, counted from our listings.
+            if ($classification === 'count') {
+                return $this->countService->replyStream($thread, $request);
             }
 
             // "Tell me about Lahug" — the area at a glance, from our listings.
