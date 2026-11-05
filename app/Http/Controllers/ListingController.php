@@ -3346,6 +3346,8 @@ class ListingController extends Controller
             // Quality gate: count only audit-passed (verified/fully_verified)
             // AND ATS-approved listings.
             'qualified' => 'nullable|boolean',
+            // series=1: also return meta.daily (per-day totals) for the KPI sparklines.
+            'series' => 'nullable|boolean',
         ]);
 
         $dateStart = $request->query('date_start');
@@ -3363,7 +3365,8 @@ class ListingController extends Controller
             $cityId,
             $teamId,
             $agentId,
-            $request->boolean('qualified')
+            $request->boolean('qualified'),
+            $request->boolean('series')
         ));
     }
 

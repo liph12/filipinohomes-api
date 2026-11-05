@@ -30,7 +30,7 @@ class ListingTopCreatorsService extends ListingInsightsService
     /** When true, only audit-passed AND ATS-approved listings count. */
     private bool $qualifiedOnly = false;
 
-    public function topCreators(string $groupBy, ?string $dateStart = null, ?string $dateEnd = null, int $limit = 20, ?int $cityId = null, ?int $teamId = null, ?int $agentId = null, bool $qualifiedOnly = false): array
+    public function topCreators(string $groupBy, ?string $dateStart = null, ?string $dateEnd = null, int $limit = 20, ?int $cityId = null, ?int $teamId = null, ?int $agentId = null, bool $qualifiedOnly = false, bool $series = false): array
     {
         $this->qualifiedOnly = $qualifiedOnly;
         $this->agentIds = null;
@@ -66,9 +66,14 @@ class ListingTopCreatorsService extends ListingInsightsService
             default => $this->byAgent($limit),
         };
 
+        $meta = [];
+        if ($series) {
+            $meta['daily'] = $this->dailySeries($groupBy, $data[0] ?? null);
+        }
+
         return [
             'data' => $data,
-            'meta' => [
+            'meta' => $meta + [
                 'group_by' => $groupBy,
                 'date_start' => $this->dateStart,
                 'date_end' => $this->dateEnd,
@@ -87,6 +92,66 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'total_groups' => $totalGroups,
             ],
         ];
+    }
+
+    /**
+     * Per day in the range — the KPI cards' sparklines: listings created (`total`), the verified +
+     * ATS-approved ones (`verified`), how many agents / teams / cities created any (`groups`, null for
+     * office regions), and the #1 row's own listings (`top`). Days with none are left out.
+     *
+     * @return array<int, array{date: string, total: int, verified: int, groups: int|null, top: int}>
+     */
+    private function dailySeries(string $groupBy, ?array $top): array
+    {
+        $cityExpr = 'COALESCE(projects.city_id, property_cities.id)';
+        $topSql = '0';
+        $topBindings = [];
+        if ($top !== null && $groupBy === 'agent') {
+            $topSql = 'SUM(CASE WHEN listings.agent_id = ? THEN 1 ELSE 0 END)';
+            $topBindings = [$top['agent_id']];
+        } elseif ($top !== null && $groupBy === 'city') {
+            $topSql = "SUM(CASE WHEN {$cityExpr} = ? THEN 1 ELSE 0 END)";
+            $topBindings = [$top['city_id']];
+        } elseif ($top !== null && $groupBy === 'team') {
+            $members = DB::table('team_agents')->where('team_id', $top['team_id'])->where('status', 'active')->pluck('agent_id')->map(fn ($id) => (int) $id)->all();
+            if ($members !== []) {
+                $topSql = 'SUM(CASE WHEN listings.agent_id IN ('.implode(',', $members).') THEN 1 ELSE 0 END)';
+            }
+        }
+        $groupsSql = match ($groupBy) {
+            'agent' => 'COUNT(DISTINCT listings.agent_id)',
+            'city' => "COUNT(DISTINCT {$cityExpr})",
+            default => 'NULL',
+        };
+
+        $rows = $this->scopedQuery()
+            ->selectRaw('DATE(listings.created_at) as date, COUNT(*) as total'
+                .", SUM(CASE WHEN listings.verification_status IN ('verified', 'fully_verified') AND properties.ats_status = 'approve' THEN 1 ELSE 0 END) as verified"
+                .", {$groupsSql} as `groups`, {$topSql} as top", $topBindings)
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+        // Teams: a listing counts for every active team of its agent, so their daily count is its own query.
+        $teams = [];
+        if ($groupBy === 'team') {
+            $teams = $this->scopedQuery()
+                ->join('team_agents as ta', function ($join) {
+                    $join->on('ta.agent_id', '=', 'listings.agent_id')->where('ta.status', 'active');
+                })
+                ->selectRaw('DATE(listings.created_at) as date, COUNT(DISTINCT ta.team_id) as n')
+                ->groupBy('date')
+                ->pluck('n', 'date')
+                ->all();
+        }
+
+        return $rows->map(fn ($r) => [
+            'date' => (string) $r->date,
+            'total' => (int) $r->total,
+            'verified' => (int) $r->verified,
+            'groups' => $groupBy === 'team' ? (int) ($teams[$r->date] ?? 0) : ($r->groups !== null ? (int) $r->groups : null),
+            'top' => (int) $r->top,
+        ])->all();
     }
 
     /**
