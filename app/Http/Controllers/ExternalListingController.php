@@ -115,13 +115,23 @@ class ExternalListingController extends Controller
      * GET /lr/listings/match?email=&code= (X-LR-Token) — match() for the Leuterio Realty website, with
      * its own secret instead of the public /fh-agent token, so every call is known to be LR. Not tied to
      * the partner-feed switch. A found listing is logged as an LR lookup ("Used in LR").
+     *
+     * Without `code` it lists every listing the agent with that email owns (FH or LR email; deleted ones
+     * excluded; any status, visibility, ATS or audit result), newest first, paginated (page, per_page ≤ 100,
+     * default 20 per page). A listing isn't logged as "Used in LR" just for appearing in that list — only a lookup
+     * by code or a status change marks it.
      */
     public function lrMatch(Request $request)
     {
         $data = $request->validate([
             'email' => 'required|string|max:255',
-            'code' => 'required|string|max:100',
+            'code' => 'nullable|string|max:100',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
         ]);
+        if (blank($data['code'] ?? null)) {
+            return $this->lrListingsForEmail($data['email'], (int) ($data['page'] ?? 1), (int) ($data['per_page'] ?? 20));
+        }
         $found = $this->findOwned($data['email'], $data['code']);
         if (! is_array($found)) {
             return $found;
@@ -251,6 +261,35 @@ class ExternalListingController extends Controller
             $stamp['lr_status_changed_at'] = $now;
         }
         DB::table('listings')->where('id', $listing->id)->update($stamp);
+    }
+
+    /** lrMatch() without a code: every listing owned by the agent(s) with this FH or LR email. */
+    private function lrListingsForEmail(string $email, int $page, int $perPage)
+    {
+        $email = strtolower(trim($email));
+        $byFh = Agent::query()->whereHas('user', fn ($q) => $q->whereRaw('LOWER(email) = ?', [$email]))->pluck('id')->all();
+        $byLr = Agent::query()->whereRaw('LOWER(lr_email) = ?', [$email])->pluck('id')->all();
+        if (! $byFh && ! $byLr) {
+            return $this->noMatch('agent_not_found', 'No agent has this email (Filipinohomes or LR).');
+        }
+
+        $listings = Listing::query()
+            ->whereIn('agent_id', array_values(array_unique([...$byFh, ...$byLr])))
+            ->with([
+                'property.propertyAttribute.subtype.type',
+                'property.furnishing',
+                'category',
+                'agent.user',
+            ])
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->paginate($perPage, ['*'], 'page', $page)
+            ->appends(['email' => $email, 'per_page' => $perPage]);
+
+        return ExternalListingResource::collection($listings)->additional([
+            'matched' => true,
+            'matched_by' => $byFh ? 'fh_email' : 'lr_email',
+        ]);
     }
 
     private function noMatch(string $reason, string $message)
