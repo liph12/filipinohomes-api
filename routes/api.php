@@ -56,6 +56,7 @@ use App\Http\Controllers\MobileStatisticsController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OfficeController;
 use App\Http\Controllers\OpenAIController;
+use App\Http\Controllers\ProjectTaggingController;
 use App\Http\Controllers\PageBuilderController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\ProjectController;
@@ -638,6 +639,12 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/listings/insights/by-city/{city}/ats', [ListingController::class, 'insightsCityAtsListings'])
                 ->where('city', '[0-9]+');
             Route::get('/projects/deleted', [ProjectController::class, 'deletedProjects']);
+            // Project tagging: listings whose title names a development they are not tagged to
+            // (admins), and the detector the listing form uses to suggest one (any agent).
+            Route::get('/projects/tagging', [ProjectTaggingController::class, 'index']);
+            Route::post('/projects/tagging/{listing}/tag', [ProjectTaggingController::class, 'tag']);
+            Route::post('/projects/tagging/{listing}/dismiss', [ProjectTaggingController::class, 'dismiss']);
+            Route::get('/projects/detect', [ProjectTaggingController::class, 'detect']);
             Route::post('/projects', [ProjectController::class, 'store']);
             Route::post('/projects/{id}/link-unassociated', [ProjectController::class, 'linkUnassociatedProperty']);
             Route::post('/projects/{id}/link-deleted-properties', [ProjectController::class, 'linkDeletedProjectProperties']);
