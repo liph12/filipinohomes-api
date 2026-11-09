@@ -168,9 +168,9 @@ class User extends Authenticatable implements Auditable
 
     /**
      * Last heartbeat before $threshold — or, never online, signed up before
-     * it. The rule deactivateAgentIfDormant() applies at login (its policy-
-     * start floor stopped mattering once the 45-day window moved past that
-     * date); keep the two in step.
+     * it. The rule deactivateAgentIfDormant() applies it one agent at a time
+     * (its policy-start floor stopped mattering once the 45-day window moved
+     * past that date); keep the two in step.
      */
     public function scopeDormantSince($query, $threshold)
     {
@@ -180,6 +180,42 @@ class User extends Authenticatable implements Auditable
                     ->orWhere('created_at', '<', $threshold))));
     }
 
+    /**
+     * A successful sign-in IS activity, so it refreshes the heartbeat.
+     *
+     * Dormancy used to be evaluated here instead, which inverted the rule.
+     * The check ran before anything stamped presence — only /authenticate and
+     * the session ping write last_online_at — so the only agents it ever
+     * deactivated were the ones coming BACK, while an agent who genuinely
+     * stayed away kept status = active, and stayed publicly listed, forever.
+     *
+     * On an account whose last_online_at was still NULL the baseline fell
+     * through to created_at, so for any long-standing agent the window had
+     * already closed and every admin reactivation was undone by that agent's
+     * very next sign-in: the admin set Active, the agent signed in, and the
+     * sign-in itself put them straight back to deactivated. No sequence of
+     * admin actions could let them in, and nothing surfaced why.
+     *
+     * agents:deactivate-dormant owns the rule now, so it lands on the absent
+     * instead of the returning.
+     *
+     * Written through the query builder, the way sessionPing() and
+     * authenticate() write presence, so it touches neither updated_at nor the
+     * model-event/audit pipeline.
+     */
+    public function recordLoginActivity(): void
+    {
+        $now = now();
+
+        self::whereKey($this->getKey())->update(['last_online_at' => $now]);
+        $this->last_online_at = $now;
+    }
+
+    /**
+     * Apply the dormancy rule to this one agent. Driven by
+     * agents:deactivate-dormant — NOT by the sign-in paths (see
+     * recordLoginActivity() for why that inverted the rule).
+     */
     public function deactivateAgentIfDormant(): void
     {
         $agent = $this->agent;
@@ -206,7 +242,7 @@ class User extends Authenticatable implements Auditable
             $agent->auditDescription = 'Auto-deactivated (dormant ' . self::DORMANT_DAYS . 'd)';
             $agent->auditSource = 'auto_dormant';
             $agent->update(['status' => 'deactivated']);
-            \Illuminate\Support\Facades\Log::info('Agent auto-deactivated at login — no activity in 45 days', [
+            \Illuminate\Support\Facades\Log::info('Agent auto-deactivated by the dormancy sweep — no activity in 45 days', [
                 'agent_id' => $agent->id,
                 'user_id'  => $this->id,
                 'last_online_at' => $this->last_online_at,

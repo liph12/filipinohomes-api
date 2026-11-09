@@ -137,3 +137,22 @@ Schedule::command('natcon:hydrate-awardees --limit=200')
 Schedule::command('natcon:index-gallery-faces --limit=25')
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+// The 45-day agent dormancy rule. Deliberately scheduled WITHOUT --force, so
+// this is a daily DRY RUN: it writes nothing and only logs how many agents the
+// rule would deactivate.
+//
+// The rule used to be evaluated at sign-in, where it could only ever catch
+// agents on their way back (see User::recordLoginActivity). Nobody absent has
+// ever been swept, so the first enforcing run carries a backlog reaching to
+// the policy start — and deactivating an agent pulls their listings from the
+// public site, the directory and the sitemap. Enforcing that blind could be a
+// site-wide SEO event, so the number goes in the log first and someone decides.
+//
+// To enforce, run it by hand in batches — `agents:deactivate-dormant --force
+// --limit=50` — and only add --force here once the steady-state daily figure
+// is small and understood.
+Schedule::command('agents:deactivate-dormant')
+    ->dailyAt('02:30')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping(10);

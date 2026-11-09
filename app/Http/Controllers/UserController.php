@@ -787,10 +787,11 @@ class UserController extends Controller
         defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
             ->backfill($verified->loadMissing('agent')));
 
-        // Dormancy check runs at login (before this session bumps any
-        // activity timestamp): 45+ days without a heartbeat flips the
-        // agent to "deactivated".
-        $verified->deactivateAgentIfDormant();
+        // Signing in counts as activity, so it refreshes the heartbeat. The
+        // 45-day dormancy rule is applied by agents:deactivate-dormant, NOT
+        // here — evaluating it at login only ever caught agents on their way
+        // back, and silently undid admin reactivations.
+        $verified->recordLoginActivity();
 
         LoginLog::record($verified->id, $request->ip(), $request->userAgent());
 
@@ -929,7 +930,9 @@ class UserController extends Controller
         defer(fn () => app(\App\Services\LeuterioreRealty\LrAgentBackfillService::class)
             ->backfill($user->loadMissing('agent')));
 
-        $user->deactivateAgentIfDormant();
+        // Signing in counts as activity — see recordLoginActivity(). The
+        // dormancy rule lives in agents:deactivate-dormant, not here.
+        $user->recordLoginActivity();
 
         LoginLog::record($user->id, $request->ip(), $request->userAgent());
 

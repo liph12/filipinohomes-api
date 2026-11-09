@@ -150,11 +150,13 @@ class SeedStaffAccountsTest extends TestCase
 
     public function test_reset_revives_a_staff_agent_the_dormancy_rule_deactivated(): void
     {
-        [, $first] = $this->seedAccounts(['--role' => ['agent']]);
+        $this->seedAccounts(['--role' => ['agent']]);
         $email = $this->email('agent');
 
+        // agents:deactivate-dormant owns the rule — signing in is activity and
+        // can no longer be the thing that deactivates you.
         $this->travel(50)->days();
-        $this->login($email, $this->passwordFor($first, $email))->assertOk();
+        $this->artisan('agents:deactivate-dormant --force')->assertSuccessful();
         $this->assertSame('deactivated', Agent::value('status'));
 
         [$exit, $output] = $this->seedAccounts(['--role' => ['agent'], '--reset' => true]);

@@ -16,10 +16,11 @@ use Tests\TestCase;
  * 2026-07-02 policy start alone, so from 2026-08-16 on every brand-new agent
  * was deactivated at its very first login.
  *
- * The login-time check (User::deactivateAgentIfDormant) and the admin guard's
- * scope (User::scopeDormantSince) are one definition; the cases below hold
- * both to it. Today is frozen at 2026-10-31, so the grace window opens
- * 2026-09-16 00:00.
+ * The rule (User::deactivateAgentIfDormant, applied by the
+ * agents:deactivate-dormant sweep) and the admin guard's scope
+ * (User::scopeDormantSince) are one definition; the cases below hold both to
+ * it. Today is frozen at 2026-10-31, so the grace window opens 2026-09-16
+ * 00:00.
  */
 class AgentDormancyBaselineTest extends TestCase
 {
@@ -85,7 +86,7 @@ class AgentDormancyBaselineTest extends TestCase
     }
 
     #[DataProvider('cases')]
-    public function test_the_login_check_and_the_admin_scope_agree(string $createdAt, ?string $lastOnlineAt, bool $dormant): void
+    public function test_the_rule_and_the_admin_scope_agree(string $createdAt, ?string $lastOnlineAt, bool $dormant): void
     {
         $user = $this->agentUser($createdAt, $lastOnlineAt);
 
@@ -132,18 +133,30 @@ class AgentDormancyBaselineTest extends TestCase
         $this->assertSame(0, Agent::count());
     }
 
-    public function test_a_new_agent_survives_its_first_password_login_and_lapses_after_45_idle_days(): void
+    /**
+     * Signing in is activity, so it can never be what deactivates you.
+     *
+     * This test asserted the opposite until the login-time check was removed:
+     * an agent returning after 50 idle days was deactivated by the act of
+     * signing in. That is the inversion — the rule fired on the agents coming
+     * back and never on the ones who stayed away. The sweep owns it now.
+     */
+    public function test_signing_in_refreshes_the_heartbeat_instead_of_lapsing(): void
     {
         $user = $this->agentUser(now()->toDateTimeString());
 
         $this->postJson('/api/login', ['email' => $user->email, 'password' => 'secret-password'])->assertOk();
         $this->assertSame('active', $this->statusOf($user));
 
-        // Signing in isn't presence — only /authenticate and the session ping
-        // write last_online_at — so an account that never loads the app lapses.
         $this->travel(50)->days();
 
         $this->postJson('/api/login', ['email' => $user->email, 'password' => 'secret-password'])->assertOk();
-        $this->assertSame('deactivated', $this->statusOf($user));
+
+        $this->assertSame('active', $this->statusOf($user));
+        $this->assertSame(
+            now()->toDateTimeString(),
+            $user->fresh()->last_online_at?->toDateTimeString(),
+            'A successful sign-in must stamp presence — it is what keeps the sweep off a returning agent.',
+        );
     }
 }

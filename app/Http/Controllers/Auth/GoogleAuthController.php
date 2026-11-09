@@ -152,10 +152,11 @@ class GoogleAuthController extends Controller
 
     private function recordLogin(User $user, Request $request): void
     {
-        // Dormancy check runs at login (before this session bumps any
-        // activity timestamp): 45+ days without a heartbeat flips the
-        // agent to "deactivated".
-        $user->deactivateAgentIfDormant();
+        // Signing in counts as activity, so it refreshes the heartbeat. The
+        // 45-day dormancy rule is applied by agents:deactivate-dormant, NOT
+        // here — evaluating it at login only ever caught agents on their way
+        // back, and silently undid admin reactivations.
+        $user->recordLoginActivity();
 
         LoginLog::record($user->id, $request->ip(), $request->userAgent());
 
