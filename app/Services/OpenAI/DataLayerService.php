@@ -7,6 +7,7 @@ use App\Models\Listing;
 use App\Services\Listing\PriceGuideService;
 use Illuminate\Support\Facades\DB;
 use App\Services\Listing\FacilityIndex;
+use App\Services\Listing\ProjectFinder;
 
 class DataLayerService
 {
@@ -18,7 +19,7 @@ class DataLayerService
     /** NATCON awardee records by lower-cased email, loaded once per agent search (read-only). */
     private array $natconByEmail = [];
 
-    public function __construct(private readonly PriceGuideService $priceGuide, private readonly LandmarkLocator $landmarks)
+    public function __construct(private readonly PriceGuideService $priceGuide, private readonly LandmarkLocator $landmarks, private readonly ProjectFinder $projects)
     {
     }
 
@@ -321,6 +322,9 @@ class DataLayerService
     /** Set by getListingsByArguments when the results come from a wider place than asked. */
     public ?string $searchNote = null;
 
+    /** The development every result is a unit of ("Horizon 101") when the search was for one; null otherwise. */
+    public ?string $scopeLabel = null;
+
     /** Set by getListingsByArguments: how many listings matched in all. */
     public int $matchTotal = 0;
 
@@ -379,7 +383,16 @@ class DataLayerService
         $this->moreRows = [];
         $this->stepTotal = 0;
         $this->rankedBy = 'fit';
+        $this->scopeLabel = null;
         $this->wantedFacilities = array_slice(array_values(array_intersect(array_map('strval', (array) ($args['near_facilities'] ?? [])), FacilityIndex::CATEGORIES)), 0, 3);
+
+        // "Units in Horizon 101": a named development means ITS listings — never the 1.5 km around it
+        // or the whole city — so "how many" and "show me" speak of the same building.
+        $projectName = trim((string) ($args['project'] ?? ''));
+        $project = $projectName !== '' ? $this->projects->find($projectName, trim((string) ($args['address'] ?? ''))) : null;
+        if ($project !== null) {
+            return $this->searchProject($project, $args, $page);
+        }
         $asked = trim((string) ($args['address'] ?? ''));
         $near = trim((string) ($args['near'] ?? '')) !== '';
         $expanded = self::PLACE_ALIASES[mb_strtolower($asked)] ?? $asked;
@@ -459,6 +472,94 @@ class DataLayerService
         }
 
         return $this->firstPage($rows, $page);
+    }
+
+    /**
+     * The listings of one development, with the rest of the search (category, budget, size, keywords)
+     * applied inside it. Keywords, then the subtype, then the type are dropped when nothing in it
+     * matched — the building decides what its units are — and only when it still has nothing do the
+     * nearest listings around it stand in, said so in $searchNote. Otherwise the note opens the reply
+     * with the count, the same count the project profile gives.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function searchProject(object $project, array $args, int $page): array
+    {
+        $name = (string) $project->name;
+        $inside = ['project_id' => (int) $project->id, 'address' => '', 'city_id' => 0, 'near' => '', 'near_point' => null, 'radius_km' => 0] + $args;
+        // The building's own name is not a keyword: its listings rarely spell it in the title.
+        $inside['query_words'] = self::keywordsOutside((string) ($args['query_words'] ?? ''), $name);
+        $rows = $this->runListingSearch($inside);
+        foreach (['query_words', 'property_subtype', 'property_type'] as $loosen) {
+            if ($rows !== [] || trim((string) ($inside[$loosen] ?? '')) === '') {
+                continue;
+            }
+            $inside[$loosen] = '';
+            $rows = $this->runListingSearch($inside);
+        }
+        if ($rows !== []) {
+            $this->scopeLabel = $name;
+            $this->searchNote = self::projectNote($name, $inside, $rows, max(count($rows), $this->stepTotal));
+
+            return $this->firstPage($rows, $page);
+        }
+
+        $point = is_numeric($project->latitude) && is_numeric($project->longitude)
+            ? LandmarkLocator::philippinePoint((float) $project->latitude, (float) $project->longitude)
+            : null;
+        $around = $point !== null ? $this->nearby(['project_id' => 0] + $inside, $point + ['label' => $name], 1.5) : [];
+        if ($around !== []) {
+            $this->searchNote = sprintf('Nothing matched in %s itself, so these are the nearest ones around it.', $name);
+        }
+
+        return $this->firstPage($around, $page);
+    }
+
+    /**
+     * "Horizon 101 has 19 live listings right now: 11 for sale and 8 for rent." — or, narrowed by a
+     * budget, size or keyword, "4 listings for rent in Horizon 101 match what you asked for." The
+     * sale/rent split is said only when every match is in hand.
+     *
+     * @param  array<int, Listing>  $rows
+     */
+    private static function projectNote(string $name, array $args, array $rows, int $total): string
+    {
+        $attr = (array) ($args['attributes'] ?? []);
+        $narrowed = trim((string) ($args['query_words'] ?? '')) !== '' || trim((string) ($args['property_subtype'] ?? '')) !== ''
+            || (float) ($attr['price_max'] ?? 0) > 0 || (float) ($attr['price_min'] ?? 0) > 0
+            || (int) ($attr['beds'] ?? 0) > 0 || (int) ($attr['baths'] ?? 0) > 0 || (int) ($attr['parking'] ?? 0) > 0
+            || (float) ($attr['floor_area'] ?? 0) > 0 || (float) ($attr['lot_area'] ?? 0) > 0
+            || (int) ($args['price_dropped_days'] ?? 0) > 0 || trim((string) ($args['date_from'] ?? '')) !== '';
+        $cat = (string) ($args['category'] ?? '');
+        $catWord = match ($cat) {
+            'For Sale' => ' for sale',
+            'For Rent' => ' for rent',
+            'Foreclosure' => ' foreclosed',
+            default => '',
+        };
+        $noun = $total === 1 ? 'listing' : 'listings';
+        if ($narrowed) {
+            return sprintf('%d %s%s in %s %s what you asked for.', $total, $noun, $catWord, $name, $total === 1 ? 'matches' : 'match');
+        }
+        if ($cat !== '') {
+            return sprintf('%s has %d %s%s right now.', $name, $total, $noun, $catWord);
+        }
+        $sale = count(array_filter($rows, fn ($l) => ($l->category->name ?? '') === 'For Sale'));
+        $rent = count(array_filter($rows, fn ($l) => ($l->category->name ?? '') === 'For Rent'));
+        if (count($rows) === $total && $sale + $rent === $total) {
+            return sprintf('%s has %d live %s right now: %d for sale and %d for rent.', $name, $total, $noun, $sale, $rent);
+        }
+
+        return sprintf('%s has %d live %s right now.', $name, $total, $noun);
+    }
+
+    /** "horizon 101 condo" without the words of "Horizon 101" → "condo": the building's name is not a keyword. */
+    public static function keywordsOutside(string $words, string $name): string
+    {
+        $drop = array_flip(array_filter(preg_split('/\W+/u', mb_strtolower($name)) ?: [], fn ($w) => $w !== ''));
+        $kept = array_filter(preg_split('/\s+/', mb_strtolower(trim($words))) ?: [], fn ($w) => $w !== '' && ! isset($drop[$w]));
+
+        return implode(' ', $kept);
     }
 
     /**
@@ -743,6 +844,12 @@ class DataLayerService
         })->whereHas('property', function($q) use($args, $address, $attr, $point){    
             // "Lahug, Cebu City" → lahug / cebu; "CDO" → cagayan / oro (see placeWords).
             $addr = self::placeWords((string) $address);
+
+            // One development's own units ("units in Horizon 101").
+            $projectId = (int) ($args['project_id'] ?? 0);
+            if ($projectId > 0) {
+                $q->where('properties.project_id', $projectId);
+            }
 
             // Widened to a city: the property's effective city (its pin, else its typed barangay's city).
             $cityId = (int) ($args['city_id'] ?? 0);

@@ -372,8 +372,11 @@ class OpenAIController extends Controller
         // Results from the wider city: the reply opens with that fact, and the picker is told so it
         // describes them as such instead of repeating or contradicting it.
         $searchNote = $this->dataService->searchNote;
+        $scope = $this->dataService->scopeLabel;
         if ($searchNote !== null) {
-            $thread[] = ['role' => 'system', 'content' => "The reply already opens with this sentence, so do not repeat it: \"{$searchNote}\" Describe the listings by their own location."];
+            $thread[] = ['role' => 'system', 'content' => "The reply already opens with this sentence, so do not repeat it: \"{$searchNote}\" ".($scope !== null
+                ? "Every listing provided is a unit in {$scope} itself: describe them by unit size, floor area and price, not by their address."
+                : 'Describe the listings by their own location.')];
         }
         // "Near a mall", "a school for the kids": the pool was ordered by closeness to those kinds of
         // place and each card names the nearest one; the picker is told so it speaks to that.
@@ -427,7 +430,7 @@ class OpenAIController extends Controller
                 }
             }
     
-            AsaQuestionLog::outcomeLatest($request, 'listing', 'answered', (string) ($args['address'] ?? ''));
+            AsaQuestionLog::outcomeLatest($request, 'listing', 'answered', $scope ?? (string) ($args['address'] ?? ''));
 
             return response()->json([
                 'profile' => $profile,
@@ -442,7 +445,7 @@ class OpenAIController extends Controller
             ]);
         }
 
-        AsaQuestionLog::outcomeLatest($request, 'listing', 'no_results', (string) ($args['address'] ?? ''));
+        AsaQuestionLog::outcomeLatest($request, 'listing', 'no_results', $scope ?? (string) ($args['address'] ?? ''));
 
         return response()->json(['profile' => $profile] + $suggestedListings);
     }

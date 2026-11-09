@@ -606,10 +606,10 @@ class CommandService extends CacheService
         - invest → user asks whether a property, a price or a typical unit in a place is a good INVESTMENT / rental: yield, ROI, cash flow, rental income, "will it pay for itself", "is a 4M condo that rents for 22k worth it", "is a 1BR in Lahug a good investment" — an investor's question, not a search and not a buy-vs-rent for living in
         - locate → user asks WHERE a property they were already shown is, to see it on a map, how far it is from them or from a landmark, or how to get there ("where is that?", "where is it located", "show me on the map", "how far is it from me", "how do I get there", "saan yan", "asa na dapit") — about a listing already shown, not a search for new listings
         - rentbuy → user asks whether to RENT OR BUY in a place ("should I rent or buy in Lahug", "rent vs buy a condo in Cebu", "is it better to rent or to buy", "mag-rent o bumili") — a comparison of the two, not a search
-        - project → user asks about a specific BUILDING, development or condo project by name ("tell me about Avida Towers Riala", "is 38 Park Avenue a good buy", "what's listed in Mivesa"), or to COMPARE two named developments ("Riala vs 38 Park Avenue")
+        - project → user asks about a specific BUILDING, development or condo project by name ("tell me about Avida Towers Riala", "is 38 Park Avenue a good buy", "how many units are in Mivesa", "what's Horizon 101 like"), or to COMPARE two named developments ("Riala vs 38 Park Avenue")
         - count → user asks HOW MANY listings / units / properties there are in a place, or whether we have any there: "how many condos for sale in Lahug", "ilan ang for rent sa Mabolo", "how many 2 bedroom units for rent in Cebu City", "do you have houses in Talisay?", "number of listings in Mandaue" — a question about the NUMBER, not a request to see them
         - area → user asks ABOUT a place in general: "tell me about Lahug", "what's it like in BGC", "is IT Park a good area to invest", "overview of Mandaue", "which barangays in Cebu City have the most listings", rental yield / ROI / "where do condos yield the most in Cebu" — an area or investment question, not a price-only question and not a request for listings
-        - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied)
+        - listing → user shows intent to buy, sell, rent, inquire, or search for property (explicit or implied), including the units or listings IN a named building or development ("show me the units in Horizon 101", "what's for rent in Mivesa", "listings in Avida Riala")
         - agent → user shows intent to find, search, contact, or inquire about a real estate agent (explicit or implied)
         - normal → greetings, small talk, or anything NOT related to Filipino Homes real estate
         
@@ -619,7 +619,7 @@ class CommandService extends CacheService
         - If the user asks for a person (agent, broker, realtor), classify as: agent
         - If the user asks how much properties cost / the price range / average price / rate in a place, classify as: price
         - If the user asks what a place is like, for an overview / snapshot / profile of an area or neighbourhood, or whether an area is good, classify as: area
-        - If the user names a specific building / development / condo project (not a city or barangay) and asks about it or compares two of them, classify as: project
+        - If the user names a specific building / development / condo project (not a city or barangay) and asks ABOUT it, how many units it has, or compares two of them, classify as: project. Asking to SEE, show, list or find the units / listings in a named building is: listing
         - If the user asks for property (house, condo, lot, rent, location) or to see/find/show listings, classify as: listing
         - A stated budget while looking for property ("condo in Makati under 5M") is: listing — not price
         - A MONTHLY amount or a salary asked against what they can buy ("at 25k a month", "my income is 60k") is: afford
@@ -743,6 +743,7 @@ class CommandService extends CacheService
         15. Put the buyer's human situation, when they share one, in `situation` as one neutral clause (e.g. "first-time buyer, nervous about the process, two small kids") — never a filter, never invented.
         16. Wishes that cannot be checked against a listing's data go in `unverifiable`, as short phrases: safe area, quiet, flood-free, good neighbours, no traffic, pet-friendly building, good for investment. Do not turn them into filters or keywords.
         12. If the user wants to be NEAR a specific place — a mall, business park, school, hospital, office, church, beach, a named building or development ("near IT Park", "walking distance to Ayala Center Cebu", "close to SM Seaside", "beside Cebu Doctors") — put that place's name in `near` (just the place, no "near"), and the distance in `radius_km` when they say one ("within 2 km" → 2; "walking distance" → 1; otherwise 0). Do NOT put the place in query_words or address; the city still goes in address when named.
+        17. If the user wants the listings IN a specific named building, condo tower, subdivision or development — its own units ("units in Horizon 101", "what's available in Mivesa", "listings in Avida Towers Riala", "Horizon 101 for rent") — put the development's name in `project`, just the name as written. That is different from `near`: "near Horizon 101" is the surroundings, "in Horizon 101" is the building itself. Do NOT put the development in query_words or address; the city still goes in address when named.
         SYSTEM
         ];
     
@@ -808,6 +809,10 @@ class CommandService extends CacheService
                             'near' => [
                                 'type' => 'string',
                                 'description' => 'A specific place the user wants to be near — mall, business park, school, hospital, office, named building/development (e.g. "IT Park", "Ayala Center Cebu", "SM Seaside", "Avida Towers Riala"). Just the place name. Empty string "" if none.'
+                            ],
+                            'project' => [
+                                'type' => 'string',
+                                'description' => 'The named building, condo tower, subdivision or development whose OWN units the user wants ("units in Horizon 101", "listings in Mivesa", "Avida Riala for rent"). Just the name, as written. Empty string "" if none. A place to be NEAR goes in `near`, not here.'
                             ],
                             'radius_km' => [
                                 'type' => 'number',

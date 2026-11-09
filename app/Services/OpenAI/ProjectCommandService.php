@@ -3,6 +3,7 @@
 namespace App\Services\OpenAI;
 
 use App\Services\Listing\PriceGuideService;
+use App\Services\Listing\ProjectFinder;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -20,7 +21,7 @@ class ProjectCommandService extends CacheService
 {
     use InsightStream;
 
-    public function __construct(private readonly CommandService $commands, private readonly PriceGuideService $guide)
+    public function __construct(private readonly CommandService $commands, private readonly PriceGuideService $guide, private readonly ProjectFinder $finder)
     {
     }
 
@@ -60,7 +61,8 @@ class ProjectCommandService extends CacheService
         }
         $first = $profiles[0];
         $followUps = array_values(array_filter([
-            ['label' => "Listings in {$first['name']}", 'prompt' => "Show me units for sale in {$first['name']}"],
+            $first['totals']['sale_listings'] > 0 ? ['label' => 'Units for sale', 'prompt' => "Show me the listings for sale in {$first['name']}"] : null,
+            $first['totals']['rent_listings'] > 0 ? ['label' => 'Units for rent', 'prompt' => "Show me the listings for rent in {$first['name']}"] : null,
             $first['barangay'] ? ['label' => "About {$first['barangay']}", 'prompt' => "Tell me about {$first['barangay']}, {$first['city']} as an area"] : null,
             ['label' => 'Agents who list here', 'prompt' => "Find me the best agent for {$first['name']}"],
         ]));
@@ -114,22 +116,10 @@ class ProjectCommandService extends CacheService
         return sprintf('**%s** has **%d live %s** right now%s.', $profile['name'], $t['listings'], $t['listings'] === 1 ? 'listing' : 'listings', $parts !== [] ? ': '.implode(' and ', $parts) : '');
     }
 
-    /** The project row a typed name points at — the best-known match with live listings. */
+    /** The development a name means — the finder the listing search uses too, so both see the same building. */
     public function resolve(string $name, string $cityHint = ''): ?object
     {
-        $words = array_values(array_filter(preg_split('/\W+/u', mb_strtolower($name)), fn ($w) => mb_strlen($w) > 1));
-        if ($words === []) {
-            return null;
-        }
-        $q = DB::table('projects')->whereNull('deleted_at');
-        foreach ($words as $w) {
-            $q->where('name', 'LIKE', "%{$w}%");
-        }
-        if ($cityHint !== '') {
-            $q->orderByRaw('CASE WHEN complete_address LIKE ? THEN 0 ELSE 1 END', ['%'.$cityHint.'%']);
-        }
-
-        return $q->orderByDesc('views')->first(['id', 'name', 'slug', 'complete_address', 'latitude', 'longitude', 'featured_photo', 'views', 'city_id', 'brgy_id']);
+        return $this->finder->find($name, $cityHint);
     }
 
     /**
