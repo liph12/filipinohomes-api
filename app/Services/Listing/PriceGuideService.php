@@ -799,7 +799,7 @@ class PriceGuideService
             return $this->cityMemo[$cityId];
         }
 
-        return $this->cityMemo[$cityId] = Cache::remember("price-guide:city:v5:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
+        return $this->cityMemo[$cityId] = Cache::remember("price-guide:city:v6:{$cityId}", self::TTL_SECONDS, function () use ($cityId) {
             $rows = $this->baseQuery()
                 ->where('cities.id', $cityId)
                 ->select(
@@ -844,6 +844,8 @@ class PriceGuideService
                     'views_per_day' => round(((int) ($r->clicks ?? 0)) / max(1, Carbon::parse($r->created_at)->diffInDays(now())), 3),
                     'category' => (string) $r->category,
                     'type' => (string) $r->type,
+                    // The subtype as agents file it (Townhouse, Warehouse, Residential Lot) for the inventory tables.
+                    'subtype' => (string) $r->subtype,
                     'tier' => self::tierOf((string) $r->subtype, $r->bedroom_count === null ? null : (int) $r->bedroom_count),
                     'price' => $price,
                     'sqm' => $area >= self::MIN_FLOOR_AREA_SQM ? $area : null,

@@ -19,8 +19,9 @@ class ListingCountTest extends TestCase
     {
         $fresh = Carbon::now()->subDays(3)->toDateTimeString();
         $old = Carbon::now()->subDays(90)->toDateTimeString();
-        $r = fn (string $cat, string $type, ?string $tier, float $price, string $at, int $brgy = 1) => [
-            'category' => $cat, 'type' => $type, 'tier' => $tier, 'price' => $price, 'listed_at' => $at, 'barangay_id' => $brgy,
+        $r = fn (string $cat, string $type, ?string $tier, float $price, string $at, int $brgy = 1, string $subtype = '') => [
+            'category' => $cat, 'type' => $type, 'subtype' => $subtype ?: ($tier ?? ''), 'tier' => $tier, 'price' => $price, 'listed_at' => $at,
+            'barangay_id' => $brgy, 'barangay' => $brgy === 1 ? 'Lahug' : 'Mabolo',
         ];
 
         return [
@@ -28,12 +29,12 @@ class ListingCountTest extends TestCase
             $r('For Sale', 'Condominium', 'Studio', 3_100_000, $old),
             $r('For Sale', 'Condominium', '1 Bedroom', 4_200_000, $old),
             $r('For Sale', 'Condominium', '2 Bedroom', 7_900_000, $fresh),
-            $r('For Sale', 'Condominium', null, 5_000_000, $old),
+            $r('For Sale', 'Condominium', null, 5_000_000, $old, 1, 'Loft'),
             $r('For Rent', 'Condominium', 'Studio', 15_000, $old),
             $r('For Rent', 'Condominium', '1 Bedroom', 22_000, $fresh),
-            $r('For Sale', 'House', '3 Bedroom', 12_000_000, $old),
-            $r('For Sale', 'Land', null, 3_000_000, $old, 2),
-            $r('For Rent', 'Commercial', null, 80_000, $old, 2),
+            $r('For Sale', 'House', '3 Bedroom', 12_000_000, $old, 1, 'House and Lot'),
+            $r('For Sale', 'Land', null, 3_000_000, $old, 2, 'Residential Lot'),
+            $r('For Rent', 'Commercial', null, 80_000, $old, 2, 'Warehouse'),
         ];
     }
 
@@ -145,6 +146,33 @@ class ListingCountTest extends TestCase
 
         $text = ProjectCommandService::mixSentence(['name' => 'Mivesa Garden Residences', 'totals' => ['listings' => 7], 'mix' => $mix]);
         $this->assertSame('**Mivesa Garden Residences** has **7 live listings** right now: **5 for sale** (2 studios, 1 one-bedroom, 1 two-bedroom, 1 size not stated) and **2 for rent** (1 studio, 1 one-bedroom).', $text);
+    }
+
+    public function test_the_inventory_counts_each_type_and_subtype_on_both_sides(): void
+    {
+        $inv = CountCommandService::inventory($this->rows());
+
+        $this->assertSame(['Condominium', 'Studio', 3], [$inv[0]['type'], $inv[0]['subtype'], $inv[0]['listings']], 'most listings first');
+        $this->assertSame(['listings' => 2, 'low' => 2_500_000.0, 'high' => 3_100_000.0], $inv[0]['sale']);
+        $this->assertSame(['listings' => 1, 'low' => 15_000.0, 'high' => 15_000.0], $inv[0]['rent']);
+        $warehouse = array_values(array_filter($inv, fn ($i) => $i['subtype'] === 'Warehouse'))[0];
+        $this->assertNull($warehouse['sale'], 'nothing for sale: no band');
+        $this->assertSame(1, $warehouse['rent']['listings']);
+        $this->assertContains('House and Lot', array_column($inv, 'subtype'));
+        $this->assertSame(7, count($inv), 'one row per type and subtype');
+        $this->assertSame(array_sum(array_column($inv, 'listings')), count($this->rows()), 'every listing is in exactly one row');
+    }
+
+    public function test_barangays_say_where_the_listings_sit(): void
+    {
+        $by = CountCommandService::byBarangay($this->rows());
+
+        $this->assertSame([
+            ['barangay' => 'Lahug', 'listings' => 8, 'sale_listings' => 6, 'rent_listings' => 2],
+            ['barangay' => 'Mabolo', 'listings' => 2, 'sale_listings' => 1, 'rent_listings' => 1],
+        ], $by);
+        $this->assertSame(['Lahug'], array_column(CountCommandService::byBarangay($this->rows(), 1), 'barangay'), 'the limit keeps the biggest');
+        $this->assertSame('Barangay not stated', CountCommandService::byBarangay([['category' => 'For Sale', 'barangay' => null, 'price' => 1.0]])[0]['barangay']);
     }
 
     public function test_sizes_are_left_out_when_no_size_is_known(): void

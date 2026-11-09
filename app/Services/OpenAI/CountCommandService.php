@@ -82,6 +82,9 @@ class CountCommandService extends CacheService
             'totals' => $tally['totals'],
             'sections' => $tally['sections'],
             'types' => $tally['types'],
+            'inventory' => $tally['inventory'],
+            // A city's listings by barangay, so the report says where they sit; a barangay has no split.
+            'barangays' => $place['barangay_id'] === null ? self::byBarangay(self::keep($inPlace, $asked)) : [],
             'city_totals' => $cityTally['totals'] ?? null,
             'agents' => $this->guide->topAgents($place['city_id'], $place['barangay_id']),
             'new_days' => self::NEW_DAYS,
@@ -97,16 +100,11 @@ class CountCommandService extends CacheService
      *
      * @param  array<int, array{category: string, type: string, tier: ?string, price: float, listed_at?: string}>  $rows
      * @param  array{property_type?: string, tier?: string, category?: string}  $asked
-     * @return array{totals: array{listings: int, sale_listings: int, rent_listings: int, new_30d: int}, sections: array<int, array<string, mixed>>, types: array<int, array{type: string, listings: int}>}
+     * @return array{totals: array{listings: int, sale_listings: int, rent_listings: int, new_30d: int}, sections: array<int, array<string, mixed>>, types: array<int, array{type: string, listings: int}>, inventory: array<int, array<string, mixed>>}
      */
     public static function tally(array $rows, array $asked): array
     {
-        $type = (string) ($asked['property_type'] ?? '');
-        $tier = (string) ($asked['tier'] ?? '');
-        $cat = (string) ($asked['category'] ?? '');
-        $kept = array_values(array_filter($rows, fn (array $r) => self::typeMatches((string) $r['type'], $type)
-            && ($tier === '' || ($r['tier'] ?? null) === $tier)
-            && ($cat === '' || $r['category'] === $cat)));
+        $kept = self::keep($rows, $asked);
         $since = Carbon::now()->subDays(self::NEW_DAYS)->toDateTimeString();
         $isNew = fn (array $r) => isset($r['listed_at']) && (string) $r['listed_at'] >= $since;
 
@@ -144,7 +142,68 @@ class CountCommandService extends CacheService
             ],
             'sections' => $sections,
             'types' => self::byType($kept),
+            'inventory' => self::inventory($kept),
         ];
+    }
+
+    /**
+     * The rows that match what was asked: property type, unit size, For Sale / For Rent.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function keep(array $rows, array $asked): array
+    {
+        $type = (string) ($asked['property_type'] ?? '');
+        $tier = (string) ($asked['tier'] ?? '');
+        $cat = (string) ($asked['category'] ?? '');
+
+        return array_values(array_filter($rows, fn (array $r) => self::typeMatches((string) $r['type'], $type)
+            && ($tier === '' || ($r['tier'] ?? null) === $tier)
+            && ($cat === '' || $r['category'] === $cat)));
+    }
+
+    /**
+     * Every property type and subtype with how many are for sale and for rent and each side's price
+     * band — "warehouses: 9 for sale (₱8M – ₱120M), 3 for rent (₱80K – ₱400K/month)". Most first.
+     *
+     * @return array<int, array{type: string, subtype: string, listings: int, sale: ?array{listings: int, low: float, high: float}, rent: ?array{listings: int, low: float, high: float}}>
+     */
+    public static function inventory(array $rows): array
+    {
+        $groups = [];
+        foreach ($rows as $r) {
+            $key = $r['type'].'|'.($r['subtype'] ?? '');
+            $groups[$key] ??= ['type' => (string) $r['type'], 'subtype' => (string) ($r['subtype'] ?? ''), 'sale' => [], 'rent' => []];
+            $groups[$key][$r['category'] === 'For Rent' ? 'rent' : 'sale'][] = (float) $r['price'];
+        }
+        $side = fn (array $p) => $p === [] ? null : ['listings' => count($p), 'low' => (float) min($p), 'high' => (float) max($p)];
+        $out = [];
+        foreach ($groups as $g) {
+            $out[] = ['type' => $g['type'], 'subtype' => $g['subtype'], 'listings' => count($g['sale']) + count($g['rent']), 'sale' => $side($g['sale']), 'rent' => $side($g['rent'])];
+        }
+        usort($out, fn ($a, $b) => [$b['listings'], $a['type'], $a['subtype']] <=> [$a['listings'], $b['type'], $b['subtype']]);
+
+        return $out;
+    }
+
+    /**
+     * Where the listings sit within a city: each barangay's count, most first, with the sale / rent split.
+     *
+     * @return array<int, array{barangay: string, listings: int, sale_listings: int, rent_listings: int}>
+     */
+    public static function byBarangay(array $rows, int $limit = 12): array
+    {
+        $groups = [];
+        foreach ($rows as $r) {
+            $name = (string) ($r['barangay'] ?? '') ?: 'Barangay not stated';
+            $groups[$name] ??= ['barangay' => $name, 'listings' => 0, 'sale_listings' => 0, 'rent_listings' => 0];
+            $groups[$name]['listings']++;
+            $groups[$name][$r['category'] === 'For Rent' ? 'rent_listings' : 'sale_listings']++;
+        }
+        $groups = array_values($groups);
+        usort($groups, fn ($a, $b) => $b['listings'] <=> $a['listings'] ?: strcmp($a['barangay'], $b['barangay']));
+
+        return array_slice($groups, 0, $limit);
     }
 
     /** @return array{low: float, median: float, high: float} */
