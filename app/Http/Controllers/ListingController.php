@@ -34,6 +34,7 @@ use App\Services\Project\ProjectService;
 use App\Services\TeamLeadershipService;
 use App\Support\IslandMap;
 use App\Support\RegionMap;
+use App\Support\RolePreview;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -981,15 +982,21 @@ class ListingController extends Controller
     private function resolveListingScope(Request $request): array
     {
         $user = $request->user();
+        // Scoping, so the admin "Change Role" preview applies (RolePreview can
+        // only narrow). authorizeListingAudit() below is authorization and
+        // deliberately keeps reading the real role.
+        $scopeRole = RolePreview::scopeRole($request);
 
-        if ($user->role->name === 'admin') {
+        if ($scopeRole === 'admin') {
             return [true, [], null];
         }
 
         // Secretary (FH role 5): region-scoped, read + verify only. A secretary
         // with no region assigned sees nothing (fail-closed).
-        if ($user->isSecretary()) {
-            $region = $user->secretaryRegion();
+        if ($scopeRole === 'secretary') {
+            // An admin previewing the secretary view is scoped to the region on
+            // their own agent profile, exactly as a secretary would be.
+            $region = $user->isSecretary() ? $user->secretaryRegion() : $user->agent?->region;
             if ($region === null) {
                 abort(403);
             }
@@ -1455,7 +1462,10 @@ class ListingController extends Controller
     public function dashboard(Request $request)
     {
         $user = $request->user();
-        $isAdmin = $user->role->name === 'admin';
+        // Scoped by RolePreview so an admin previewing the agent dashboard gets
+        // the agent-shaped payload for their own account (the admin payload has
+        // no `category` etc., and the agent tiles rendered blank on it).
+        $isAdmin = RolePreview::scopeRole($request) === 'admin';
         // Null for any signed-in user with no agents row: OTP-signup clients
         // (role_id 3, no agent), editors, and agents whose profile was never
         // created. They all reach this route through the shared auth:sanctum
@@ -1555,9 +1565,18 @@ class ListingController extends Controller
         ]);
 
         $user = $request->user();
-        $isAdmin = $user->role->name === 'admin';
+        $isAdmin = RolePreview::scopeRole($request) === 'admin';
         $start = $validated['date_start'] ?? now()->startOfYear()->toDateString();
         $end = $validated['date_end'] ?? now()->toDateString();
+
+        // Own-agent scope for everyone but admin. No agents row → match
+        // nothing explicitly: `where('agent_id', null)` would compile to
+        // `IS NULL` (see dashboard()), and an admin previewing the agent view
+        // may well have no agents row.
+        $agentId = $user->agent?->id;
+        $ownAgent = fn ($q, string $col) => $agentId
+            ? $q->where($col, $agentId)
+            : $q->whereRaw('1 = 0');
 
         // Distinct agents with ≥1 transaction in the period.
         $agentIds = Listing::query()
@@ -1566,7 +1585,7 @@ class ListingController extends Controller
                     ->whereNotNull('status_change_date')
                     ->whereBetween('status_change_date', [$start.' 00:00:00', $end.' 23:59:59']);
             })
-            ->when(! $isAdmin, fn ($q) => $q->where('agent_id', optional($user->agent)->id))
+            ->when(! $isAdmin, fn ($q) => $ownAgent($q, 'agent_id'))
             ->distinct()
             ->pluck('agent_id')
             ->filter()
@@ -1584,7 +1603,7 @@ class ListingController extends Controller
             ->whereIn('properties.status', ['sold', 'rented', 'leased'])
             ->whereNotNull('properties.status_change_date')
             ->whereBetween('properties.status_change_date', [$start.' 00:00:00', $end.' 23:59:59'])
-            ->when(! $isAdmin, fn ($q) => $q->where('listings.agent_id', optional($user->agent)->id))
+            ->when(! $isAdmin, fn ($q) => $ownAgent($q, 'listings.agent_id'))
             ->whereNotNull('listings.agent_id')
             ->groupBy('listings.agent_id', 'properties.status')
             ->get([
@@ -1989,7 +2008,7 @@ class ListingController extends Controller
 
         $user = $request->user();
         $user->loadMissing('role', 'agent');
-        $isAdmin = $user->role?->name === 'admin';
+        $isAdmin = RolePreview::scopeRole($request) === 'admin';
         $agentId = $user->agent?->id;
         $start = $validated['date_start'] ?? now()->startOfYear()->toDateString();
         $end = $validated['date_end'] ?? now()->toDateString();

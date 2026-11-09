@@ -42,6 +42,18 @@ class PageBuilderController extends Controller
         $query = PageBuilder::query();
         $this->applyPageSearch($query, (string) $request->input('search', ''));
 
+        // Public callers (the /page/agents hub and the page sitemap) opt in with
+        // `public=1` and must not list a page the public would get a 404 for:
+        // an admin's page before they've posted a listing — see
+        // guardInactiveAgentPage(). The admin Page List omits the flag and keeps
+        // every page.
+        if ($request->boolean('public')) {
+            $query->where(function ($q) {
+                $q->whereDoesntHave('agent.user.role', fn ($r) => $r->where('name', 'admin'))
+                    ->orWhereHas('agent', fn ($a) => $a->eligibleForPublicDirectory());
+            });
+        }
+
         // Default order: most-viewed first (biggest clicks → smallest) when no
         // explicit sort is requested.
         if (! $this->applyPageSort($query, $request)) {
@@ -150,11 +162,20 @@ class PageBuilderController extends Controller
      * the owning agent, admins, and region secretaries keep access. These routes
      * carry no auth middleware, so the token is resolved on demand via the
      * sanctum guard.
+     *
+     * An ADMIN's page is also hidden until they have posted a listing — admins
+     * work as agents, but one with nothing listed doesn't belong on the public
+     * agent pages (Agent::scopeEligibleForPublicDirectory, the same rule the
+     * directory uses). Agents' and secretaries' pages are unaffected.
      */
     private function guardInactiveAgentPage(PageBuilder $page): void
     {
         $agent = $page->agent;
-        if ($agent && $agent->status === 'active') {
+        $ownedByAdmin = $agent
+            && $agent->loadMissing('user.role')->user?->role?->name === 'admin';
+
+        if ($agent && $agent->status === 'active'
+            && (! $ownedByAdmin || $agent->isEligibleForPublicDirectory())) {
             return;
         }
 

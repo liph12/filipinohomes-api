@@ -63,6 +63,38 @@ class Agent extends Model implements Auditable
         return $this->hasMany(Listing::class, 'agent_id');
     }
 
+    /**
+     * Who may appear on the PUBLIC agent pages — the /agents directory, office
+     * pages, the "N agents online" pill and the agent's own profile page:
+     * every agent, plus any admin with at least one publicly-listed listing.
+     *
+     * Admins also work as agents, so their posted listings should put them in
+     * front of clients like anyone else — but an admin with nothing posted has
+     * no business in the directory, so the listing is the condition. "Posted"
+     * means publicly listed (Listing::publiclyListed), so an admin whose only
+     * listings are private or flagged doesn't surface with a profile reading
+     * "0 listings".
+     *
+     * The single definition: keep every public surface on this scope (and the
+     * profile page on isEligibleForPublicDirectory()) so they cannot drift.
+     */
+    public function scopeEligibleForPublicDirectory($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereHas('user.role', fn ($r) => $r->where('name', 'agent'))
+                ->orWhere(function ($admin) {
+                    $admin->whereHas('user.role', fn ($r) => $r->where('name', 'admin'))
+                        ->whereHas('listings', fn ($l) => $l->publiclyListed());
+                });
+        });
+    }
+
+    /** Instance form of scopeEligibleForPublicDirectory(), for a single agent. */
+    public function isEligibleForPublicDirectory(): bool
+    {
+        return static::query()->whereKey($this->getKey())->eligibleForPublicDirectory()->exists();
+    }
+
     public function pageBuilder()
     {
         return $this->hasOne(PageBuilder::class, 'agent_id');

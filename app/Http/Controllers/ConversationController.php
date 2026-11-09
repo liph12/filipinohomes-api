@@ -9,6 +9,7 @@ use App\Services\Inquiry\InquiryModerationService;
 use App\Services\ReviewEligibilityService;
 use App\Services\TeamLeadershipService;
 use App\Support\Impersonation;
+use App\Support\RolePreview;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -30,8 +31,10 @@ class ConversationController extends Controller
 
         // Agents should only see accepted/closed conversations, not pending ones.
         // Team leaders are an exception: they need to see pending inquiries for
-        // their team members so they can moderate them.
-        if ($user->role?->name === 'agent') {
+        // their team members so they can moderate them. Scoped through
+        // RolePreview so an admin previewing the agent view gets the agent's
+        // filter (narrowing only — the policy check above stays real).
+        if (RolePreview::scopeRole($request) === 'agent') {
             $ledIds = app(TeamLeadershipService::class)->getLedTeamMemberUserIds($user->id);
 
             $query->where(function ($q) use ($ledIds) {

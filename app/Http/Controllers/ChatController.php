@@ -18,6 +18,7 @@ use App\Services\AuditMailService;
 use App\Services\AuditSecurityService;
 use App\Services\ChatRateLimitService;
 use App\Services\TeamLeadershipService;
+use App\Support\RolePreview;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -31,7 +32,10 @@ class ChatController extends Controller
     public function index(Request $request)
     {
         $user = Auth::user();
-        $roleName = $user->role?->name;
+        // Scoping only (RolePreview can only narrow): an admin previewing the
+        // agent or client view sees that role's slice of their own chats, not
+        // the full moderation inbox. store()/send keep reading the real role.
+        $roleName = RolePreview::scopeRole($request);
 
         // Show endpoint hydrates the rest on demand.
         $query = Chat::with([

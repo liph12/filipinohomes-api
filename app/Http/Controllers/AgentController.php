@@ -83,11 +83,19 @@ class AgentController extends Controller
                 'user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
                 'pageBuilder:id,agent_id,slug',
                 'teamMembers.team',
-            ])
-            ->whereHas('user.role', function ($q) use ($request) {
+            ]);
+
+        if ($request->boolean('public')) {
+            // Public pages (directory, search, office pages): agents, plus any
+            // admin who has posted a listing — admins also work as agents.
+            $query->eligibleForPublicDirectory();
+        } else {
+            // Admin management views keep the explicit role split.
+            $query->whereHas('user.role', function ($q) use ($request) {
                 // Opt-in: show ONLY admins that have an agent profile.
                 $q->where('name', $request->boolean('include_admins') ? 'admin' : 'agent');
             });
+        }
 
         // Public visibility gate: the public agents directory opts in with
         // `public=1` (see lib/agents.ts + hooks/useAgents.ts) and must surface
@@ -377,11 +385,11 @@ class AgentController extends Controller
         $threshold = now()->subMinutes(5);
 
         $ids = User::query()
-            ->whereHas('role', fn ($q) => $q->where('name', 'agent'))
-            // Public "N agents online" pill — only count active agents, matching
-            // the public agents-directory gate (excludes inactive/resigned/
-            // deactivated and soft-deleted agents).
-            ->whereHas('agent', fn ($q) => $q->where('status', 'active'))
+            // Public "N agents online" pill — same eligibility as the public
+            // directory (agents, plus admins who have posted a listing), and
+            // only active agents (excludes inactive/resigned/deactivated and
+            // soft-deleted agents).
+            ->whereHas('agent', fn ($q) => $q->where('status', 'active')->eligibleForPublicDirectory())
             ->where('last_online_at', '>=', $threshold)
             ->whereHas('agent.listings', function ($lq) {
                 $lq->whereNull('listings.deleted_at');

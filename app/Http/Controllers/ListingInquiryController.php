@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Listing;
 use App\Models\ListingInquiry;
+use App\Support\RolePreview;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -26,10 +27,16 @@ class ListingInquiryController extends Controller
             'latestMessage',
         ]);
 
-        $role = $user->role->name;
+        // RolePreview: an admin previewing the client/agent view gets that
+        // role's slice of their OWN inquiries, not every inquiry in the system.
+        $role = RolePreview::scopeRole($request);
 
         if ($role === 'agent') {
-            $query->where('agent_id', $user->agent->id);
+            // Null-safe: an agent-scoped request without an agents row (an
+            // admin previewing, or an agent whose profile was never created)
+            // has no inquiries of its own — not a 500.
+            $agentId = $user->agent?->id;
+            $agentId ? $query->where('agent_id', $agentId) : $query->whereRaw('1 = 0');
         } elseif ($role !== 'admin') {
             // Regular client — only see their own inquiries
             $query->where('client_id', $user->id);
