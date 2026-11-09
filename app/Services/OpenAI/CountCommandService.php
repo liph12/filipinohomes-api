@@ -21,6 +21,11 @@ class CountCommandService extends CacheService
 
     public const NEW_DAYS = 30;
 
+    /** Above these an "asking price" is a placeholder, not a price: ₱5 billion to buy, ₱5 million a month to rent. */
+    public const SALE_PRICE_CEILING = 5_000_000_000;
+
+    public const RENT_PRICE_CEILING = 5_000_000;
+
     private const CATEGORIES = ['For Sale', 'For Rent'];
 
     public function __construct(private readonly PriceGuideService $guide, private readonly PriceCommandService $price)
@@ -30,14 +35,16 @@ class CountCommandService extends CacheService
     public function replyStream(array $thread, $req): StreamedResponse
     {
         $asked = $this->price->extract($thread);
+        // A province ("Bohol", "Palawan", "the province of Cebu") is every city in it together.
         $place = $this->price->resolvePlace($asked);
-        if ($place === null) {
+        $province = self::matchProvince($this->guide->provinces(), $asked, self::lastUserText($thread), $place !== null);
+        if ($province === null && $place === null) {
             AsaQuestionLog::outcome($req, 'no_data');
 
             return $this->streamInsight('count', 'count', ['empty' => true], $this->notFoundText($asked), [], $req);
         }
 
-        $insight = $this->insight($place, $asked);
+        $insight = $province !== null ? $this->provinceInsight($province, $asked) : $this->insight($place, $asked);
         $text = self::headline($insight);
         $spot = $insight['place']['label'];
         $what = self::whatPhrase($insight['asked'], 1, '');
@@ -46,10 +53,18 @@ class CountCommandService extends CacheService
                 ? ['label' => 'Show me the ones for sale', 'prompt' => "Show me {$what} for sale in {$spot}"] : null,
             $insight['totals']['rent_listings'] > 0 && $insight['asked']['category'] !== 'For Sale'
                 ? ['label' => 'Show me the ones for rent', 'prompt' => "Show me {$what} for rent in {$spot}"] : null,
-            $insight['totals']['listings'] > 0
+            $insight['totals']['listings'] > 0 && $insight['place']['scope'] !== 'province'
                 ? ['label' => 'What do they cost?', 'prompt' => "How much is a {$what} in {$spot}?"] : null,
-            ['label' => "About {$insight['place']['city']}", 'prompt' => "Tell me about {$insight['place']['city']} as an area"],
+            $insight['place']['scope'] !== 'province'
+                ? ['label' => "About {$insight['place']['city']}", 'prompt' => "Tell me about {$insight['place']['city']} as an area"] : null,
         ]));
+        if ($insight['place']['scope'] === 'province') {
+            // Drill into the province's biggest cities.
+            $plural = self::whatPhrase($insight['asked'], 2, '');
+            foreach (array_slice($insight['cities'], 0, 3) as $c) {
+                $followUps[] = ['label' => $c['city'], 'prompt' => "How many {$plural} are there in {$c['city']}?"];
+            }
+        }
 
         AsaQuestionLog::outcome($req, $insight['totals']['listings'] > 0 ? 'answered' : 'no_data', $spot);
 
@@ -85,11 +100,101 @@ class CountCommandService extends CacheService
             'inventory' => $tally['inventory'],
             // A city's listings by barangay, so the report says where they sit; a barangay has no split.
             'barangays' => $place['barangay_id'] === null ? self::byBarangay(self::keep($inPlace, $asked)) : [],
+            'cities' => [],
             'city_totals' => $cityTally['totals'] ?? null,
             'agents' => $this->guide->topAgents($place['city_id'], $place['barangay_id']),
             'new_days' => self::NEW_DAYS,
             'computed_at' => Carbon::now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * A province's counts: every city's rows together, the split by city instead of by barangay, the
+     * agents most active across the province.
+     *
+     * @return array<string, mixed>
+     */
+    public function provinceInsight(array $province, array $asked): array
+    {
+        $rows = [];
+        foreach ($province['cities'] as $c) {
+            foreach ($this->guide->rows((int) $c['city_id']) as $r) {
+                $rows[] = $r + ['city' => (string) $c['city']];
+            }
+        }
+        $tally = self::tally($rows, $asked);
+
+        return [
+            'place' => ['label' => $province['province'], 'city' => $province['province'], 'barangay' => null, 'province' => $province['province'], 'scope' => 'province', 'cities_count' => count($province['cities'])],
+            'asked' => [
+                'property_type' => (string) ($asked['property_type'] ?? ''),
+                'tier' => (string) ($asked['tier'] ?? ''),
+                'category' => (string) ($asked['category'] ?? ''),
+            ],
+            'totals' => $tally['totals'],
+            'sections' => $tally['sections'],
+            'types' => $tally['types'],
+            'inventory' => $tally['inventory'],
+            'barangays' => [],
+            'cities' => self::byCity(self::keep($rows, $asked)),
+            'city_totals' => null,
+            'agents' => $this->guide->topAgentsIn(array_column($province['cities'], 'city_id')),
+            'new_days' => self::NEW_DAYS,
+            'computed_at' => Carbon::now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * The province a question means, if any: a named province; or a city / barangay word that is really
+     * a province's name when no city matches it, or when the question says "province" or "whole".
+     *
+     * @param  array<int, array{province_id: int, province: string, listings: int, cities: array<int, array<string, mixed>>}>  $provinces
+     * @return array{province_id: int, province: string, listings: int, cities: array<int, array<string, mixed>>}|null
+     */
+    public static function matchProvince(array $provinces, array $asked, string $question, bool $placeKnown): ?array
+    {
+        $norm = fn (string $s) => trim(preg_replace('/\s+/', ' ', preg_replace('/\b(province|region|probinsya|of|the|whole|entire|all)\b/u', ' ', preg_replace('/[^a-z0-9ñ ]/u', ' ', mb_strtolower($s)))));
+        $find = function (string $name) use ($provinces, $norm): ?array {
+            $want = $norm($name);
+            if ($want === '') {
+                return null;
+            }
+            if (in_array($want, ['ncr', 'national capital', 'manila region'], true)) {
+                $want = 'metro manila';
+            }
+            foreach ($provinces as $p) {
+                if ($norm($p['province']) === $want) {
+                    return $p;
+                }
+            }
+
+            return null;
+        };
+        if (($hit = $find((string) ($asked['province'] ?? ''))) !== null) {
+            return $hit;
+        }
+        $saysProvince = (bool) preg_match('/\b(province|probinsya|whole|entire|all of|buong)\b/iu', $question);
+        if ($placeKnown && ! $saysProvince) {
+            return null;
+        }
+        foreach ([(string) ($asked['city'] ?? ''), (string) ($asked['barangay'] ?? '')] as $name) {
+            if (($hit = $find($name)) !== null) {
+                return $hit;
+            }
+        }
+
+        return null;
+    }
+
+    private static function lastUserText(array $thread): string
+    {
+        for ($i = count($thread) - 1; $i >= 0; $i--) {
+            if (($thread[$i]['role'] ?? '') === 'user') {
+                return (string) ($thread[$i]['content'] ?? '');
+            }
+        }
+
+        return '';
     }
 
     // ── Pure counting ─────────────────────────────────────────────────────
@@ -159,7 +264,8 @@ class CountCommandService extends CacheService
 
         return array_values(array_filter($rows, fn (array $r) => self::typeMatches((string) $r['type'], $type)
             && ($tier === '' || ($r['tier'] ?? null) === $tier)
-            && ($cat === '' || $r['category'] === $cat)));
+            && ($cat === '' || $r['category'] === $cat)
+            && (float) $r['price'] <= ($r['category'] === 'For Rent' ? self::RENT_PRICE_CEILING : self::SALE_PRICE_CEILING)));
     }
 
     /**
@@ -193,15 +299,31 @@ class CountCommandService extends CacheService
      */
     public static function byBarangay(array $rows, int $limit = 12): array
     {
+        return self::groupedCounts($rows, 'barangay', 'Barangay not stated', $limit);
+    }
+
+    /**
+     * Where a province's listings sit: each city's or town's count, most first, with the sale / rent split.
+     *
+     * @return array<int, array{city: string, listings: int, sale_listings: int, rent_listings: int}>
+     */
+    public static function byCity(array $rows, int $limit = 15): array
+    {
+        return self::groupedCounts($rows, 'city', 'City not stated', $limit);
+    }
+
+    /** @return array<int, array<string, int|string>> */
+    private static function groupedCounts(array $rows, string $key, string $fallback, int $limit): array
+    {
         $groups = [];
         foreach ($rows as $r) {
-            $name = (string) ($r['barangay'] ?? '') ?: 'Barangay not stated';
-            $groups[$name] ??= ['barangay' => $name, 'listings' => 0, 'sale_listings' => 0, 'rent_listings' => 0];
+            $name = (string) ($r[$key] ?? '') ?: $fallback;
+            $groups[$name] ??= [$key => $name, 'listings' => 0, 'sale_listings' => 0, 'rent_listings' => 0];
             $groups[$name]['listings']++;
             $groups[$name][$r['category'] === 'For Rent' ? 'rent_listings' : 'sale_listings']++;
         }
         $groups = array_values($groups);
-        usort($groups, fn ($a, $b) => $b['listings'] <=> $a['listings'] ?: strcmp($a['barangay'], $b['barangay']));
+        usort($groups, fn ($a, $b) => $b['listings'] <=> $a['listings'] ?: strcmp((string) $a[$key], (string) $b[$key]));
 
         return array_slice($groups, 0, $limit);
     }
@@ -269,7 +391,9 @@ class CountCommandService extends CacheService
             if ($ct && $ct['listings'] > 0) {
                 $text .= sprintf(' **%s** as a whole has **%d %s**: %d for sale and %d for rent.', $insight['place']['city'], $ct['listings'], self::whatPhrase($asked, $ct['listings'], ''), $ct['sale_listings'], $ct['rent_listings']);
             } else {
-                $text .= ' Try the city as a whole or a nearby area, and I can show the closest matches.';
+                $text .= ($insight['place']['scope'] ?? '') === 'province'
+                    ? ' Try one of its cities, or another province.'
+                    : ' Try the city as a whole or a nearby area, and I can show the closest matches.';
             }
 
             return $text;
@@ -364,10 +488,10 @@ class CountCommandService extends CacheService
 
     private function notFoundText(array $asked): string
     {
-        $named = trim(implode(', ', array_filter([$asked['barangay'] ?? '', $asked['city'] ?? ''])));
+        $named = trim(implode(', ', array_filter([$asked['barangay'] ?? '', $asked['city'] ?? '', $asked['province'] ?? ''])));
 
         return $named !== ''
-            ? "I can't find **{$named}** among the places with live listings on Filipino Homes. Check the spelling, or name the city it is in."
-            : 'Which city or barangay should I count listings in? You can add a type and size too, like "2 bedroom condos for rent in Lahug".';
+            ? "I can't find **{$named}** among the places with live listings on Filipino Homes. Check the spelling, or name the city or province it is in."
+            : 'Which city, province or barangay should I count listings in? You can add a type and size too, like "2 bedroom condos for rent in Lahug" or "houses for sale in Bohol".';
     }
 }

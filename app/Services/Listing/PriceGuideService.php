@@ -500,6 +500,61 @@ class PriceGuideService
     }
 
     /**
+     * Every province with live listings and the cities and towns in it — no minimum per town, so a
+     * province's count is whole. Most listings first.
+     *
+     * @return array<int, array{province_id: int, province: string, listings: int, cities: array<int, array{city_id: int, city: string, listings: int}>}>
+     */
+    public function provinces(): array
+    {
+        return Cache::remember('price-guide:provinces:v1', self::TTL_SECONDS, function () {
+            $rows = $this->baseQuery()
+                ->select('provinces.id as province_id', 'provinces.name as province', 'cities.id as city_id', 'cities.name as city', DB::raw('COUNT(*) as listings'))
+                ->groupBy('provinces.id', 'provinces.name', 'cities.id', 'cities.name')
+                ->orderByDesc('listings')
+                ->get();
+            $out = [];
+            foreach ($rows as $r) {
+                $out[(int) $r->province_id] ??= ['province_id' => (int) $r->province_id, 'province' => (string) $r->province, 'listings' => 0, 'cities' => []];
+                $out[(int) $r->province_id]['listings'] += (int) $r->listings;
+                $out[(int) $r->province_id]['cities'][] = ['city_id' => (int) $r->city_id, 'city' => (string) $r->city, 'listings' => (int) $r->listings];
+            }
+            $out = array_values($out);
+            usort($out, fn ($a, $b) => $b['listings'] <=> $a['listings']);
+
+            return $out;
+        });
+    }
+
+    /**
+     * The agents with the most live listings across several cities — a province's most active.
+     *
+     * @param  array<int, int>  $cityIds
+     * @return array<int, array{id: int, name: string, listings: int}>
+     */
+    public function topAgentsIn(array $cityIds, int $limit = 3): array
+    {
+        $cityIds = array_values(array_unique(array_map('intval', $cityIds)));
+        if ($cityIds === []) {
+            return [];
+        }
+        sort($cityIds);
+        $key = 'price-guide:agents-in:'.md5(implode(',', $cityIds)).":{$limit}";
+
+        return Cache::remember($key, self::TTL_SECONDS, function () use ($cityIds, $limit) {
+            return $this->baseQuery()->whereIn('cities.id', $cityIds)
+                ->select('agents.id', 'agents.first_name', 'agents.last_name', DB::raw('COUNT(*) as listings'))
+                ->groupBy('agents.id', 'agents.first_name', 'agents.last_name')
+                ->orderByDesc('listings')
+                ->limit($limit)
+                ->get()
+                ->map(fn ($a) => ['id' => (int) $a->id, 'name' => trim("{$a->first_name} {$a->last_name}"), 'listings' => (int) $a->listings])
+                ->values()
+                ->all();
+        });
+    }
+
+    /**
      * The city's slim listing rows (see cityRows), for callers that compute their own statistics —
      * the valuation and the rent-or-buy comparison. Empty when the city has no public listings.
      *

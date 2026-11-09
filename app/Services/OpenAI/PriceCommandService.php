@@ -109,11 +109,11 @@ class PriceCommandService extends CacheService
     /**
      * What the user is asking about, from the thread — place and optional narrowing. Never prices.
      *
-     * @return array{city:string, barangay:string, category:string, tier:string, property_type:string}
+     * @return array{city:string, barangay:string, province:string, category:string, tier:string, property_type:string}
      */
     public function extract(array $thread): array
     {
-        $empty = ['city' => '', 'barangay' => '', 'category' => '', 'tier' => '', 'property_type' => ''];
+        $empty = ['city' => '', 'barangay' => '', 'province' => '', 'category' => '', 'tier' => '', 'property_type' => ''];
 
         try {
             $response = $this->client->chat()->create([
@@ -126,6 +126,7 @@ class PriceCommandService extends CacheService
                     Return the city and, when named, the barangay (district) — e.g. "Lahug" is a barangay of "Cebu City";
                     "Mactan" of "Lapu-Lapu City"; "BGC" / "Bonifacio Global City" of "Taguig City"; "IT Park" is in Lahug, Cebu City.
                     If only a barangay is named and you know its city, fill the city too. Do not guess a place that was not implied.
+                    If the place is a PROVINCE or region rather than a city — "Bohol", "Palawan", "Cebu province", "Metro Manila" — put it in province and leave city empty unless a city is named too.
                     Expand abbreviations to full names: "CDO" → "Cagayan de Oro", "BGC" → barangay "Bonifacio Global City" in "Taguig City", "QC" → "Quezon City", "GenSan" → "General Santos City".
                     Leave fields empty ("") when not mentioned. Never output prices.
                     SYSTEM,
@@ -138,11 +139,12 @@ class PriceCommandService extends CacheService
                         'properties' => [
                             'city' => ['type' => 'string', 'description' => 'City or municipality, e.g. "Cebu City", "Makati City". "" if none.'],
                             'barangay' => ['type' => 'string', 'description' => 'Barangay / district inside the city, e.g. "Lahug". "" if none.'],
+                            'province' => ['type' => 'string', 'description' => 'Province or region when named instead of a city, e.g. "Bohol", "Palawan", "Metro Manila". "" if none.'],
                             'category' => ['type' => 'string', 'enum' => ['', 'For Sale', 'For Rent'], 'description' => 'Buying = For Sale, renting = For Rent, "" if not said.'],
                             'tier' => ['type' => 'string', 'enum' => ['', 'Studio', '1 Bedroom', '2 Bedroom', '3 Bedroom', '4+ Bedroom'], 'description' => 'Unit size if said ("2BR" = "2 Bedroom", 4 or more = "4+ Bedroom").'],
                             'property_type' => ['type' => 'string', 'enum' => ['', 'Condominium', 'House', 'Apartment', 'Lot', 'Commercial'], 'description' => 'Property type if said (condo = Condominium, house/townhouse = House, lot/land = Lot).'],
                         ],
-                        'required' => ['city', 'barangay', 'category', 'tier', 'property_type'],
+                        'required' => ['city', 'barangay', 'province', 'category', 'tier', 'property_type'],
                     ],
                 ]],
                 'function_call' => ['name' => 'extract_price_query'],

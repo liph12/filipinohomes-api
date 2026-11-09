@@ -21,7 +21,7 @@ class ListingCountTest extends TestCase
         $old = Carbon::now()->subDays(90)->toDateTimeString();
         $r = fn (string $cat, string $type, ?string $tier, float $price, string $at, int $brgy = 1, string $subtype = '') => [
             'category' => $cat, 'type' => $type, 'subtype' => $subtype ?: ($tier ?? ''), 'tier' => $tier, 'price' => $price, 'listed_at' => $at,
-            'barangay_id' => $brgy, 'barangay' => $brgy === 1 ? 'Lahug' : 'Mabolo',
+            'barangay_id' => $brgy, 'barangay' => $brgy === 1 ? 'Lahug' : 'Mabolo', 'city' => $brgy === 1 ? 'Cebu City' : 'Mandaue City',
         ];
 
         return [
@@ -173,6 +173,44 @@ class ListingCountTest extends TestCase
         ], $by);
         $this->assertSame(['Lahug'], array_column(CountCommandService::byBarangay($this->rows(), 1), 'barangay'), 'the limit keeps the biggest');
         $this->assertSame('Barangay not stated', CountCommandService::byBarangay([['category' => 'For Sale', 'barangay' => null, 'price' => 1.0]])[0]['barangay']);
+    }
+
+    public function test_cities_say_where_a_provinces_listings_sit(): void
+    {
+        $this->assertSame([
+            ['city' => 'Cebu City', 'listings' => 8, 'sale_listings' => 6, 'rent_listings' => 2],
+            ['city' => 'Mandaue City', 'listings' => 2, 'sale_listings' => 1, 'rent_listings' => 1],
+        ], CountCommandService::byCity($this->rows()));
+    }
+
+    public function test_a_province_is_read_from_its_name_or_from_the_word_province(): void
+    {
+        $provinces = [
+            ['province_id' => 1, 'province' => 'Cebu', 'listings' => 2000, 'cities' => [['city_id' => 1, 'city' => 'Cebu City', 'listings' => 900]]],
+            ['province_id' => 2, 'province' => 'Bohol', 'listings' => 40, 'cities' => [['city_id' => 9, 'city' => 'Tagbilaran City', 'listings' => 30]]],
+            ['province_id' => 3, 'province' => 'Metro Manila', 'listings' => 120, 'cities' => []],
+        ];
+        $m = fn (array $asked, string $q, bool $known) => CountCommandService::matchProvince($provinces, $asked + ['province' => '', 'city' => '', 'barangay' => ''], $q, $known)['province'] ?? null;
+
+        $this->assertSame('Bohol', $m(['province' => 'Bohol'], 'How many houses in Bohol?', false));
+        $this->assertSame('Bohol', $m(['city' => 'Bohol'], 'How many houses in Bohol?', false), 'a province typed as the city, with no such city');
+        $this->assertNull($m(['city' => 'Cebu'], 'How many condos in Cebu?', true), 'a known city wins');
+        $this->assertSame('Cebu', $m(['city' => 'Cebu'], 'How many condos in the whole province of Cebu?', true), '"province" asks for all of it');
+        $this->assertSame('Metro Manila', $m(['province' => 'NCR'], 'listings in NCR', false));
+        $this->assertNull($m(['city' => 'Cebu City'], 'How many in Cebu City?', true));
+        $this->assertNull($m(['city' => 'Atlantis'], 'How many in Atlantis?', false));
+    }
+
+    public function test_a_placeholder_price_is_not_a_listing_to_count(): void
+    {
+        $rows = $this->rows();
+        $rows[] = ['category' => 'For Sale', 'type' => 'Commercial', 'subtype' => 'Building', 'tier' => null, 'price' => 150_000_000_000.0, 'listed_at' => '2026-01-01 00:00:00', 'barangay_id' => 1, 'barangay' => 'Lahug', 'city' => 'Cebu City'];
+        $rows[] = ['category' => 'For Rent', 'type' => 'House', 'subtype' => 'House and Lot', 'tier' => null, 'price' => 99_000_000.0, 'listed_at' => '2026-01-01 00:00:00', 'barangay_id' => 1, 'barangay' => 'Lahug', 'city' => 'Cebu City'];
+
+        $t = CountCommandService::tally($rows, ['property_type' => '', 'tier' => '', 'category' => '']);
+
+        $this->assertSame(10, $t['totals']['listings'], 'a ₱150 billion sale and a ₱99 million a month rent are placeholders');
+        $this->assertSame(12_000_000.0, $t['sections'][0]['high']);
     }
 
     public function test_sizes_are_left_out_when_no_size_is_known(): void
