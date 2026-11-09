@@ -7,6 +7,7 @@ use App\Mail\BriefReceivedMailer;
 use App\Models\Agent;
 use App\Models\BriefLink;
 use App\Models\ClientBrief;
+use App\Models\User;
 use App\Support\Briefs;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -15,17 +16,17 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
 /**
- * Buyers & Sellers Link. Every agent has one permanent link with two public
- * pages on the site (/buy-with/{slug}, /sell-with/{slug}); a client answers a
- * four-step brief there and it lands on the agent's dashboard page and in
- * their inbox.
+ * Buyers & Sellers Link. Every agent, and every admin, has one permanent link
+ * with two public pages on the site (/buy-with/{slug}, /sell-with/{slug}); a
+ * client answers a four-step brief there and it lands on the owner's
+ * dashboard page and in their inbox.
  *
  *   GET  /briefs/questions            the brief definitions (public, no token)
- *   GET  /brief-links/{slug}          the link and its agent (public, no token)
+ *   GET  /brief-links/{slug}          the link and its owner (public, no token)
  *   POST /brief-links/{code}/briefs   a client's brief (guest token, throttled)
- *   POST /agent/brief-link            the signed-in agent's link, created on first use
- *   GET  /agent/briefs                the signed-in agent's briefs
- *   GET  /admin/briefs                every agent's briefs, admins only
+ *   POST /agent/brief-link            the signed-in user's link, created on first use
+ *   GET  /agent/briefs                the signed-in user's own briefs
+ *   GET  /admin/briefs                everyone's briefs with their owner, admins only
  */
 class BriefLinkController extends Controller
 {
@@ -37,8 +38,8 @@ class BriefLinkController extends Controller
 
     public function show(string $slug): JsonResponse
     {
-        $link = BriefLink::where('slug', $slug)->with('agent.user')->first();
-        $face = $link ? Briefs::agentFace($link->agent) : null;
+        $link = BriefLink::where('slug', $slug)->with(['agent.user', 'user.role'])->first();
+        $face = $link ? Briefs::ownerFace($link->agent, $link->user) : null;
         if (! $link || ! $face) {
             return response()->json(['message' => 'This link is not available.'], 404);
         }
@@ -54,7 +55,7 @@ class BriefLinkController extends Controller
     /**
      * A client's brief. Public by design: validated, honeypot-guarded,
      * per-IP throttled (routes), narrowed to the known option keys, and
-     * stored under the link's agent, never one named in the request.
+     * stored under the link's owner, never one named in the request.
      */
     public function store(Request $request, string $code): JsonResponse
     {
@@ -79,8 +80,8 @@ class BriefLinkController extends Controller
             return response()->json(['ok' => true]);
         }
 
-        $link = BriefLink::where('code', $code)->with('agent.user')->first();
-        if (! $link || ! $link->is_active || ! Briefs::agentFace($link->agent)) {
+        $link = BriefLink::where('code', $code)->with(['agent.user', 'user.role'])->first();
+        if (! $link || ! $link->is_active || ! Briefs::ownerFace($link->agent, $link->user)) {
             return response()->json(['message' => 'This link is no longer active.'], 404);
         }
 
@@ -104,6 +105,7 @@ class BriefLinkController extends Controller
 
         $brief = ClientBrief::create([
             'brief_link_id' => $link->id,
+            'user_id' => $link->user_id ?? $link->agent?->user_id,
             'agent_id' => $link->agent_id,
             'kind' => $kind,
             'name' => trim($data['name']),
@@ -118,31 +120,40 @@ class BriefLinkController extends Controller
             'user_agent' => mb_substr((string) $request->userAgent(), 0, 512),
         ]);
 
-        $this->notifyAgent($brief, $link);
+        $this->notifyOwner($brief, $link);
 
         return response()->json(['ok' => true, 'id' => $brief->id], 201);
     }
 
-    /** The signed-in agent's link, created with its address the first time. */
+    /**
+     * The signed-in user's link, created with its address the first time.
+     * Agents and admins have one; an agent's link made before links had
+     * owners is claimed for its agent's account here.
+     */
     public function myLink(Request $request): JsonResponse
     {
+        $user = $request->user();
         $agent = $this->agentOf($request);
-        if (! $agent) {
-            return response()->json(['message' => 'Only agents have a Buyers & Sellers Link.'], 403);
+        if (! Briefs::canOwnLink($user, $agent)) {
+            return response()->json(['message' => 'Only agents and admins have a Buyers & Sellers Link.'], 403);
         }
 
-        $link = BriefLink::where('agent_id', $agent->id)->first();
+        $link = $this->linkOf($user, $agent);
         if (! $link) {
             try {
                 $link = BriefLink::create([
-                    'agent_id' => $agent->id,
-                    'slug' => Briefs::slugFor($agent),
+                    'user_id' => $user->id,
+                    'agent_id' => $agent?->id,
+                    'slug' => Briefs::slugFor($agent, $user),
                     'code' => Briefs::mintCode(),
-                ]);
+                ])->refresh(); // is_active comes from the table's default
             } catch (UniqueConstraintViolationException) {
                 // A second tab created it a moment ago.
-                $link = BriefLink::where('agent_id', $agent->id)->firstOrFail();
+                $link = $this->linkOf($user, $agent) ?? throw new \RuntimeException('Brief link vanished');
             }
+        } elseif ($link->user_id === null) {
+            $link->update(['user_id' => $user->id]);
+            ClientBrief::where('brief_link_id', $link->id)->whereNull('user_id')->update(['user_id' => $user->id]);
         }
 
         return response()->json(['data' => [
@@ -154,15 +165,21 @@ class BriefLinkController extends Controller
         ]]);
     }
 
-    /** The signed-in agent's briefs, newest first; `kind` narrows to buyers or sellers. */
+    /** The signed-in user's own briefs, newest first; `kind` narrows to buyers or sellers. */
     public function myBriefs(Request $request)
     {
+        $user = $request->user();
         $agent = $this->agentOf($request);
-        if (! $agent) {
-            return response()->json(['message' => 'Only agents have a Buyers & Sellers Link.'], 403);
+        if (! Briefs::canOwnLink($user, $agent)) {
+            return response()->json(['message' => 'Only agents and admins have a Buyers & Sellers Link.'], 403);
         }
 
-        $rows = ClientBrief::where('agent_id', $agent->id)
+        $rows = ClientBrief::where(function ($q) use ($user, $agent) {
+            $q->where('user_id', $user->id);
+            if ($agent) {
+                $q->orWhere('agent_id', $agent->id);
+            }
+        })
             ->when($this->kindOf($request), fn ($q, $kind) => $q->where('kind', $kind))
             ->latest('id')
             ->limit(1000)
@@ -171,14 +188,14 @@ class BriefLinkController extends Controller
         return ClientBriefResource::collection($rows);
     }
 
-    /** Every agent's briefs with the agent each came through, admins only. */
+    /** Everyone's briefs with the owner each came through, admins only. */
     public function adminBriefs(Request $request)
     {
         if ($request->user()->role?->name !== 'admin') {
             return response()->json(['message' => 'Admins only.'], 403);
         }
 
-        $rows = ClientBrief::with('agent:id,first_name,last_name,user_id')
+        $rows = ClientBrief::with(['agent:id,first_name,last_name,user_id', 'user:id,name,role_id', 'user.role:id,name'])
             ->when($this->kindOf($request), fn ($q, $kind) => $q->where('kind', $kind))
             ->latest('id')
             ->limit(2000)
@@ -192,6 +209,13 @@ class BriefLinkController extends Controller
         return Agent::where('user_id', $request->user()->id)->first();
     }
 
+    /** The user's link: theirs by account, else the one made for their agent row before links had owners. */
+    private function linkOf(User $user, ?Agent $agent): ?BriefLink
+    {
+        return BriefLink::where('user_id', $user->id)->first()
+            ?? ($agent ? BriefLink::where('agent_id', $agent->id)->first() : null);
+    }
+
     private function kindOf(Request $request): ?string
     {
         $kind = (string) $request->query('kind', '');
@@ -199,16 +223,15 @@ class BriefLinkController extends Controller
         return in_array($kind, ClientBrief::KINDS, true) ? $kind : null;
     }
 
-    /** One email per brief. Delivery failures are logged, never shown to the client. */
-    private function notifyAgent(ClientBrief $brief, BriefLink $link): void
+    /** One email per brief to the link's owner. Delivery failures are logged, never shown to the client. */
+    private function notifyOwner(ClientBrief $brief, BriefLink $link): void
     {
-        $agent = $link->agent;
-        $to = $agent?->user?->email ?: $agent?->lr_email;
+        $to = $link->user?->email ?: $link->agent?->user?->email ?: $link->agent?->lr_email;
         if (! $to) {
             return;
         }
         try {
-            Mail::to($to)->send(new BriefReceivedMailer($brief, $agent));
+            Mail::to($to)->send(new BriefReceivedMailer($brief, $link));
         } catch (\Throwable $e) {
             Log::warning('Brief email failed', ['brief' => $brief->id, 'error' => $e->getMessage()]);
         }

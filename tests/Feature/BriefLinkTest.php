@@ -71,7 +71,8 @@ class BriefLinkTest extends TestCase
         });
         Schema::create('brief_links', function (Blueprint $t) {
             $t->id();
-            $t->foreignId('agent_id')->unique();
+            $t->foreignId('user_id')->nullable();
+            $t->foreignId('agent_id')->nullable()->unique();
             $t->string('slug', 80)->unique();
             $t->string('code', 12)->unique();
             $t->boolean('is_active')->default(true);
@@ -80,7 +81,8 @@ class BriefLinkTest extends TestCase
         Schema::create('client_briefs', function (Blueprint $t) {
             $t->id();
             $t->foreignId('brief_link_id');
-            $t->foreignId('agent_id');
+            $t->foreignId('agent_id')->nullable();
+            $t->foreignId('user_id')->nullable();
             $t->string('kind', 10);
             $t->string('name', 200);
             $t->string('phone_code', 8)->default('+63');
@@ -131,7 +133,7 @@ class BriefLinkTest extends TestCase
 
     private function link(Agent $agent, array $extra = []): BriefLink
     {
-        return BriefLink::create(array_merge(['agent_id' => $agent->id, 'slug' => 'agent-'.$agent->id, 'code' => 'c'.str_pad((string) $agent->id, 7, 'x')], $extra));
+        return BriefLink::create(array_merge(['user_id' => $agent->user_id, 'agent_id' => $agent->id, 'slug' => 'agent-'.$agent->id, 'code' => 'c'.str_pad((string) $agent->id, 7, 'x')], $extra));
     }
 
     private function buyerPayload(array $over = []): array
@@ -181,6 +183,7 @@ class BriefLinkTest extends TestCase
     {
         $first = $this->as($this->agentUser)->postJson('/api/agent/brief-link')->assertOk();
         $this->assertSame('neil-allan-mary', $first->json('data.slug'));
+        $this->assertTrue($first->json('data.is_active'), 'live from the start, not null until a reload');
         $this->assertMatchesRegularExpression('/^[23456789abcdefghjkmnpqrstuvwxyz]{8}$/', $first->json('data.code'));
 
         $again = $this->as($this->agentUser)->postJson('/api/agent/brief-link')->assertOk();
@@ -262,7 +265,7 @@ class BriefLinkTest extends TestCase
         $link = $this->link($this->agent);
         $this->guest()->postJson("/api/brief-links/{$link->code}/briefs", $this->buyerPayload())->assertCreated();
 
-        $html = (new BriefReceivedMailer(ClientBrief::firstOrFail(), $this->agent))->render();
+        $html = (new BriefReceivedMailer(ClientBrief::firstOrFail(), $link))->render();
         foreach (['Neil Allan Mary', 'Juan Dela Cruz', '+63 0917 555 1234', '₱3M – 5M', 'Condominium, House and Lot', 'Cebu, Cebu City, Cebu, Mandaue City, Cebu', 'Near schools, Flood-free area', 'Priority', 'Near my work in IT Park please.', 'wa.me/639175551234', '/agent/buyers-link?view=buyers&amp;brief='] as $needle) {
             $this->assertStringContainsString($needle, $html, "email shows: $needle");
         }
@@ -388,7 +391,71 @@ class BriefLinkTest extends TestCase
         $all = $this->as($this->admin)->getJson('/api/admin/briefs')->assertOk();
         $this->assertCount(3, $all->json('data'));
         $this->assertSame('Other Agent', $all->json('data.0.agent.full_name'));
+        $this->assertSame($this->otherAgentUser->id, $all->json('data.0.agent.id'), 'the owner key is the account');
+        $this->assertFalse($all->json('data.0.agent.is_admin'));
         $this->as($this->agentUser)->getJson('/api/admin/briefs')->assertForbidden();
+    }
+
+    // ── an admin's own link ───────────────────────────────────────────────
+
+    public function test_an_admin_without_an_agent_row_has_a_link_and_gets_its_briefs(): void
+    {
+        $res = $this->as($this->admin)->postJson('/api/agent/brief-link')->assertOk();
+        $this->assertSame('it-admin', $res->json('data.slug'), 'named after the account when there is no agent row');
+        $link = BriefLink::findOrFail($res->json('data.id'));
+        $this->assertSame($this->admin->id, $link->user_id);
+        $this->assertNull($link->agent_id);
+
+        $this->getJson('/api/brief-links/it-admin')
+            ->assertOk()
+            ->assertJsonPath('data.agent.name', 'It Admin')
+            ->assertJsonPath('data.agent.first_name', 'It')
+            ->assertJsonPath('data.agent.initials', 'IA');
+
+        $this->guest()->postJson("/api/brief-links/{$link->code}/briefs", $this->buyerPayload())->assertCreated();
+        $brief = ClientBrief::firstOrFail();
+        $this->assertSame($this->admin->id, $brief->user_id);
+        $this->assertNull($brief->agent_id);
+
+        Mail::assertSent(BriefReceivedMailer::class, function (BriefReceivedMailer $mail) {
+            $mail->assertHasTo('admin@example.test');
+
+            return str_contains($mail->render(), '/admin/buyers-link?view=buyers&amp;brief=');
+        });
+
+        $mine = $this->as($this->admin)->getJson('/api/agent/briefs')->assertOk();
+        $this->assertCount(1, $mine->json('data'));
+
+        $all = $this->as($this->admin)->getJson('/api/admin/briefs')->assertOk();
+        $this->assertSame('It Admin', $all->json('data.0.agent.full_name'));
+        $this->assertSame($this->admin->id, $all->json('data.0.agent.id'));
+        $this->assertTrue($all->json('data.0.agent.is_admin'));
+    }
+
+    public function test_an_admins_link_stays_up_whatever_their_agent_row_says(): void
+    {
+        Model::unguard();
+        Agent::create(['user_id' => $this->admin->id, 'first_name' => 'IT', 'last_name' => 'ADMIN', 'status' => 'deactivated']);
+        Model::reguard();
+
+        $res = $this->as($this->admin)->postJson('/api/agent/brief-link')->assertOk();
+        $this->assertSame('it-admin', $res->json('data.slug'));
+        $this->assertNotNull(BriefLink::findOrFail($res->json('data.id'))->agent_id, 'the agent row is still the owner\'s face');
+
+        $this->getJson('/api/brief-links/it-admin')->assertOk()->assertJsonPath('data.agent.name', 'It Admin');
+    }
+
+    public function test_an_agents_link_made_before_links_had_owners_is_claimed(): void
+    {
+        $old = $this->link($this->agent, ['user_id' => null]);
+        $this->guest()->postJson("/api/brief-links/{$old->code}/briefs", $this->buyerPayload())->assertCreated();
+        ClientBrief::query()->update(['user_id' => null]);
+
+        $res = $this->as($this->agentUser)->postJson('/api/agent/brief-link')->assertOk();
+        $this->assertSame($old->id, $res->json('data.id'), 'the same link, not a new one');
+        $this->assertSame($this->agentUser->id, $old->fresh()->user_id);
+        $this->assertSame($this->agentUser->id, ClientBrief::firstOrFail()->user_id);
+        $this->assertCount(1, $this->as($this->agentUser)->getJson('/api/agent/briefs')->json('data'));
     }
 
     // ── the grade and the numbers ─────────────────────────────────────────

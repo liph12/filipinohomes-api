@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Agent;
 use App\Models\BriefLink;
 use App\Models\ClientBrief;
+use App\Models\User;
 use Illuminate\Support\Str;
 
 /**
@@ -295,30 +296,49 @@ final class Briefs
         return 'nurture';
     }
 
-    // ── The agent ───────────────────────────────────────────────────────
+    // ── The owner ───────────────────────────────────────────────────────
 
     /**
-     * The agent behind a link as the public page shows them, or null when
-     * their access is gone (a link dies with it).
+     * Who may have a link: every agent, and every admin (with or without an
+     * agent row). Clients and other users have none.
+     */
+    public static function canOwnLink(?User $user, ?Agent $agent): bool
+    {
+        return $agent !== null || ($user !== null && $user->isAdmin());
+    }
+
+    /** Where the owner reads their briefs on the dashboard. */
+    public static function dashboardPath(?User $user): string
+    {
+        return $user?->isAdmin() ? '/admin/buyers-link' : '/agent/buyers-link';
+    }
+
+    /**
+     * The person behind a link as the public page shows them, or null when
+     * their access is gone (a link dies with it). An agent's link stops when
+     * they are blocked; an admin's stays up whatever their agent row says,
+     * like the rest of the admin's access.
      *
      * @return array{id: int, name: string, first_name: string, initials: string, photo: ?string, whatsapp: string, phone: string}|null
      */
-    public static function agentFace(?Agent $agent): ?array
+    public static function ownerFace(?Agent $agent, ?User $user): ?array
     {
-        if (! $agent || in_array($agent->status, self::BLOCKED_AGENT, true)) {
+        $admin = $user !== null && $user->isAdmin();
+        if (! $admin && (! $agent || in_array($agent->status, self::BLOCKED_AGENT, true))) {
             return null;
         }
-        $name = self::agentName($agent);
-        $photo = AvatarUrl::clean($agent->avatar ?? $agent->user?->avatar);
+        $user ??= $agent?->user;
+        $name = self::ownerName($agent, $user);
+        $photo = AvatarUrl::clean($agent?->avatar ?? $user?->avatar);
         if (is_array($photo)) {
             $photo = $photo[0] ?? null;
         }
-        $phone = self::phoneDigits('+63', $agent->mobile_no ?: $agent->user?->mobile_no);
-        $whatsapp = self::phoneDigits('+63', $agent->whats_app_no) ?: $phone;
+        $phone = self::phoneDigits('+63', $agent?->mobile_no ?: $user?->mobile_no);
+        $whatsapp = self::phoneDigits('+63', $agent?->whats_app_no) ?: $phone;
         $words = preg_split('/\s+/', $name) ?: [];
 
         return [
-            'id' => $agent->id,
+            'id' => (int) ($agent?->id ?? $user?->id ?? 0),
             'name' => $name,
             'first_name' => $words[0] ?? $name,
             'initials' => mb_strtoupper(mb_substr($words[0] ?? 'F', 0, 1).mb_substr($words[count($words) - 1] ?? '', 0, 1)),
@@ -328,12 +348,19 @@ final class Briefs
         ];
     }
 
-    public static function agentName(Agent $agent): string
+    /** The owner's name as shown everywhere: the agent row's first, else the account's. */
+    public static function ownerName(?Agent $agent, ?User $user): string
     {
-        $name = trim(preg_replace('/\s+/', ' ', implode(' ', array_filter([$agent->first_name, $agent->last_name]))) ?? '');
-        $name = $name !== '' ? $name : (string) ($agent->user?->name ?? '');
+        $name = $agent ? trim(preg_replace('/\s+/', ' ', implode(' ', array_filter([$agent->first_name, $agent->last_name]))) ?? '') : '';
+        $name = $name !== '' ? $name : trim((string) (($user ?? $agent?->user)?->name ?? ''));
 
         return $name !== '' ? ucwords(mb_strtolower($name)) : 'Your Filipino Homes agent';
+    }
+
+    /** @deprecated use ownerName(); kept for callers that only have the agent. */
+    public static function agentName(Agent $agent): string
+    {
+        return self::ownerName($agent, null);
     }
 
     /**
@@ -364,14 +391,15 @@ final class Briefs
     // ── The link ────────────────────────────────────────────────────────
 
     /**
-     * The readable address, minted once from the agent's name ("MICHELLE Q.
-     * GUINTO" → "michelle-guinto"), then -2, -3, … when the name is taken.
+     * The readable address, minted once from the owner's name ("MICHELLE Q.
+     * GUINTO" → "michelle-guinto"; an admin without an agent row from their
+     * account name), then -2, -3, … when the name is taken.
      */
-    public static function slugFor(Agent $agent): string
+    public static function slugFor(?Agent $agent, ?User $user = null): string
     {
-        $first = trim((string) $agent->first_name);
-        $last = trim((string) $agent->last_name);
-        $base = Str::slug($first.' '.$last) ?: Str::slug((string) ($agent->user?->name ?? ''));
+        $first = trim((string) $agent?->first_name);
+        $last = trim((string) $agent?->last_name);
+        $base = Str::slug($first.' '.$last) ?: Str::slug((string) (($user ?? $agent?->user)?->name ?? ''));
         $base = Str::limit($base ?: 'fh-agent', 60, '');
         $taken = BriefLink::where('slug', $base)->orWhere('slug', 'like', $base.'-%')->pluck('slug')->all();
         for ($n = 1; $n <= 500; $n++) {

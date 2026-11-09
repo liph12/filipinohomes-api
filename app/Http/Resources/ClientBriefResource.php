@@ -27,9 +27,12 @@ class ClientBriefResource extends JsonResource
             // Buyers only: who to call first, from the answers.
             'grade' => $this->kind === 'buyer' ? Briefs::grade($this->budget, $this->profile ?? []) : null,
             'created_at' => $this->created_at,
-            'agent' => $this->whenLoaded('agent', fn () => [
-                'id' => $this->agent->id,
-                'full_name' => Briefs::agentName($this->agent),
+            // Admin list only: whose link it came through. `id` is the owner's
+            // account, the same key for an agent's and an admin's leads.
+            'agent' => $this->when($this->relationLoaded('user') || $this->relationLoaded('agent'), fn () => [
+                'id' => (int) ($this->user_id ?? $this->agent?->user_id ?? 0),
+                'full_name' => Briefs::ownerName($this->agent, $this->user),
+                'is_admin' => (bool) $this->user?->isAdmin(),
             ]),
         ];
     }

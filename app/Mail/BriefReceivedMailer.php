@@ -3,7 +3,7 @@
 namespace App\Mail;
 
 use App\Mail\Concerns\TagsFhMailerHeader;
-use App\Models\Agent;
+use App\Models\BriefLink;
 use App\Models\ClientBrief;
 use App\Support\Briefs;
 use Illuminate\Bus\Queueable;
@@ -14,9 +14,10 @@ use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * To the agent, one per brief sent through their Buyers & Sellers Link:
- * who the client is, every answer in the client's four steps, and buttons
- * to open it on the dashboard or reply on WhatsApp / Viber.
+ * To the link's owner (an agent or an admin), one per brief sent through
+ * their Buyers & Sellers Link: who the client is, every answer in the
+ * client's four steps, and buttons to open it on the dashboard or reply on
+ * WhatsApp / Viber.
  */
 class BriefReceivedMailer extends Mailable
 {
@@ -24,7 +25,7 @@ class BriefReceivedMailer extends Mailable
 
     public function __construct(
         public ClientBrief $brief,
-        public Agent $agent,
+        public BriefLink $link,
     ) {
         $this->tagFhMailerHeader();
     }
@@ -49,14 +50,14 @@ class BriefReceivedMailer extends Mailable
         return new Content(
             view: 'emails.brief-received',
             with: [
-                'agentName' => Briefs::agentName($this->agent),
+                'agentName' => Briefs::ownerName($this->link->agent, $this->link->user),
                 'kind' => $brief->kind,
                 'clientName' => $brief->name,
                 'clientFirst' => explode(' ', trim($brief->name))[0] ?: $brief->name,
                 'sections' => Briefs::sections($brief),
                 'gradeLabel' => $grade ? config("briefs.grade.labels.$grade.label") : null,
                 'gradeWhy' => $grade ? config("briefs.grade.labels.$grade.why") : null,
-                'dashboardUrl' => "{$site}/agent/buyers-link?view={$view}&brief={$brief->id}",
+                'dashboardUrl' => $site.Briefs::dashboardPath($this->link->user)."?view={$view}&brief={$brief->id}",
                 'whatsappUrl' => ($d = Briefs::phoneDigits($brief->phone_code, $brief->phone)) !== '' ? "https://wa.me/{$d}" : null,
                 'viberUrl' => $d !== '' ? "viber://chat?number=%2B{$d}" : null,
                 'receivedAt' => $brief->created_at?->timezone('Asia/Manila')->format('M j, Y g:i A'),

@@ -5,15 +5,22 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * An agent's one Buyers & Sellers Link: the readable address of their two
- * public brief pages (/buy-with/{slug}, /sell-with/{slug}) and the internal
- * code the forms post to. Created the first time the agent opens the page.
+ * One Buyers & Sellers Link per signed-in user (an agent or an admin): the
+ * readable address of their two public brief pages (/buy-with/{slug},
+ * /sell-with/{slug}) and the internal code the forms post to. Created the
+ * first time they open the page. `agent_id` is the owner's agent row when
+ * they have one; an admin who is not an agent has only `user_id`.
  */
 class BriefLink extends Model
 {
-    protected $fillable = ['agent_id', 'slug', 'code', 'is_active'];
+    protected $fillable = ['user_id', 'agent_id', 'slug', 'code', 'is_active'];
 
     protected $casts = ['is_active' => 'boolean'];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
 
     public function agent()
     {
