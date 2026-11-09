@@ -176,6 +176,14 @@ class ChatController extends Controller
             }
         }
 
+        // Optional date window, same anchor as stats() — lets the
+        // chat-statistics page scope its unreplied list and its charts to the
+        // same picker that drives the KPI cards. Absent on every other caller
+        // (the shared inbox, duplicate-detection lookups), so they are
+        // unaffected.
+        [$windowFrom, $windowTo] = $this->activityWindow($request);
+        $this->applyActivityWindow($query, $windowFrom, $windowTo);
+
         // Filter inquiries by the inquirer's role (agents also send inquiries,
         // so this lets moderators isolate client vs. agent inquiries).
         if ($inquirerRole = $request->query('inquirer_role')) {
@@ -1303,6 +1311,65 @@ class ChatController extends Controller
     }
 
     /**
+     * Read the optional date window off the request, as [from, to] Carbons
+     * (either may be null = unbounded). Shared by index() and stats() so the
+     * chat-statistics page can scope its list and its aggregates to the same
+     * window from one picker.
+     *
+     * @return array{0: ?Carbon, 1: ?Carbon}
+     */
+    private function activityWindow(Request $request): array
+    {
+        $validated = $request->validate([
+            'date_from' => 'sometimes|nullable|date',
+            'date_to' => 'sometimes|nullable|date|after_or_equal:date_from',
+        ]);
+
+        return [
+            ! empty($validated['date_from'])
+                ? Carbon::parse($validated['date_from'])->startOfDay()
+                : null,
+            ! empty($validated['date_to'])
+                ? Carbon::parse($validated['date_to'])->endOfDay()
+                : null,
+        ];
+    }
+
+    /**
+     * Restrict a chats query to those whose LATEST conversation falls inside
+     * the window — "inquiries with activity in this window".
+     *
+     * This is the single definition of that anchor. index() and stats() MUST
+     * agree on it: the statistics page renders the aggregates as a headline
+     * over the list, so if the list answered a different question the page
+     * contradicted itself (a "9 today" card above two dozen older unreplied
+     * rows is what prompted this).
+     *
+     * Safe on both Eloquent and query-builder chats queries — it only needs
+     * `chats.id` to correlate against.
+     */
+    private function applyActivityWindow($query, ?Carbon $from, ?Carbon $to): void
+    {
+        if (! $from && ! $to) {
+            return;
+        }
+
+        $query->whereExists(function ($q) use ($from, $to) {
+            $q->select(DB::raw(1))
+                ->from('conversations as c')
+                ->whereColumn('c.chat_id', 'chats.id')
+                ->whereNull('c.deleted_at')
+                ->whereRaw('c.id = (SELECT MAX(c2.id) FROM conversations c2 WHERE c2.chat_id = chats.id AND c2.deleted_at IS NULL)');
+            if ($from) {
+                $q->where('c.created_at', '>=', $from);
+            }
+            if ($to) {
+                $q->where('c.created_at', '<=', $to);
+            }
+        });
+    }
+
+    /**
      * Aggregate counts for the /admin/chat-statistics page.
      *
      * Returns:
@@ -1326,16 +1393,7 @@ class ChatController extends Controller
         // chat (the same conversation the rest of this method aggregates over)
         // — "inquiries with activity in this window". Both bounds optional;
         // missing dates mean "no lower / no upper bound". Accepts YYYY-MM-DD.
-        $validated = $request->validate([
-            'date_from' => 'sometimes|nullable|date',
-            'date_to' => 'sometimes|nullable|date|after_or_equal:date_from',
-        ]);
-        $dateFrom = ! empty($validated['date_from'])
-            ? Carbon::parse($validated['date_from'])->startOfDay()
-            : null;
-        $dateTo = ! empty($validated['date_to'])
-            ? Carbon::parse($validated['date_to'])->endOfDay()
-            : null;
+        [$dateFrom, $dateTo] = $this->activityWindow($request);
 
         $applyDateFilter = function ($q) use ($dateFrom, $dateTo) {
             if ($dateFrom) {
@@ -1355,21 +1413,7 @@ class ChatController extends Controller
             ->select('chats.type', DB::raw('COUNT(*) as n'))
             ->groupBy('chats.type');
 
-        if ($dateFrom || $dateTo) {
-            $byTypeQuery->whereExists(function ($q) use ($dateFrom, $dateTo) {
-                $q->select(DB::raw(1))
-                    ->from('conversations as c')
-                    ->whereColumn('c.chat_id', 'chats.id')
-                    ->whereNull('c.deleted_at')
-                    ->whereRaw('c.id = (SELECT MAX(c2.id) FROM conversations c2 WHERE c2.chat_id = chats.id AND c2.deleted_at IS NULL)');
-                if ($dateFrom) {
-                    $q->where('c.created_at', '>=', $dateFrom);
-                }
-                if ($dateTo) {
-                    $q->where('c.created_at', '<=', $dateTo);
-                }
-            });
-        }
+        $this->applyActivityWindow($byTypeQuery, $dateFrom, $dateTo);
 
         $byType = $byTypeQuery->pluck('n', 'type')->toArray();
 
@@ -1398,6 +1442,45 @@ class ChatController extends Controller
               AND m.user_id = c.agent_user_id
               AND m.status NOT IN ('deleted', 'unsent')
         )";
+
+        // 1b) Time series for the "Inquiries Over Time" chart.
+        //
+        // The page used to build this client-side from the 50 most recent
+        // chats, so any window wider than those 50 rendered as its newest 50
+        // and silently under-reported — a year of inquiries drew the same bar
+        // height as a busy fortnight. Counting server-side over the window
+        // removes the cap, and bucketing on the SAME column the window
+        // anchors on (the latest conversation's created_at) is what makes the
+        // chart's total match the KPI cards above it.
+        //
+        // Grouped by type so the chart can follow the All / Property Inquiries
+        // / Agent Messages tabs without a second round trip.
+        $seriesByMonth = $dateFrom && $dateTo
+            ? $dateFrom->diffInDays($dateTo) > 92
+            : true;
+
+        $series = DB::table('conversations as c')
+            ->joinSub($latestConvSub, 'lc', 'lc.id', '=', 'c.id')
+            ->join('chats', 'chats.id', '=', 'c.chat_id')
+            ->whereNull('chats.deleted_at')
+            ->tap($applyDateFilter)
+            ->groupBy('bucket', 'chats.type')
+            ->orderBy('bucket')
+            ->select(
+                DB::raw(sprintf(
+                    "DATE_FORMAT(c.created_at, '%s') as bucket",
+                    $seriesByMonth ? '%Y-%m' : '%Y-%m-%d'
+                )),
+                'chats.type',
+                DB::raw('COUNT(*) as n')
+            )
+            ->get()
+            ->map(fn ($r) => [
+                'bucket' => (string) $r->bucket,
+                'type' => (string) $r->type,
+                'count' => (int) $r->n,
+            ])
+            ->all();
 
         // 2) Listing-inquiry rollup (single grouped query)
         // Only accepted conversations count toward chat-stats KPIs.
@@ -1598,6 +1681,8 @@ class ChatController extends Controller
             'listing_inquiries' => $listingInquiries,
             'per_team' => $perTeam,
             'per_agent' => $perAgent,
+            'series' => $series,
+            'series_granularity' => $seriesByMonth ? 'month' : 'day',
         ]);
     }
 }
