@@ -3158,6 +3158,12 @@ class ListingController extends Controller
      * grouped scan at once. `generated_at` lives INSIDE the cached payload, so
      * the UI's "updated Ns ago" reports the age of the data rather than the age
      * of the HTTP response.
+     *
+     * An optional date_start / date_end (Y-m-d, both or neither) narrows every
+     * number to the listings ADDED on those Asia/Manila calendar days that are
+     * still on the site. A day after today is clamped to today, never refused,
+     * and a range that ended before today is cached for TTL_PAST with an hour's
+     * stale tail: only an edit to an old listing can move it.
      */
     public function insightsHeatmap(Request $request, ListingHeatmapService $heatmap): JsonResponse
     {
@@ -3170,6 +3176,10 @@ class ListingController extends Controller
             // would be 42k rows nobody asked for, so the id is mandatory there
             // and meaningless above it.
             'city_id' => 'nullable|integer|exists:cities,id|required_if:level,barangay',
+            // Manila calendar days, inclusive, both or neither. No upper bound on
+            // purpose: a future day is clamped to today below, not refused.
+            'date_start' => 'nullable|required_with:date_end|date_format:Y-m-d|after_or_equal:'.ListingHeatmapService::EARLIEST_DAY,
+            'date_end' => 'nullable|required_with:date_start|date_format:Y-m-d|after_or_equal:date_start',
         ]);
 
         $level = in_array($validated['level'] ?? 'province', ListingHeatmapService::LEVELS, true)
@@ -3192,6 +3202,14 @@ class ListingController extends Controller
         $provinceId = $heatmap->canonicalProvinceId($requestedProvinceId);
         $cityId = $requestedCityId !== null ? $heatmap->canonicalCityId($requestedCityId) : null;
 
+        // Clamped before the key is built too: "Oct 1 → Oct 31" asked on Oct 20
+        // IS "Oct 1 → Oct 20", and the two must share one entry. '' is absent:
+        // the tests call this directly, without ConvertEmptyStringsToNull.
+        $range = $heatmap->resolveRange(
+            ($validated['date_start'] ?? '') !== '' ? (string) $validated['date_start'] : null,
+            ($validated['date_end'] ?? '') !== '' ? (string) $validated['date_end'] : null,
+        );
+
         $scopeKey = 'admin';
         if ($agentIds !== null) {
             $sorted = array_values(array_unique(array_map('intval', $agentIds)));
@@ -3207,12 +3225,16 @@ class ListingController extends Controller
         // v2 is a literal generation bump: the key gained a city slot when the
         // barangay tier landed, and an in-flight v1 entry must not alias onto
         // the new shape.
+        // v3: the key gained a range slot, and the payload gained fields (prev_7d, sold/rented/leased, meta.range).
         $cacheKey = sprintf(
-            'heatmap:counts:v2:%d:%s:%s:%s:%s',
+            'heatmap:counts:v3:%d:%s:%s:%s:%s:%s',
             $heatmap->boundariesVersion(),
             $level,
             $provinceId !== null ? (string) $provinceId : 'all',
             $cityId !== null ? (string) $cityId : 'all',
+            $range !== null
+                ? str_replace('-', '', $range['date_start']).'-'.str_replace('-', '', $range['date_end'])
+                : 'all',
             $scopeKey
         );
 
@@ -3220,10 +3242,12 @@ class ListingController extends Controller
 
         $payload = Cache::flexible(
             $cacheKey,
-            [ListingHeatmapService::TTL, 300],
-            function () use ($heatmap, $level, $provinceId, $cityId, $agentIds, $cacheKey, &$computed) {
+            $range !== null && $range['past']
+                ? [ListingHeatmapService::TTL_PAST, 3600]
+                : [ListingHeatmapService::TTL, 300],
+            function () use ($heatmap, $level, $provinceId, $cityId, $agentIds, $range, $cacheKey, &$computed) {
                 $computed = true;
-                $result = $heatmap->heatmap($level, $provinceId, $agentIds, $cityId);
+                $result = $heatmap->heatmap($level, $provinceId, $agentIds, $cityId, $range);
 
                 // The plan's budget is ~120 ms locally. A sustained breach is
                 // the signal to precompute this into a table (plan section F),
@@ -3233,6 +3257,7 @@ class ListingController extends Controller
                         'key' => $cacheKey,
                         'compute_ms' => $result['meta']['compute_ms'],
                         'areas' => $result['totals']['areas'] ?? null,
+                        'range' => $range !== null ? $range['date_start'].'..'.$range['date_end'] : null,
                     ]);
                 }
 
@@ -3241,11 +3266,18 @@ class ListingController extends Controller
         );
 
         // "stale" = served from the flexible tail rather than the fresh window.
-        // Derived from the payload's own timestamp because Cache::flexible does
-        // not report which branch answered.
+        // Derived from the payload's own timestamp and its own ttl because
+        // Cache::flexible does not report which branch answered (and a past
+        // range's fresh window is TTL_PAST, not TTL).
         $age = time() - strtotime((string) ($payload['generated_at'] ?? 'now'));
         $payload['meta']['cached'] = ! $computed;
-        $payload['meta']['stale'] = ! $computed && $age > ListingHeatmapService::TTL;
+        $payload['meta']['stale'] = ! $computed && $age > (int) ($payload['ttl'] ?? ListingHeatmapService::TTL);
+
+        // A fact about THIS request, not the payload: a clamped request and its
+        // exact twin share one entry, and only one of them was clamped.
+        if ($range !== null) {
+            $payload['meta']['range']['clamped'] = $range['clamped'];
+        }
 
         return response()->json($payload)
             ->header('X-Heatmap-Cache', $computed ? 'miss' : 'hit');

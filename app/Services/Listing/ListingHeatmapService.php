@@ -34,12 +34,14 @@ use InvalidArgumentException;
  * a listing whose project sits in one city while its address barangay sits
  * in another could break the identity, and today none does.
  *
- * Three things here are deliberate and easy to break:
+ * Four things here are deliberate and easy to break:
  *
- * 1. ONE grouped query. The page shows 3 categories × 4 time windows and the
- *    user flips between them with zero network, so all 16 numbers per area are
- *    computed in a single pass of SUM(CASE WHEN …) columns rather than 16
- *    queries or 4 date-filtered calls.
+ * 1. ONE grouped query. The page shows 3 categories × 8 measures (all-time,
+ *    three "new" windows, the seven days before the last seven, and the three
+ *    transaction statuses) and the user flips between them with zero network,
+ *    so all 32 numbers per area — every measure overall and per category — are
+ *    computed in a single pass of SUM(CASE WHEN …) columns rather than 32
+ *    queries or a date-filtered call per window.
  *
  * 2. The time windows are computed in PHP and BOUND AS PARAMETERS. The app
  *    timezone is UTC, `listings.created_at` is UTC, and the MySQL session
@@ -55,6 +57,14 @@ use InvalidArgumentException;
  *    the map, the table and the CSV, and the boss would read an empty area as
  *    "no data" instead of "zero".
  *
+ * 4. A date range narrows the BASE query, never a column. With one, every
+ *    number on the row (total, categories, new_*, prev_7d, the statuses) is
+ *    "of the listings added on those Manila days that are still on the site",
+ *    so the row keeps its one shape and every toggle keeps working. It is
+ *    bound as two instants by this class's baseListingQuery() override (point
+ *    2 again), deliberately NOT through the parent's date_start/date_end: that
+ *    filter compares UTC day literals, so its "day" starts at 08:00 Manila.
+ *
  * Province identity is {@see ProvinceCanonicalizer}'s, not `provinces.id`'s —
  * see that class for why the two disagree. City identity is
  * {@see CityGroup}'s, and barangay identity folds identical-name twin rows
@@ -66,6 +76,16 @@ class ListingHeatmapService extends ListingInsightsService
     /** Seconds the counts payload stays fresh; echoed to the client as `ttl`. */
     public const TTL = 55;
 
+    /**
+     * TTL for a range that ended before today. Nothing new can be added to a
+     * past day, so only an edit to an old listing (a delete, a status or
+     * category change) moves it: there is no live poll to keep up with.
+     */
+    public const TTL_PAST = 600;
+
+    /** The first day a range may start on; anything earlier is a typo, not a question. */
+    public const EARLIEST_DAY = '2000-01-01';
+
     /** The tiers, in drill order. Anything else is coerced to the first. */
     public const LEVELS = ['province', 'city', 'barangay'];
 
@@ -76,16 +96,33 @@ class ListingHeatmapService extends ListingInsightsService
         'foreclosure' => 'Foreclosure',
     ];
 
-    /** Every numeric field on a row, in response order. Also the zero template. */
+    /**
+     * Every numeric field on a row, in response order. Also the zero template.
+     * sold / rented / leased are the TRANSACTION_STATUSES values (the column
+     * aliases aggregate() selects); the two lists change together.
+     */
     private const METRICS = [
-        'total', 'new_1d', 'new_7d', 'new_30d',
+        'total', 'new_1d', 'new_7d', 'new_30d', 'prev_7d', 'sold', 'rented', 'leased',
         'for_sale', 'for_sale_new_1d', 'for_sale_new_7d', 'for_sale_new_30d',
+        'for_sale_prev_7d', 'for_sale_sold', 'for_sale_rented', 'for_sale_leased',
         'for_rent', 'for_rent_new_1d', 'for_rent_new_7d', 'for_rent_new_30d',
+        'for_rent_prev_7d', 'for_rent_sold', 'for_rent_rented', 'for_rent_leased',
         'foreclosure', 'foreclosure_new_1d', 'foreclosure_new_7d', 'foreclosure_new_30d',
+        'foreclosure_prev_7d', 'foreclosure_sold', 'foreclosure_rented', 'foreclosure_leased',
     ];
 
     /** Per-instance memo of cityGroupIds(): the controller and heatmap() ask for the same city. */
     private array $cityGroupCache = [];
+
+    /**
+     * The Manila calendar days this call counts listings ADDED on, as the
+     * half-open [from, to) pair of Asia/Manila midnights — null = all time.
+     * Set, and always reset, by heatmap() right after configure(); read by
+     * baseListingQuery(), so every sub-query of one call sees one range.
+     *
+     * @var array{from: Carbon, to: Carbon}|null
+     */
+    private ?array $createdBetween = null;
 
     /**
      * Fold a `provinces.id` onto the id the heatmap actually paints.
@@ -158,14 +195,61 @@ class ListingHeatmapService extends ListingInsightsService
     }
 
     /**
+     * Turn a requested range into the one the heatmap answers for.
+     *
+     * Both bounds are Asia/Manila calendar days (Y-m-d), inclusive. A day
+     * after today is clamped to today rather than refused: nothing has been
+     * added there yet, so "Oct 1 → Oct 31" asked on Oct 20 IS "Oct 1 → Oct 20".
+     * The start is then held at or before the end, so a range wholly in the
+     * future collapses onto today.
+     *
+     * Public because the controller needs it BEFORE the service runs: the
+     * resolved range is part of the cache key, so a clamped request and its
+     * unclamped equivalent must share one entry (as with canonicalProvinceId()).
+     *
+     * Null when neither bound is given. `clamped` = either bound moved; `past`
+     * = the range ended before today (the controller caches it for TTL_PAST).
+     *
+     * @return array{date_start: string, date_end: string, clamped: bool, past: bool}|null
+     */
+    public function resolveRange(?string $dateStart, ?string $dateEnd): ?array
+    {
+        $dateStart = $dateStart !== null && $dateStart !== '' ? $dateStart : null;
+        $dateEnd = $dateEnd !== null && $dateEnd !== '' ? $dateEnd : null;
+
+        if ($dateStart === null && $dateEnd === null) {
+            return null;
+        }
+        if ($dateStart === null || $dateEnd === null) {
+            // The controller's required_with makes this unreachable over HTTP;
+            // half a range from anywhere else is a bug, not "all time".
+            throw new InvalidArgumentException('A date range needs both date_start and date_end.');
+        }
+
+        $todayManila = Carbon::now('Asia/Manila')->format('Y-m-d');
+
+        // Zero-padded Y-m-d sorts as a string exactly as it does as a date.
+        $end = min($dateEnd, $todayManila);
+        $start = min($dateStart, $end);
+
+        return [
+            'date_start' => $start,
+            'date_end' => $end,
+            'clamped' => $end !== $dateEnd || $start !== $dateStart,
+            'past' => $end < $todayManila,
+        ];
+    }
+
+    /**
      * The full counts payload for one level and scope.
      *
      * @param  'province'|'city'|'barangay'  $level
      * @param  int|null  $provinceId  canonical or not — folded either way; ignored at barangay level
      * @param  int[]|null  $agentIds  null = admin (unscoped), list = team leader
      * @param  int|null  $cityId  any id of the city group; REQUIRED at barangay level, ignored elsewhere
+     * @param  array{date_start: string, date_end: string, past?: bool}|null  $range  resolveRange()'s answer; null = all time
      */
-    public function heatmap(string $level, ?int $provinceId = null, ?array $agentIds = null, ?int $cityId = null): array
+    public function heatmap(string $level, ?int $provinceId = null, ?array $agentIds = null, ?int $cityId = null, ?array $range = null): array
     {
         $startedAt = microtime(true);
         $level = in_array($level, self::LEVELS, true) ? $level : 'province';
@@ -199,6 +283,9 @@ class ListingHeatmapService extends ListingInsightsService
         $version = $this->boundariesVersion();
 
         $this->configure([], $agentIds);
+        // Always (re)set: an instance reused for a second call must never
+        // carry the first call's range into it.
+        $this->createdBetween = $range !== null ? $this->rangeBounds($range) : null;
         if ($groupIds !== []) {
             // Not configure()'s province_id: that filters on ONE id, and the
             // whole point of the group is that several ids are the same place.
@@ -247,14 +334,23 @@ class ListingHeatmapService extends ListingInsightsService
             'province_id' => $canonicalProvinceId,
             'city_id' => $canonicalCityId,
             'generated_at' => Carbon::now('UTC')->toIso8601ZuluString(),
-            'ttl' => self::TTL,
+            'ttl' => $range !== null && ! empty($range['past']) ? self::TTL_PAST : self::TTL,
             'scope' => $agentIds === null ? 'admin' : 'team',
             'boundaries_version' => $version,
             'meta' => [
                 'windows' => [
                     'today_from' => $windows['today']->toIso8601String(),
                     'd7_from' => $windows['d7']->toIso8601String(),
+                    'd14_from' => $windows['d14']->toIso8601String(),
                     'd30_from' => $windows['d30']->toIso8601String(),
+                ],
+                'range' => $this->createdBetween === null ? null : [
+                    'date_start' => (string) $range['date_start'],
+                    'date_end' => (string) $range['date_end'],
+                    'from' => $this->createdBetween['from']->toIso8601String(),
+                    // Exclusive: the midnight AFTER the last day.
+                    'to' => $this->createdBetween['to']->toIso8601String(),
+                    'days' => (int) round($this->createdBetween['from']->diffInDays($this->createdBetween['to'])),
                 ],
                 'compute_ms' => (int) round((microtime(true) - $startedAt) * 1000),
             ],
@@ -264,14 +360,71 @@ class ListingHeatmapService extends ListingInsightsService
     }
 
     /**
-     * The three "new since" cut-offs as Asia/Manila start-of-day instants.
+     * The shared base query, narrowed to the call's range when there is one —
+     * once, here, so the range reaches every column of the aggregate at once
+     * instead of being re-applied (and one day forgotten) column by column.
+     *
+     * Bound as two UTC instants, the treatment the rolling windows get (class
+     * docblock, point 2). NOT the parent's date_start/date_end: those compare
+     * `listings.created_at` to UTC day literals, eight hours off the Manila day.
+     */
+    protected function baseListingQuery()
+    {
+        $query = parent::baseListingQuery();
+
+        if ($this->createdBetween !== null) {
+            $query->where('listings.created_at', '>=', $this->bind($this->createdBetween['from']))
+                ->where('listings.created_at', '<', $this->bind($this->createdBetween['to']));
+        }
+
+        return $query;
+    }
+
+    /**
+     * A resolved range as the instants it covers: the first day's Manila
+     * midnight up to — not including — the midnight after the last day.
+     * Half-open like the rolling windows, so no 23:59:59 is needed and a
+     * listing at a day's seam is never dropped or counted twice.
+     *
+     * @param  array{date_start?: string, date_end?: string}  $range
+     * @return array{from: Carbon, to: Carbon}
+     */
+    private function rangeBounds(array $range): array
+    {
+        $from = $this->manilaMidnight((string) ($range['date_start'] ?? ''));
+        $to = $this->manilaMidnight((string) ($range['date_end'] ?? ''))->addDay();
+
+        if ($to <= $from) {
+            throw new InvalidArgumentException('A date range cannot end before it starts.');
+        }
+
+        return ['from' => $from, 'to' => $to];
+    }
+
+    /** The Asia/Manila midnight that starts a strict Y-m-d calendar day. */
+    private function manilaMidnight(string $day): Carbon
+    {
+        $midnight = Carbon::createFromFormat('!Y-m-d', $day, 'Asia/Manila');
+
+        // createFromFormat() quietly rolls 2026-02-30 over to March 2.
+        if (! $midnight instanceof Carbon || $midnight->format('Y-m-d') !== $day) {
+            throw new InvalidArgumentException("Not a Y-m-d calendar day: '{$day}'.");
+        }
+
+        return $midnight;
+    }
+
+    /**
+     * The "new since" cut-offs as Asia/Manila start-of-day instants.
      *
      * today = this Manila calendar day; d7 = that day and the six before it
-     * (so "last 7 days" includes today); d30 likewise. Kept as Carbon objects
-     * so the response can report them with their +08:00 offset while the SQL
-     * binds their UTC form.
+     * (so "last 7 days" includes today); d30 likewise. d14 starts the week
+     * BEFORE d7's: prev_7d is [d14, d7), the seven days new_7d has just let go
+     * of, so the two weeks never share a listing. Kept as Carbon objects so the
+     * response can report them with their +08:00 offset while the SQL binds
+     * their UTC form.
      *
-     * @return array{today: Carbon, d7: Carbon, d30: Carbon}
+     * @return array{today: Carbon, d7: Carbon, d14: Carbon, d30: Carbon}
      */
     private function windows(): array
     {
@@ -280,6 +433,7 @@ class ListingHeatmapService extends ListingInsightsService
         return [
             'today' => $today,
             'd7' => $today->copy()->subDays(6),
+            'd14' => $today->copy()->subDays(13),
             'd30' => $today->copy()->subDays(29),
         ];
     }
@@ -293,6 +447,11 @@ class ListingHeatmapService extends ListingInsightsService
     /**
      * The single grouped aggregate. $extra adds the city level's province
      * columns; everything else is identical between levels.
+     *
+     * Every measure is one condition on one listing, counted across all three
+     * categories (`new_7d`) and inside each (`for_sale_new_7d`). They are plain
+     * counts, so they fold by addition: twin rows into one area, barangays
+     * into their city — the *Buckets() methods rely on exactly that.
      *
      * @return Collection<int, \stdClass>
      */
@@ -310,17 +469,28 @@ class ListingHeatmapService extends ListingInsightsService
 
         $query->selectRaw('COUNT(listings.id) as total');
 
-        $cutoffs = [
-            'new_1d' => $this->bind($windows['today']),
-            'new_7d' => $this->bind($windows['d7']),
-            'new_30d' => $this->bind($windows['d30']),
+        // alias => [condition, its bindings]. The condition is fixed SQL; every
+        // value in it is a placeholder.
+        $measures = [
+            'new_1d' => ['listings.created_at >= ?', [$this->bind($windows['today'])]],
+            'new_7d' => ['listings.created_at >= ?', [$this->bind($windows['d7'])]],
+            'new_30d' => ['listings.created_at >= ?', [$this->bind($windows['d30'])]],
+            // The week before new_7d's, half-open so the two never overlap.
+            'prev_7d' => [
+                'listings.created_at >= ? AND listings.created_at < ?',
+                [$this->bind($windows['d14']), $this->bind($windows['d7'])],
+            ],
         ];
 
-        foreach ($cutoffs as $alias => $cutoff) {
-            $query->selectRaw(
-                "SUM(CASE WHEN listings.created_at >= ? THEN 1 ELSE 0 END) as {$alias}",
-                [$cutoff]
-            );
+        // The By Status tab's transaction statuses. A property's CURRENT
+        // status, not a dated event: under a range, `sold` means "of the
+        // listings added in the range, how many are sold now".
+        foreach (self::TRANSACTION_STATUSES as $status) {
+            $measures[$status] = ['properties.status = ?', [$status]];
+        }
+
+        foreach ($measures as $alias => [$condition, $bindings]) {
+            $query->selectRaw("SUM(CASE WHEN {$condition} THEN 1 ELSE 0 END) as {$alias}", $bindings);
         }
 
         foreach (self::CATEGORIES as $key => $categoryName) {
@@ -328,10 +498,10 @@ class ListingHeatmapService extends ListingInsightsService
                 "SUM(CASE WHEN categories.name = ? THEN 1 ELSE 0 END) as {$key}",
                 [$categoryName]
             );
-            foreach ($cutoffs as $alias => $cutoff) {
+            foreach ($measures as $alias => [$condition, $bindings]) {
                 $query->selectRaw(
-                    "SUM(CASE WHEN categories.name = ? AND listings.created_at >= ? THEN 1 ELSE 0 END) as {$key}_{$alias}",
-                    [$categoryName, $cutoff]
+                    "SUM(CASE WHEN categories.name = ? AND {$condition} THEN 1 ELSE 0 END) as {$key}_{$alias}",
+                    [$categoryName, ...$bindings]
                 );
             }
         }
@@ -644,6 +814,10 @@ class ListingHeatmapService extends ListingInsightsService
                 'new_1d' => $metrics[$key.'_new_1d'],
                 'new_7d' => $metrics[$key.'_new_7d'],
                 'new_30d' => $metrics[$key.'_new_30d'],
+                'prev_7d' => $metrics[$key.'_prev_7d'],
+                'sold' => $metrics[$key.'_sold'],
+                'rented' => $metrics[$key.'_rented'],
+                'leased' => $metrics[$key.'_leased'],
             ];
         }
 
@@ -661,6 +835,10 @@ class ListingHeatmapService extends ListingInsightsService
             'new_1d' => $metrics['new_1d'],
             'new_7d' => $metrics['new_7d'],
             'new_30d' => $metrics['new_30d'],
+            'prev_7d' => $metrics['prev_7d'],
+            'sold' => $metrics['sold'],
+            'rented' => $metrics['rented'],
+            'leased' => $metrics['leased'],
             'by_category' => $byCategory,
             'has_boundary' => $id !== null && isset($linked[$id]),
         ];

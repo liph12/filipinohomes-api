@@ -24,14 +24,27 @@ use Tests\TestCase;
  * The rules worth a test are the ones that are invisible when they break:
  * a province with no listings must still be ON the map (as a zero, not as a
  * hole), the duplicate Samar rows must land on ONE area, "new today" must mean
- * the Manila calendar day and not the UTC one, and a team leader must not see
- * the whole platform. Everything else the admin would notice immediately.
+ * the Manila calendar day and not the UTC one (and so must a date range's
+ * days), and a team leader must not see the whole platform. Everything else
+ * the admin would notice immediately.
  *
  * Builds its own minimal tables — the full migration suite is MySQL-only, and
  * the heatmap query is deliberately dialect-neutral so it can run here.
  */
 class ListingHeatmapTest extends TestCase
 {
+    /** Every count on a row, flat — each one must fold from tier to tier. */
+    private const ROW_COUNTS = [
+        'total', 'for_sale', 'for_rent', 'foreclosure',
+        'new_1d', 'new_7d', 'new_30d', 'prev_7d', 'sold', 'rented', 'leased',
+    ];
+
+    /** by_category's keys, in response order. */
+    private const CATEGORY_KEYS = ['for_sale', 'for_rent', 'foreclosure'];
+
+    /** Every count inside one by_category block, in response order. */
+    private const CATEGORY_COUNTS = ['total', 'new_1d', 'new_7d', 'new_30d', 'prev_7d', 'sold', 'rented', 'leased'];
+
     /** Asia/Manila start of the current calendar day — the service's "today". */
     private Carbon $manilaMidnight;
 
@@ -359,6 +372,7 @@ class ListingHeatmapTest extends TestCase
         $this->assertSame([
             'id', 'name', 'province_id', 'province_name', 'city_id', 'city_name', 'total',
             'for_sale', 'for_rent', 'foreclosure', 'new_1d', 'new_7d', 'new_30d',
+            'prev_7d', 'sold', 'rented', 'leased',
             'by_category', 'has_boundary',
         ], array_keys($cebu));
         $this->assertNull($cebu['city_id']);
@@ -668,6 +682,7 @@ class ListingHeatmapTest extends TestCase
         $this->assertSame([
             'id', 'name', 'province_id', 'province_name', 'city_id', 'city_name', 'total',
             'for_sale', 'for_rent', 'foreclosure', 'new_1d', 'new_7d', 'new_30d',
+            'prev_7d', 'sold', 'rented', 'leased',
             'by_category', 'has_boundary',
         ], array_keys($lahug));
         $this->assertSame(11, $lahug['id']);
@@ -881,9 +896,486 @@ class ListingHeatmapTest extends TestCase
         $this->heatmap(['level' => 'barangay', 'city_id' => 1], 'agent', 800);
     }
 
+    public function test_a_range_counts_the_listings_added_on_those_manila_days(): void
+    {
+        // The window-edge pair from seedListings(): 23:00 Manila yesterday and
+        // 01:00 Manila today are 15:00 and 17:00 of ONE UTC date, so a range
+        // read as UTC days (the parent's date_start/date_end) cannot split
+        // them. The Manila day must.
+        $this->assertSame(
+            substr($this->utc($this->manilaMidnight->copy()->subHour()), 0, 10),
+            substr($this->utc($this->manilaMidnight->copy()->addHour()), 0, 10),
+            'the fixture pair must share a UTC date, or this test proves nothing'
+        );
+
+        $yesterday = $this->day(-1);
+        $payload = $this->heatmap(['level' => 'city', 'province_id' => 25, 'date_start' => $yesterday, 'date_end' => $yesterday]);
+
+        $this->assertSame(1, $this->areaNamed($payload, 'Talisay City')['total'], "only the 23:00 listing was added on yesterday's Manila day");
+        // Cebu City's 00:30-today listing is on that UTC date too. In Manila it is today's.
+        $this->assertSame(0, $this->areaNamed($payload, 'Cebu City')['total']);
+        $this->assertSame(1, $payload['totals']['listings']);
+
+        $today = $this->day(0);
+        $payload = $this->heatmap(['level' => 'city', 'province_id' => 25, 'date_start' => $today, 'date_end' => $today]);
+
+        $this->assertSame(1, $this->areaNamed($payload, 'Talisay City')['total'], "the 01:00 listing is today's");
+        $this->assertSame(1, $this->areaNamed($payload, 'Cebu City')['total'], 'and so is the 00:30 one');
+        $this->assertSame(2, $payload['totals']['listings']);
+        // A range narrows the numbers, never the rows.
+        $this->assertSame(2, $payload['totals']['areas']);
+    }
+
+    public function test_a_range_ending_today_is_the_rolling_window_of_the_same_length(): void
+    {
+        $windows = ['new_1d' => 0, 'new_7d' => -6, 'new_30d' => -29];
+
+        foreach (['province' => [], 'city' => [], 'barangay' => ['city_id' => 1]] as $level => $scope) {
+            $allTime = $this->byId($this->heatmap(['level' => $level] + $scope));
+
+            foreach ($windows as $window => $offset) {
+                $ranged = $this->byId($this->heatmap(
+                    ['level' => $level, 'date_start' => $this->day($offset), 'date_end' => $this->day(0)] + $scope
+                ));
+
+                $this->assertSame(array_keys($allTime), array_keys($ranged), "{$level}: a range keeps every area");
+
+                foreach ($allTime as $id => $row) {
+                    $this->assertSame($row[$window], $ranged[$id]['total'], "{$level} {$row['name']}: [T{$offset}, T] is {$window}");
+
+                    foreach (self::CATEGORY_KEYS as $category) {
+                        $this->assertSame(
+                            $row['by_category'][$category][$window],
+                            $ranged[$id]['by_category'][$category]['total'],
+                            "{$level} {$row['name']} {$category}: [T{$offset}, T] is {$window}"
+                        );
+                        $this->assertSame($ranged[$id][$category], $ranged[$id]['by_category'][$category]['total']);
+                    }
+                }
+            }
+        }
+
+        // The three windows really are three different numbers here, or the
+        // loop above would prove nothing.
+        $cebu = $this->areaNamed($this->heatmap(['level' => 'province']), 'Cebu');
+        $this->assertSame([2, 4, 5, 6], [$cebu['new_1d'], $cebu['new_7d'], $cebu['new_30d'], $cebu['total']]);
+    }
+
+    public function test_an_unusable_range_is_a_validation_failure(): void
+    {
+        $cases = [
+            'an end before the start' => [['date_start' => $this->day(-1), 'date_end' => $this->day(-2)], 'date_end'],
+            'a lone date_start' => [['date_start' => $this->day(-1)], 'date_end'],
+            'a lone date_end' => [['date_end' => $this->day(-1)], 'date_start'],
+            'a US-style date' => [['date_start' => '10/01/2026', 'date_end' => '2026-10-31'], 'date_start'],
+            'a day that does not exist' => [['date_start' => '2026-02-30', 'date_end' => '2026-03-05'], 'date_start'],
+            'a day before EARLIEST_DAY' => [['date_start' => '1999-12-31', 'date_end' => '2000-01-05'], 'date_start'],
+        ];
+
+        foreach ($cases as $why => [$query, $field]) {
+            try {
+                $this->heatmap(['level' => 'province'] + $query);
+                $this->fail("{$why} must be a 422");
+            } catch (ValidationException $e) {
+                $this->assertArrayHasKey($field, $e->errors(), "{$why} is reported against {$field}");
+            }
+        }
+    }
+
+    public function test_a_future_end_is_clamped_to_today_and_shares_the_entry_of_the_range_ending_today(): void
+    {
+        $start = $this->day(-6);
+        $clamped = $this->heatmap(['level' => 'province', 'date_start' => $start, 'date_end' => $this->day(30)]);
+
+        $this->assertFalse($clamped['meta']['cached']);
+        $this->assertSame($start, $clamped['meta']['range']['date_start']);
+        $this->assertSame($this->day(0), $clamped['meta']['range']['date_end'], 'a day after today is today, not a 422');
+        $this->assertTrue($clamped['meta']['range']['clamped']);
+        $this->assertSame(7, $clamped['meta']['range']['days']);
+        $this->assertSame(ListingHeatmapService::TTL, $clamped['ttl'], 'a range that reaches today is live');
+
+        $aggregates = [];
+        DB::listen(function ($query) use (&$aggregates) {
+            if (str_contains($query->sql, 'listings') || str_contains($query->sql, 'boundaries')) {
+                $aggregates[] = $query->sql;
+            }
+        });
+
+        $exact = $this->heatmap(['level' => 'province', 'date_start' => $start, 'date_end' => $this->day(0)]);
+
+        $this->assertSame([], $aggregates, 'the clamped request and the exact one are one cache entry');
+        $this->assertTrue($exact['meta']['cached']);
+        $this->assertSame($clamped['data'], $exact['data']);
+        // "clamped" describes the request that was made, not the payload that answered it.
+        $this->assertFalse($exact['meta']['range']['clamped']);
+
+        // A range wholly in the future collapses onto today rather than failing.
+        $future = $this->heatmap(['level' => 'province', 'date_start' => $this->day(5), 'date_end' => $this->day(9)]);
+        $this->assertSame([$this->day(0), $this->day(0)], [$future['meta']['range']['date_start'], $future['meta']['range']['date_end']]);
+        $this->assertTrue($future['meta']['range']['clamped']);
+        $this->assertSame(1, $future['meta']['range']['days']);
+    }
+
+    public function test_each_range_gets_its_own_cache_entry_and_the_all_time_entry_is_untouched(): void
+    {
+        $lastWeek = ['level' => 'province', 'date_start' => $this->day(-6), 'date_end' => $this->day(0)];
+
+        $allTime = $this->heatmap(['level' => 'province']);
+        $week = $this->heatmap($lastWeek);
+
+        $aggregates = [];
+        DB::listen(function ($query) use (&$aggregates) {
+            if (str_contains($query->sql, 'listings')) {
+                $aggregates[] = $query->sql;
+            }
+        });
+
+        // A second range must be computed, not served the first range's payload.
+        $yesterday = $this->heatmap(['level' => 'province', 'date_start' => $this->day(-1), 'date_end' => $this->day(-1)]);
+        $this->assertNotSame([], $aggregates, 'a different range has to be computed, not read back');
+
+        $this->assertSame(9, $allTime['totals']['listings']);
+        $this->assertSame(7, $week['totals']['listings']);
+        $this->assertSame(1, $yesterday['totals']['listings']);
+
+        // Going back to either earlier entry is a hit, and says what it said.
+        $aggregates = [];
+        $allTimeAgain = $this->heatmap(['level' => 'province']);
+        $weekAgain = $this->heatmap($lastWeek);
+
+        $this->assertSame([], $aggregates);
+        $this->assertTrue($allTimeAgain['meta']['cached']);
+        $this->assertTrue($weekAgain['meta']['cached']);
+        $this->assertSame($allTime['data'], $allTimeAgain['data']);
+        $this->assertSame($week['data'], $weekAgain['data']);
+        $this->assertArrayHasKey('range', $allTimeAgain['meta']);
+        $this->assertNull($allTimeAgain['meta']['range'], 'the all-time payload never picks up a range');
+    }
+
+    public function test_a_reused_service_never_carries_one_calls_range_into_the_next(): void
+    {
+        // The range lives on the instance between configure() and the query,
+        // so a second call on the same object must start from all time.
+        $service = app(ListingHeatmapService::class);
+        $yesterday = $service->resolveRange($this->day(-1), $this->day(-1));
+
+        $ranged = $service->heatmap('province', null, null, null, $yesterday);
+        $after = $service->heatmap('province');
+
+        $this->assertSame(1, $ranged['totals']['listings']);
+        $this->assertSame(9, $after['totals']['listings'], 'the range must not outlive the call it was given to');
+        $this->assertNull($after['meta']['range']);
+        $this->assertSame(ListingHeatmapService::TTL, $after['ttl']);
+    }
+
+    public function test_a_team_leaders_range_is_scoped_to_their_team(): void
+    {
+        $range = ['date_start' => $this->day(-3), 'date_end' => $this->day(0)];
+
+        $admin = $this->heatmap(['level' => 'province'] + $range);
+        $leader = $this->heatmap(['level' => 'province'] + $range, 'agent', 700);
+
+        // [T-3, T] holds four team listings in Cebu and agent 9's three in Samar.
+        $this->assertSame(7, $admin['totals']['listings']);
+        $this->assertSame(3, $this->areaNamed($admin, 'Samar')['total']);
+
+        $this->assertSame('team', $leader['scope']);
+        $this->assertSame(4, $this->areaNamed($leader, 'Cebu')['total']);
+        $this->assertSame(0, $this->areaNamed($leader, 'Samar')['total'], 'agent 9 is on no team');
+        $this->assertSame(4, $leader['totals']['listings'], 'a leader must not be served the admin range payload');
+        $this->assertNotNull($this->areaNamed($leader, 'Siquijor'), 'zero-seeding survives a range and a scope together');
+
+        // The team, not just the leader: agent 8's listing from ten days ago.
+        $older = $this->heatmap(['level' => 'province', 'date_start' => $this->day(-12), 'date_end' => $this->day(-8)], 'agent', 700);
+        $this->assertSame(1, $this->areaNamed($older, 'Cebu')['total']);
+
+        $catbalogan = $this->heatmap(['level' => 'barangay', 'city_id' => 3] + $range, 'agent', 700);
+        $this->assertSame(0, $catbalogan['totals']['listings']);
+        $this->assertSame(['Mercedes', 'Poblacion'], $this->names($catbalogan));
+    }
+
+    public function test_barangay_rows_sum_to_the_city_row_under_a_range(): void
+    {
+        // Statuses too, so the new counts have something to add up.
+        DB::table('properties')->where('id', 101)->update(['status' => 'sold']);
+        DB::table('properties')->where('id', 104)->update(['status' => 'rented']);
+        DB::table('properties')->where('id', 107)->update(['status' => 'leased']);
+
+        $range = ['date_start' => $this->day(-12), 'date_end' => $this->day(0)];
+        $cities = $this->heatmap(['level' => 'city'] + $range);
+
+        // The range reaches both tiers: Cebu City loses its 40-day-old listing
+        // and keeps the ten-day-old one, which is last week's.
+        $cebuCity = $this->areaNamed($cities, 'Cebu City');
+        $this->assertSame(3, $cebuCity['total']);
+        $this->assertSame(1, $cebuCity['prev_7d']);
+        $this->assertSame(1, $cebuCity['sold']);
+
+        foreach ([1 => 'Cebu City', 2 => 'Talisay City', 3 => 'Catbalogan', 4 => 'Calbayog'] as $cityId => $name) {
+            $barangays = $this->heatmap(['level' => 'barangay', 'city_id' => $cityId] + $range);
+
+            $this->assertSame($range['date_start'], $barangays['meta']['range']['date_start']);
+            $this->assertBarangaysSumToTheCity($this->areaNamed($cities, $name), $barangays, $name);
+        }
+    }
+
+    public function test_meta_range_echoes_the_range_and_sets_the_ttl(): void
+    {
+        $past = $this->heatmap(['level' => 'province', 'date_start' => $this->day(-6), 'date_end' => $this->day(-2)]);
+
+        $this->assertSame([
+            'date_start' => $this->day(-6),
+            'date_end' => $this->day(-2),
+            'from' => $this->manilaMidnight->copy()->subDays(6)->toIso8601String(),
+            // Exclusive: the midnight after the last day.
+            'to' => $this->manilaMidnight->copy()->subDay()->toIso8601String(),
+            'days' => 5,
+            'clamped' => false,
+        ], $past['meta']['range']);
+        $this->assertStringEndsWith('+08:00', $past['meta']['range']['from']);
+        $this->assertSame(ListingHeatmapService::TTL_PAST, $past['ttl'], 'a range wholly in the past is cached for TTL_PAST');
+        $this->assertSame(4, $past['totals']['listings']);
+
+        $live = $this->heatmap(['level' => 'province', 'date_start' => $this->day(-6), 'date_end' => $this->day(0)]);
+        $this->assertSame(ListingHeatmapService::TTL, $live['ttl'], 'a range that includes today is live');
+        $this->assertSame(7, $live['meta']['range']['days']);
+        $this->assertSame($this->manilaMidnight->copy()->addDay()->toIso8601String(), $live['meta']['range']['to']);
+
+        $none = $this->heatmap(['level' => 'province']);
+        $this->assertArrayHasKey('range', $none['meta']);
+        $this->assertNull($none['meta']['range']);
+        $this->assertSame(ListingHeatmapService::TTL, $none['ttl']);
+
+        // Blank dates are no dates: the all-time entry, not a new one.
+        $blank = $this->heatmap(['level' => 'province', 'date_start' => '', 'date_end' => '']);
+        $this->assertNull($blank['meta']['range']);
+        $this->assertTrue($blank['meta']['cached']);
+    }
+
+    public function test_staleness_is_judged_against_the_payloads_own_ttl(): void
+    {
+        $past = ['level' => 'province', 'date_start' => $this->day(-6), 'date_end' => $this->day(-2)];
+
+        // Both entries generated 70 s ago: past TTL, well inside TTL_PAST.
+        $this->travel(-70)->seconds();
+        $this->heatmap(['level' => 'province']);
+        $this->heatmap($past);
+        $this->travelBack();
+
+        $allTime = $this->heatmap(['level' => 'province']);
+        $this->assertTrue($allTime['meta']['cached']);
+        $this->assertTrue($allTime['meta']['stale'], 'a 70 s old all-time payload is past its 55 s ttl');
+
+        $old = $this->heatmap($past);
+        $this->assertTrue($old['meta']['cached']);
+        $this->assertSame(ListingHeatmapService::TTL_PAST, $old['ttl']);
+        $this->assertFalse($old['meta']['stale'], 'a past range is fresh for TTL_PAST, not for TTL');
+    }
+
+    public function test_prev_7d_is_the_seven_days_before_new_7d_and_never_overlaps_it(): void
+    {
+        // In Siquijor, so nothing else in the fixture shares the area.
+        DB::table('cities')->insert(['id' => 7, 'name' => 'Larena', 'province_id' => 67, 'type' => 1]);
+        DB::table('barangays')->insert(['id' => 22, 'name' => 'Bagong Barrio', 'city_id' => 7]);
+
+        $midnight = $this->manilaMidnight;
+        $this->addListing(400, 22, 1, $midnight->copy()->subDays(7)->addMinutes(30));  // T-7 00:30: the week before
+        $this->addListing(401, 22, 2, $midnight->copy()->subDays(6)->addMinutes(30));  // T-6 00:30: this week
+        $this->addListing(402, 22, 3, $midnight->copy()->subDays(13)->subMinutes(30)); // T-14 23:30: neither
+
+        $payload = $this->heatmap(['level' => 'province']);
+        $siquijor = $this->areaNamed($payload, 'Siquijor');
+
+        $this->assertSame(3, $siquijor['total']);
+        $this->assertSame(1, $siquijor['prev_7d']);
+        $this->assertSame(1, $siquijor['new_7d']);
+        $this->assertSame(3, $siquijor['new_30d']);
+        $this->assertSame([1, 0], [$siquijor['by_category']['for_sale']['prev_7d'], $siquijor['by_category']['for_sale']['new_7d']]);
+        $this->assertSame([0, 1], [$siquijor['by_category']['for_rent']['prev_7d'], $siquijor['by_category']['for_rent']['new_7d']]);
+        $this->assertSame([0, 0], [$siquijor['by_category']['foreclosure']['prev_7d'], $siquijor['by_category']['foreclosure']['new_7d']]);
+
+        // The seeded Cebu City listing from ten days ago is last week's too.
+        $this->assertSame(1, $this->areaNamed($payload, 'Cebu')['prev_7d']);
+
+        $this->assertSame(
+            $midnight->copy()->subDays(13)->toIso8601String(),
+            $payload['meta']['windows']['d14_from']
+        );
+
+        foreach ($payload['data'] as $row) {
+            $this->assertSame(
+                $row['prev_7d'],
+                array_sum(array_map(fn (string $category) => $row['by_category'][$category]['prev_7d'], self::CATEGORY_KEYS)),
+                "by_category prev_7d must sum to prev_7d for {$row['name']}"
+            );
+        }
+
+        // Under a range it is "of the listings added in the range", like every other number.
+        $ranged = $this->areaNamed(
+            $this->heatmap(['level' => 'province', 'date_start' => $this->day(-29), 'date_end' => $this->day(-7)]),
+            'Siquijor'
+        );
+        $this->assertSame([2, 1, 0], [$ranged['total'], $ranged['prev_7d'], $ranged['new_7d']]);
+    }
+
+    public function test_sold_rented_and_leased_follow_the_property_status_per_area_and_category(): void
+    {
+        DB::table('properties')->whereIn('id', [100, 101])->update(['status' => 'sold']);   // Cebu City, For Sale
+        DB::table('properties')->where('id', 104)->update(['status' => 'rented']);          // Talisay, For Rent
+        DB::table('properties')->where('id', 105)->update(['status' => 'leased']);          // Talisay, For Rent
+        DB::table('properties')->where('id', 107)->update(['status' => 'sold']);            // Catbalogan 5, Foreclosure
+        DB::table('properties')->where('id', 108)->update(['status' => 'leased']);          // Calbayog, For Sale
+        // Never counted, whatever their status: a non-standard category and a
+        // soft-deleted listing.
+        DB::table('properties')->whereIn('id', [109, 900])->update(['status' => 'sold']);
+
+        $provinces = $this->heatmap(['level' => 'province']);
+        $cebu = $this->areaNamed($provinces, 'Cebu');
+        $samar = $this->areaNamed($provinces, 'Samar');
+
+        $this->assertSame([2, 1, 1], $this->statuses($cebu));
+        $this->assertSame([2, 0, 0], $this->statuses($cebu['by_category']['for_sale']));
+        $this->assertSame([0, 1, 1], $this->statuses($cebu['by_category']['for_rent']));
+        $this->assertSame([0, 0, 0], $this->statuses($cebu['by_category']['foreclosure']));
+
+        // Both of Samar's statuses were filed under the duplicate row 82.
+        $this->assertSame([1, 0, 1], $this->statuses($samar));
+        $this->assertSame([0, 0, 1], $this->statuses($samar['by_category']['for_sale']));
+        $this->assertSame([1, 0, 0], $this->statuses($samar['by_category']['foreclosure']));
+
+        // A status is not a delete: the listings are all still counted.
+        $this->assertSame(6, $cebu['total']);
+        $this->assertSame(3, $samar['total']);
+
+        foreach ($provinces['data'] as $row) {
+            $this->assertLessThanOrEqual($row['total'], array_sum($this->statuses($row)), "{$row['name']}: statuses are a subset of the listings");
+
+            foreach (['sold', 'rented', 'leased'] as $status) {
+                $this->assertSame(
+                    $row[$status],
+                    array_sum(array_map(fn (string $category) => $row['by_category'][$category][$status], self::CATEGORY_KEYS)),
+                    "by_category {$status} must sum to {$status} for {$row['name']}"
+                );
+            }
+            foreach (self::CATEGORY_KEYS as $category) {
+                $block = $row['by_category'][$category];
+                $this->assertLessThanOrEqual($block['total'], array_sum($this->statuses($block)));
+            }
+        }
+
+        $cities = $this->heatmap(['level' => 'city']);
+        $this->assertSame([2, 0, 0], $this->statuses($this->areaNamed($cities, 'Cebu City')));
+        $this->assertSame([0, 1, 1], $this->statuses($this->areaNamed($cities, 'Talisay City')));
+        $this->assertSame([1, 0, 0], $this->statuses($this->areaNamed($cities, 'Catbalogan')));
+        $this->assertSame([0, 0, 1], $this->statuses($this->areaNamed($cities, 'Calbayog')));
+
+        foreach ([1 => 'Cebu City', 2 => 'Talisay City', 3 => 'Catbalogan', 4 => 'Calbayog'] as $cityId => $name) {
+            $this->assertBarangaysSumToTheCity(
+                $this->areaNamed($cities, $name),
+                $this->heatmap(['level' => 'barangay', 'city_id' => $cityId]),
+                $name
+            );
+        }
+    }
+
+    public function test_the_unknown_row_and_zero_seeded_rows_carry_every_new_field(): void
+    {
+        // A listing that resolves to no place at all lands on the id-less row.
+        $this->addListing(500, null, 2, $this->manilaMidnight->copy()->subDays(10), 9, 'rented');
+
+        $payload = $this->heatmap(['level' => 'province']);
+        $rows = $this->byId($payload);
+
+        $unknown = $rows['unknown'] ?? null;
+        $this->assertNotNull($unknown);
+        $this->assertNull(end($payload['data'])['id'], 'Unknown is still never the headline');
+        $this->assertSame([1, 1, 0], [$unknown['total'], $unknown['prev_7d'], $unknown['new_7d']]);
+        $this->assertSame([0, 1, 0], $this->statuses($unknown));
+        $this->assertSame(1, $unknown['by_category']['for_rent']['prev_7d']);
+        $this->assertSame(1, $unknown['by_category']['for_rent']['rented']);
+        $this->assertSame(1, $payload['totals']['unknown_listings']);
+
+        // Same keys as an ordinary row, all the way down — and a zero, never a
+        // hole, where nothing was listed.
+        $cebu = $this->areaNamed($payload, 'Cebu');
+        foreach ([$unknown, $this->areaNamed($payload, 'Siquijor')] as $row) {
+            $this->assertSame(array_keys($cebu), array_keys($row), "{$row['name']} has the ordinary row's shape");
+            foreach (self::CATEGORY_KEYS as $category) {
+                $this->assertSame(self::CATEGORY_COUNTS, array_keys($row['by_category'][$category]));
+            }
+        }
+
+        $siquijor = $this->areaNamed($payload, 'Siquijor');
+        foreach (self::ROW_COUNTS as $field) {
+            $this->assertSame(0, $siquijor[$field], "a zero-seeded row is 0 for {$field}");
+        }
+        foreach (self::CATEGORY_KEYS as $category) {
+            $this->assertSame(array_fill_keys(self::CATEGORY_COUNTS, 0), $siquijor['by_category'][$category]);
+        }
+    }
+
     /** Row names in response order (biggest first, Unknown last). */
     private function names(array $payload): array
     {
         return array_column($payload['data'], 'name');
+    }
+
+    /** A Manila calendar day as Y-m-d, $offset days from today. */
+    private function day(int $offset): string
+    {
+        return $this->manilaMidnight->copy()->addDays($offset)->format('Y-m-d');
+    }
+
+    /** Rows keyed by area id ('unknown' for the id-less row), in key order, to compare payloads area by area. */
+    private function byId(array $payload): array
+    {
+        $rows = [];
+        foreach ($payload['data'] as $row) {
+            $rows[$row['id'] ?? 'unknown'] = $row;
+        }
+        ksort($rows, SORT_STRING);
+
+        return $rows;
+    }
+
+    /** One listing on a property of its own, created at a Manila instant. A null barangay resolves nowhere. */
+    private function addListing(int $id, ?int $barangayId, int $categoryId, Carbon $createdAt, int $agentId = 9, string $status = 'active'): void
+    {
+        DB::table('properties')->insert([
+            'id' => $id, 'address_id' => $barangayId, 'status' => $status,
+            'created_at' => $this->utc($createdAt), 'updated_at' => $this->utc($createdAt),
+        ]);
+        DB::table('listings')->insert([
+            'id' => $id, 'category_id' => $categoryId, 'property_id' => $id, 'agent_id' => $agentId,
+            'created_at' => $this->utc($createdAt), 'updated_at' => $this->utc($createdAt),
+        ]);
+    }
+
+    /** [sold, rented, leased] of a row, or of one by_category block. */
+    private function statuses(array $counts): array
+    {
+        return [$counts['sold'], $counts['rented'], $counts['leased']];
+    }
+
+    /** Every count on a city row, flat and per category, is the sum over that city's barangay rows. */
+    private function assertBarangaysSumToTheCity(array $cityRow, array $barangays, string $context): void
+    {
+        foreach (self::ROW_COUNTS as $field) {
+            $this->assertSame(
+                $cityRow[$field],
+                array_sum(array_column($barangays['data'], $field)),
+                "{$context}: the barangays' {$field} must sum to the city's"
+            );
+        }
+
+        foreach (self::CATEGORY_KEYS as $category) {
+            foreach (self::CATEGORY_COUNTS as $field) {
+                $this->assertSame(
+                    $cityRow['by_category'][$category][$field],
+                    array_sum(array_map(fn (array $row) => $row['by_category'][$category][$field], $barangays['data'])),
+                    "{$context}: the barangays' {$category} {$field} must sum to the city's"
+                );
+            }
+        }
     }
 }
