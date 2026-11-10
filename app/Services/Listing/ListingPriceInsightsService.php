@@ -11,7 +11,8 @@ use Illuminate\Support\Facades\DB;
  * Same hygiene as the public price guide (PriceGuideService): public, unflagged listings with a real
  * price (For Sale and Foreclosure ≥ ₱100k, For Rent ≥ ₱1k, so placeholder prices stay out; "All" is the
  * three together, each against its own floor), and ₱/sqm only where the
- * area is at least 10 sqm — floor area for buildings, lot area for land. Medians are reported beside
+ * area is at least 10 sqm — floor area for buildings, lot area for land. The price rules live in
+ * {@see ListingPriceRules}, shared with the Listings Heatmap's area details. Medians are reported beside
  * averages because a few ₱200M mansions move an average a long way and a median not at all.
  *
  * Scope (province / city / barangay / island / region, dates, the team lead's agents) comes from the
@@ -23,18 +24,6 @@ class ListingPriceInsightsService extends ListingInsightsService
 
     /** Selectable categories; anything else (incl. none / "All") means all three together. */
     public const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
-
-    private const SALE_PRICE_FLOOR = 100_000;
-
-    private const RENT_PRICE_FLOOR = 1_000;
-
-    /**
-     * Ceilings, the other side of the floors: a ₱150B house (CEB-16102) and an ₱84B one (NOR-15747) are
-     * typos that alone dragged the house average to ₱60M; the dearest real listing is under ₱1B.
-     */
-    private const SALE_PRICE_CEILING = 5_000_000_000;
-
-    private const RENT_PRICE_CEILING = 10_000_000;
 
     private const MIN_AREA_SQM = 10;
 
@@ -336,18 +325,14 @@ class ListingPriceInsightsService extends ListingInsightsService
     /** Public, unflagged, really-priced listings of one category ('' = all), with their property type and areas. */
     private function pricedQuery(string $category, string $type)
     {
-        return $this->baseListingQuery()
-            ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
-            ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
-            ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
-            ->where('listings.visibility', 'public')
-            ->where(fn ($q) => $q->whereNull('listings.verification_status')->orWhere('listings.verification_status', '!=', 'flagged'))
+        // Each listing against its own category's floor and ceiling — see ListingPriceRules.
+        return ListingPriceRules::apply(
+            $this->baseListingQuery()
+                ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
+                ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
+                ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
+        )
             ->when($category !== '', fn ($q) => $q->where('categories.name', $category))
-            ->whereNotNull('listings.price')
-            // Each listing against its own category's floor: rent ≥ ₱1k, sale and foreclosure ≥ ₱100k.
-            ->where(fn ($q) => $q
-                ->where(fn ($r) => $r->where('categories.name', 'For Rent')->whereBetween('listings.price', [self::RENT_PRICE_FLOOR, self::RENT_PRICE_CEILING]))
-                ->orWhere(fn ($r) => $r->where('categories.name', '!=', 'For Rent')->whereBetween('listings.price', [self::SALE_PRICE_FLOOR, self::SALE_PRICE_CEILING])))
             ->when($type !== '', fn ($q) => $q->where('property_types.name', $type));
     }
 
@@ -419,24 +404,15 @@ class ListingPriceInsightsService extends ListingInsightsService
 
         return [
             'avg_price' => $prices ? round(array_sum($prices) / count($prices)) : null,
-            'median_price' => $prices ? round(self::median($prices)) : null,
+            'median_price' => $prices ? round(ListingPriceRules::median($prices)) : null,
             'min_price' => $prices ? $prices[0] : null,
             'max_price' => $prices ? $prices[count($prices) - 1] : null,
             'avg_ppsqm' => $ppsqm ? round(array_sum($ppsqm) / count($ppsqm)) : null,
-            'median_ppsqm' => $ppsqm ? round(self::median($ppsqm)) : null,
+            'median_ppsqm' => $ppsqm ? round(ListingPriceRules::median($ppsqm)) : null,
             'ppsqm_listings' => count($ppsqm),
             // Size range over the same listings the ₱/sqm uses (usable area ≥ 10 sqm).
             'min_area' => $areas ? $areas[0] : null,
             'max_area' => $areas ? $areas[count($areas) - 1] : null,
         ];
-    }
-
-    /** @param list<float> $sorted */
-    private static function median(array $sorted): float
-    {
-        $n = count($sorted);
-        $mid = intdiv($n, 2);
-
-        return $n % 2 ? $sorted[$mid] : ($sorted[$mid - 1] + $sorted[$mid]) / 2;
     }
 }

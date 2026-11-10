@@ -632,6 +632,8 @@ Route::middleware('strip.tags')->group(function () {
             // while the geometry only changes on a boundary re-import.
             Route::get('/listings/insights/heatmap', [ListingController::class, 'insightsHeatmap']);
             Route::get('/listings/insights/heatmap/boundaries', [ListingController::class, 'insightsHeatmapBoundaries']);
+            // One clicked area's typical prices + agent count (the details card).
+            Route::get('/listings/insights/heatmap/area', [ListingController::class, 'insightsHeatmapArea']);
             // Admin "Top Listing Creators" tile (admin-gated in the controller).
             Route::get('/listings/insights/top-creators', [ListingController::class, 'insightsTopCreators']);
             Route::get('/listings/insights/status/{status}', [ListingController::class, 'insightsListingsForStatus'])

@@ -728,6 +728,11 @@ class ListingController extends Controller
         $applyVerification = $c['verification'];
         $applyAtsStatus = $c['ats'];
 
+        // The Listings Heatmap's "View these listings" link (no-op without its
+        // params). On the base query, like date_from/date_to above, so the stat
+        // cards count the same listings the list shows.
+        $query = $c['heatmap_area']($query);
+
         $statusCounts = $visibilityCounts = $categoryCounts = $atsCounts = $verificationCounts = [];
         $totalViews = 0;
 
@@ -890,7 +895,7 @@ class ListingController extends Controller
         [$query, $trashed, $propHas] = $this->scopedListingQuery($request, $isAdmin, $ledAgentIds, $secretaryRegion);
 
         $c = $this->listingFilterClosures($request, $propHas);
-        foreach (['status', 'visibility', 'category', 'featured', 'subtypes', 'verification', 'ats', 'date', 'price', 'beds', 'baths', 'area', 'furnishings'] as $k) {
+        foreach (['status', 'visibility', 'category', 'featured', 'subtypes', 'verification', 'ats', 'date', 'price', 'beds', 'baths', 'area', 'furnishings', 'heatmap_area'] as $k) {
             $query = $c[$k]($query);
         }
         $this->applyGeoFilters($query, $request, $trashed);
@@ -1135,7 +1140,8 @@ class ListingController extends Controller
      * verification/ats/date filter, as composable closures. allListings composes
      * subsets for its counts and the full set for the paginated result;
      * mapMarkers applies the full set. (date is NOT applied to the count clones,
-     * matching the original behavior.)
+     * matching the original behavior.) heatmap_area is the exception the other
+     * way: allListings applies it to the base query, so the counts follow it.
      */
     private function listingFilterClosures(Request $request, callable $propHas): array
     {
@@ -1146,8 +1152,11 @@ class ListingController extends Controller
         $subtypes = $request->input('subtypes');
         $verificationStatus = $request->input('verification_status');
         $atsStatus = $request->input('ats_status');
+        $heatmapArea = $this->heatmapAreaFilter($request);
 
         return [
+            // The Listings Heatmap's "View these listings" link (no-op without its params).
+            'heatmap_area' => $heatmapArea,
             'status' => function ($q) use ($status, $propHas) {
                 if (! $status) {
                     return $q;
@@ -1307,6 +1316,56 @@ class ListingController extends Controller
                 return $q->whereHas('property', fn ($sub) => $sub->whereIn('furnishing_id', $ids));
             },
         ];
+    }
+
+    /**
+     * The Listings Heatmap's "View these listings" link, as one more filter.
+     *
+     * area_level + area_id (+ area_city_id for a barangay) narrow to exactly
+     * the listings that area's number on the map counts: the heatmap's own
+     * areaListingsQuery(), as a subquery, so the list can never drift from
+     * the map's definition of the place. added_from / added_to (Manila
+     * calendar days, both or neither, the heatmap's own range rules) narrow
+     * to the listings added on those days, inside the area when one is given.
+     *
+     * No agent scope here: All Listings already has its own (a team leader's
+     * list is their team's), and it applies on top. A no-op without the params.
+     */
+    private function heatmapAreaFilter(Request $request): \Closure
+    {
+        $validated = $request->validate([
+            // All or none: a level and an id, and a barangay's city as well.
+            'area_level' => 'nullable|required_with:area_id,area_city_id|in:province,city,barangay',
+            'area_id' => 'nullable|required_with:area_level|integer|min:1',
+            'area_city_id' => 'nullable|required_if:area_level,barangay|integer|min:1',
+            // Not date_from / date_to: those are the audit queue's UTC-day filter.
+            ...$this->heatmapRangeRules('added_from', 'added_to'),
+        ]);
+
+        $level = (string) ($validated['area_level'] ?? '');
+        $heatmap = app(ListingHeatmapService::class);
+        $range = $this->heatmapRange($heatmap, $validated, 'added_from', 'added_to');
+
+        if ($level !== '') {
+            // Built once, compiled into each query that applies it. The range
+            // rides inside, exactly as a ranged heatmap applies it.
+            $areaListingIds = $heatmap->areaListingsQuery(
+                $level,
+                (int) $validated['area_id'],
+                $level === 'barangay' ? (int) $validated['area_city_id'] : null,
+                null,
+                $range,
+                null
+            )->select('listings.id');
+
+            return fn ($q) => $q->whereIn('listings.id', $areaListingIds);
+        }
+
+        if ($range !== null) {
+            return fn ($q) => $heatmap->whereAddedDuring($q, $range);
+        }
+
+        return fn ($q) => $q;
     }
 
     /**
@@ -3176,10 +3235,7 @@ class ListingController extends Controller
             // would be 42k rows nobody asked for, so the id is mandatory there
             // and meaningless above it.
             'city_id' => 'nullable|integer|exists:cities,id|required_if:level,barangay',
-            // Manila calendar days, inclusive, both or neither. No upper bound on
-            // purpose: a future day is clamped to today below, not refused.
-            'date_start' => 'nullable|required_with:date_end|date_format:Y-m-d|after_or_equal:'.ListingHeatmapService::EARLIEST_DAY,
-            'date_end' => 'nullable|required_with:date_start|date_format:Y-m-d|after_or_equal:date_start',
+            ...$this->heatmapRangeRules('date_start', 'date_end'),
         ]);
 
         $level = in_array($validated['level'] ?? 'province', ListingHeatmapService::LEVELS, true)
@@ -3203,19 +3259,8 @@ class ListingController extends Controller
         $cityId = $requestedCityId !== null ? $heatmap->canonicalCityId($requestedCityId) : null;
 
         // Clamped before the key is built too: "Oct 1 → Oct 31" asked on Oct 20
-        // IS "Oct 1 → Oct 20", and the two must share one entry. '' is absent:
-        // the tests call this directly, without ConvertEmptyStringsToNull.
-        $range = $heatmap->resolveRange(
-            ($validated['date_start'] ?? '') !== '' ? (string) $validated['date_start'] : null,
-            ($validated['date_end'] ?? '') !== '' ? (string) $validated['date_end'] : null,
-        );
-
-        $scopeKey = 'admin';
-        if ($agentIds !== null) {
-            $sorted = array_values(array_unique(array_map('intval', $agentIds)));
-            sort($sorted);
-            $scopeKey = 'team:'.md5(implode(',', $sorted));
-        }
+        // IS "Oct 1 → Oct 20", and the two must share one entry.
+        $range = $this->heatmapRange($heatmap, $validated, 'date_start', 'date_end');
 
         // The payload carries boundaries_version and the has_boundary flags, so a
         // re-import or re-link has to invalidate the counts too — otherwise a
@@ -3232,10 +3277,8 @@ class ListingController extends Controller
             $level,
             $provinceId !== null ? (string) $provinceId : 'all',
             $cityId !== null ? (string) $cityId : 'all',
-            $range !== null
-                ? str_replace('-', '', $range['date_start']).'-'.str_replace('-', '', $range['date_end'])
-                : 'all',
-            $scopeKey
+            $this->heatmapRangeSlot($range),
+            $this->heatmapScopeKey($agentIds)
         );
 
         $computed = false;
@@ -3281,6 +3324,112 @@ class ListingController extends Controller
 
         return response()->json($payload)
             ->header('X-Heatmap-Cache', $computed ? 'miss' : 'hit');
+    }
+
+    /**
+     * Listings Heatmap — the details card's extra numbers for ONE area: how
+     * many listings (equal to that area's row on the map), how many agents
+     * list there, and the typical For Sale asking price and For Rent monthly
+     * rent. See ListingHeatmapService::areaDetails() for what each one counts.
+     *
+     * Same access rule and same range rules as the counts endpoint. Asked once
+     * per click and never polled, so it is cached for TTL_AREA under the
+     * area's canonical ids: Samar 82 and 83 (or Lagtang 18 and 19) share one
+     * entry, as they share one row.
+     */
+    public function insightsHeatmapArea(Request $request, ListingHeatmapService $heatmap): JsonResponse
+    {
+        $agentIds = $this->resolveInsightsAgentScope($request);
+
+        $validated = $request->validate([
+            'level' => 'required|in:province,city,barangay',
+            'id' => 'required|integer|min:1',
+            // The barangay rows are one city group's, so a barangay is named inside its city.
+            'city_id' => 'required_if:level,barangay|nullable|integer',
+            ...$this->heatmapRangeRules('date_start', 'date_end'),
+            'category' => 'nullable|in:all,for_sale,for_rent,foreclosure',
+        ]);
+
+        $level = (string) $validated['level'];
+        // Derived from the level, as on the counts endpoint: a stray city_id
+        // above barangay level must not fork the key.
+        $cityId = $level === 'barangay' ? $heatmap->canonicalCityId((int) $validated['city_id']) : null;
+        $areaId = $heatmap->canonicalAreaId($level, (int) $validated['id'], $cityId);
+        $range = $this->heatmapRange($heatmap, $validated, 'date_start', 'date_end');
+        $category = ($validated['category'] ?? '') !== '' ? (string) $validated['category'] : 'all';
+
+        $cacheKey = sprintf(
+            'heatmap:area:v1:%d:%s:%d:%s:%s:%s:%s',
+            $heatmap->boundariesVersion(),
+            $level,
+            $areaId,
+            $cityId !== null ? (string) $cityId : '-',
+            $this->heatmapRangeSlot($range),
+            $category,
+            $this->heatmapScopeKey($agentIds)
+        );
+
+        $payload = Cache::remember(
+            $cacheKey,
+            ListingHeatmapService::TTL_AREA,
+            fn () => $heatmap->areaDetails($level, $areaId, $cityId, $agentIds, $range, $category)
+        );
+
+        return response()->json($payload);
+    }
+
+    /**
+     * The heatmap's date range rules, for any pair of param names: Manila
+     * calendar days (Y-m-d), inclusive, both or neither, none before
+     * EARLIEST_DAY, an end before the start a 422. No upper bound on purpose: a
+     * future day is clamped to today by resolveRange(), not refused. One
+     * definition, so the counts, an area's details and the All Listings link
+     * accept exactly the same ranges.
+     *
+     * @return array<string, string>
+     */
+    private function heatmapRangeRules(string $startKey, string $endKey): array
+    {
+        return [
+            $startKey => 'nullable|required_with:'.$endKey.'|date_format:Y-m-d|after_or_equal:'.ListingHeatmapService::EARLIEST_DAY,
+            $endKey => 'nullable|required_with:'.$startKey.'|date_format:Y-m-d|after_or_equal:'.$startKey,
+        ];
+    }
+
+    /**
+     * A validated range pair resolved (and clamped) the way the heatmap answers
+     * for it; null = all time. '' is absent: the tests call the controller
+     * directly, without ConvertEmptyStringsToNull.
+     *
+     * @return array{date_start: string, date_end: string, clamped: bool, past: bool}|null
+     */
+    private function heatmapRange(ListingHeatmapService $heatmap, array $validated, string $startKey, string $endKey): ?array
+    {
+        return $heatmap->resolveRange(
+            ($validated[$startKey] ?? '') !== '' ? (string) $validated[$startKey] : null,
+            ($validated[$endKey] ?? '') !== '' ? (string) $validated[$endKey] : null,
+        );
+    }
+
+    /** A resolved range's cache-key slot: "20261001-20261031", or "all". */
+    private function heatmapRangeSlot(?array $range): string
+    {
+        return $range !== null
+            ? str_replace('-', '', $range['date_start']).'-'.str_replace('-', '', $range['date_end'])
+            : 'all';
+    }
+
+    /** "admin", or "team:" + a hash of the sorted led agent ids — one key per footprint, not per leader. */
+    private function heatmapScopeKey(?array $agentIds): string
+    {
+        if ($agentIds === null) {
+            return 'admin';
+        }
+
+        $sorted = array_values(array_unique(array_map('intval', $agentIds)));
+        sort($sorted);
+
+        return 'team:'.md5(implode(',', $sorted));
     }
 
     /**

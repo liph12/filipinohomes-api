@@ -4,7 +4,9 @@ namespace App\Services\Listing;
 
 use App\Support\BarangayNameMatcher;
 use App\Support\CityGroup;
+use App\Support\CityNameMatcher;
 use App\Support\ProvinceCanonicalizer;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -70,11 +72,24 @@ use InvalidArgumentException;
  * {@see CityGroup}'s, and barangay identity folds identical-name twin rows
  * inside one city on {@see BarangayNameMatcher::foldKey()} — the registry
  * carries 361 such duplicate groups and a polygon can only ever point at one.
+ *
+ * One more contract rides on those folds: {@see areaListingsQuery()} restates,
+ * as a WHERE, exactly which listings each *Buckets() method folds onto one
+ * area. The details card and the All Listings "View these listings" link both
+ * stand on it, and promise the admin the number on the map. Change a fold and
+ * that method changes with it; the area-membership tests compare the two for
+ * every row at every tier.
  */
 class ListingHeatmapService extends ListingInsightsService
 {
     /** Seconds the counts payload stays fresh; echoed to the client as `ttl`. */
     public const TTL = 55;
+
+    /**
+     * Seconds an area's details (typical prices, agents) stay cached. They are
+     * read once per click, never polled, and a median does not move in minutes.
+     */
+    public const TTL_AREA = 600;
 
     /**
      * TTL for a range that ended before today. Nothing new can be added to a
@@ -113,6 +128,18 @@ class ListingHeatmapService extends ListingInsightsService
 
     /** Per-instance memo of cityGroupIds(): the controller and heatmap() ask for the same city. */
     private array $cityGroupCache = [];
+
+    /**
+     * Per-instance memo: every `cities` id, nationwide, under its
+     * {@see CityNameMatcher::normalize()}d name — the name half of the city
+     * fold key. Null until cityIdsNamed() first needs it.
+     *
+     * @var array<string, int[]>|null
+     */
+    private ?array $cityIdsByName = null;
+
+    /** Per-instance memo of barangayFoldIds(): the controller and areaListingsQuery() ask for the same barangay. */
+    private array $barangayFoldCache = [];
 
     /**
      * The Manila calendar days this call counts listings ADDED on, as the
@@ -360,6 +387,346 @@ class ListingHeatmapService extends ListingInsightsService
     }
 
     /**
+     * Listings query for ONE heatmap area: exactly the rows that area's count is built from.
+     *
+     * heatmap()'s own base query — the same exclusions, standard categories,
+     * joins, range and agent scope — narrowed to the listings the *Buckets()
+     * method of that tier folds onto the area:
+     *
+     *   province — the province's group ids (Samar 82 + 83) on the COALESCE
+     *              province id, as provinceBuckets() folds them.
+     *   city     — cityBuckets()' fold key: the canonical province AND the
+     *              normalized town name, both read off the LISTING. See
+     *              cityFoldScope() for why that is not just "the city group".
+     *   barangay — the city group, exactly as the barangay tier scopes, and the
+     *              address barangays sharing the area's fold key, twins and all.
+     *
+     * Every number the area shows — its total, a category's total, a status,
+     * a window under a range — is then a count of this query, plus the same
+     * single condition the aggregate puts in that column.
+     *
+     * No columns are selected: count() it, or select('listings.id') to use it
+     * as a subquery. One row per listing, because every join is on a primary key.
+     *
+     * The heatmap's id-less "Unknown" rows (no place resolved) have no id to ask for.
+     *
+     * @param  'province'|'city'|'barangay'  $level
+     * @param  int  $areaId  the row's id as heatmap() returns it, or any id that folds onto it (82 for Samar, Catbalogan 3 for 5, Lagtang 18 for 19)
+     * @param  int|null  $cityId  any id of the city group; REQUIRED at barangay level, ignored elsewhere
+     * @param  int[]|null  $agentIds  null = admin (unscoped), list = team leader
+     * @param  array{date_start: string, date_end: string}|null  $range  resolveRange()'s answer; null = all time
+     * @param  string|null  $category  for_sale | for_rent | foreclosure; null or 'all' = all three
+     * @return Builder
+     */
+    public function areaListingsQuery(string $level, int $areaId, ?int $cityId = null, ?array $agentIds = null, ?array $range = null, ?string $category = null)
+    {
+        if (! in_array($level, self::LEVELS, true)) {
+            // Not coerced, unlike heatmap(): answering for a different tier
+            // than the one asked about would be a wrong number, not a default.
+            throw new InvalidArgumentException("Unknown heatmap level '{$level}'.");
+        }
+        if ($level === 'barangay' && $cityId === null) {
+            throw new InvalidArgumentException('A barangay area needs its city_id.');
+        }
+        $categoryName = $this->categoryName($category);
+
+        $provinceIds = null;
+        $nameCityIds = [];
+        $cityGroupIds = [];
+        $barangayIds = [];
+
+        // Resolved before configure(): these read the registry, not listings.
+        if ($level === 'province') {
+            $provinceIds = ProvinceCanonicalizer::groupIds($this->provinceNames(), $areaId);
+        } elseif ($level === 'city') {
+            ['province_ids' => $provinceIds, 'city_ids' => $nameCityIds] = $this->cityFoldScope($areaId);
+        } else {
+            $cityGroupIds = $this->cityGroupIds($cityId);
+            $barangayIds = $this->barangayFoldIds($cityGroupIds, $areaId);
+        }
+
+        // Exactly heatmap()'s state: the agent scope, and the range always (re)set.
+        $this->configure([], $agentIds);
+        $this->createdBetween = $range !== null ? $this->rangeBounds($range) : null;
+
+        if ($level === 'barangay') {
+            $this->scopeCityIds = $cityGroupIds;
+        } elseif ($provinceIds !== null) {
+            // An empty list matches nothing (the base query's contract).
+            $this->scopeProvinceIds = $provinceIds;
+        }
+
+        $query = $this->baseListingQuery();
+
+        if ($level === 'city') {
+            $query->whereIn(DB::raw($this->cityIdExpr()), $nameCityIds ?: [0]);
+            if ($provinceIds === null) {
+                // A town filed under no province keys under "none".
+                $query->whereRaw($this->provinceIdExpr().' IS NULL');
+            }
+        } elseif ($level === 'barangay') {
+            $query->whereIn('properties.address_id', $barangayIds ?: [0]);
+        }
+
+        if ($categoryName !== null) {
+            $query->where('categories.name', $categoryName);
+        }
+
+        return $query;
+    }
+
+    /**
+     * The id heatmap() paints an area under, from any id that folds onto it —
+     * so twins requested separately share one cache entry, as with
+     * canonicalProvinceId() and canonicalCityId().
+     *
+     * @param  int|null  $cityId  barangay level only (required there)
+     */
+    public function canonicalAreaId(string $level, int $areaId, ?int $cityId = null): int
+    {
+        return match ($level) {
+            'province' => (int) $this->canonicalProvinceId($areaId),
+            'city' => $this->canonicalCityId($areaId),
+            'barangay' => $this->canonicalBarangayId($areaId, $cityId ?? throw new InvalidArgumentException('A barangay area needs its city_id.')),
+            default => throw new InvalidArgumentException("Unknown heatmap level '{$level}'."),
+        };
+    }
+
+    /**
+     * The details card's extra numbers for ONE area: how many listings (the
+     * row's total, by construction), how many agents list there, and the
+     * typical For Sale asking price and For Rent monthly rent.
+     *
+     * None of these can be added up when twin areas fold together (a median
+     * of medians is not a median; agents repeat across towns), which is why
+     * they are asked for per area and never ride the 60 s counts poll.
+     *
+     * "Typical" is the median of the believable prices ({@see ListingPriceRules},
+     * the same rules as Price Insights), with `count` saying how many prices it
+     * was taken over. Under a category, the area is that category's listings
+     * only, so a price whose category is ruled out is null rather than a
+     * number about listings the card is not showing.
+     *
+     * @param  string|null  $category  for_sale | for_rent | foreclosure; null or 'all' = all three
+     * @return array{level: string, id: int, city_id: ?int, category: string, range: ?array{date_start: string, date_end: string}, listings: int, agents: int, sale: ?array{median: float, count: int}, rent: ?array{median: float, count: int}, generated_at: string}
+     */
+    public function areaDetails(string $level, int $areaId, ?int $cityId = null, ?array $agentIds = null, ?array $range = null, ?string $category = null): array
+    {
+        $category = $category !== null && $category !== '' ? $category : 'all';
+        $query = $this->areaListingsQuery($level, $areaId, $cityId, $agentIds, $range, $category);
+
+        $listings = (clone $query)->count();
+
+        return [
+            'level' => $level,
+            'id' => $this->canonicalAreaId($level, $areaId, $cityId),
+            'city_id' => $level === 'barangay' ? $this->canonicalCityId($cityId) : null,
+            'category' => $category,
+            'range' => $range === null ? null : [
+                'date_start' => (string) $range['date_start'],
+                'date_end' => (string) $range['date_end'],
+            ],
+            'listings' => $listings,
+            'agents' => $listings > 0 ? (int) (clone $query)->distinct()->count('listings.agent_id') : 0,
+            'sale' => $this->typicalPrice($query, 'for_sale', $category),
+            'rent' => $this->typicalPrice($query, 'for_rent', $category),
+            'generated_at' => Carbon::now('UTC')->toIso8601ZuluString(),
+        ];
+    }
+
+    /**
+     * Narrow any listings query (Eloquent or not) to the listings ADDED on a
+     * resolved range's Manila days: the same half-open instants a ranged
+     * heatmap counts, so a list filtered this way agrees with the map.
+     *
+     * @template T of \Illuminate\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder
+     *
+     * @param  T  $query
+     * @param  array{date_start: string, date_end: string}  $range  resolveRange()'s answer
+     * @return T
+     */
+    public function whereAddedDuring($query, array $range)
+    {
+        return $this->whereCreatedBetween($query, $this->rangeBounds($range));
+    }
+
+    /**
+     * The median believable price of the area's listings in one category, and
+     * how many prices it was taken over — null when there are none, or when
+     * the card's category already rules this one out.
+     *
+     * @return array{median: float, count: int}|null
+     */
+    private function typicalPrice($areaQuery, string $key, string $category): ?array
+    {
+        if ($category !== 'all' && $category !== $key) {
+            return null;
+        }
+
+        // Only the price column: a median needs nothing else.
+        $prices = ListingPriceRules::apply((clone $areaQuery)->where('categories.name', self::CATEGORIES[$key]))
+            ->pluck('listings.price')
+            ->map(fn ($price) => (float) $price)
+            ->all();
+
+        $median = ListingPriceRules::median($prices);
+
+        return $median === null ? null : ['median' => round($median, 2), 'count' => count($prices)];
+    }
+
+    /** categories.name for a heatmap category key; null for none / 'all' (the three together). */
+    private function categoryName(?string $category): ?string
+    {
+        if ($category === null || $category === '' || $category === 'all') {
+            return null;
+        }
+        if (! isset(self::CATEGORIES[$category])) {
+            throw new InvalidArgumentException("Unknown heatmap category '{$category}'.");
+        }
+
+        return self::CATEGORIES[$category];
+    }
+
+    /**
+     * What cityBuckets() folds onto one city's row, as two id lists for the
+     * listing's own COALESCE expressions: the province ids of the row's
+     * canonical province (null = the listing resolves to NO province, for a
+     * town filed under none), and every `cities` id NATIONWIDE that carries the
+     * row's normalized name.
+     *
+     * Why not just cityGroupIds(): cityBuckets() keys an aggregate row on the
+     * LISTING's province — provinceIdExpr(), where a project's own prov_id
+     * comes first — not on the province of the town the listing resolved to.
+     * The two agree for every listing in the local copy of the data (checked
+     * 2026-11-10), but a project filed under Bohol with its town set to Cebu's
+     * Carmen is counted on Bohol's Carmen row, and a group-of-ids filter would
+     * put it under Cebu's. Matching on both halves of the key makes the count
+     * exact either way. The name half reads cityIdExpr()'s row, which is the
+     * row cityNameExpr() names: the foreign key on projects.city_id makes them
+     * one row whenever a project names a town.
+     *
+     * An id with no `cities` row names no town: both lists are empty, so the
+     * area is too (no listing can resolve to it, by the same foreign keys).
+     *
+     * @return array{province_ids: int[]|null, city_ids: int[]}
+     */
+    private function cityFoldScope(int $cityId): array
+    {
+        $city = DB::table('cities')->where('id', $cityId)->first(['id', 'name', 'province_id']);
+
+        if ($city === null) {
+            return ['province_ids' => [], 'city_ids' => []];
+        }
+
+        return [
+            'province_ids' => $city->province_id !== null
+                ? ProvinceCanonicalizer::groupIds($this->provinceNames(), (int) $city->province_id)
+                : null,
+            'city_ids' => $this->cityIdsNamed((string) $city->name),
+        ];
+    }
+
+    /**
+     * Every `cities` id, nationwide, whose name folds to the same town name.
+     *
+     * @return int[]
+     */
+    private function cityIdsNamed(string $name): array
+    {
+        if ($this->cityIdsByName === null) {
+            $index = [];
+            foreach (DB::table('cities')->orderBy('id')->get(['id', 'name']) as $row) {
+                $index[CityNameMatcher::normalize((string) $row->name)][] = (int) $row->id;
+            }
+            $this->cityIdsByName = $index;
+        }
+
+        return $this->cityIdsByName[CityNameMatcher::normalize($name)] ?? [];
+    }
+
+    /**
+     * The address barangay ids barangayBuckets() folds onto one row of a city
+     * group: every barangay sharing $barangayId's fold key that a listing in
+     * the group can sit on. Empty when $barangayId is not one of them (it
+     * belongs to another town), which makes the area empty rather than quietly
+     * answering for a same-name barangay that is not the one asked about.
+     *
+     * The candidates are the group's registry rows plus one more kind:
+     * barangays OUTSIDE the group that a listing still resolves into it,
+     * because its project sits in this town while its unit's address barangay
+     * sits in another. barangayBuckets() folds those by name too, onto the
+     * town's own row of that name or onto a row of their own. Only a project
+     * can do that — without one, a listing's town IS its barangay's — so they
+     * are found through the projects in the group, never by scanning listings.
+     *
+     * @param  int[]  $cityGroupIds
+     * @return int[] ascending
+     */
+    private function barangayFoldIds(array $cityGroupIds, int $barangayId): array
+    {
+        $memo = implode(',', $cityGroupIds).'|'.$barangayId;
+        if (isset($this->barangayFoldCache[$memo])) {
+            return $this->barangayFoldCache[$memo];
+        }
+
+        /** @var array<int, string> $candidates */
+        $candidates = [];
+        foreach (DB::table('barangays')->whereIn('city_id', $cityGroupIds)->get(['id', 'name']) as $row) {
+            $candidates[(int) $row->id] = trim((string) $row->name);
+        }
+
+        $foreign = DB::table('properties')
+            ->join('projects', function ($join) {
+                // The base query's own project join: a deleted project resolves nothing.
+                $join->on('projects.id', '=', 'properties.project_id')
+                    ->whereNull('projects.deleted_at');
+            })
+            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->whereIn('projects.city_id', $cityGroupIds)
+            ->whereNotNull('properties.address_id')
+            ->where(fn ($q) => $q->whereNull('barangays.city_id')->orWhereNotIn('barangays.city_id', $cityGroupIds))
+            ->distinct()
+            ->get(['properties.address_id', 'barangays.name']);
+
+        foreach ($foreign as $row) {
+            $candidates[(int) $row->address_id] = trim((string) ($row->name ?? ''));
+        }
+
+        $ids = [];
+        if (isset($candidates[$barangayId])) {
+            $key = $this->barangayKey($candidates[$barangayId]);
+            foreach ($candidates as $id => $name) {
+                if ($this->barangayKey($name) === $key) {
+                    $ids[] = $id;
+                }
+            }
+            sort($ids);
+        }
+
+        return $this->barangayFoldCache[$memo] = $ids;
+    }
+
+    /**
+     * The id a barangay row is painted under: the lowest polygon-linked id of
+     * its fold group, else the lowest — offerAreaId()'s survivor, the same rule
+     * as cities. Itself when it is not a barangay of the town.
+     */
+    private function canonicalBarangayId(int $barangayId, int $cityId): int
+    {
+        $cityGroupIds = $this->cityGroupIds($cityId);
+        $foldIds = $this->barangayFoldIds($cityGroupIds, $barangayId);
+
+        if ($foldIds === []) {
+            return $barangayId;
+        }
+
+        $version = $this->boundariesVersion();
+        $canonicalCityId = CityGroup::canonicalId($cityGroupIds, $this->linkedAreaIds('city', $version));
+
+        return CityGroup::canonicalId($foldIds, $this->linkedAreaIds('barangay', $version, $cityGroupIds, $canonicalCityId));
+    }
+
+    /**
      * The shared base query, narrowed to the call's range when there is one —
      * once, here, so the range reaches every column of the aggregate at once
      * instead of being re-applied (and one day forgotten) column by column.
@@ -373,11 +740,23 @@ class ListingHeatmapService extends ListingInsightsService
         $query = parent::baseListingQuery();
 
         if ($this->createdBetween !== null) {
-            $query->where('listings.created_at', '>=', $this->bind($this->createdBetween['from']))
-                ->where('listings.created_at', '<', $this->bind($this->createdBetween['to']));
+            $this->whereCreatedBetween($query, $this->createdBetween);
         }
 
         return $query;
+    }
+
+    /**
+     * The one place a range becomes SQL: two UTC instants, half-open. Shared by
+     * the heatmap's base query and whereAddedDuring() (All Listings), so the
+     * map and the list can never disagree about which day a listing is from.
+     *
+     * @param  array{from: Carbon, to: Carbon}  $bounds  rangeBounds()'s answer
+     */
+    private function whereCreatedBetween($query, array $bounds)
+    {
+        return $query->where('listings.created_at', '>=', $this->bind($bounds['from']))
+            ->where('listings.created_at', '<', $this->bind($bounds['to']));
     }
 
     /**
@@ -565,6 +944,9 @@ class ListingHeatmapService extends ListingInsightsService
      * at one of them. Two half-filled rows for "Carmen" would paint one and
      * grey the other. The survivor is the id the boundary actually references,
      * so the row the map can shade is the row that holds the count.
+     *
+     * The key is read off the LISTING (its provinceIdExpr, its city's name);
+     * cityFoldScope() restates it for areaListingsQuery() and must follow it.
      */
     private function cityBuckets(array $provinceNames, array $idMap, array $groupIds, array $windows, array $linkedCities): array
     {
@@ -636,6 +1018,8 @@ class ListingHeatmapService extends ListingInsightsService
      * Every row carries the GROUP's canonical city and province, not the
      * particular twin row it came from — the admin clicked one town and every
      * row under it should say so.
+     *
+     * barangayFoldIds() restates this fold for areaListingsQuery() and must follow it.
      *
      * @param  int[]  $cityGroupIds
      * @param  array{id: int, name: string, province_id: ?int}  $city
