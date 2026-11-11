@@ -58,6 +58,13 @@ Schedule::command('reports:send-website-analytics')
     ->timezone('Asia/Manila')
     ->withoutOverlapping();
 
+// Executive Report — agent replies saying a listing is already sold / rented /
+// taken, read once into listing_sold_claims so the report never reads message
+// text in a page request. Resumes from its own watermark (settings), so a
+// missed hour only makes the next run longer; :17 keeps it off the top of the
+// hour. The first deploy needs a one-off `reports:scan-sold-claims --max=0`.
+Schedule::command('reports:scan-sold-claims')->hourlyAt(17)->withoutOverlapping(30);
+
 // Personal greeting + poster TO each active agent celebrating today. Same
 // 07:00 slot as the admin digest; renders/uploads the poster per agent so
 // it runs in the background.

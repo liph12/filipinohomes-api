@@ -1140,6 +1140,16 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/client-insights', \App\Http\Controllers\Admin\ClientInsightsController::class);
                 Route::get('/admin/client-insights/replies', [\App\Http\Controllers\Admin\ClientInsightsController::class, 'replies']);
                 Route::get('/admin/client-insights/missed-reply', [\App\Http\Controllers\Admin\ClientInsightsController::class, 'missedReply']);
+                // Executive Report — summary cached per date range; /drill lists the
+                // records behind any number on the page. GET /analysis only reads the
+                // saved AI analysis; POST may call OpenAI (also capped per day).
+                Route::get('/admin/executive-report', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'summary']);
+                Route::get('/admin/executive-report/drill', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'drill']);
+                Route::get('/admin/executive-report/explorer', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'explorer']);
+                Route::get('/admin/executive-report/sold-claims', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'soldClaims']);
+                Route::get('/admin/executive-report/analysis', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'analysis']);
+                Route::post('/admin/executive-report/analysis', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'generateAnalysis'])
+                    ->middleware('throttle:6,1');
                 Route::get('/admin/analytics/status', [AnalyticsController::class, 'status']);
                 Route::get('/admin/analytics/website', [AnalyticsController::class, 'website']);
                 Route::get('/admin/analytics/website/realtime', [AnalyticsController::class, 'realtime']);
