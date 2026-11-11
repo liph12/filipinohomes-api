@@ -11,8 +11,8 @@ use InvalidArgumentException;
 /**
  * How long the Executive Report summary takes to build, part by part, on this
  * server's data — run where there is no web request limit (the production
- * host cuts a request at ~20 seconds). Builds fresh, never from the cache, and
- * writes nothing (the cache included).
+ * host cuts a request at ~20 seconds). Builds fresh: the cached summary is
+ * never read or written (the place-name map caches itself, as on any page load).
  *
  *   php artisan reports:executive-profile                  # the last 30 days
  *   php artisan reports:executive-profile 2026-01-01 2026-11-11
@@ -23,7 +23,7 @@ class ProfileExecutiveReport extends Command
                             {start? : First day, Y-m-d (Manila); default 29 days before the end}
                             {end? : Last day, Y-m-d (Manila); default today}';
 
-    protected $description = 'Time each part of the Executive Report summary build (no cache, nothing written).';
+    protected $description = 'Time each part of the Executive Report summary build (fresh; the cached summary is never read or written).';
 
     public function handle(ExecutiveReportService $report): int
     {
