@@ -18,12 +18,20 @@ use Illuminate\Support\Facades\DB;
  * and was mass-reset in October); the Leuterio Realty sync also creates rows
  * for agents who never opened FH. A user counts as real once they have left
  * any trace of using it: shown up as online (`last_online_at`), signed in
- * (`login_logs`, kept since April), held an API token (deleted on logout), or
- * ever done anything "active" counts — a message, an inquiry, a favourite, a
- * listing, an audited edit. That last part keeps Total ≥ Active by
- * construction. Uncorrelated IN subqueries — each an index semi-join, the
- * guard style of Listing.php — never a per-row subquery; every subquery drops
- * NULLs, because a NULL inside NOT IN quietly matches nothing.
+ * (`login_logs`, kept since April), held an API token (deleted on logout),
+ * sent a message, opened an inquiry, saved a favourite or owned a listing.
+ * Audited edits are left out of the all-time check: scanning every audit row
+ * is far too slow on production, and anyone who edits is online, so they
+ * already count through `last_online_at`.
+ *
+ * How the sets are queried — this is what keeps the page inside the
+ * production host's ~20-second request limit. Every "user is in / not in this
+ * set of ids" check is a JOIN against ONE materialized derived table (the
+ * UNION of the sources, deduplicated once), never `u.id IN (…)` OR'd with
+ * other `IN (…)`s or run against a UNION: MySQL can't turn those into joins
+ * and re-checks them for every user row, which the first production build
+ * did ten times over and took past the limit. "Not in" is a LEFT JOIN with
+ * no match — NULL-safe by construction, unlike NOT IN.
  *
  * Agents. Only agent rows whose user's role is `agent`: admins, editors and
  * secretaries also carry agent rows (to post listings) and would otherwise
@@ -50,27 +58,24 @@ final class PeopleQueries
         return DB::table('users as u')->join('roles as r', 'r.id', '=', 'u.role_id');
     }
 
-    /** Users who have really used FH — signed in, been online, or held a token. */
+    /** Users who have really used FH (see the class note). */
     public function realUsers(): Builder
     {
-        return $this->whereReal($this->users());
+        return $this->users()->joinSub($this->realIds(), 'real', 'real.user_id', '=', 'u.id');
     }
 
     /** Clients who signed up in the range and became real users. */
     public function newClients(ReportRange $range): Builder
     {
-        return $this->whereReal($this->clientsCreated($range));
+        return $this->clientsCreated($range)->joinSub($this->realIds(), 'real', 'real.user_id', '=', 'u.id');
     }
 
     /** Clients whose account was created in the range but never used — abandoned sign-ups (new clients' complement). */
     public function unfinishedSignups(ReportRange $range): Builder
     {
-        $query = $this->clientsCreated($range)->whereNull('u.last_online_at');
-        foreach ($this->traces() as $trace) {
-            $query->whereNotIn('u.id', $trace);
-        }
-
-        return $query;
+        return $this->clientsCreated($range)
+            ->leftJoinSub($this->realIds(), 'real', 'real.user_id', '=', 'u.id')
+            ->whereNull('real.user_id');
     }
 
     /** Clients who signed in during the range and joined before it. */
@@ -79,7 +84,7 @@ final class PeopleQueries
         return $this->users()
             ->where('r.name', 'client')
             ->where('u.created_at', '<', $range->fromUtc())
-            ->whereIn('u.id', $this->loginsIn($range));
+            ->joinSub($this->loginsIn($range), 'lg', 'lg.user_id', '=', 'u.id');
     }
 
     /** Users of any role (or one role) with a recorded action in the range. */
@@ -87,7 +92,7 @@ final class PeopleQueries
     {
         return $this->users()
             ->when($role !== null, fn ($q) => $q->where('r.name', $role))
-            ->whereIn('u.id', $this->activityIn($range));
+            ->joinSub($this->activityIn($range), 'act', 'act.user_id', '=', 'u.id');
     }
 
     // ── Agents ──────────────────────────────────────────────────────────────
@@ -121,25 +126,27 @@ final class PeopleQueries
     public function postingAgents(ReportRange $range, Builder $listingsAdded): Builder
     {
         return $this->agents()
-            ->whereIn('agents.id', (clone $listingsAdded)->select('listings.agent_id'));
+            ->joinSub((clone $listingsAdded)->select('listings.agent_id')->distinct(), 'posted', 'posted.agent_id', '=', 'agents.id');
     }
 
     /** Agents who signed in during the range (any agent status). */
     public function loggedInAgents(ReportRange $range): Builder
     {
-        return $this->agents()->whereIn('agents.user_id', $this->loginsIn($range));
+        return $this->agents()->joinSub($this->loginsIn($range), 'lg', 'lg.user_id', '=', 'agents.user_id');
     }
 
     /** Headcount agents with a recorded action in the range. */
     public function activeAgents(ReportRange $range): Builder
     {
-        return $this->headcount()->whereIn('agents.user_id', $this->activityIn($range));
+        return $this->headcount()->joinSub($this->activityIn($range), 'act', 'act.user_id', '=', 'agents.user_id');
     }
 
-    /** Headcount agents with NO recorded action in the range. */
+    /** Headcount agents with NO recorded action in the range — the active ones' complement. */
     public function idleAgents(ReportRange $range): Builder
     {
-        return $this->headcount()->whereNotIn('agents.user_id', $this->activityIn($range));
+        return $this->headcount()
+            ->leftJoinSub($this->activityIn($range), 'act', 'act.user_id', '=', 'agents.user_id')
+            ->whereNull('act.user_id');
     }
 
     /**
@@ -202,7 +209,7 @@ final class PeopleQueries
         return $query;
     }
 
-    // ── Building blocks ─────────────────────────────────────────────────────
+    // ── Building blocks — each one derived table of distinct user ids ──────
 
     private function clientsCreated(ReportRange $range): Builder
     {
@@ -212,33 +219,16 @@ final class PeopleQueries
             ->where('u.created_at', '<', $range->toUtc());
     }
 
-    private function whereReal(Builder $query): Builder
+    /** Every user with a trace of using FH (see the class note); UNION = deduplicated once. */
+    private function realIds(): Builder
     {
-        return $query->where(function ($q) {
-            $q->whereNotNull('u.last_online_at');
-            foreach ($this->traces() as $trace) {
-                $q->orWhereIn('u.id', $trace);
-            }
-        });
-    }
-
-    /**
-     * Every source of "this user has used FH" besides presence: sign-ins,
-     * tokens, and all-time versions of the activity sources (activityIn()).
-     *
-     * @return Builder[] each selecting non-null user ids
-     */
-    private function traces(): array
-    {
-        return [
-            DB::table('login_logs')->whereNotNull('user_id')->select('user_id'),
-            DB::table('personal_access_tokens')->where('tokenable_type', User::class)->select('tokenable_id'),
-            DB::table('messages')->whereNotNull('user_id')->select('user_id'),
-            DB::table('chats')->whereNotNull('user_id')->select('user_id'),
-            DB::table('favorites')->whereNotNull('user_id')->select('user_id'),
-            DB::table('listings')->join('agents as ta', 'ta.id', '=', 'listings.agent_id')->whereNotNull('ta.user_id')->select('ta.user_id'),
-            DB::table('audits')->whereNotNull('user_id')->whereIn('event', self::EDIT_EVENTS)->select('user_id'),
-        ];
+        return DB::table('users')->whereNotNull('last_online_at')->select('id as user_id')
+            ->union(DB::table('login_logs')->whereNotNull('user_id')->select('user_id'))
+            ->union(DB::table('personal_access_tokens')->where('tokenable_type', User::class)->select('tokenable_id'))
+            ->union(DB::table('messages')->whereNotNull('user_id')->select('user_id'))
+            ->union(DB::table('chats')->whereNotNull('user_id')->select('user_id'))
+            ->union(DB::table('favorites')->whereNotNull('user_id')->select('user_id'))
+            ->union(DB::table('listings')->join('agents as ta', 'ta.id', '=', 'listings.agent_id')->whereNotNull('ta.user_id')->select('ta.user_id'));
     }
 
     /** User ids with a login in the range (uses the (logged_in_at, user_id) index). */
@@ -247,21 +237,21 @@ final class PeopleQueries
         return DB::table('login_logs')
             ->where('logged_in_at', '>=', $range->fromUtc())
             ->where('logged_in_at', '<', $range->toUtc())
-            ->select('user_id');
+            ->select('user_id')
+            ->distinct();
     }
 
     /**
      * User ids with any recorded action in the range: a sign-in, a message, an
      * inquiry opened, a favourite, a listing posted (credited to the owner's
-     * user), or an audited edit they made. One UNION, used as an IN subquery.
+     * user), or an audited edit they made. One UNION, joined as a derived table.
      */
     private function activityIn(ReportRange $range): Builder
     {
         $from = $range->fromUtc();
         $to = $range->toUtc();
 
-        // NOT NULL throughout: idleAgents() takes this as NOT IN, where one NULL would empty it.
-        return $this->loginsIn($range)
+        return DB::table('login_logs')->where('logged_in_at', '>=', $from)->where('logged_in_at', '<', $to)->select('user_id')
             ->union(DB::table('messages')->whereNotNull('user_id')->where('created_at', '>=', $from)->where('created_at', '<', $to)->select('user_id'))
             ->union(DB::table('chats')->whereNotNull('user_id')->where('created_at', '>=', $from)->where('created_at', '<', $to)->select('user_id'))
             ->union(DB::table('favorites')->whereNotNull('user_id')->where('created_at', '>=', $from)->where('created_at', '<', $to)->select('user_id'))

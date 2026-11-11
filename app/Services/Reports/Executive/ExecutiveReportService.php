@@ -13,6 +13,7 @@ use App\Services\Reports\Executive\SoldClaims\SoldClaimScanner;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * The Executive Report's summary for one date range: the At-a-glance tiles,
@@ -31,6 +32,9 @@ final class ExecutiveReportService
     private const MAX_TTL = 1800;
 
     private const REFRESH_AFTER = 60;
+
+    /** A build slower than this is logged (executive_report.slow_build). */
+    private const SLOW_MS = 8000;
 
     public function __construct(
         private readonly MetricEngine $engine,
@@ -80,8 +84,14 @@ final class ExecutiveReportService
                 'built_at' => $now->getTimestamp(),
                 'generated_at' => $now->copy()->setTimezone(ReportRange::TZ)->toIso8601String(),
                 'compute_ms' => (int) round((hrtime(true) - $started) / 1e6),
+                'timings_ms' => $report['timings_ms'],
                 'ttl' => min($range->ttl($now), self::MAX_TTL),
             ];
+            unset($report['timings_ms']);
+            if ($report['meta']['compute_ms'] > self::SLOW_MS) {
+                // The production host cuts a request at ~20 s; past this, a build is heading there.
+                Log::warning('executive_report.slow_build', ['range' => $range->key()] + array_intersect_key($report['meta'], array_flip(['compute_ms', 'timings_ms'])));
+            }
             Cache::put($key, $report, $report['meta']['ttl']);
             $built = true;
 
@@ -91,26 +101,46 @@ final class ExecutiveReportService
         return $this->served($report, ! $built);
     }
 
+    /**
+     * The summary, with `timings_ms` — how long each part took. A part pays
+     * for the row sets it is first to need (they are shared after), so the
+     * slow part points at the slow query.
+     */
     public function build(ReportRange $range, Carbon $now): array
     {
         $c = $this->context($range, $now);
         $previous = $range->previous();
 
+        $timings = [];
+        $timed = function (string $part, callable $build) use (&$timings) {
+            $started = hrtime(true);
+            $result = $build();
+            $timings[$part] = (int) round((hrtime(true) - $started) / 1e6);
+
+            return $result;
+        };
+
+        $kpis = $timed('kpis', fn () => array_map(fn ($key) => $c->stat($key, compare: true), MetricRegistry::KPIS));
+        $sections = [
+            'usage' => $timed('usage', fn () => $this->usage->build($c)),
+            'agents' => $timed('agents', fn () => $this->agents->build($c)),
+            'teams' => $timed('teams', fn () => $this->teamsSection->build($c)),
+            'inquiries' => $timed('inquiries', fn () => $this->inquiries->build($c)),
+            'deals' => $timed('deals', fn () => $this->deals->build($c)),
+            'places' => $timed('places', fn () => $this->places->build($c)),
+        ];
+        $trend = $timed('trend', fn () => $this->trend->build($c));
+        $notes = $timed('notes', fn () => $this->notes());
+
         return [
             'range' => $range->toArray() + ['previous' => ['start' => $previous->start, 'end' => $previous->end]],
             'as_of' => $now->copy()->setTimezone(ReportRange::TZ)->toIso8601String(),
             'data_since' => $this->dataSince($range),
-            'kpis' => array_map(fn ($key) => $c->stat($key, compare: true), MetricRegistry::KPIS),
-            'sections' => [
-                'usage' => $this->usage->build($c),
-                'agents' => $this->agents->build($c),
-                'teams' => $this->teamsSection->build($c),
-                'inquiries' => $this->inquiries->build($c),
-                'deals' => $this->deals->build($c),
-                'places' => $this->places->build($c),
-            ],
-            'trend' => $this->trend->build($c),
-            'notes' => $this->notes(),
+            'kpis' => $kpis,
+            'sections' => $sections,
+            'trend' => $trend,
+            'notes' => $notes,
+            'timings_ms' => $timings,
         ];
     }
 

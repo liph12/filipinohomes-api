@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\Reports\Executive\SoldClaims\SoldClaimMatcher;
 use App\Services\Reports\Executive\SoldClaims\SoldClaimScanner;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -74,6 +75,17 @@ class ScanSoldClaims extends Command
         $this->line($result['done']
             ? 'Caught up.'
             : sprintf('Stopped at message %d of %d — the next run continues from there.', $result['to'], $result['upper']));
+
+        // This run's counts are only what was NEW — say what is stored in all, so a
+        // caught-up run reading 0 doesn't look like the scan found nothing.
+        $stored = DB::table('listing_sold_claims')->selectRaw('tier, COUNT(*) as n')->groupBy('tier')->pluck('n', 'tier');
+        $this->line(sprintf(
+            'Stored in all: %d strong, %d medium, %d weak claim%s.',
+            (int) ($stored['strong'] ?? 0),
+            (int) ($stored['medium'] ?? 0),
+            (int) ($stored['weak'] ?? 0),
+            array_sum($stored->all()) === 1 ? '' : 's',
+        ));
 
         Log::info('Sold-claim scan', array_diff_key($result, ['samples' => true]));
 

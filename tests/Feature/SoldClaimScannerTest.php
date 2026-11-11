@@ -199,7 +199,14 @@ class SoldClaimScannerTest extends TestCase
 
         $this->artisan('reports:scan-sold-claims')
             ->expectsOutputToContain('Caught up.')
+            ->expectsOutputToContain('Stored in all: 3 strong, 0 medium, 1 weak claims.')
             ->assertSuccessful();
         $this->assertSame(4, DB::table('listing_sold_claims')->count());
+
+        // A second run reads nothing new — and still says what is stored.
+        $this->artisan('reports:scan-sold-claims')
+            ->expectsOutputToContain('Read 0 agent replies')
+            ->expectsOutputToContain('Stored in all: 3 strong, 0 medium, 1 weak claims.')
+            ->assertSuccessful();
     }
 }
