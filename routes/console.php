@@ -28,6 +28,12 @@ Schedule::command('inquiries:auto-approve')->everyFiveMinutes()->withoutOverlapp
 // If this stops, the Mailbox falls back to live mail-server reads after 10 min.
 Schedule::command('mailbox:sync')->everyMinute()->withoutOverlapping(5);
 
+// Mailbox archive: website emails of finished periods (per year up to 2025,
+// per quarter after, one month after the quarter ends) go to S3 and are
+// removed from the mail server to free its storage. Daily so a missed night
+// catches up; the command itself does nothing unless MAILBOX_ARCHIVE_ENABLED.
+Schedule::command('mailbox:archive')->dailyAt('02:30')->timezone('Asia/Manila')->withoutOverlapping(120);
+
 // Nightly boss digest — today's site activity to every un-muted admin, at the
 // close of the Manila day. `php artisan reports:send-activity you@x.com` for a
 // one-off test send.

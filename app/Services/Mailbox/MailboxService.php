@@ -6,6 +6,7 @@ use App\Models\Conversation;
 use App\Models\Inquiry;
 use App\Models\InquiryReply;
 use App\Models\MailboxMessage;
+use App\Services\Mailbox\Concerns\ArchivesMailbox;
 use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Mail\Message as MailMessage;
@@ -37,6 +38,8 @@ use Webklex\PHPIMAP\Message;
  */
 class MailboxService
 {
+    use ArchivesMailbox; // old website emails → S3, freed from the mail server
+
     /** Folder key → simple names that identify it on the server (lower-case). */
     private const SPECIAL = [
         'sent' => ['sent', 'sent items', 'sent messages', 'sent mail'],
@@ -329,7 +332,8 @@ class MailboxService
     {
         $state = $this->folderState($path);
         $account = $this->account();
-        $base = MailboxMessage::query()->where('account', $account)->where('folder_path', $path);
+        // Archived rows (S3) are no longer on the server — sync leaves them alone.
+        $base = MailboxMessage::query()->where('account', $account)->where('folder_path', $path)->whereNull('archived_at');
         // Includes the website criteria: changing categories forces a full re-check.
         $prevKey = $this->ck('state:'.md5($path.'|'.$this->websiteCriteria()));
         $prev = Cache::get($prevKey);
@@ -539,7 +543,7 @@ class MailboxService
         try {
             do {
                 $remaining = MailboxMessage::query()->where('account', $this->account())->where('is_primary', true)
-                    ->whereIn('category', self::CHAT_CATEGORIES)->where('chat_checked', false)->count();
+                    ->whereIn('category', self::CHAT_CATEGORIES)->where('chat_checked', false)->whereNull('archived_at')->count();
                 if ($remaining === 0) {
                     break;
                 }
@@ -557,7 +561,7 @@ class MailboxService
     {
         $started = microtime(true);
         $rows = MailboxMessage::query()->where('account', $this->account())->where('is_primary', true)
-            ->whereIn('category', self::CHAT_CATEGORIES)->where('chat_checked', false)
+            ->whereIn('category', self::CHAT_CATEGORIES)->where('chat_checked', false)->whereNull('archived_at')
             ->orderByDesc('uid')->limit(200)->get(['id', 'folder_path', 'uid', 'message_id']);
 
         $linked = 0;
@@ -640,7 +644,7 @@ class MailboxService
     {
         $rows = MailboxMessage::query()->where('account', $this->account())->where('folder_path', $path)
             ->whereIn('category', self::FORM_CATEGORIES)->where('from_email', strtolower($this->address()))
-            ->get(['id', 'uid', 'category']);
+            ->whereNull('archived_at')->get(['id', 'uid', 'category']);
         if ($rows->isEmpty()) {
             return 0;
         }
@@ -905,6 +909,7 @@ class MailboxService
             'seen' => (bool) $m->seen,
             'flagged' => (bool) $m->flagged,
             'answered' => (bool) $m->answered,
+            'archived' => $m->archived_at !== null, // lives in the S3 archive, not on the mail server
         ];
     }
 
@@ -1374,7 +1379,10 @@ class MailboxService
             $this->indexQuery($key === 'starred' ? 'inbox' : $key)->where('uid', $uid)->update(['detail' => json_encode($detail)]);
         }
 
-        return array_merge($this->summaryFromHeader($uid, $message->getHeader(), $rawFlags), $detail, ['seen' => true]);
+        return array_merge($this->summaryFromHeader($uid, $message->getHeader(), $rawFlags), $detail, [
+            'seen' => true,
+            'archived' => $this->archivedRow($this->folderPath($key), $uid) !== null,
+        ]);
     }
 
     /** The opened-email view (everything but the summary fields). @return array<string, mixed> */
@@ -1449,11 +1457,13 @@ class MailboxService
 
     private function storeFlags(string $key, array $uids, string $imapFlag, bool $on): void
     {
-        $folder = $this->folder($key);
+        // Archived emails have no server copy: their read/star lives in the database only.
         $uids = $this->cleanUids($uids);
+        $uids = array_values(array_diff($uids, $this->archivedUids($this->folderPath($key), $uids)));
         if ($uids === []) {
             return;
         }
+        $folder = $this->folder($key);
         $this->withRetry(function () use ($folder, $uids, $imapFlag, $on) {
             $this->client()->openFolder($folder->path);
             $this->assertWebsiteMessages($folder->path, $uids);
@@ -1465,11 +1475,13 @@ class MailboxService
     /** Move messages to another folder (spam, inbox, archive, trash…). */
     public function move(string $key, array $uids, string $targetKey): void
     {
+        $uids = $this->cleanUids($uids);
+        abort_if($this->archivedUids($this->folderPath($key), $uids) !== [], 422, 'Archived emails stay where they are — they are stored in the archive, not on the mail server. Unselect them and try again.');
+
         $from = $this->folder($key);
         $to = $this->folder($targetKey);
         abort_if($targetKey === 'starred' || $from->path === $to->path, 422, 'Pick another folder.');
 
-        $uids = $this->cleanUids($uids);
         if ($uids === []) {
             return;
         }
@@ -1515,6 +1527,10 @@ class MailboxService
 
             return;
         }
+
+        // The S3 archive is separate from the mail server: deleting here never
+        // touches it (and clearing the archive in S3 never touches the mail server).
+        abort_if($this->archivedUids($this->folderPath($key), $uids) !== [], 422, 'Archived emails are kept in the S3 archive and can\'t be deleted from the Mailbox. Unselect them and try again.');
 
         $folder = $this->folder($key);
         $this->client()->openFolder($folder->path);
@@ -1599,6 +1615,11 @@ class MailboxService
         if ($original !== null && $mode !== 'forward') {
             try {
                 $this->storeFlags($data['ref_folder'], [(int) $data['ref_uid']], '\\Answered', true);
+                // Archived originals keep "answered" in the database (no server copy).
+                if ($this->archivedUids($path = $this->folderPath($data['ref_folder']), [(int) $data['ref_uid']]) !== []) {
+                    MailboxMessage::query()->where('account', $this->account())->where('folder_path', $path)
+                        ->where('uid', (int) $data['ref_uid'])->update(['answered' => true]);
+                }
             } catch (\Throwable) {
                 // cosmetic only
             }
@@ -1724,6 +1745,11 @@ class MailboxService
      */
     private function fetchMessage(string $key, int $uid): array
     {
+        // Archived: read from the S3 archive — no mail-server login at all.
+        if ($row = $this->archivedRow($this->folderPath($key), $uid)) {
+            return [$this->archivedMessage($row), $this->rowFlags($row)];
+        }
+
         $folder = $this->folder($key);
 
         return $this->withRetry(function () use ($folder, $uid) {

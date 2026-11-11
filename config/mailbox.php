@@ -45,6 +45,25 @@ return [
     'since' => env('MAILBOX_SINCE', '2026-04-01'),
     'tag_required_from' => env('MAILBOX_TAG_REQUIRED_FROM', '2026-11-16'),
 
+    // Archive (`mailbox:archive`, daily): website emails whose period is done
+    // are copied to S3 — the complete original email, gzipped, private — then
+    // removed from the mail server to free its storage. The Mailbox keeps
+    // listing them and opens them from S3. Other mail is never touched.
+    //   up to `yearly_until` → one batch per year
+    //   later                → one batch per quarter, archived `delay_months`
+    //                          after the quarter ends (Q1 → May 1, Q2 → Aug 1,
+    //                          Q3 → Nov 1, Q4 → Feb 1)
+    // Periods follow Philippine time. Off unless MAILBOX_ARCHIVE_ENABLED=true;
+    // `php artisan mailbox:archive --dry-run` shows what it would do.
+    'archive' => [
+        'enabled' => (bool) env('MAILBOX_ARCHIVE_ENABLED', false),
+        'disk' => env('MAILBOX_ARCHIVE_DISK', 's3'),
+        'prefix' => env('MAILBOX_ARCHIVE_PREFIX', 'filipinohomes-new/mailbox-archive'),
+        'yearly_until' => (int) env('MAILBOX_ARCHIVE_YEARLY_UNTIL', 2025),
+        'delay_months' => (int) env('MAILBOX_ARCHIVE_DELAY_MONTHS', 1),
+        'timezone' => 'Asia/Manila',
+    ],
+
     // Compose limits.
     'max_recipients' => 50,
     'max_attachment_mb' => 20, // total per message
