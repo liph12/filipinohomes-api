@@ -1012,6 +1012,23 @@ Route::middleware('strip.tags')->group(function () {
                 Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
 
+                // ── Mailbox — the info@filipinohomes.com inbox (IMAP/SMTP on
+                //    Hostinger, own MAILBOX_* credentials; see config/mailbox.php).
+                Route::group(['prefix' => '/admin/mailbox'], function () {
+                    Route::get('/folders', [\App\Http\Controllers\Admin\MailboxController::class, 'folders']);
+                    Route::get('/categories', [\App\Http\Controllers\Admin\MailboxController::class, 'categories']);
+                    Route::post('/sync', [\App\Http\Controllers\Admin\MailboxController::class, 'sync'])->middleware('throttle:6,1');
+                    Route::get('/messages', [\App\Http\Controllers\Admin\MailboxController::class, 'index']);
+                    Route::get('/messages/{uid}', [\App\Http\Controllers\Admin\MailboxController::class, 'show'])->whereNumber('uid');
+                    Route::get('/messages/{uid}/attachments/{index}', [\App\Http\Controllers\Admin\MailboxController::class, 'attachment'])
+                        ->whereNumber('uid')->whereNumber('index');
+                    Route::post('/flag', [\App\Http\Controllers\Admin\MailboxController::class, 'flag']);
+                    Route::post('/move', [\App\Http\Controllers\Admin\MailboxController::class, 'move']);
+                    Route::post('/delete', [\App\Http\Controllers\Admin\MailboxController::class, 'delete']);
+                    Route::post('/send', [\App\Http\Controllers\Admin\MailboxController::class, 'send'])
+                        ->middleware('throttle:30,1');
+                });
+
                 // ── Company Events — the dashboard's event manager (title,
                 //    time, place, pictures). Uploads share the gallery's
                 //    120/min ceiling; literal /photos registered before the

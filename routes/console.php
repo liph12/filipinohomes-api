@@ -23,6 +23,11 @@ Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlap
 // left behind by a crashed run (see the api2-ops footgun notes).
 Schedule::command('inquiries:auto-approve')->everyFiveMinutes()->withoutOverlapping(10);
 
+// Admin Mailbox index: copy the shared mailbox's website emails into the
+// database so /admin/mailbox doesn't log in to the mail server per click.
+// If this stops, the Mailbox falls back to live mail-server reads after 10 min.
+Schedule::command('mailbox:sync')->everyMinute()->withoutOverlapping(5);
+
 // Nightly boss digest — today's site activity to every un-muted admin, at the
 // close of the Manila day. `php artisan reports:send-activity you@x.com` for a
 // one-off test send.

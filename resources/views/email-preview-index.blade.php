@@ -1,42 +1,132 @@
+{{--
+    Local email preview viewer (APP_DEBUG only — see routes/web.php).
+    Group tabs → buttons for each email in the group → the selected email below
+    in a frame. The selection lives in the URL hash (#group/type) so reloads and
+    shared links keep it. Each email is still at /preview/email/{type}.
+--}}
+@php
+    $groups = [
+        'Inquiry' => [
+            'inquiry-admin' => 'Admin — pending review',
+            'inquiry-admin-unassigned' => 'Admin — agent not on a team',
+            'inquiry-team-leader' => 'Team leader',
+            'inquiry-agent' => 'Agent — assigned',
+            'inquiry-agent-profile' => 'Agent profile',
+            'inquiry-agent-page' => 'Website Builder',
+            'notification' => 'New message (chat reminder)',
+        ],
+        'Contact Us' => [
+            'contact-us' => 'Contact Us',
+            'inquiry' => 'Get In Touch',
+            'inquiry-maintenance' => 'Maintenance',
+        ],
+        'ATS' => [
+            'ats-approved' => 'Approved',
+            'ats-pending' => 'Pending',
+            'ats-rejected' => 'Rejected',
+            'ats-expired' => 'Expired',
+            'ats-expiring-soon' => 'Expiring soon',
+            'ats-expiry-expired' => 'Expiry — expired',
+        ],
+        'Audit' => [
+            'flagged' => 'Listing flagged',
+            'verified' => 'Listing verified',
+        ],
+        'Reports' => [
+            'boss-report' => 'Site activity report',
+            'website-analytics' => 'Website analytics',
+            'birthdays' => 'Birthdays (daily digest)',
+            'birthday-greeting' => 'Agent birthday greeting',
+        ],
+        'Account' => [
+            'otp' => 'Login OTP',
+        ],
+    ];
+@endphp
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Email previews</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 720px; margin: 64px auto; padding: 0 24px; color: #1f2937; }
-        h1   { font-size: 24px; margin-bottom: 8px; }
-        p    { color: #6b7280; }
-        ul   { list-style: none; padding: 0; }
-        li   { margin: 12px 0; }
-        a    { display: inline-block; padding: 12px 18px; border-radius: 10px; background: #245ee0; color: #fff; text-decoration: none; font-weight: 600; }
-        a:hover { background: #1e4ec0; }
-        code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+        :root { --blue:#245ee0; --ink:#0f172a; --muted:#64748b; --line:#e4e9f0; --bg:#edf2f7; }
+        * { box-sizing:border-box; }
+        body { margin:0; font-family:Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+        header { position:sticky; top:0; z-index:5; background:#fff; border-bottom:1px solid var(--line); padding:14px 20px 12px; }
+        h1 { margin:0; font-size:18px; }
+        .sub { margin:2px 0 12px; font-size:13px; color:var(--muted); }
+        .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+        .tabs button { border:0; background:transparent; padding:8px 14px; border-radius:999px; font:700 14px Helvetica,Arial,sans-serif; color:var(--muted); cursor:pointer; }
+        .tabs button.on { background:var(--blue); color:#fff; }
+        .tabs button .n { font-weight:600; opacity:.7; margin-left:4px; }
+        .emails { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+        .emails button { border:1px solid var(--line); background:#fff; padding:7px 12px; border-radius:10px; font:600 13px Helvetica,Arial,sans-serif; color:var(--ink); cursor:pointer; }
+        .emails button.on { border-color:var(--blue); color:var(--blue); background:#eef3fd; }
+        .emails .open { margin-left:auto; font-size:13px; color:var(--blue); text-decoration:none; font-weight:600; }
+        main { padding:20px; }
+        iframe { display:block; width:100%; max-width:760px; margin:0 auto; border:0; border-radius:12px; background:var(--bg); min-height:600px; }
     </style>
 </head>
 <body>
-    <h1>Email previews</h1>
-    <p>Renders each Mailable with dummy data. Refresh after editing the blade template — no mail is sent.</p>
-    <ul>
-        <li><a href="/preview/email/boss-report">📊 Site Activity Report (boss digest)</a> &nbsp; <code>AdminActivityReportMailer</code> &nbsp; <small>(live last-7-days data)</small></li>
-        <li><a href="/preview/email/birthdays">🎂 Birthdays (daily digest)</a> &nbsp; <code>StaffBirthdaysMailer</code> &nbsp; <small>(live data)</small></li>
-        <li><a href="/preview/email/birthday-greeting">🎉 Agent Birthday Greeting</a> &nbsp; <code>AgentBirthdayGreetingMailer</code> &nbsp; <small>(letter · <a href="/preview/birthday-poster.jpg" style="padding:2px 8px;font-size:12px;">attached poster</a>)</small></li>
-        <li><a href="/preview/email/flagged">⚑ Listing Flagged</a> &nbsp; <code>ListingFlaggedMailer</code></li>
-        <li><a href="/preview/email/verified">✓ Listing Verified</a> &nbsp; <code>ListingVerifiedMailer</code></li>
-        <li><a href="/preview/email/ats-approved">✓ ATS Updated — Approved</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
-        <li><a href="/preview/email/ats-pending">⏳ ATS Updated — Pending</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
-        <li><a href="/preview/email/ats-expired">⚠ ATS Updated — Expired</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
-        <li><a href="/preview/email/ats-rejected">✕ ATS Updated — Rejected</a> &nbsp; <code>AtsStatusUpdatedMailer</code></li>
-        <li><a href="/preview/email/ats-expiring-soon">⏳ ATS Expiring Soon (1 week)</a> &nbsp; <code>AtsExpiryMailer</code></li>
-        <li><a href="/preview/email/ats-expiry-expired">⚠ ATS Expired</a> &nbsp; <code>AtsExpiryMailer</code></li>
-        <li><a href="/preview/email/inquiry">✉ New Inquiry</a> &nbsp; <code>InquiryMailer</code> &nbsp; <small>(home / maintenance)</small></li>
-        <li><a href="/preview/email/contact-us">📨 Contact Us Submission</a> &nbsp; <code>ContactUsMailer</code> &nbsp; <small>(contact page — rich form)</small></li>
-        <li><a href="/preview/email/notification">💬 Message Notification</a> &nbsp; <code>MessageNotificationMailer</code> &nbsp; <small>(legacy / reply-path)</small></li>
-        <li><a href="/preview/email/inquiry-admin">🏠 Listing Inquiry — Admin View</a> &nbsp; <code>perspective=admin</code></li>
-        <li><a href="/preview/email/inquiry-admin-unassigned">🚨 Listing Inquiry — Admin View (Agent Unassigned)</a> &nbsp; <code>perspective=admin, teamName=null</code></li>
-        <li><a href="/preview/email/inquiry-team-leader">👥 Listing Inquiry — Team Leader View</a> &nbsp; <code>perspective=team_leader</code></li>
-        <li><a href="/preview/email/inquiry-agent">✅ Listing Inquiry — Agent (Assigned)</a> &nbsp; <code>perspective=agent</code></li>
-        <li><a href="/preview/email/otp">🔐 Login OTP</a> &nbsp; <code>LoginOtpMailer</code></li>
-    </ul>
+    <header>
+        <h1>Email previews</h1>
+        <p class="sub">Each email rendered with sample data — nothing is sent. Edit a Blade template, then click the email again (or reload) to see it.</p>
+        <div class="row tabs" id="tabs">
+            @foreach ($groups as $group => $items)
+                <button type="button" data-group="{{ $group }}">{{ $group }}<span class="n">{{ count($items) }}</span></button>
+            @endforeach
+        </div>
+        <div class="row emails" id="emails"></div>
+    </header>
+    <main>
+        <iframe id="frame" title="Email preview"></iframe>
+    </main>
+
+    <script>
+        const groups = @json($groups);
+        const tabs = document.getElementById('tabs');
+        const emails = document.getElementById('emails');
+        const frame = document.getElementById('frame');
+
+        function select(group, type) {
+            const items = groups[group] || groups[Object.keys(groups)[0]];
+            group = groups[group] ? group : Object.keys(groups)[0];
+            type = items[type] ? type : Object.keys(items)[0];
+
+            tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.group === group));
+            emails.innerHTML = '';
+            for (const [key, label] of Object.entries(items)) {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = label;
+                b.className = key === type ? 'on' : '';
+                b.onclick = () => select(group, key);
+                emails.appendChild(b);
+            }
+            const open = document.createElement('a');
+            open.className = 'open';
+            open.href = '/preview/email/' + type;
+            open.target = '_blank';
+            open.textContent = 'Open in new tab ↗';
+            emails.appendChild(open);
+
+            history.replaceState(null, '', '#' + encodeURIComponent(group) + '/' + type);
+            frame.src = '/preview/email/' + type + '?t=' + Date.now(); // always re-render the latest template
+        }
+
+        // Fit the frame to the email's height (same origin, so it can be measured).
+        frame.addEventListener('load', () => {
+            try { frame.style.height = frame.contentDocument.documentElement.scrollHeight + 'px'; } catch (e) {}
+        });
+
+        tabs.addEventListener('click', e => {
+            const b = e.target.closest('button');
+            if (b) select(b.dataset.group);
+        });
+
+        const [g, t] = decodeURIComponent(location.hash.slice(1)).split('/');
+        select(g, t);
+    </script>
 </body>
 </html>

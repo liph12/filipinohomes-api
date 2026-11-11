@@ -16,31 +16,27 @@
                             <tbody>
 
                                 <tr>
-                                    <td align="center" valign="top"
-                                        style="background:#245ee0;padding:44px 32px 36px;border-bottom:1px solid #1f478b;">
-                                        <img align="center" alt="Filipino Homes"
-                                            src="https://api2.filipinohomes.com/fh-logo-white.png"
-                                            width="350"
-                                            style="max-width:350px;width:100%;display:inline !important;border:0;height:auto;" />
+                                    <td align="center" valign="top" style="background:#ffffff;padding:22px 40px 0;">
+                                        <img align="center" alt="Filipino Homes" src="https://filipinohomes.com/images/fh-logo-black.png"
+                                            width="300" style="max-width:300px;width:100%;display:inline !important;border:0;height:auto;" />
+                                        <div style="height:1px;line-height:1px;font-size:0;background:#e9eef5;margin:20px 0 0;">&nbsp;</div>
                                     </td>
                                 </tr>
 
                                 {{-- Green verified banner --}}
                                 <tr>
-                                    <td align="center" valign="top"
-                                        style="background-color:#f0fdf4;padding:28px 32px 20px;border-bottom:1px solid #bbf7d0;">
-                                        <span style="font-size:28px;line-height:36px;font-family:Helvetica,Arial,sans-serif;font-weight:700;color:#15803d;display:block;">
-                                            ✓ Listing Verified
-                                        </span>
+                                    <td align="center" valign="top" style="background-color:#ffffff;padding:24px 40px 0;">
+                                        <span style="display:inline-block;font-size:22px;line-height:28px;font-family:Helvetica,Arial,sans-serif;font-weight:800;color:#15803d;">Listing Verified</span>
                                     </td>
                                 </tr>
 
                                 <tr>
                                     <td align="left" valign="top"
-                                        style="background-color:#ffffff;padding:32px 40px 16px;">
-                                        <span style="font-size:16px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
+                                        style="background-color:#ffffff;padding:26px 40px 16px;">
+                                        <div style="font-size:19px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#0f172a;font-weight:700;margin:0 0 6px;">
                                             Hello {{ ucwords(strtolower($agentName)) }},
-                                            <br /><br />
+                                        </div>
+                                        <span style="font-size:16px;line-height:26px;font-family:Helvetica,Arial,sans-serif;color:#475467;display:block;">
                                             Good news — your listing has passed our initial audit and is now marked as <strong style="color:#15803d;">Verified</strong>. Buyers will see a verified badge on your listing.
                                         </span>
                                     </td>
@@ -160,10 +156,8 @@
                                 </tr>
 
                                 <tr>
-                                    <td align="center" style="padding:0 40px 32px;">
-                                        <span style="font-size:13px;font-family:Helvetica,Arial,sans-serif;color:#94a3b8;display:block;">
-                                            This is an automated message from Filipino Homes. Please do not reply to this email.
-                                        </span>
+                                    <td align="center" style="padding:14px 40px 18px;background:#ffffff;border-top:1px solid #eef2f6;">
+                                        <span style="font-size:12px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:#94a3b8;">This is an automated message from Filipino Homes. Please do not reply to this email.</span>
                                     </td>
                                 </tr>
 

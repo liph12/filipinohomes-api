@@ -14,6 +14,10 @@ class StripHtmlTags
     protected array $except = [
         'password',
         'password_confirmation',
+        // Admin Mailbox compose body: plain text that MailboxService escapes
+        // (htmlspecialchars) before building the HTML, so stripping would only
+        // eat legitimate text like "price < 5M".
+        'mail_body',
     ];
 
     public function handle(Request $request, Closure $next): Response

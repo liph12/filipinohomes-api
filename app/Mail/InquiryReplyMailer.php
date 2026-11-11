@@ -5,6 +5,7 @@ namespace App\Mail;
 use App\Mail\Concerns\TagsFhMailerHeader;
 use App\Models\Inquiry;
 use App\Models\InquiryReply;
+use App\Support\SharedInbox;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
@@ -23,10 +24,10 @@ class InquiryReplyMailer extends Mailable
     use Queueable, SerializesModels, TagsFhMailerHeader;
 
     public function __construct(
-        public Inquiry      $inquiry,
+        public Inquiry $inquiry,
         public InquiryReply $reply,
-        public string       $adminName,
-        public ?string      $adminAvatar = null,
+        public string $adminName,
+        public ?string $adminAvatar = null,
     ) {
         $this->tagFhMailerHeader();
     }
@@ -34,10 +35,11 @@ class InquiryReplyMailer extends Mailable
     public function envelope(): Envelope
     {
         $subject = $this->reply->subject ?: 'Re: Filipino Homes — your message';
-        $from    = env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com');
+        // The shared inbox: the client's reply comes back to info@ (and the Mailbox).
+        $from = SharedInbox::ADDRESS;
 
         return new Envelope(
-            from:    new Address($from, 'Filipino Homes'),
+            from: new Address($from, 'Filipino Homes'),
             subject: $subject,
             replyTo: [new Address($from, 'Filipino Homes')],
         );

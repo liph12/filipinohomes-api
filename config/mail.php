@@ -49,6 +49,20 @@ return [
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
         ],
 
+        // The admin Mailbox's own SMTP (info@ on Hostinger). Independent of
+        // MAIL_* so switching the app's mailer never breaks the mailbox.
+        // See config/mailbox.php.
+        'mailbox' => [
+            'transport' => 'smtp',
+            'scheme' => env('MAILBOX_SMTP_SCHEME', 'smtps'),
+            'host' => env('MAILBOX_SMTP_HOST', 'smtp.hostinger.com'),
+            'port' => env('MAILBOX_SMTP_PORT', 465),
+            'username' => env('MAILBOX_SMTP_USERNAME', env('MAILBOX_USERNAME', 'info@filipinohomes.com')),
+            'password' => env('MAILBOX_SMTP_PASSWORD', env('MAILBOX_PASSWORD')),
+            'timeout' => 30,
+            'local_domain' => 'filipinohomes.com',
+        ],
+
         'ses' => [
             'transport' => 'ses',
         ],
@@ -109,6 +123,19 @@ return [
     | used globally for all emails that are sent by your application.
     |
     */
+
+    // Reply-To on automated emails people should answer on the website
+    // instead (chat reminders). Replies to it are not read.
+    'no_reply_address' => env('MAIL_NO_REPLY_ADDRESS', 'no-reply@filipinohomes.com'),
+
+    // Addresses that deliver INTO the info@ mailbox (Hostinger forwarders /
+    // aliases, e.g. itadmin@filipinohomes.com → info@). Comma-separated.
+    // The app treats them as info@ itself: never BCC'd next to info@ and not
+    // sent their own copy of daily reports, so info@ gets each email once.
+    'shared_inbox_aliases' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('MAIL_SHARED_INBOX_ALIASES', '')),
+    ))),
 
     'from' => [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),

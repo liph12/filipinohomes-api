@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Cache;
 use App\Mail\LoginOtpMailer;
 use App\Mail\InquiryMailer;
 use App\Mail\ContactUsMailer;
+use App\Support\SharedInbox;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Services\LeuterioreRealty\LrApiService;
@@ -111,8 +112,11 @@ class UserController extends Controller
             // SMTP failures must not 500 the inquiry — Inquiry row below
             // is the real persistence; email is a notification.
             try {
-                Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
-                    ->bcc($adminEmails)
+                // BCC minus the shared mailbox itself — an admin whose email is
+                // info@ (or the current SMTP account) would add a duplicate copy.
+                $to = env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com');
+                Mail::to($to)
+                    ->bcc(SharedInbox::bccWithout($adminEmails, $to))
                     ->send(new InquiryMailer(
                         clientName:    $validated['name'],
                         clientEmail:   $validated['email'],
@@ -229,8 +233,11 @@ class UserController extends Controller
             // wrap so the persistence call below still runs even if the
             // mail send fails.
             try {
-                Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
-                    ->bcc($adminEmails)
+                // BCC minus the shared mailbox itself — an admin whose email is
+                // info@ (or the current SMTP account) would add a duplicate copy.
+                $to = env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com');
+                Mail::to($to)
+                    ->bcc(SharedInbox::bccWithout($adminEmails, $to))
                     ->send(new ContactUsMailer(
                         clientName:    $validated['name'],
                         clientEmail:   $validated['email'],

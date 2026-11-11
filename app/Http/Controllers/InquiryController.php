@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Mail\InquiryReplyMailer;
 use App\Models\Inquiry;
 use App\Models\InquiryReply;
+use App\Services\AuditMailService;
+use App\Services\Mailbox\MailboxService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -24,7 +26,7 @@ class InquiryController extends Controller
     {
         $validated = $request->validate([
             'per_page' => 'nullable|integer|min:1|max:100',
-            'search'   => 'nullable|string|max:255',
+            'search' => 'nullable|string|max:255',
             // Filter by form source. Known values posted by the public
             // forms are `home_get_in_touch`, `maintenance_page`, and
             // `contact_page` (see UserController::sendInquiry +
@@ -32,14 +34,14 @@ class InquiryController extends Controller
             // add_source_to_inquiries_table migration may have a null
             // source — they're matched by the All filter (no `source`
             // param) only.
-            'source'   => 'nullable|string|max:64',
+            'source' => 'nullable|string|max:64',
         ]);
 
         $query = Inquiry::with(['replies.admin:id,name,email,avatar'])
             ->orderByDesc('created_at');
 
-        if (!empty($validated['search'])) {
-            $term = '%' . $validated['search'] . '%';
+        if (! empty($validated['search'])) {
+            $term = '%'.$validated['search'].'%';
             $query->where(function ($q) use ($term) {
                 $q->where('name', 'like', $term)
                     ->orWhere('email', 'like', $term)
@@ -47,7 +49,7 @@ class InquiryController extends Controller
             });
         }
 
-        if (!empty($validated['source'])) {
+        if (! empty($validated['source'])) {
             $query->where('source', $validated['source']);
         }
 
@@ -75,6 +77,7 @@ class InquiryController extends Controller
             $inquiry->forceFill(['read_at' => now()])->saveQuietly();
         }
         $inquiry->load(['replies.admin:id,name,email,avatar']);
+
         return response()->json(['data' => $inquiry]);
     }
 
@@ -100,6 +103,7 @@ class InquiryController extends Controller
     public function markAllRead()
     {
         Inquiry::whereNull('read_at')->update(['read_at' => now()]);
+
         return response()->json(['unread_count' => 0]);
     }
 
@@ -111,31 +115,39 @@ class InquiryController extends Controller
     public function reply(Request $request, Inquiry $inquiry)
     {
         $validated = $request->validate([
-            'subject'       => 'nullable|string|max:255',
-            'body'          => 'required|string|max:10000',
+            'subject' => 'nullable|string|max:255',
+            'body' => 'required|string|max:10000',
             // Already-hosted S3 image URLs (uploaded via /upload before send) —
             // rendered inline in the email. No file handling happens here.
-            'attachments'   => 'nullable|array|max:6',
+            'attachments' => 'nullable|array|max:6',
             'attachments.*' => 'url|max:2048',
         ]);
 
         $admin = $request->user();
 
         $reply = InquiryReply::create([
-            'inquiry_id'    => $inquiry->id,
+            'inquiry_id' => $inquiry->id,
             'admin_user_id' => $admin->id,
-            'subject'       => $validated['subject'] ?? 'Re: Filipino Homes — your message',
-            'body'          => $validated['body'],
-            'attachments'   => $validated['attachments'] ?? [],
+            'subject' => $validated['subject'] ?? 'Re: Filipino Homes — your message',
+            'body' => $validated['body'],
+            'attachments' => $validated['attachments'] ?? [],
         ]);
 
         try {
-            Mail::to($inquiry->email)->send(new InquiryReplyMailer(
-                inquiry:     $inquiry,
-                reply:       $reply,
-                adminName:   $admin->name ?? 'Filipino Homes',
-                adminAvatar: $admin->avatar ?? null,
-            ));
+            // Through info@'s own mailbox (when connected) and filed in its Sent
+            // folder, so the reply also shows in the dashboard Mailbox.
+            $mailbox = app(MailboxService::class);
+            $sent = ($mailbox->isConfigured() ? Mail::mailer('mailbox') : Mail::mailer())
+                ->to($inquiry->email)
+                ->send(new InquiryReplyMailer(
+                    inquiry: $inquiry,
+                    reply: $reply,
+                    adminName: $admin->name ?? 'Filipino Homes',
+                    adminAvatar: $admin->avatar ?? null,
+                ));
+            if ($sent !== null && $mailbox->isConfigured()) {
+                $mailbox->appendToSent($sent->toString());
+            }
 
             $reply->update(['sent_at' => now()]);
         } catch (\Throwable $e) {
@@ -144,19 +156,20 @@ class InquiryController extends Controller
             // of silently misleading the user.
             Log::error('InquiryController@reply: mail send failed', [
                 'inquiry_id' => $inquiry->id,
-                'reply_id'   => $reply->id,
-                'error'      => $e->getMessage(),
+                'reply_id' => $reply->id,
+                'error' => $e->getMessage(),
             ]);
-            app(\App\Services\AuditMailService::class)->recordFailure(
+            app(AuditMailService::class)->recordFailure(
                 $e,
-                \App\Mail\InquiryReplyMailer::class,
+                InquiryReplyMailer::class,
                 [$inquiry->email],
                 $validated['subject'] ?? 'Re: Filipino Homes — your message',
-                ['auditable_type' => \App\Models\Inquiry::class, 'auditable_id' => $inquiry->id],
+                ['auditable_type' => Inquiry::class, 'auditable_id' => $inquiry->id],
             );
+
             return response()->json([
                 'message' => 'Reply saved but email delivery failed. Please retry.',
-                'data'    => $reply->fresh(),
+                'data' => $reply->fresh(),
             ], 502);
         }
 

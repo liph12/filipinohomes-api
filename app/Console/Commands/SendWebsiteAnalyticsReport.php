@@ -57,8 +57,9 @@ class SendWebsiteAnalyticsReport extends Command
                 Mail::to($testEmail)->send(new WebsiteAnalyticsReportMailer($report));
                 $this->info("Test report sent to {$testEmail}.");
             } else {
-                Mail::to(env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'))
-                    ->bcc($settings['recipients'])
+                $to = env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com');
+                Mail::to($to)
+                    ->bcc(\App\Support\SharedInbox::bccWithout($settings['recipients'], $to))
                     ->send(new WebsiteAnalyticsReportMailer($report));
                 $this->info('Report sent to '.count($settings['recipients']).' recipient(s) via BCC.');
             }

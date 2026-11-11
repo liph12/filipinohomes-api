@@ -140,6 +140,12 @@ if (config('app.debug')) {
                 clientMessage: "Hi! I saw your 3BR condo listing in Mandaue and I'd like to schedule a viewing this weekend.\n\nIs Saturday afternoon possible? Also, is the unit still available for a March move-in?",
                 source:        'home_get_in_touch',
             ),
+            'inquiry-maintenance' => new InquiryMailer(
+                clientName:    'Carlo Reyes',
+                clientEmail:   'carlo.reyes@example.com',
+                clientMessage: "Hi, I tried to post an inquiry but the site says it's under maintenance. When will it be back?",
+                source:        'maintenance_page',
+            ),
             'contact-us' => new ContactUsMailer(
                 clientName:    'Maria Santos',
                 clientEmail:   'maria.santos@example.com',
@@ -212,6 +218,29 @@ if (config('app.debug')) {
                 agentUserId:      null,
                 showListingOwner: false,
                 perspective:      'agent',
+            ),
+            // "Message Me" from an agent's profile / Website Builder page.
+            'inquiry-agent-profile' => new MessageNotificationMailer(
+                sender:           $sender,
+                receiver:         $receiver,
+                message:          "Hi! I saw your profile. Do you have 2BR condos for rent in Cebu?",
+                slug:             'chat-123',
+                roleName:         'agent',
+                listing:          null,
+                agentUserId:      null,
+                showListingOwner: false,
+                perspective:      'agent_profile',
+            ),
+            'inquiry-agent-page' => new MessageNotificationMailer(
+                sender:           $sender,
+                receiver:         $receiver,
+                message:          "Hello! I found your website. Can you help me find a house and lot?",
+                slug:             'chat-124',
+                roleName:         'agent',
+                listing:          null,
+                agentUserId:      null,
+                showListingOwner: false,
+                perspective:      'agent_page',
             ),
             'otp'      => new LoginOtpMailer(
                 'juan.cruz@example.com',

@@ -5,10 +5,12 @@ namespace App\Mail;
 use App\Mail\Concerns\TagsFhMailerHeader;
 use App\Models\User;
 use App\Services\TeamLeadershipService;
+use App\Support\SharedInbox;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Mime\Email;
 
 // Sends synchronously. Production has no `php artisan queue:work` worker
 // wired up (no supervisor / systemd / cron config in this repo), so when
@@ -28,19 +30,33 @@ class MessageNotificationMailer extends Mailable
     use SerializesModels, TagsFhMailerHeader;
 
     public $receiverEmail;
+
     public $receiverName;
+
     public $senderEmail;
+
     public $senderName;
+
     public $senderMobile;
+
     public $senderWhatsapp;
+
     public $senderAvatar;
+
     public $message;
+
     public $slug;
+
     public $roleName;
+
     public $listing;
+
     public $frontendUrl;
+
     public $greetingName;
+
     public $agentUserId;
+
     /**
      * Whether the "Listing Owner" contact block should render in the email.
      * Hidden when the TO recipient IS the listing owner (the agent) — the
@@ -48,24 +64,28 @@ class MessageNotificationMailer extends Mailable
      * admin/team-leader copy (see dispatchForInquiry below).
      */
     public $showListingOwner;
+
     /**
      * Per-role view selector. One of: 'admin', 'team_leader', 'agent', or
      * null (legacy / generic message-notification blade used by the
      * reply-path job). Drives view-switching in build().
      */
     public $perspective;
+
     /**
      * Human-readable origin label for the agent-direct blade ("agent profile"
      * or "agent page"). Lets the single agent-profile-inquiry template render
      * the correct surface name without a per-source duplicate.
      */
     public $channelLabel;
+
     /**
      * Team name to render in the admin/team-leader callout block. Falls
      * back to a "(unassigned)" / "your team" label in the blade when
      * null (agent has no team).
      */
     public $teamName;
+
     /**
      * Team id — kept on the mailable for future routing (e.g. team-scoped
      * inbox deep links) even though the current blades don't display it.
@@ -89,9 +109,9 @@ class MessageNotificationMailer extends Mailable
         $this->receiverName = $receiver->name;
         $this->senderEmail = $sender->email;
         $this->senderName = $sender->name;
-        $this->senderMobile   = $sender->mobile_no ?? null;
+        $this->senderMobile = $sender->mobile_no ?? null;
         $this->senderWhatsapp = $sender->agent?->whats_app_no ?? null;
-        $this->senderAvatar   = $sender->avatar ?? null;
+        $this->senderAvatar = $sender->avatar ?? null;
         $this->message = $message;
         $this->slug = $slug;
         $this->roleName = $roleName;
@@ -114,6 +134,14 @@ class MessageNotificationMailer extends Mailable
         $this->teamName = $teamName;
         $this->teamId = $teamId;
         $this->tagFhMailerHeader();
+
+        // Which inquiry (chats.id) this email is about — the slug ends in
+        // "-{chatId}" (or is "chat-{chatId}"). Lets the admin Mailbox show the
+        // inquiry's live approval status next to the email.
+        if (preg_match('/-(\d+)$/', (string) $slug, $m)) {
+            $chatId = $m[1];
+            $this->withSymfonyMessage(fn (Email $email) => $email->getHeaders()->addTextHeader('X-FH-Chat-Id', $chatId));
+        }
     }
 
     public function build()
@@ -129,12 +157,27 @@ class MessageNotificationMailer extends Mailable
         // null in prod, which made SMTP reject these sends silently once
         // the queue actually started running them. Falls back to the
         // shared inbox so a missing env doesn't break dispatch.
-        return $this->from(
+        $mail = $this->from(
             env('MAIL_FROM_ADDRESS', 'info@filipinohomes.com'),
             'FH Support Team',
         )
             ->subject($this->resolveSubject())
             ->markdown($this->resolveView());
+
+        // Chat reminders ("New message received", no perspective) and agent emails: replying by
+        // email never reached the chat — it landed in info@ and the other side
+        // never saw it. Point Reply at a no-reply address instead; the email's
+        // "Reply to Inquiry" button opens the conversation on the website.
+        // Same for the agent's emails (assigned inquiry, agent profile/page):
+        // their reply must go through the website chat to reach the client.
+        if (in_array($this->perspective, [null, 'agent', 'agent_profile', 'agent_page'], true)) {
+            $mail->replyTo(
+                (string) config('mail.no_reply_address', 'no-reply@filipinohomes.com'),
+                'Filipino Homes (do not reply)',
+            );
+        }
+
+        return $mail;
     }
 
     /**
@@ -146,13 +189,13 @@ class MessageNotificationMailer extends Mailable
     private function resolveView(): string
     {
         return match ($this->perspective) {
-            'admin'         => 'emails.listing-inquiry-admin',
-            'team_leader'   => 'emails.listing-inquiry-team-leader',
-            'agent'         => 'emails.listing-inquiry-agent',
+            'admin' => 'emails.listing-inquiry-admin',
+            'team_leader' => 'emails.listing-inquiry-team-leader',
+            'agent' => 'emails.listing-inquiry-agent',
             // Both agent-direct perspectives share one blade; the wording is
             // driven by $channelLabel rather than a duplicate template.
             'agent_profile', 'agent_page' => 'emails.agent-profile-inquiry',
-            default         => 'emails.message-notification',
+            default => 'emails.message-notification',
         };
     }
 
@@ -163,16 +206,17 @@ class MessageNotificationMailer extends Mailable
      */
     private function resolveSubject(): string
     {
-        $listingName = !empty($this->listing['name']) ? (string) $this->listing['name'] : null;
+        $listingName = ! empty($this->listing['name']) ? (string) $this->listing['name'] : null;
         $suffix = $listingName ? " — {$listingName}" : '';
         $senderName = trim((string) ($this->senderName ?? ''));
         $senderSuffix = $senderName !== '' ? " — {$senderName}" : '';
+
         return match ($this->perspective) {
             'admin', 'team_leader' => "[Filipino Homes] New inquiry pending review{$suffix}",
-            'agent'                => "[Filipino Homes] Inquiry assigned to you{$suffix}",
-            'agent_profile'        => "[Filipino Homes] New inquiry from your agent profile{$senderSuffix}",
-            'agent_page'           => "[Filipino Homes] New inquiry from your agent page{$senderSuffix}",
-            default                => 'Filipino Homes - New message received',
+            'agent' => "[Filipino Homes] Inquiry assigned to you{$suffix}",
+            'agent_profile' => "[Filipino Homes] New inquiry from your agent profile{$senderSuffix}",
+            'agent_page' => "[Filipino Homes] New inquiry from your agent page{$senderSuffix}",
+            default => 'Filipino Homes - New message received',
         };
     }
 
@@ -200,12 +244,12 @@ class MessageNotificationMailer extends Mailable
         ?array $listing,
         ?int $agentUserId
     ): void {
-        $receiverIsOwner = !empty($listing['owner_email'])
+        $receiverIsOwner = ! empty($listing['owner_email'])
             && strcasecmp((string) $listing['owner_email'], (string) $receiver->email) === 0;
         // The sender is the listing owner (agent messaging a client about
         // their own listing) — the FROM block already shows exactly this
         // contact, so the Listing Owner card would duplicate it.
-        $senderIsOwner = !empty($listing['owner_email'])
+        $senderIsOwner = ! empty($listing['owner_email'])
             && strcasecmp((string) $listing['owner_email'], (string) $sender->email) === 0;
 
         Mail::to($receiver->email)->send(new self(
@@ -221,7 +265,7 @@ class MessageNotificationMailer extends Mailable
             // own info echoed back), OR the sender IS the owner (the FROM
             // block already shows them). Otherwise show it so a client has
             // the agent's contact details handy.
-            !$receiverIsOwner && !$senderIsOwner,
+            ! $receiverIsOwner && ! $senderIsOwner,
         ));
     }
 
@@ -261,32 +305,34 @@ class MessageNotificationMailer extends Mailable
         $teamContext = $agentUserId
             ? app(TeamLeadershipService::class)->findTeamInfoForAgent($agentUserId)
             : null;
-        $teamId   = $teamContext['team_id']   ?? null;
+        $teamId = $teamContext['team_id'] ?? null;
         $teamName = $teamContext['team_name'] ?? null;
 
         // --- Email 1: admin BCC fan-out -------------------------------------
         $adminEmails = self::resolveAdminEmails([$senderEmail]);
-        if (!empty($adminEmails)) {
+        if (! empty($adminEmails)) {
             // Receiver is a generic admin persona. The admin blade greets
             // "Hello Admin," and doesn't display the receiver name, so this
             // persona only exists to satisfy the constructor's email/name
             // dereferences.
             $adminPersona = (object) [
                 'email' => $sharedInbox,
-                'name'  => 'Admin',
+                'name' => 'Admin',
             ];
-            Mail::to($sharedInbox)->bcc($adminEmails)->send(new self(
-                sender:           $sender,
-                receiver:         $adminPersona,
-                message:          $message,
-                slug:             $slug,
-                roleName:         'admin',
-                listing:          $listing,
-                agentUserId:      $agentUserId,
+            // Never BCC the shared mailbox itself — an admin whose email is
+            // info@ would add a duplicate copy to the To one.
+            Mail::to($sharedInbox)->bcc(SharedInbox::bccWithout($adminEmails, $sharedInbox))->send(new self(
+                sender: $sender,
+                receiver: $adminPersona,
+                message: $message,
+                slug: $slug,
+                roleName: 'admin',
+                listing: $listing,
+                agentUserId: $agentUserId,
                 showListingOwner: true,
-                perspective:      'admin',
-                teamName:         $teamName,
-                teamId:           $teamId,
+                perspective: 'admin',
+                teamName: $teamName,
+                teamId: $teamId,
             ));
         } else {
             Log::warning('dispatchForSubmission: no unmuted admin recipients (role_id=1)');
@@ -297,11 +343,11 @@ class MessageNotificationMailer extends Mailable
         if ($leaderUserId) {
             $leader = User::find($leaderUserId);
             $leaderEmail = (string) ($leader->email ?? '');
-            $isSender    = $leaderEmail !== '' && strcasecmp($leaderEmail, $senderEmail) === 0;
+            $isSender = $leaderEmail !== '' && strcasecmp($leaderEmail, $senderEmail) === 0;
             // Dedup against the admin list: a user with role_id=1 who is
             // also flagged as team leader already received the admin email.
             $adminEmailsLower = array_map('strtolower', $adminEmails);
-            $alreadyEmailed   = in_array(strtolower($leaderEmail), $adminEmailsLower, true);
+            $alreadyEmailed = in_array(strtolower($leaderEmail), $adminEmailsLower, true);
 
             // Team leader who prefers push (and has a device) gets the in-app
             // push instead — skip their email.
@@ -313,19 +359,19 @@ class MessageNotificationMailer extends Mailable
             // alreadyEmailed dedup alone wouldn't catch them).
             $leaderMuted = (bool) ($leader->admin_emails_muted ?? false);
 
-            if ($leader && $leaderEmail !== '' && !$isSender && !$alreadyEmailed && !$leaderPrefersPush && !$leaderMuted) {
-                Mail::to($sharedInbox)->bcc([$leaderEmail])->send(new self(
-                    sender:           $sender,
-                    receiver:         $leader,
-                    message:          $message,
-                    slug:             $slug,
-                    roleName:         'team_leader',
-                    listing:          $listing,
-                    agentUserId:      $agentUserId,
+            if ($leader && $leaderEmail !== '' && ! $isSender && ! $alreadyEmailed && ! $leaderPrefersPush && ! $leaderMuted) {
+                Mail::to($sharedInbox)->bcc(SharedInbox::bccWithout([$leaderEmail], $sharedInbox))->send(new self(
+                    sender: $sender,
+                    receiver: $leader,
+                    message: $message,
+                    slug: $slug,
+                    roleName: 'team_leader',
+                    listing: $listing,
+                    agentUserId: $agentUserId,
                     showListingOwner: true,
-                    perspective:      'team_leader',
-                    teamName:         $teamName,
-                    teamId:           $teamId,
+                    perspective: 'team_leader',
+                    teamName: $teamName,
+                    teamId: $teamId,
                 ));
             }
         }
@@ -348,11 +394,12 @@ class MessageNotificationMailer extends Mailable
         ?int $agentUserId
     ): void {
         $sharedInbox = 'info@filipinohomes.com';
-        $agentEmail  = (string) ($agent->email ?? '');
+        $agentEmail = (string) ($agent->email ?? '');
         if ($agentEmail === '') {
             Log::warning('dispatchForAcceptance: agent has no email — skipping send', [
                 'agent_user_id' => $agentUserId,
             ]);
+
             return;
         }
 
@@ -362,16 +409,16 @@ class MessageNotificationMailer extends Mailable
             return;
         }
 
-        Mail::to($sharedInbox)->bcc([$agentEmail])->send(new self(
-            sender:           $sender,
-            receiver:         $agent,
-            message:          $message,
-            slug:             $slug,
-            roleName:         'agent',
-            listing:          $listing,
-            agentUserId:      $agentUserId,
+        Mail::to($sharedInbox)->bcc(SharedInbox::bccWithout([$agentEmail], $sharedInbox))->send(new self(
+            sender: $sender,
+            receiver: $agent,
+            message: $message,
+            slug: $slug,
+            roleName: 'agent',
+            listing: $listing,
+            agentUserId: $agentUserId,
             showListingOwner: false,
-            perspective:      'agent',
+            perspective: 'agent',
         ));
     }
 
@@ -396,11 +443,12 @@ class MessageNotificationMailer extends Mailable
         ?string $source = null
     ): void {
         $sharedInbox = 'info@filipinohomes.com';
-        $agentEmail  = (string) ($agent->email ?? '');
+        $agentEmail = (string) ($agent->email ?? '');
         if ($agentEmail === '') {
             Log::warning('dispatchForAgentProfile: agent has no email — skipping send', [
                 'agent_user_id' => $agentUserId,
             ]);
+
             return;
         }
 
@@ -417,16 +465,16 @@ class MessageNotificationMailer extends Mailable
         // on. Reflect that in the email so the agent knows the lead's origin.
         $perspective = $source === 'agent_page' ? 'agent_page' : 'agent_profile';
 
-        Mail::to($sharedInbox)->bcc([$agentEmail])->send(new self(
-            sender:           $sender,
-            receiver:         $agent,
-            message:          $message,
-            slug:             $slug,
-            roleName:         'agent',
-            listing:          null,
-            agentUserId:      $agentUserId,
+        Mail::to($sharedInbox)->bcc(SharedInbox::bccWithout([$agentEmail], $sharedInbox))->send(new self(
+            sender: $sender,
+            receiver: $agent,
+            message: $message,
+            slug: $slug,
+            roleName: 'agent',
+            listing: null,
+            agentUserId: $agentUserId,
             showListingOwner: false,
-            perspective:      $perspective,
+            perspective: $perspective,
         ));
     }
 
@@ -442,7 +490,7 @@ class MessageNotificationMailer extends Mailable
      * admins with no registered device, still receive the email. Admins muted
      * per-user from System Users (users.admin_emails_muted) are dropped too.
      *
-     * @param array<int, string> $excludeEmails
+     * @param  array<int, string>  $excludeEmails
      * @return array<int, string>
      */
     private static function resolveAdminEmails(array $excludeEmails): array
@@ -453,7 +501,7 @@ class MessageNotificationMailer extends Mailable
             ->get(['id', 'email', 'inquiry_notify_channel'])
             ->reject(fn ($u) => self::prefersInquiryPush($u))
             ->pluck('email')
-            ->filter(fn ($email) => $email && !self::emailMatchesAny((string) $email, $excludeEmails))
+            ->filter(fn ($email) => $email && ! self::emailMatchesAny((string) $email, $excludeEmails))
             ->unique()
             ->values()
             ->all();
@@ -494,6 +542,7 @@ class MessageNotificationMailer extends Mailable
                 return true;
             }
         }
+
         return false;
     }
 
@@ -502,45 +551,45 @@ class MessageNotificationMailer extends Mailable
      * Eloquent model. Pulls just the strings/URLs the blade renders so the
      * queued job doesn't have to serialize the whole model graph.
      *
-     * @param  mixed $listing  Listing model (loaded with property + category)
+     * @param  mixed  $listing  Listing model (loaded with property + category)
      * @return array<string, mixed>|null
      */
     public static function buildListingPayload($listing): ?array
     {
-        if (!$listing) {
+        if (! $listing) {
             return null;
         }
 
         $photo = null;
         $raw = $listing->featured_photo ?? null;
-        if (is_array($raw) && !empty($raw[0])) {
+        if (is_array($raw) && ! empty($raw[0])) {
             $photo = (string) $raw[0];
         } elseif (is_string($raw) && $raw !== '') {
             $decoded = json_decode($raw, true);
-            $photo = is_array($decoded) && !empty($decoded[0]) ? (string) $decoded[0] : $raw;
+            $photo = is_array($decoded) && ! empty($decoded[0]) ? (string) $decoded[0] : $raw;
         }
-        if (!$photo) {
+        if (! $photo) {
             $propertyPhotos = $listing->property?->photos;
-            if (is_array($propertyPhotos) && !empty($propertyPhotos[0])) {
+            if (is_array($propertyPhotos) && ! empty($propertyPhotos[0])) {
                 $photo = (string) $propertyPhotos[0];
             }
         }
 
         $barangay = $listing->property?->barangay;
-        $city     = $barangay?->city;
+        $city = $barangay?->city;
         $province = $city?->province;
         $locParts = array_filter([
             $barangay?->name,
             $city?->name,
             $province?->name,
         ]);
-        $location = !empty($locParts)
+        $location = ! empty($locParts)
             ? implode(', ', $locParts)
             : ($listing->property?->address ?? null);
 
         $price = $listing->price ?? null;
         if ($price !== null && is_numeric($price)) {
-            $price = 'PHP ' . number_format((float) $price);
+            $price = 'PHP '.number_format((float) $price);
         }
 
         $subtype = $listing->property?->propertyAttribute?->subtype;
@@ -554,32 +603,32 @@ class MessageNotificationMailer extends Mailable
         $ownerEmail = null;
         $ownerAvatar = null;
         if ($agent) {
-            $ownerName     = trim(($agent->first_name ?? '') . ' ' . ($agent->last_name ?? '')) ?: null;
-            $ownerMobile   = $agent->mobile_no    ?? null;
+            $ownerName = trim(($agent->first_name ?? '').' '.($agent->last_name ?? '')) ?: null;
+            $ownerMobile = $agent->mobile_no ?? null;
             $ownerWhatsapp = $agent->whats_app_no ?? null;
-            $ownerEmail    = $agent->user?->email ?? null;
+            $ownerEmail = $agent->user?->email ?? null;
             // Use the related User's avatar (a plain URL string). Agent's
             // own `avatar` column is JSON-cast and its structure isn't
             // guaranteed to be a single URL, so we skip it here.
-            $ownerAvatar   = $agent->user?->avatar ?? null;
+            $ownerAvatar = $agent->user?->avatar ?? null;
         }
 
         $frontend = rtrim((string) env('FRONTEND_URL', 'https://filipinohomes.com'), '/');
-        $publicUrl = !empty($listing->slug) ? "{$frontend}/listings/{$listing->slug}" : null;
+        $publicUrl = ! empty($listing->slug) ? "{$frontend}/listings/{$listing->slug}" : null;
 
         return [
-            'name'           => $listing->name ?? null,
-            'price'          => $price,
-            'image'          => $photo,
-            'location'       => $location,
-            'category'       => $listing->category?->name ?? null,
-            'subtype'        => $subtypeName ? trim(($typeName ? "{$typeName} · " : '') . $subtypeName) : $typeName,
-            'public_url'     => $publicUrl,
-            'owner_name'     => $ownerName,
-            'owner_mobile'   => $ownerMobile,
+            'name' => $listing->name ?? null,
+            'price' => $price,
+            'image' => $photo,
+            'location' => $location,
+            'category' => $listing->category?->name ?? null,
+            'subtype' => $subtypeName ? trim(($typeName ? "{$typeName} · " : '').$subtypeName) : $typeName,
+            'public_url' => $publicUrl,
+            'owner_name' => $ownerName,
+            'owner_mobile' => $ownerMobile,
             'owner_whatsapp' => $ownerWhatsapp,
-            'owner_email'    => $ownerEmail,
-            'owner_avatar'   => $ownerAvatar,
+            'owner_email' => $ownerEmail,
+            'owner_avatar' => $ownerAvatar,
         ];
     }
 }
