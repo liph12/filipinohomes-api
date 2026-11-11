@@ -14,6 +14,13 @@ use App\Services\Reports\Executive\MetricRegistry;
  * that doesn't exist or has nothing to show, markdown or a link. So whatever
  * the model says, every number on the page is one the report computed.
  *
+ * A placeholder becomes a BARE number, so it also drops the ways a model
+ * garbles one even when the number itself is right: the same placeholder
+ * twice, numbers listed back to back ("{a}, {b} and {c}"), a number as the
+ * subject of a verb ("{a} fell"), a comparison the wrong way round ("to
+ * {a.prev}"), and direction words that contradict the change ("rose
+ * {a.change}" when it fell). Each refusal comes back with its reason.
+ *
  * render() swaps the placeholders for formatted values as segments; a value
  * segment carries its fact's metric, filters and dates, so the page can open
  * the records behind it like any other number in the report.
@@ -31,27 +38,48 @@ final class AnalysisValidator
     /** Counting words a model could slip a made-up number in with ("one" is too common to refuse). */
     private const NUMBER_WORDS = '/\b(?:zeros?|nil|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|dozens?|percent|twice|double[ds]?|triple[ds]?|half|halved|quadrupled?)\b/i';
 
+    /** A value or previous-value placeholder — what the reader sees as a bare number. */
+    private const NUMBER = '\{[a-z][a-z0-9_]*(?:\.prev)?\}';
+
+    private const SUBJECT_VERBS = 'were|was|is|are|fell|rose|grew|dropped|stayed|remained|increased|decreased|declined|went|came|led|has|have|had|jumped|slipped|climbed|reached|hit';
+
+    private const DOWN_WORDS = '/\b(?:fell|dropped|declined|decreased|down|lower|shrank|slipped|slid|less|fewer)\b/i';
+
+    private const UP_WORDS = '/\b(?:rose|grew|increased|up|higher|jumped|climbed|gained|more)\b/i';
+
     /**
      * @param  array{meta: array, facts: array<string, array>}  $facts
-     * @return array{headline: string|null, bullets: array<int, array{text: string, kind: string, fact_ids: string[]}>, dropped: int}|null
-     *                                                                                                                                     null when fewer than MIN_BULLETS bullets survive
+     * @return array{headline: string|null, bullets: array<int, array{text: string, kind: string, fact_ids: string[]}>, dropped: int, rejected: array<int, array{text: string, reason: string}>}|null
+     *                                                                                                                                                                                                null when fewer than MIN_BULLETS bullets survive
      */
     public function validate(array $raw, array $facts): ?array
     {
         $known = $facts['facts'];
+        $rejected = [];
 
         $headline = is_string($raw['headline'] ?? null) ? trim($raw['headline']) : '';
-        $headline = $headline !== '' && mb_strlen($headline) <= 160 && $this->clean($headline, $known) ? $headline : null;
+        $problem = $headline === '' ? 'empty' : (mb_strlen($headline) > 160 ? 'too_long' : $this->problem($headline, $known));
+        if ($problem !== null) {
+            $rejected[] = ['text' => mb_substr($headline, 0, 320), 'reason' => "headline: {$problem}"];
+            $headline = null;
+        }
 
         $bullets = [];
-        $dropped = 0;
         foreach (is_array($raw['bullets'] ?? null) ? $raw['bullets'] : [] as $bullet) {
             $text = is_array($bullet) && is_string($bullet['text'] ?? null) ? trim($bullet['text']) : '';
+            // The card labels each bullet itself ("Next step:"), so a label the model added goes.
+            $text = trim(preg_replace('/^(?:win|risk|watch|action|next step|good news|problem)\s*:\s*/i', '', $text) ?? $text);
             $kind = is_array($bullet) ? ($bullet['kind'] ?? null) : null;
 
-            if ($text === '' || mb_strlen($text) > 320 || ! in_array($kind, self::KINDS, true) || ! $this->clean($text, $known)
-                || count($bullets) === self::MAX_BULLETS) {
-                $dropped++;
+            $problem = match (true) {
+                $text === '' => 'empty',
+                mb_strlen($text) > 320 => 'too_long',
+                ! in_array($kind, self::KINDS, true) => 'kind',
+                count($bullets) === self::MAX_BULLETS => 'too_many',
+                default => $this->problem($text, $known),
+            };
+            if ($problem !== null) {
+                $rejected[] = ['text' => mb_substr($text, 0, 320), 'reason' => $problem];
 
                 continue;
             }
@@ -64,13 +92,18 @@ final class AnalysisValidator
             ];
         }
 
-        return count($bullets) < self::MIN_BULLETS ? null : ['headline' => $headline, 'bullets' => $bullets, 'dropped' => $dropped];
+        $dropped = count(array_filter($rejected, fn ($r) => ! str_starts_with($r['reason'], 'headline')));
+
+        return count($bullets) < self::MIN_BULLETS
+            ? null
+            : ['headline' => $headline, 'bullets' => $bullets, 'dropped' => $dropped, 'rejected' => $rejected];
     }
 
-    /** Only placeholder numbers, every placeholder resolvable, no markdown or links. */
-    private function clean(string $text, array $known): bool
+    /** Why a text can't be shown — null when it can. */
+    private function problem(string $text, array $known): ?string
     {
-        foreach ($this->placeholders($text) as [$id, $part]) {
+        $placeholders = $this->placeholders($text);
+        foreach ($placeholders as [$id, $part]) {
             $fact = $known[$id] ?? null;
             $resolvable = $fact !== null && match ($part) {
                 'name' => isset($fact['name']),
@@ -79,15 +112,63 @@ final class AnalysisValidator
                 default => $fact['value'] !== null,
             };
             if (! $resolvable) {
-                return false;
+                return 'unknown_fact';
             }
         }
 
         $bare = preg_replace(self::PLACEHOLDER, '', $text) ?? '';
+        if (preg_match('/[0-9%{}]/', $bare)) {
+            return 'typed_number'; // or a broken placeholder
+        }
+        if (preg_match(self::NUMBER_WORDS, $bare)) {
+            return 'number_word';
+        }
+        if (preg_match('~https?://|www\.|\]\(|[*_#`|<>]~i', $bare)) {
+            return 'markup';
+        }
 
-        return ! preg_match('/[0-9%{}]/', $bare)            // a typed number, or a broken placeholder
-            && ! preg_match(self::NUMBER_WORDS, $bare)
-            && ! preg_match('~https?://|www\.|\]\(|[*_#`|<>]~i', $bare);
+        // Each number once: "{a.prev} … {a.prev}" is a slip ({id.name} may repeat).
+        $keys = array_map(fn ($p) => $p[0].'.'.$p[1], array_filter($placeholders, fn ($p) => $p[1] !== 'name'));
+        if (count($keys) !== count(array_unique($keys))) {
+            return 'repeated';
+        }
+        $n = self::NUMBER;
+        if (preg_match("/{$n}\s*(?:,|and|or|&)\s*(?:and\s+)?{$n}/i", $text)) {
+            return 'bare_list';
+        }
+        if (preg_match("/{$n}\s+(?:".self::SUBJECT_VERBS.')\b/i', $text)) {
+            return 'number_as_subject';
+        }
+        if (preg_match('/\bto\s+\{[a-z0-9_]+\.prev\}/i', $text)) {
+            return 'reversed';
+        }
+        foreach ($placeholders as [$id, $part]) {
+            if ($part === '' && str_contains($text, "{{$id}.prev}") && preg_match('/\bfrom\s+\{'.preg_quote($id, '/').'\}/', $text)) {
+                return 'reversed';
+            }
+            if ($part === 'change' && ($why = $this->contradicts($text, $id, (float) $known[$id]['change_pct'])) !== null) {
+                return $why;
+            }
+        }
+
+        return null;
+    }
+
+    /** "fell {a.change}" when it rose (or the reverse) — judged within the change's own clause. */
+    private function contradicts(string $text, string $id, float $pct): ?string
+    {
+        $at = strpos($text, "{{$id}.change}");
+        $clause = preg_split('/[,;.]/', substr($text, 0, (int) $at));
+        $clause = (string) end($clause);
+
+        if ($pct > 0 && preg_match(self::DOWN_WORDS, $clause)) {
+            return 'contradicts_change';
+        }
+        if ($pct < 0 && preg_match(self::UP_WORDS, $clause)) {
+            return 'contradicts_change';
+        }
+
+        return null;
     }
 
     /** @return array<int, array{0: string, 1: string}> [fact id, part ('' for the value)] */
@@ -121,7 +202,8 @@ final class AnalysisValidator
                 'name' => ['type' => 'text', 'text' => (string) $fact['name']],
                 'change' => [
                     'type' => 'change',
-                    'text' => self::pct((float) $fact['change_pct']),
+                    // Arrow + size: reads right after "down" / "up", and the arrow keeps the direction.
+                    'text' => self::arrowPct((float) $fact['change_pct']),
                     'direction' => $fact['change_pct'] > 0 ? 'up' : ($fact['change_pct'] < 0 ? 'down' : 'flat'),
                     'better' => MetricRegistry::get($fact['metric'])['better'],
                 ],
@@ -161,6 +243,14 @@ final class AnalysisValidator
             'minutes' => self::duration((float) $value),
             default => number_format((float) $value, floor((float) $value) == $value ? 0 : 1),
         };
+    }
+
+    /** "▲ 12%", "▼ 8.5%", "0%". */
+    public static function arrowPct(float $pct): string
+    {
+        $arrow = $pct > 0 ? '▲ ' : ($pct < 0 ? '▼ ' : '');
+
+        return $arrow.number_format(abs($pct), abs($pct) < 10 ? 1 : 0).'%';
     }
 
     public static function pct(float $pct): string

@@ -61,6 +61,12 @@ class AnalysisValidatorTest extends TestCase
             'a broken placeholder' => ['{Listings_Added} listings arrived.'],
             'markdown' => ['**{listings_added}** listings arrived.'],
             'a link' => ['See https://filipinohomes.com for {listings_added} listings.'],
+            // Right numbers, garbled sentence.
+            'the same number twice' => ['Listings went from {listings_added.prev} to {listings_added}, back near {listings_added.prev}.'],
+            'numbers listed back to back' => ['{agents_dormant_30d}, {listings_added} and {town_1_deals} need a look.'],
+            'a number as the subject' => ['{listings_added} fell this period.'],
+            'the comparison backwards' => ['Listings added fell to {listings_added.prev}.'],
+            'words against the change' => ['Listings fell {listings_added.change} on the period before.'],
         ];
     }
 
@@ -75,6 +81,35 @@ class AnalysisValidatorTest extends TestCase
 
         $this->assertCount(2, $result['bullets']);
         $this->assertSame(1, $result['dropped']);
+    }
+
+    public function test_a_label_the_model_added_is_dropped(): void
+    {
+        $result = (new AnalysisValidator)->validate(self::answer([
+            'Action: ask {town_1_deals.name} how it closed {town_1_deals} deals.',
+            '{agents_dormant_30d} agents have not opened FH in a month.',
+        ]), self::FACTS);
+
+        $this->assertSame('ask {town_1_deals.name} how it closed {town_1_deals} deals.', $result['bullets'][0]['text']);
+    }
+
+    public function test_each_refusal_says_why(): void
+    {
+        $result = (new AnalysisValidator)->validate([
+            'headline' => 'A record 1,204 listings!',
+            'bullets' => [
+                ['text' => '{agents_dormant_30d} agents have not opened FH in a month.', 'fact_ids' => [], 'kind' => 'risk'],
+                ['text' => '{town_1_deals.name} led with {town_1_deals} deals.', 'fact_ids' => [], 'kind' => 'win'],
+                ['text' => '{listings_added} fell to {listings_added.prev}.', 'fact_ids' => [], 'kind' => 'watch'],
+                ['text' => 'Sales rose sharply.', 'fact_ids' => [], 'kind' => 'brag'],
+            ],
+        ], self::FACTS);
+
+        $this->assertSame(
+            ['headline: typed_number', 'number_as_subject', 'kind'],
+            array_column($result['rejected'], 'reason'),
+        );
+        $this->assertSame(2, $result['dropped'], 'The headline is not a bullet.');
     }
 
     public function test_fewer_than_two_good_bullets_is_no_analysis(): void
@@ -105,7 +140,7 @@ class AnalysisValidatorTest extends TestCase
         $this->assertSame('Cebu City', $segments[0]['text']);
         $this->assertSame(['7', 'deals.total', ['city_id' => 10]], [$segments[2]['text'], $segments[2]['metric'], (array) $segments[2]['filters']]);
         $this->assertSame('2026-11-01', $segments[2]['range']['start']);
-        $this->assertSame(['+9.5%', 'up', 'up'], [$segments[4]['text'], $segments[4]['direction'], $segments[4]['better']]);
+        $this->assertSame(['▲ 9.5%', 'up', 'up'], [$segments[4]['text'], $segments[4]['direction'], $segments[4]['better']]);
         $this->assertSame(['1,100', '2026-10-01'], [$segments[6]['text'], $segments[6]['range']['start']]);
     }
 

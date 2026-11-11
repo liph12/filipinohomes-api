@@ -186,6 +186,10 @@ final class ExecutiveAnalysisService
 
         $raw = $this->arguments($response);
         $result = $raw !== null ? $this->validator->validate($raw, $facts) : null;
+        if ($result !== null && $result['rejected'] !== []) {
+            // What the checks threw away, and why — the record to tune the prompt by.
+            Log::info('openai.executive_report.dropped', ['range' => $range->key(), 'rejected' => $result['rejected']]);
+        }
         if ($result === null) {
             Log::warning('openai.executive_report.rejected', ['range' => $range->key(), 'raw' => mb_substr(json_encode($raw) ?: '', 0, 2000)]);
 
@@ -266,10 +270,20 @@ final class ExecutiveAnalysisService
         NUMBERS — the hard rule. Every number must come from the FACTS and be written ONLY as a placeholder:
           {id}         the fact's value          {id.prev}    its previous value
           {id.change}  its change in percent      {id.name}    the person, team or place it is about
-        Never type a digit, a percent sign or a spelled-out number such as "zero", "three" or "twice" — write
-        "{agents_dormant_30d} agents have not opened FH in a month", never "42 agents". Use only ids listed
-        in FACTS; {id.prev} and {id.change} only where the fact shows them. List the ids each bullet uses
-        in fact_ids. A bullet that types a number is thrown away.
+        Never type a digit, a percent sign or a spelled-out number such as "zero", "three" or "twice". Use
+        only ids listed in FACTS; {id.prev} and {id.change} only where the fact shows them. List the ids each
+        bullet uses in fact_ids.
+
+        Each placeholder turns into a BARE number ("387", "₱47,368", "−62%"), so the words next to it must say
+        what it counts — follow each fact's "say:" wording. Then:
+        - The current value is {id} and the earlier one {id.prev}: "from {id.prev} to {id}", never "to {id.prev}".
+        - Use each placeholder once per bullet, and never list them back to back ("{a}, {b} and {c}").
+        - A number is never the subject of a sentence: not "{a} fell", but "{a} listings were added, down {a.change}".
+        GOOD: "{agents_dormant_30d} agents haven't opened FH in a month."
+        GOOD: "Listings added fell {listings_added.change}, from {listings_added.prev} to {listings_added}."
+        BAD:  "{inquiries_received}, {deals_total} and {claims_sold_unmarked} were all at nothing."
+        BAD:  "{listings_added} fell to {listings_added.prev}."
+        A bullet that breaks these rules is thrown away, so write fewer, cleaner bullets rather than more.
 
         WHAT TO SAY
         - Lead with what a CEO acts on: deals, whether clients get answers (hanging inquiries, reply
@@ -291,7 +305,7 @@ final class ExecutiveAnalysisService
     {
         $lines = [];
         foreach ($facts['facts'] as $id => $f) {
-            $parts = ["{{$id}}", $f['label'], 'value '.AnalysisValidator::format($f['value'], $f['unit'])];
+            $parts = ["{{$id}}", $f['label'], 'value '.AnalysisValidator::format($f['value'], $f['unit']), "say: {$f['say']}"];
             if ($f['previous'] !== null) {
                 $parts[] = 'previous '.AnalysisValidator::format($f['previous'], $f['unit']);
             }

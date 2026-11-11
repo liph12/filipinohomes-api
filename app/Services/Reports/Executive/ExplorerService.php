@@ -327,6 +327,8 @@ final class ExplorerService
             'columns' => [
                 Table::col('listing', 'Listing', 'listing'),
                 Table::col('status', 'Status', 'status'),
+                // ₱/sqm below is a sale price per sqm for one row and a monthly rent for the next.
+                Table::col('category', 'Sale / rent', 'text'),
                 Table::col('price', 'Asking price', 'money'),
                 Table::col('area', 'Area', 'sqm'),
                 Table::col('ppsqm', '₱/sqm', 'ppsqm'),
