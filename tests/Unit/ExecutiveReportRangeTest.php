@@ -61,6 +61,9 @@ class ExecutiveReportRangeTest extends TestCase
             'March → all of a short February' => ['2026-03-01', '2026-03-31', '2026-02-01', '2026-02-28'],
             'the 31st of a month → clamped into a 30-day one' => ['2026-10-01', '2026-10-30', '2026-09-01', '2026-09-30'],
             'year to date → the same span last year' => ['2026-01-01', '2026-11-10', '2025-01-01', '2025-11-10'],
+            'two whole months → the two whole months before' => ['2026-09-01', '2026-10-31', '2026-07-01', '2026-08-31'],
+            'whole months across a new year' => ['2026-01-01', '2026-02-28', '2025-01-01', '2025-02-28'],
+            'whole months starting mid-year → the months just before' => ['2026-03-01', '2026-05-31', '2025-12-01', '2026-02-28'],
             'any other window → the same days just before' => ['2026-11-03', '2026-11-09', '2026-10-27', '2026-11-02'],
         ];
     }

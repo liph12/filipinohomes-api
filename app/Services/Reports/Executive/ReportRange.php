@@ -131,6 +131,9 @@ final class ReportRange
      *   - a month from its 1st → that span of the month before (the whole month
      *     before when this one is complete);
      *   - a year from Jan 1 → the same span last year;
+     *   - several whole months ("Last 2 months": Sep 1 – Oct 31) → the same
+     *     number of whole months before (Jul 1 – Aug 31), not the same count of
+     *     days (which would start on Jul 2);
      *   - anything else → the same number of days immediately before.
      */
     public function previous(): self
@@ -155,6 +158,15 @@ final class ReportRange
             $endDay = min($e->day, $monthStart->daysInMonth);
 
             return new self(sprintf('%04d-01-01', $year), $monthStart->day($endDay)->format('Y-m-d'));
+        }
+
+        if ($s->day === 1 && $e->day === $e->daysInMonth) {
+            $months = ($e->year - $s->year) * 12 + ($e->month - $s->month) + 1;
+
+            return new self(
+                $s->copy()->subMonthsNoOverflow($months)->format('Y-m-d'),
+                $s->copy()->subDay()->format('Y-m-d'),
+            );
         }
 
         $days = $this->days();
