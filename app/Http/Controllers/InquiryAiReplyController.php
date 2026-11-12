@@ -86,6 +86,7 @@ class InquiryAiReplyController extends Controller
             'contact_whatsapp' => 'sometimes|nullable|string|max:40',
             'inactive_agent_enabled' => 'sometimes|boolean',
             'inactive_agent_days' => 'sometimes|integer|min:1|max:365',
+            'direct_enabled' => 'sometimes|boolean',
         ];
     }
 }

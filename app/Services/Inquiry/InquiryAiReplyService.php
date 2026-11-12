@@ -85,6 +85,10 @@ class InquiryAiReplyService
         // instead of making the client wait for an agent who won't come.
         'inactive_agent_enabled' => true,
         'inactive_agent_days' => 15,
+        // Direct inquiries to an agent ("Message me" on the agent profile or
+        // the agent's own website): first reply, then — if the agent doesn't
+        // answer in time, or is inactive — point the client to other agents.
+        'direct_enabled' => true,
     ];
 
     /** inquiry_ai_replies.source for an admin-number reply sent because the agent is inactive. */
@@ -120,6 +124,7 @@ class InquiryAiReplyService
             'contact_whatsapp' => trim((string) $m['contact_whatsapp']),
             'inactive_agent_enabled' => (bool) $m['inactive_agent_enabled'],
             'inactive_agent_days' => max(1, min(365, (int) $m['inactive_agent_days'])),
+            'direct_enabled' => (bool) $m['direct_enabled'],
         ];
     }
 
@@ -243,6 +248,56 @@ class InquiryAiReplyService
             ]);
     }
 
+    /**
+     * Direct inquiries to an agent (chats.type = agent, from the agent profile
+     * or the agent's website) that the agent hasn't answered, whoever sent
+     * them (any role). No moderation
+     * step, so the clock starts when the conversation was opened.
+     */
+    private function directAwaitingQuery(array $s): Builder
+    {
+        $q = Conversation::query()
+            ->where('status', 'accepted')
+            // Any sender role (client, agent, admin, …) — only not messaging themselves.
+            ->whereHas('chat', fn ($c) => $c->where('type', 'agent')
+                ->whereColumn('chats.user_id', '!=', 'chats.type_id'))
+            ->whereNotExists(fn ($m) => $m->select(DB::raw(1))
+                ->from('messages')
+                ->whereColumn('messages.conversation_id', 'conversations.id')
+                ->where('messages.automated', false)
+                ->whereRaw('messages.user_id <> (SELECT chats.user_id FROM chats WHERE chats.id = conversations.chat_id)'))
+            ->orderBy('conversations.id');
+
+        if ($s['enabled_since']) {
+            $q->where('conversations.created_at', '>=', Carbon::parse($s['enabled_since']));
+        }
+
+        return $q;
+    }
+
+    public function directAckQuery(array $s): Builder
+    {
+        $now = Carbon::now();
+
+        return $this->withoutStage($this->directAwaitingQuery($s), self::STAGE_ACK)
+            ->whereBetween('conversations.created_at', [
+                $now->copy()->subMinutes($s['ack_delay_minutes'] + self::ACK_MAX_AGE_MINUTES),
+                $now->copy()->subMinutes($s['ack_delay_minutes']),
+            ]);
+    }
+
+    /** No office-hours hold: this message gives no phone number, just other agents. */
+    public function directEscalationQuery(array $s): Builder
+    {
+        $now = Carbon::now();
+
+        return $this->withoutStage($this->directAwaitingQuery($s), self::STAGE_ESCALATION)
+            ->whereBetween('conversations.created_at', [
+                $now->copy()->subHours($s['max_age_hours']),
+                $now->copy()->subMinutes($s['escalation_after_minutes']),
+            ]);
+    }
+
     public function sentToday(): int
     {
         return (int) DB::table('inquiry_ai_replies')
@@ -292,6 +347,14 @@ class InquiryAiReplyService
         }
         if ($s['escalation_enabled'] && $this->isOfficeOpen($s, Carbon::now())) {
             $jobs = $jobs->merge($this->escalationQuery($s)->limit($budget)->get()->map(fn ($c) => [$c, self::STAGE_ESCALATION]));
+        }
+        if ($s['direct_enabled']) {
+            if ($s['ack_enabled']) {
+                $jobs = $jobs->merge($this->directAckQuery($s)->limit($budget)->get()->map(fn ($c) => [$c, self::STAGE_ACK]));
+            }
+            if ($s['escalation_enabled']) {
+                $jobs = $jobs->merge($this->directEscalationQuery($s)->limit($budget)->get()->map(fn ($c) => [$c, self::STAGE_ESCALATION]));
+            }
         }
         $jobs = $jobs->take($budget);
 
@@ -353,7 +416,8 @@ class InquiryAiReplyService
         if (! $s['enabled'] || ! $s['ack_enabled'] || $this->sentToday() >= $s['daily_cap']) {
             return 'skipped';
         }
-        $conversation = $this->ackQuery($s)->whereKey($conversationId)->first();
+        $conversation = $this->ackQuery($s)->whereKey($conversationId)->first()
+            ?? ($s['direct_enabled'] ? $this->directAckQuery($s)->whereKey($conversationId)->first() : null);
         $assistant = $conversation ? $this->assistantUser() : null;
         if (! $conversation || ! $assistant) {
             return 'skipped';
@@ -404,7 +468,8 @@ class InquiryAiReplyService
     {
         return $s['inactive_agent_enabled']
             && $s['escalation_enabled']
-            && ($s['contact_mobile'] !== '' || $s['contact_whatsapp'] !== '')
+            // A direct inquiry's message points to other agents — no number needed.
+            && ($this->isDirect($conversation) || $s['contact_mobile'] !== '' || $s['contact_whatsapp'] !== '')
             && $this->agentInactive($conversation, $s);
     }
 
@@ -416,7 +481,7 @@ class InquiryAiReplyService
      */
     public function agentInactive(Conversation $conversation, array $s): bool
     {
-        $userId = $conversation->agent_user_id;
+        $userId = $this->ownerUserId($conversation);
         if (! $userId) {
             return false;
         }
@@ -427,6 +492,34 @@ class InquiryAiReplyService
         $recent = fn ($at) => $at && Carbon::parse($at)->gte($cutoff);
 
         return ! $recent($lastLogin) && ! $recent($lastActive);
+    }
+
+    /** A direct inquiry to an agent (profile / agent website), not a listing inquiry. */
+    public function isDirect(Conversation $conversation): bool
+    {
+        $conversation->loadMissing('chat');
+
+        return $conversation->chat?->type === 'agent';
+    }
+
+    /** The agent who should answer: the listing owner, or the agent a direct inquiry was sent to. */
+    private function ownerUserId(Conversation $conversation): ?int
+    {
+        if ($conversation->agent_user_id) {
+            return (int) $conversation->agent_user_id;
+        }
+
+        return $this->isDirect($conversation) ? (int) $conversation->chat->type_id : null;
+    }
+
+    private function owner(Conversation $conversation): ?User
+    {
+        if ($conversation->agent_user_id) {
+            return $conversation->agentUser;
+        }
+        $id = $this->ownerUserId($conversation);
+
+        return $id ? User::with('agent')->find($id) : null;
     }
 
     public function lastRun(): ?array
@@ -464,12 +557,17 @@ class InquiryAiReplyService
                 return 'skipped';
             }
 
-            [$body, $source, $tokens] = match ($stage) {
-                self::STAGE_ACK => $this->composeAck($conversation, $s),
-                self::STAGE_FOLLOWUP => [$this->followupText($conversation, $s), 'template', null],
-                default => $inactiveAgent
-                    ? [$this->inactiveAgentText($conversation, $s), self::SOURCE_INACTIVE_AGENT, null]
-                    : [$this->escalationText($conversation, $s), 'template', null],
+            $direct = $this->isDirect($conversation);
+            [$body, $source, $tokens] = match (true) {
+                $direct && $stage === self::STAGE_ACK => [$this->directAckText($conversation), 'template', null],
+                $direct => [$this->directRedirectText($conversation, $inactiveAgent), $inactiveAgent ? self::SOURCE_INACTIVE_AGENT : 'template', null],
+                default => match ($stage) {
+                    self::STAGE_ACK => $this->composeAck($conversation, $s),
+                    self::STAGE_FOLLOWUP => [$this->followupText($conversation, $s), 'template', null],
+                    default => $inactiveAgent
+                        ? [$this->inactiveAgentText($conversation, $s), self::SOURCE_INACTIVE_AGENT, null]
+                        : [$this->escalationText($conversation, $s), 'template', null],
+                },
             };
 
             $message = DB::transaction(function () use ($conversation, $assistant, $body) {
@@ -550,12 +648,29 @@ class InquiryAiReplyService
             }
         }
 
-        if ($stage === self::STAGE_ESCALATION && $conversation->agentUser) {
+        $owner = $stage === self::STAGE_ESCALATION ? $this->owner($conversation) : null;
+        if ($owner && $this->isDirect($conversation)) {
+            try {
+                $clientName = $client?->name ?: 'A client';
+                app(ExpoPushService::class)->notify(
+                    $owner,
+                    'inquiry',
+                    'Unanswered message',
+                    $inactiveAgent
+                        ? "{$clientName} messaged you and was pointed to other agents because you haven't been active recently. Please reply."
+                        : "{$clientName} has waited ".$this->durationLabel((int) $conversation->created_at?->diffInMinutes(now()))
+                            .' for your reply and was pointed to other agents. Please reply.',
+                    ['type' => 'inquiry', 'id' => $conversation->chat_id, 'conversation_id' => $conversation->id],
+                );
+            } catch (Throwable $e) {
+                Log::warning('Inquiry AI reply: agent push failed', ['conversation_id' => $conversation->id, 'error' => $e->getMessage()]);
+            }
+        } elseif ($owner) {
             try {
                 $clientName = $client?->name ?: 'A client';
                 $about = $listing ? " about {$listing->name}" : '';
                 app(ExpoPushService::class)->notify(
-                    $conversation->agentUser,
+                    $owner,
                     'inquiry',
                     'Unanswered inquiry',
                     $inactiveAgent
@@ -702,6 +817,40 @@ class InquiryAiReplyService
         return $this->sign(implode("\n", $lines));
     }
 
+    /** Direct inquiry, first reply: just a thank-you — no numbers, no property. */
+    public function directAckText(Conversation $conversation): string
+    {
+        $f = $this->facts($conversation);
+
+        return $this->sign("Hi {$f['client']}! Thank you for reaching out. {$f['agent']} has been notified and will contact you shortly to assist you further.");
+    }
+
+    /**
+     * Direct inquiry, agent didn't answer in time (or is inactive): point the
+     * client to other agents. "👉 Label: URL" lines render as a clickable
+     * label in the chat and the email (plain-text surfaces keep the URL).
+     */
+    public function directRedirectText(Conversation $conversation, bool $inactiveAgent = false): string
+    {
+        $f = $this->facts($conversation);
+        $opening = $inactiveAgent
+            ? "Hi {$f['client']}! Thank you for reaching out. {$f['agent']} may not be responsive at the moment."
+            : "Hi {$f['client']}, we're sorry for the wait. {$f['agent']} may not be responsive at the moment.";
+
+        return $this->sign(implode("\n", [
+            $opening,
+            '',
+            'You can also inquire with our other agents through their profiles or their own agent websites:',
+            '👉 Find an Agent: '.$this->siteUrl('/agents'),
+            '👉 Agent Websites: '.$this->siteUrl('/page/agents'),
+        ]));
+    }
+
+    private function siteUrl(string $path): string
+    {
+        return rtrim((string) config('services.inquiry_ai.site_url', 'https://filipinohomes.com'), '/').$path;
+    }
+
     /** "📱 mobile" / "💬 WhatsApp" (the chat and email show the WhatsApp logo) + office hours. */
     private function officeContactLines(array $s): array
     {
@@ -721,6 +870,7 @@ class InquiryAiReplyService
     private function facts(Conversation $conversation): array
     {
         $conversation->loadMissing(['chat.user', 'chat.listing', 'agentUser.agent']);
+        $owner = $this->owner($conversation);
         $clientMessage = (string) Message::where('conversation_id', $conversation->id)
             ->where('user_id', $conversation->chat->user_id)
             ->where('automated', false)
@@ -729,7 +879,7 @@ class InquiryAiReplyService
 
         return [
             'client' => $this->firstName($conversation->chat->user?->name) ?: 'there',
-            'agent' => $this->agentFirstName($conversation) ?: 'your agent',
+            'agent' => $this->agentFirstName($owner) ?: 'your agent',
             'listing' => $conversation->chat->listing?->name,
             // The listing's property code (listings.code, e.g. "CEB-16296").
             'code' => trim((string) $conversation->chat->listing?->code) ?: null,
@@ -743,8 +893,8 @@ class InquiryAiReplyService
             'email' => $conversation->chat->user?->email ?: null,
             'mobile' => trim((string) $conversation->chat->user?->mobile_no) ?: null,
             // The agent's own numbers (already public on their listings/profile).
-            'agent_mobile' => trim((string) $conversation->agentUser?->agent?->mobile_no) ?: null,
-            'agent_whatsapp' => trim((string) $conversation->agentUser?->agent?->whats_app_no) ?: null,
+            'agent_mobile' => trim((string) $owner?->agent?->mobile_no) ?: null,
+            'agent_whatsapp' => trim((string) $owner?->agent?->whats_app_no) ?: null,
         ];
     }
 
@@ -917,11 +1067,11 @@ class InquiryAiReplyService
      * first names whole ("John Mark", "Jay Ann") — in normal capitalisation
      * ("JUAN" → "Juan"). Falls back to the first word of the account name.
      */
-    private function agentFirstName(Conversation $conversation): string
+    private function agentFirstName(?User $owner): string
     {
-        $first = trim((string) $conversation->agentUser?->agent?->first_name);
+        $first = trim((string) $owner?->agent?->first_name);
         if ($first === '') {
-            $first = $this->firstName($conversation->agentUser?->name);
+            $first = $this->firstName($owner?->name);
         }
 
         return $first === '' ? '' : Str::title(Str::lower($first));

@@ -168,6 +168,22 @@ class InquiryAiReplyTest extends TestCase
         return $conversationId;
     }
 
+    /** A direct message to the agent ("Message me" on the profile / agent website), opened $minutesAgo. */
+    private function directInquiry(int $minutesAgo, ?User $sender = null): int
+    {
+        $sender ??= $this->client;
+        $chatId = DB::table('chats')->insertGetId(['type' => 'agent', 'user_id' => $sender->id, 'type_id' => $this->agent->id, 'created_at' => now()->subMinutes($minutesAgo), 'updated_at' => now()]);
+        $conversationId = DB::table('conversations')->insertGetId([
+            'chat_id' => $chatId,
+            'status' => 'accepted',
+            'created_at' => now()->subMinutes($minutesAgo),
+            'updated_at' => now(),
+        ]);
+        DB::table('messages')->insert(['conversation_id' => $conversationId, 'user_id' => $sender->id, 'body' => 'Hi, are you available?', 'created_at' => now()->subMinutes($minutesAgo), 'updated_at' => now()]);
+
+        return $conversationId;
+    }
+
     private function run_(): array
     {
         return app(InquiryAiReplyService::class)->run();
@@ -382,6 +398,76 @@ class InquiryAiReplyTest extends TestCase
         expect($this->automated($id)->first()->body)->toContain('please contact our office directly');
     }
 
+    public function test_direct_message_gets_a_short_first_reply(): void
+    {
+        $this->enable();
+        $id = $this->directInquiry(1);
+
+        expect($this->run_()['acks'])->toBe(1);
+        expect($this->automated($id)->first()->body)->toBe(
+            "Hi Maria! Thank you for reaching out. Juan Miguel has been notified and will contact you shortly to assist you further.\n\n— Filipinohomes Assistant"
+        );
+    }
+
+    public function test_direct_message_points_to_other_agents_when_the_agent_does_not_reply_even_after_hours(): void
+    {
+        $push = Mockery::mock(ExpoPushService::class);
+        $push->shouldReceive('notify')->once()->withArgs(fn ($user, $type, $title, $body) => $user->id === $this->agent->id && str_contains($body, 'pointed to other agents'));
+        $this->app->instance(ExpoPushService::class, $push);
+        // Sunday 9 PM — office closed, but this message has no phone number so it isn't held.
+        Carbon::setTestNow(Carbon::parse('2026-11-08 21:00', 'Asia/Manila'));
+        $this->enable();
+        $id = $this->directInquiry(185);
+
+        expect($this->run_()['escalations'])->toBe(1);
+        expect($this->automated($id)->last()->body)
+            ->toStartWith("Hi Maria, we're sorry for the wait. Juan Miguel may not be responsive at the moment.")
+            ->toContain("websites:\n👉 Find an Agent: https://filipinohomes.com/agents\n👉 Agent Websites: https://filipinohomes.com/page/agents\n")
+            ->not->toContain('977-815-0888');
+    }
+
+    public function test_direct_message_to_an_inactive_agent_points_to_other_agents_right_away(): void
+    {
+        $this->makeAgentInactive();
+        $this->enable();
+        $id = $this->directInquiry(1);
+
+        $out = $this->run_();
+
+        expect($out['escalations'])->toBe(1)->and($this->automated($id))->toHaveCount(1);
+        expect($this->automated($id)->first()->body)
+            ->toStartWith('Hi Maria! Thank you for reaching out. Juan Miguel may not be responsive at the moment.')
+            ->toContain('👉 Find an Agent: https://filipinohomes.com/agents');
+    }
+
+    public function test_direct_messages_cover_every_role_but_skip_answered_and_switched_off(): void
+    {
+        $this->enable();
+        $otherAgent = User::forceCreate(['name' => 'Pedro Agent', 'email' => 'pedro@example.com', 'password' => 'x', 'role_id' => 2]);
+        $admin = User::forceCreate(['name' => 'Office Admin', 'email' => 'office@example.com', 'password' => 'x', 'role_id' => 1]);
+        $agentToAgent = $this->directInquiry(1, $otherAgent);
+        $fromStaff = $this->directInquiry(1, $admin);
+        $answered = $this->directInquiry(1);
+        DB::table('messages')->insert(['conversation_id' => $answered, 'user_id' => $this->agent->id, 'body' => 'Hello!', 'created_at' => now(), 'updated_at' => now()]);
+
+        $this->run_();
+
+        expect($this->automated($agentToAgent)->first()?->body)->toStartWith('Hi Pedro! Thank you for reaching out. Juan Miguel has been notified')
+            ->and($this->automated($fromStaff)->first()?->body)->toStartWith('Hi Office! Thank you for reaching out. Juan Miguel has been notified')
+            ->and($this->automated($answered))->toHaveCount(0);
+
+        // ...and the "may not be responsive" message after the wait.
+        Carbon::setTestNow(now()->addHours(4));
+        $this->run_();
+        expect($this->automated($agentToAgent)->last()->body)->toStartWith("Hi Pedro, we're sorry for the wait. Juan Miguel may not be responsive at the moment.");
+        Carbon::setTestNow(now()->subHours(4));
+
+        $this->enable(['direct_enabled' => false]);
+        $off = $this->directInquiry(1);
+        $this->run_();
+        expect($this->automated($off))->toHaveCount(0);
+    }
+
     public function test_shows_the_office_whatsapp_when_set(): void
     {
         $this->app->instance(ExpoPushService::class, Mockery::mock(ExpoPushService::class)->shouldIgnoreMissing());
@@ -573,7 +659,7 @@ class InquiryAiReplyTest extends TestCase
 
         $all = $this->getJson('/api/admin/inquiries/unanswered')->assertOk();
         expect(collect($all->json('data'))->pluck('conversation_id')->sort()->values()->all())->toBe([$waiting, $escalated])
-            ->and($all->json('counts'))->toBe(['all' => 2, 'office_number' => 1, 'waiting' => 1, 'inactive_agent' => 0]);
+            ->and($all->json('counts'))->toBe(['all' => 2, 'office_number' => 1, 'waiting' => 1, 'active_agent' => 2, 'inactive_agent' => 0]);
 
         $office = $this->getJson('/api/admin/inquiries/unanswered?filter=office_number')->assertOk();
         expect(collect($office->json('data'))->pluck('conversation_id')->all())->toBe([$escalated])
@@ -597,6 +683,7 @@ class InquiryAiReplyTest extends TestCase
         $this->makeAgentInactive(lastLoginDaysAgo: 20);
         $inactive = $this->getJson('/api/admin/inquiries/unanswered?filter=inactive_agent')->assertOk();
         expect($inactive->json('counts.inactive_agent'))->toBe(2)
+            ->and($inactive->json('counts.active_agent'))->toBe(0)
             ->and(count($inactive->json('data')))->toBe(2);
 
         Sanctum::actingAs($this->agent);

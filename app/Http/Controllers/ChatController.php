@@ -828,6 +828,12 @@ class ChatController extends Controller
                 sender: $user,
                 source: $validated['source'] ?? null,
             );
+
+            // Inquiry Filipinohomes Assistant's first reply (client → agent only;
+            // the service skips agent-to-agent and staff messages).
+            if ($chat->activeConversation) {
+                app(InquiryAiReplyService::class)->replySoon($chat->activeConversation->id);
+            }
         }
 
         return new ChatResource($chat);

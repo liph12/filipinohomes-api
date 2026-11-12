@@ -1,11 +1,18 @@
 {{-- The client's message as a light-blue chat bubble (icon is on the section label).
      Lines like "💬 0917…" (the Inquiry AI Assistant's WhatsApp line) show the
-     official WhatsApp logo + a wa.me link; "📞/📱 <number>" become tap-to-call.
+     official WhatsApp logo + a wa.me link; "📞/📱 <number>" become tap-to-call;
+     "👉 Label: https://…" becomes a clickable label.
      Every piece of text is escaped — only those fixed tags are added. --}}
 @props(['message', 'label' => 'Message'])
 @if (!empty($message))
 @php
     $html = collect(preg_split('/\R/u', (string) $message))->map(function (string $line) {
+        // "👉 Find an Agent: https://…" (assistant link line) → "👉 <a>Find an Agent</a>".
+        // Only links to our own website, so a client can't hide a foreign URL behind a label.
+        $site = rtrim((string) config('services.inquiry_ai.site_url', 'https://filipinohomes.com'), '/').'/';
+        if (preg_match('/^👉 ([^:]{1,60}): (https:\/\/\S+)$/u', $line, $l) && str_starts_with($l[2], $site)) {
+            return '👉 <a href="'.e($l[2]).'" target="_blank" style="color:#1d4ed8;text-decoration:underline;font-weight:bold;">'.e($l[1]).'</a>';
+        }
         if (! preg_match('/^(💬|📞|📱) ([+()\d][\d\s()+-]{5,})$/u', $line, $m)) {
             return e($line);
         }

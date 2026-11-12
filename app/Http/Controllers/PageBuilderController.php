@@ -66,19 +66,29 @@ class PageBuilderController extends Controller
     /**
      * Filter agent pages by title or the page agent's name. Shared by the
      * active list (index) and the trashed list (deleted).
+     *
+     * Every word must match the title or a part of the agent's name, so a
+     * full name works: "Juan Dela Cruz" → Juan (first) + Dela, Cruz (last).
+     * The whole phrase still matches a title as before.
      */
     protected function applyPageSearch($query, string $search): void
     {
-        $search = trim($search);
+        $search = trim(preg_replace('/\s+/', ' ', $search));
         if ($search === '') {
             return;
         }
+        $like = fn (string $v) => '%'.addcslashes($v, '%_\\').'%';
+        $words = array_slice(array_values(array_unique(explode(' ', $search))), 0, 6);
 
-        $query->where(function ($q) use ($search) {
-            $q->where('title', 'like', "%{$search}%")
-                ->orWhereHas('agent', function ($a) use ($search) {
-                    $a->where('first_name', 'like', "%{$search}%")
-                        ->orWhere('last_name', 'like', "%{$search}%");
+        $query->where(function ($q) use ($search, $words, $like) {
+            $q->where('title', 'like', $like($search))
+                ->orWhere(function ($all) use ($words, $like) {
+                    foreach ($words as $word) {
+                        $all->where(fn ($w) => $w->where('title', 'like', $like($word))
+                            ->orWhereHas('agent', fn ($a) => $a->where('first_name', 'like', $like($word))
+                                ->orWhere('middle_name', 'like', $like($word))
+                                ->orWhere('last_name', 'like', $like($word))));
+                    }
                 });
         });
     }

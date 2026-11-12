@@ -10,7 +10,7 @@ use Illuminate\Validation\Rule;
 /**
  * Admin sidebar → Unanswered Inquiries. See App\Services\Inquiry\UnansweredInquiryService.
  *
- *   GET /admin/inquiries/unanswered?filter=all|office_number|waiting|inactive_agent&q=&page=
+ *   GET /admin/inquiries/unanswered?filter=all|office_number|waiting|active_agent|inactive_agent&q=&page=
  */
 class UnansweredInquiryController extends Controller
 {
@@ -33,6 +33,8 @@ class UnansweredInquiryController extends Controller
                 'total' => $page->total(),
             ],
             'counts' => $service->counts($v['q'] ?? null),
+            // The assistant's "inactive after" days — the Active / Inactive agents split.
+            'inactive_days' => app(\App\Services\Inquiry\InquiryAiReplyService::class)->settings()['inactive_agent_days'],
         ]);
     }
 }

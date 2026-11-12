@@ -25,7 +25,7 @@ use Illuminate\Support\Str;
  */
 class UnansweredInquiryService
 {
-    public const FILTERS = ['all', 'office_number', 'waiting', 'inactive_agent'];
+    public const FILTERS = ['all', 'office_number', 'waiting', 'active_agent', 'inactive_agent'];
 
     private function base(): Builder
     {
@@ -53,6 +53,7 @@ class UnansweredInquiryService
             'office_number' => $q->whereNotNull('esc.id'),
             'waiting' => $q->whereNull('esc.id'),
             'inactive_agent' => $this->whereAgentInactive($q),
+            'active_agent' => $this->whereAgentActive($q),
             default => $q,
         };
     }
@@ -72,6 +73,22 @@ class UnansweredInquiryService
                 ->from('users as iu')
                 ->whereColumn('iu.id', 'c.agent_user_id')
                 ->where('iu.last_online_at', '>=', $cutoff));
+    }
+
+    /** The opposite of whereAgentInactive: a login or activity within the inactive-after days. */
+    private function whereAgentActive(Builder $q): Builder
+    {
+        $cutoff = Carbon::now()->subDays(app(InquiryAiReplyService::class)->settings()['inactive_agent_days']);
+
+        return $q->where(fn ($w) => $w
+            ->whereExists(fn ($l) => $l->select(DB::raw(1))
+                ->from('login_logs as al')
+                ->whereColumn('al.user_id', 'c.agent_user_id')
+                ->where('al.logged_in_at', '>=', $cutoff))
+            ->orWhereExists(fn ($u) => $u->select(DB::raw(1))
+                ->from('users as auu')
+                ->whereColumn('auu.id', 'c.agent_user_id')
+                ->where('auu.last_online_at', '>=', $cutoff)));
     }
 
     private function applySearch(Builder $q, ?string $search): Builder

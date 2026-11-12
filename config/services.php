@@ -58,6 +58,8 @@ return [
     // account its chat replies are posted from. Created on first use.
     'inquiry_ai' => [
         'assistant_email' => env('INQUIRY_AI_ASSISTANT_EMAIL', 'assistant@filipinohomes.com'),
+        // Public website, for links in assistant messages (e.g. Find an Agent).
+        'site_url' => env('FRONTEND_URL', 'https://filipinohomes.com'),
     ],
 
     /*
