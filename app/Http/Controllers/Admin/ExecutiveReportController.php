@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Services\Reports\Executive\AgentReportService;
 use App\Services\Reports\Executive\Analysis\ExecutiveAnalysisService;
 use App\Services\Reports\Executive\DrillService;
 use App\Services\Reports\Executive\ExecutiveReportService;
@@ -25,9 +26,9 @@ use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
- * The admin Executive Report (/admin/insights-analytics/executive-report):
- * one page on how FH is used and performing, where every number opens the
- * records behind it.
+ * The admin AI Report (/admin/insights-analytics/ai-report — once the
+ * Executive Report, whose API names it keeps): how FH is used and performing,
+ * by topic, where every number opens the records behind it.
  *
  * Dates are Asia/Manila calendar days (`date_start` / `date_end`, Y-m-d, both
  * included); without them the report covers the last 30 days. A day after
@@ -76,6 +77,22 @@ class ExecutiveReportController extends Controller
             ));
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages(['filters' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * GET /admin/executive-report/agents?date_start=&date_end=&office=&refresh=1
+     * The AI Report's Agents page: leads, regions, teams, who went quiet. `office` narrows it to one office region.
+     */
+    public function agents(Request $request, AgentReportService $agents): JsonResponse
+    {
+        $data = $request->validate(['office' => ['nullable', Rule::in([...OfficeRegionMap::REGIONS, 'unassigned'])]]);
+        $range = $this->range($request);
+
+        try {
+            return response()->json($agents->page($range, Carbon::now(), $data['office'] ?? null, $request->boolean('refresh')));
+        } catch (LockTimeoutException) {
+            return response()->json(['message' => 'The report for these dates is still being built — try again in a minute.'], 503);
         }
     }
 

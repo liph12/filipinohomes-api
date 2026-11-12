@@ -1145,6 +1145,7 @@ Route::middleware('strip.tags')->group(function () {
                 // saved AI analysis; POST may call OpenAI (also capped per day).
                 Route::get('/admin/executive-report', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'summary']);
                 Route::get('/admin/executive-report/drill', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'drill']);
+                Route::get('/admin/executive-report/agents', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'agents']);
                 Route::get('/admin/executive-report/explorer', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'explorer']);
                 Route::get('/admin/executive-report/sold-claims', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'soldClaims']);
                 Route::get('/admin/executive-report/analysis', [\App\Http\Controllers\Admin\ExecutiveReportController::class, 'analysis']);

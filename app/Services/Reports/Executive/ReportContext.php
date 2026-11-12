@@ -17,12 +17,18 @@ use Illuminate\Support\Facades\DB;
  * the exact inverse of a drill filter, so a cell counts the rows its drill
  * lists — the summary parity test holds every table cell to that.
  *
- * `$filters` narrows every listing-side row set (the Market explorer's slice:
- * a type, a province, a town, a project); a cell's drill then carries those
- * filters plus its own.
+ * `$filters` narrows the build: the Market explorer's slice (a type, a
+ * province, a town, a project) or the Agents page's office focus. Every row
+ * set and every stat takes the filters its metric family understands
+ * (filtersFor()) — a team count can't narrow to an office, so it stays FH-wide
+ * — and a stat carries them, so its drill lists the same records. A cell's
+ * drill carries those filters plus its own.
  */
 final class ReportContext
 {
+    /** "As of now" agent sets that still depend on the range (the range's leads, waiting now). */
+    private const RANGE_BOUND_NOW = ['agents.unanswered'];
+
     private array $memo = [];
 
     public function __construct(
@@ -33,8 +39,15 @@ final class ReportContext
         private readonly PeopleQueries $people,
         private readonly Geography $geo,
         private readonly TeamDirectory $teams,
+        private readonly LeadQueries $leads,
         public readonly array $filters = [],
     ) {}
+
+    /** The context's filters that a metric's drill accepts. */
+    public function filtersFor(string $key): array
+    {
+        return array_intersect_key($this->filters, array_flip(MetricRegistry::filters($key)));
+    }
 
     // ── Stats ───────────────────────────────────────────────────────────────
 
@@ -58,6 +71,9 @@ final class ReportContext
             'value' => $value,
             'partial' => MetricRegistry::partial($key, $this->range),
         ];
+        if (($filters = $this->filtersFor($key)) !== []) {
+            $stat['filters'] = $filters; // the tile's drill narrows the same way
+        }
         if ($def['kind'] === 'median') {
             $stat['sample'] = $sample;
         }
@@ -98,12 +114,12 @@ final class ReportContext
             return [PricePerSqm::median($values), count($values)];
         }
         if ($def['kind'] === 'median') {
-            $median = $this->engine->median($key, $range, $this->now);
+            $median = $this->engine->median($key, $range, $this->now, $this->filtersFor($key));
 
             return [$median['value'], $median['sample']];
         }
 
-        return [$this->engine->value($key, $range, $this->now), null];
+        return [$this->engine->value($key, $range, $this->now, $this->filtersFor($key)), null];
     }
 
     /** The lifecycle metrics, counted over the one lifecycle row set — MetricEngine::lifecycleSource()'s conditions. */
@@ -175,7 +191,16 @@ final class ReportContext
     {
         return $this->memo['rows:lifecycle'] ??= DB::query()
             ->fromSub($this->q->lifecycle($this->range, $this->now, $this->filters), 't')
-            ->get(['t.chat_id', 't.listing_id', 't.agent_id', 't.bucket', 't.reached_agent', 't.received_at', 't.reviewed_at', 't.last_side_at', 't.first_agent_at']);
+            ->get(['t.chat_id', 't.listing_id', 't.agent_id', 't.office', 't.bucket', 't.reached_agent', 't.received_at', 't.reviewed_at', 't.last_side_at', 't.first_agent_at']);
+    }
+
+    /** Every lead of the range from all four sources — one row per lead (see LeadQueries). */
+    public function leadRows(): Collection
+    {
+        return $this->memo['rows:leads'] ??= $this->leads->applyFilters(
+            DB::query()->fromSub($this->leads->all($this->range, $this->now), 'ld'),
+            array_intersect_key($this->filters, array_flip(MetricRegistry::FAMILY_FILTERS['lead'])),
+        )->get(['ld.lead_key', 'ld.source', 'ld.agent_id', 'ld.office', 'ld.answered', 'ld.waiting']);
     }
 
     /** The listings of a ₱/sqm sample, each with its ₱/sqm — the median's drill lists exactly these. */
@@ -218,26 +243,41 @@ final class ReportContext
 
     // ── People ──────────────────────────────────────────────────────────────
 
-    /** @return array<int, string|null> agent id => office region, for an agent-family metric */
+    /**
+     * @return array<int, string|null> agent id => office region, for an agent-family metric.
+     *                                 Two sets are differences of sets already fetched, not a query
+     *                                 of their own — the same people the drill's SQL lists.
+     */
     public function agents(string $key, ?ReportRange $range = null): array
     {
         $range ??= $this->range;
-        $when = MetricRegistry::get($key)['as_of'] === 'now' ? 'now' : $range->key();
+        $when = MetricRegistry::get($key)['as_of'] === 'now' && ! in_array($key, self::RANGE_BOUND_NOW, true) ? 'now' : $range->key();
 
-        return $this->memo['agents:'.$key.':'.$when] ??= $this->engine->agentRegions($key, $range, $this->now);
+        return $this->memo['agents:'.$key.':'.$when] ??= match ($key) {
+            // Active the period before, not in this one.
+            'agents.gone_quiet' => array_diff_key($this->agents('agents.active', $range->previous()), $this->agents('agents.active', $range)),
+            // Dormant, minus the dormant who never used FH.
+            'agents.dormant_used' => array_diff_key($this->agents('agents.dormant_30d'), $this->agents('agents.never_used')),
+            default => $this->engine->agentRegions($key, $range, $this->now, $this->filtersFor($key)),
+        };
     }
 
-    /** Team ids behind a team metric — MetricEngine::teamIds()'s sets, over the memoized agent sets. */
+    /**
+     * Team ids behind a team metric — MetricEngine::teamIds()'s sets, over the
+     * memoized agent sets. A team count can't narrow to an office (its drill
+     * takes no office filter), so under a focus it stays FH-wide.
+     */
     public function teamIds(string $key, ?ReportRange $range = null): array
     {
         $range ??= $this->range;
-        $roster = $this->teamsOf(array_keys($this->agents('agents.headcount', $range)));
-        $active = fn () => $this->teamsOf(array_keys($this->agents('agents.active', $range)));
+        $roster = $this->teamsOf(array_keys($this->fhWideAgents('agents.headcount', $range)));
+        $active = fn () => $this->teamsOf(array_keys($this->fhWideAgents('agents.active', $range)));
 
         $ids = match ($key) {
             'teams.total' => $roster,
             'teams.active' => $active(),
             'teams.inactive' => array_values(array_diff($roster, $active())),
+            'teams.no_leader' => array_values(array_filter($roster, fn ($team) => $this->teams->leaders($team) === [])),
         };
         sort($ids);
 
@@ -251,6 +291,17 @@ final class ReportContext
             array_map('intval', $this->people->agents()->pluck('agents.id')->all()),
             true,
         );
+    }
+
+    /** An agent set ignoring the context's filters (the same memo as agents() when there are none). */
+    private function fhWideAgents(string $key, ReportRange $range): array
+    {
+        if ($this->filtersFor($key) === []) {
+            return $this->agents($key, $range);
+        }
+        $when = MetricRegistry::get($key)['as_of'] === 'now' ? 'now' : $range->key();
+
+        return $this->memo['agents-fh:'.$key.':'.$when] ??= $this->engine->agentRegions($key, $range, $this->now);
     }
 
     private function teamsOf(array $agentIds): array

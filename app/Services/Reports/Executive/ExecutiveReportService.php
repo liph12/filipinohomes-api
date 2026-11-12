@@ -50,11 +50,12 @@ final class ExecutiveReportService
         private readonly PlacesSection $places,
         private readonly TrendSection $trend,
         private readonly SoldClaimScanner $scanner,
+        private readonly LeadQueries $leads,
     ) {}
 
     public function context(ReportRange $range, Carbon $now, array $filters = []): ReportContext
     {
-        return new ReportContext($range, $now, $this->engine, $this->q, $this->people, $this->geo, $this->teams, $filters);
+        return new ReportContext($range, $now, $this->engine, $this->q, $this->people, $this->geo, $this->teams, $this->leads, $filters);
     }
 
     /**
@@ -153,7 +154,7 @@ final class ExecutiveReportService
     }
 
     /** Each source's first day of data, flagged where the range starts earlier. */
-    private function dataSince(ReportRange $range): array
+    public function dataSince(ReportRange $range): array
     {
         $out = [];
         foreach (MetricRegistry::DATA_SINCE as $source => $since) {
