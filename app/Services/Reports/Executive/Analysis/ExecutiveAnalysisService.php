@@ -357,8 +357,8 @@ final class ExecutiveAnalysisService
               agents who don't use FH or who have no team, Cebu and the other office regions, the most and least
               active teams, agents who stopped, and agents who never used FH.
             - findings: kind "win" for good news, "risk" for a problem, "watch" for something to keep an eye on.
-            - Prefer facts that aren't zero. Write about a zero only when the zero is itself the problem (no lead
-              answered, a team with nobody working).
+            - Prefer facts that aren't zero. Write about a zero only when the zero is itself the problem (leads came
+              in but none was answered, a team with nobody working) — with no leads, there is nothing to answer.
             - actions: three concrete steps for this week. Each has a title — a plain imperative of a few words with
               no numbers ("Call back the clients nobody answered") — and a text of at most two sentences saying who
               should do what. When a step is about one team, office region or agent, name it with {id.name}. List
@@ -409,9 +409,9 @@ final class ExecutiveAnalysisService
           {id}         the fact's value          {id.prev}    its previous value
           {id.change}  its change in percent      {id.name}    the person, team or place it is about — only
                                                                where the fact lists a "name:"
-        Never type a digit, a percent sign or a spelled-out number such as "zero", "three" or "twice". Use
-        only ids listed in FACTS; {id.prev} and {id.change} only where the fact shows them. List the ids each
-        bullet uses in fact_ids.
+        Never type a digit, a percent sign or a spelled-out number such as "zero", "three" or "twice". For
+        nothing, write "no" or "none" ("no chat lead was answered"). Use only ids listed in FACTS; {id.prev}
+        and {id.change} only where the fact shows them. List the ids each bullet uses in fact_ids.
 
         Each placeholder turns into a BARE number ("387", "₱47,368", "−62%"), so the words next to it must say
         what it counts — follow each fact's "say:" wording. Then:

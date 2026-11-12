@@ -153,7 +153,7 @@ final class AnalysisFacts
 
         foreach ($page['leads']['spread'] as $b) {
             $id = 'spread_'.str_replace('-', '_', $b['bucket']);
-            $facts[$id] = self::cell("Agents who got {$b['label']} in the period", "{{$id}} agents got {$b['label']}", $b['label'], $b['agents'], 'agents.with_leads', $b['filters']);
+            $facts[$id] = self::cell("Agents who got {$b['label']} in the period", "{{$id}} agents got {{$id}.name}", $b['label'], $b['agents'], 'agents.with_leads', $b['filters']);
         }
 
         // The spotlight (Cebu) under its own name, then the next biggest regions — never one region twice.
@@ -171,7 +171,8 @@ final class AnalysisFacts
         foreach (array_slice($regions, 0, self::REGIONS) as $i => $row) {
             $this->region($facts, 'region_'.($i + 1), $row);
         }
-        $facts['agents_no_office'] = self::cell('Roster agents with no office region', '{agents_no_office} agents have no office region', 'No office region', $page['regions']['unassigned'], 'agents.headcount', ['office_region' => 'unassigned']);
+        // "No office region" / "No team" aren't names: without one, the AI can't write "the No team agents".
+        $facts['agents_no_office'] = self::cell('Roster agents with no office region', '{agents_no_office} agents have no office region', null, $page['regions']['unassigned'], 'agents.headcount', ['office_region' => 'unassigned']);
 
         foreach (['most_active' => 'team_top', 'least_active' => 'team_low'] as $list => $prefix) {
             foreach (array_slice($page['teams'][$list], 0, self::TEAMS) as $i => $row) {
@@ -179,9 +180,9 @@ final class AnalysisFacts
             }
         }
         $noTeam = $page['teams']['no_team'];
-        $facts['no_team_agents'] = self::cell('Roster agents in no team', '{no_team_agents} agents are in no team', 'No team', $noTeam['members'], 'agents.headcount', $noTeam['filters']);
-        $facts['no_team_leads'] = self::cell('Leads that went to agents in no team', '{no_team_leads} leads went to agents in no team', 'No team', $noTeam['leads'], 'leads.all', $noTeam['filters']);
-        $facts['no_team_waiting'] = self::cell('Never-answered leads of agents in no team', '{no_team_waiting} leads to agents in no team were never answered', 'No team', $noTeam['waiting'], 'leads.waiting', $noTeam['filters']);
+        $facts['no_team_agents'] = self::cell('Roster agents in no team', '{no_team_agents} agents are in no team', null, $noTeam['members'], 'agents.headcount', $noTeam['filters']);
+        $facts['no_team_leads'] = self::cell('Leads that went to agents in no team', '{no_team_leads} leads went to agents in no team', null, $noTeam['leads'], 'leads.all', $noTeam['filters']);
+        $facts['no_team_waiting'] = self::cell('Never-answered leads of agents in no team', '{no_team_waiting} leads to agents in no team were never answered', null, $noTeam['waiting'], 'leads.waiting', $noTeam['filters']);
 
         $board = collect($page['top']['rows'])->keyBy(fn ($r) => $r['agent']['id']);
         foreach (array_slice($page['top']['tops']['leads'], 0, self::AGENTS) as $i => $agentId) {
@@ -282,9 +283,9 @@ final class AnalysisFacts
         return $part !== null && $whole ? (int) round($part / $whole * 100) : null;
     }
 
-    private static function cell(string $label, string $say, string $name, int|float|null $value, string $metric, array $filters): array
+    private static function cell(string $label, string $say, ?string $name, int|float|null $value, string $metric, array $filters): array
     {
-        return [
+        return array_filter([
             'label' => $label,
             'say' => $say,
             'name' => $name,
@@ -297,6 +298,6 @@ final class AnalysisFacts
             'partial' => false,
             'metric' => $metric,
             'filters' => $filters,
-        ];
+        ], fn ($v, $k) => $k !== 'name' || $v !== null, ARRAY_FILTER_USE_BOTH);
     }
 }
