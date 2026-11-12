@@ -75,6 +75,10 @@ class InquiryModerationService
             'reviewed_at' => now(),
         ]);
 
+        // Inquiry Filipinohomes Assistant: first reply right after approval (no-op while
+        // it's switched off; runs after the response).
+        app(InquiryAiReplyService::class)->replySoon($conversation->id);
+
         // Add the agent to conversation_users so they can see the full history
         if ($conversation->agent_user_id) {
             $conversation->users()->syncWithoutDetaching([

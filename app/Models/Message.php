@@ -7,13 +7,15 @@ use Illuminate\Database\Eloquent\Model;
 class Message extends Model
 {
 
-    protected $fillable = ['conversation_id', 'user_id', 'reply_to_id', 'type', 'body', 'attachments', 'read_at', 'status'];
+    protected $fillable = ['conversation_id', 'user_id', 'reply_to_id', 'type', 'body', 'attachments', 'read_at', 'status', 'automated'];
 
     protected function casts(): array
     {
         return [
             'read_at' => 'datetime',
             'attachments' => 'array',
+            // Posted by the Inquiry Filipinohomes Assistant (App\Services\Inquiry\InquiryAiReplyService).
+            'automated' => 'boolean',
         ];
     }
 

@@ -172,6 +172,7 @@ class InquiryTopAgentsService extends InquiryInsightsService
             ->join('messages', function ($j) {
                 $j->on('messages.conversation_id', '=', 'conversations.id')
                     ->whereColumn('messages.user_id', '!=', 'agents.user_id')
+                    ->where('messages.automated', false)
                     ->where('messages.status', '!=', 'deleted');
             })
             ->leftJoin('conversation_users as cu', function ($j) {

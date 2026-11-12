@@ -13,7 +13,7 @@
     'title' => 'To respond to the inquiry, open it in your Filipino Homes account.',
     'note' => "Please don't reply to this email — replies here are not delivered to the client.",
 ])
-@php $ico = fn (string $n) => asset('images/email/'.$n.'.png'); @endphp
+@php $ico = fn (string $n) => \App\Support\EmailAsset::url('images/email/'.$n.'.png'); @endphp
 <tr>
     <td align="left" class="fh-pad" style="padding:18px 40px 22px;background:#ffffff;">
         <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">

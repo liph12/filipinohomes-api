@@ -171,7 +171,8 @@ class ClientInsightsService
                 'conversations.status', 'conversations.reviewed_at',
                 DB::raw("{$agent} as agent_user_id"),
                 DB::raw("EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id = {$agent}) as agent_replied"),
-                DB::raw('EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id <> chats.user_id) as anyone_replied'),
+                // automated = the Inquiry Filipinohomes Assistant, not a human reply.
+                DB::raw('EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id <> chats.user_id AND m.automated = 0) as anyone_replied'),
                 DB::raw("(SELECT MIN(m.created_at) FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id = {$agent}) as agent_reply_at"),
                 'categories.name as category', 'property_types.name as ptype', 'property_subtypes.name as subtype',
                 'listings.price', 'property_attributes.bedroom_count as beds', 'property_attributes.bathroom_count as baths',

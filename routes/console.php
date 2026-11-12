@@ -23,6 +23,14 @@ Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlap
 // left behind by a crashed run (see the api2-ops footgun notes).
 Schedule::command('inquiries:auto-approve')->everyFiveMinutes()->withoutOverlapping(10);
 
+// Inquiry Filipinohomes Assistant: first reply right after approval ("your agent will
+// confirm…") and, if the agent still hasn't answered, an apology with the
+// office numbers during office hours. Off until switched on in System
+// Settings; settings are read inside the command. Each message is claimed in
+// inquiry_ai_replies first, so EC2 and Laravel Cloud both running this can't
+// double-send.
+Schedule::command('inquiries:ai-reply')->everyFiveMinutes()->withoutOverlapping(10);
+
 // Admin Mailbox index: copy the shared mailbox's website emails into the
 // database so /admin/mailbox doesn't log in to the mail server per click.
 // If this stops, the Mailbox falls back to live mail-server reads after 10 min.

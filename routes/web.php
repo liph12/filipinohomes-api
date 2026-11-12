@@ -14,6 +14,11 @@ use App\Mail\LoginOtpMailer;
 use App\Mail\MessageNotificationMailer;
 use App\Natcon\Mail\PhotoInviteMailer;
 
+// Square-cropped avatar for email person cards (Gmail/Outlook ignore
+// object-fit, so a non-square photo would be squashed). Allowlisted hosts only.
+Route::get('/email/avatar', \App\Http\Controllers\EmailAvatarController::class)
+    ->middleware('throttle:120,1');
+
 Route::get('/', function () {
     return view('welcome');
 });
@@ -98,6 +103,7 @@ if (config('app.debug')) {
             'name'  => 'Juan Dela Cruz',
         ]);
         $listing  = [
+            'code'           => 'CEB-3123',
             'name'           => 'For Sale: 3BR Condo in Centro, Mandaue City',
             'price'          => 'PHP 5,500,000',
             'image'          => 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=800',

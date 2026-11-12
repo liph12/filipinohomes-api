@@ -1,11 +1,20 @@
 {{-- Chat reminder ("New message received") to the other person in a conversation.
      Replies go through the website (Reply-To is a no-reply address). --}}
-@php $owner = $listing ?? []; @endphp
-<x-email.layout :footer="!empty($showListingOwner) ? 'You\'re receiving this because you\'re an admin or team leader at Filipino Homes.' : 'You\'re receiving this because you\'re part of this conversation on Filipino Homes.'">
+@php
+    $owner = $listing ?? [];
+    // The client (the person who sent the inquiry) gets client wording — the
+    // "review and respond" / "admin or team leader" lines are for staff.
+    $toClient = ($roleName ?? null) === 'client';
+@endphp
+<x-email.layout :footer="$toClient ? 'You\'re receiving this because you sent an inquiry on Filipino Homes.' : (!empty($showListingOwner) ? 'You\'re receiving this because you\'re an admin or team leader at Filipino Homes.' : 'You\'re receiving this because you\'re part of this conversation on Filipino Homes.')">
     <x-email.heading color="blue">New message received</x-email.heading>
 
     <x-email.greeting :name="ucwords(strtolower($greetingName))">
-        A new message has been submitted through Filipino Homes. Please review below and respond at your earliest convenience.
+        @if ($toClient)
+            You have a new message about your inquiry on Filipino Homes. You can read it below.
+        @else
+            A new message has been submitted through Filipino Homes. Please review below and respond at your earliest convenience.
+        @endif
     </x-email.greeting>
 
     <x-email.listing-card :listing="$listing" label="Listing" />

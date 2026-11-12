@@ -54,6 +54,12 @@ return [
         'chat_model' => env('OPENAI_CHAT_MODEL', 'gpt-5.4-mini'),
     ],
 
+    // Inquiry Filipinohomes Assistant (App\Services\Inquiry\InquiryAiReplyService): the
+    // account its chat replies are posted from. Created on first use.
+    'inquiry_ai' => [
+        'assistant_email' => env('INQUIRY_AI_ASSISTANT_EMAIL', 'assistant@filipinohomes.com'),
+    ],
+
     /*
     | Google Analytics Data API (admin Website Analytics dashboard) + Search
     | Console. GA_SA_KEY_BASE64 = the service-account JSON key file, base64-

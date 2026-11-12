@@ -31,6 +31,8 @@ class MessageResource extends JsonResource
             'attachments' => $this->attachments ?? [],
             'read_at' => $this->read_at,
             'status' => $this->status,
+            // Sent by the Inquiry Filipinohomes Assistant — the chat UI labels it "Automated".
+            'automated' => (bool) ($this->automated ?? false),
             'reply_to' => $this->whenLoaded('replyTo', function () {
                 if (!$this->replyTo) return null;
                 return [

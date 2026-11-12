@@ -618,6 +618,8 @@ class MessageNotificationMailer extends Mailable
 
         return [
             'name' => $listing->name ?? null,
+            // Property code (listings.code, e.g. "CEB-16296") — shown as the card's label.
+            'code' => $listing->code ?? null,
             'price' => $price,
             'image' => $photo,
             'location' => $location,

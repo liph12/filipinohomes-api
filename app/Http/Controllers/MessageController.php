@@ -7,6 +7,7 @@ use App\Jobs\SendMessageNotification;
 use App\Models\BlockedUser;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Services\Inquiry\InquiryAiReplyService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
@@ -154,6 +155,10 @@ class MessageController extends Controller
             $message->id,
             Auth::id()
         );
+
+        // Inquiry Filipinohomes Assistant: thank the client once if they answered its
+        // first reply before the agent did (no-op otherwise; after response).
+        app(InquiryAiReplyService::class)->clientReplied($message, $conversation);
 
         $message->load(['user', 'replyTo.user', 'reactions.user']);
 

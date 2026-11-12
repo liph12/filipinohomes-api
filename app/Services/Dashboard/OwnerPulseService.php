@@ -169,7 +169,9 @@ class OwnerPulseService
                 ->whereNull('conversations.deleted_at')
                 ->whereNotExists(fn ($q) => $q->from('messages')
                     ->whereColumn('messages.conversation_id', 'conversations.id')
-                    ->whereColumn('messages.user_id', '!=', 'chats.user_id')), 'chats.created_at'),
+                    ->whereColumn('messages.user_id', '!=', 'chats.user_id')
+                    // The Inquiry Filipinohomes Assistant's replies aren't a human answer.
+                    ->where('messages.automated', false)), 'chats.created_at'),
             'clients' => $sum($this->clientQuery(), 'users.created_at'),
             'returning' => (int) $this->returningQuery()
                 ->whereBetween('login_logs.logged_in_at', [$from->startOfDay()->utc(), $to->endOfDay()->utc()])

@@ -128,6 +128,11 @@ return [
     // instead (chat reminders). Replies to it are not read.
     'no_reply_address' => env('MAIL_NO_REPLY_ADDRESS', 'no-reply@filipinohomes.com'),
 
+    // Public base URL for email icons (App\Support\EmailAsset). Empty = the
+    // API's APP_URL, or the live API when APP_URL is local (localhost /
+    // 127.0.0.1), since Gmail can't load images from a developer's machine.
+    'asset_url' => env('MAIL_ASSET_URL'),
+
     // Addresses that deliver INTO the info@ mailbox (Hostinger forwarders /
     // aliases, e.g. itadmin@filipinohomes.com → info@). Comma-separated.
     // The app treats them as info@ itself: never BCC'd next to info@ and not

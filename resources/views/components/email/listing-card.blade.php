@@ -4,6 +4,13 @@
     Title clamps to 2 lines by width; address to 1 line.
 --}}
 @props(['listing', 'label' => 'Your Listing'])
+@php
+    // The pill shows the property code when the listing has one ("Listing
+    // Code: CEB-16296") so staff and clients can quote it; otherwise the label.
+    if (!empty($listing['code'])) {
+        $label = 'Listing Code: '.$listing['code'];
+    }
+@endphp
 @if (!empty($listing))
 <tr>
     <td align="left" valign="top" class="fh-pad" style="background-color:#ffffff;padding:22px 40px 6px;">
@@ -24,7 +31,7 @@
                         <table border="0" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-bottom:12px;">
                             <tr>
                                 <td style="background:#eef2f8;border-radius:999px;padding:7px 16px 7px 12px;">
-                                    <img src="{{ asset('images/email/icon-listing.png') }}" width="20" height="20" alt="" style="width:20px;height:20px;border:0;vertical-align:-5px;margin-right:8px;" /><span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#334155;letter-spacing:0.06em;text-transform:uppercase;font-weight:800;">{{ $label }}</span>
+                                    <img src="{{ \App\Support\EmailAsset::url('images/email/icon-listing.png') }}" width="20" height="20" alt="" style="width:20px;height:20px;border:0;vertical-align:-5px;margin-right:8px;" /><span style="font-size:13px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#334155;letter-spacing:0.06em;text-transform:uppercase;font-weight:800;">{{ $label }}</span>
                                 </td>
                             </tr>
                         </table>
@@ -39,7 +46,7 @@
                         </div>
                         @endif
                         @if (!empty($listing['location']))
-                        <div title="{{ $listing['location'] }}" style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#475467;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><img src="{{ asset('images/email/icon-pin.png') }}" width="16" height="16" alt="" style="width:16px;height:16px;border:0;vertical-align:-3px;margin-right:6px;" />{{ \Illuminate\Support\Str::limit($listing['location'], 38, '…') }}</div>
+                        <div title="{{ $listing['location'] }}" style="font-size:14px;line-height:20px;font-family:Helvetica,Arial,sans-serif;color:#475467;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><img src="{{ \App\Support\EmailAsset::url('images/email/icon-pin.png') }}" width="16" height="16" alt="" style="width:16px;height:16px;border:0;vertical-align:-3px;margin-right:6px;" />{{ \Illuminate\Support\Str::limit($listing['location'], 38, '…') }}</div>
                         @endif
                         @if (!empty($listing['price']))
                         <span style="display:block;font-size:22px;line-height:28px;font-family:Helvetica,Arial,sans-serif;color:#2f8a3e;font-weight:800;">{{ $listing['price'] }}</span>

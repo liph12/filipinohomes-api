@@ -46,6 +46,8 @@ use App\Http\Controllers\HomesPhNewsController;
 use App\Http\Controllers\ImageUploadController;
 use App\Http\Controllers\ImpersonationController;
 use App\Http\Controllers\InquiryAnalyticsController;
+use App\Http\Controllers\InquiryAiReplyController;
+use App\Http\Controllers\UnansweredInquiryController;
 use App\Http\Controllers\InquiryAutoApprovalController;
 use App\Http\Controllers\InquiryController;
 use App\Http\Controllers\ListingController;
@@ -1007,6 +1009,18 @@ Route::middleware('strip.tags')->group(function () {
                 Route::put('/admin/inquiries/auto-approval', [InquiryAutoApprovalController::class, 'update']);
                 Route::post('/admin/inquiries/auto-approval/preview', [InquiryAutoApprovalController::class, 'preview'])
                     ->middleware('throttle:20,1');
+
+                // Inquiry Filipinohomes Assistant — settings KV behind InquiryAiReplyService;
+                // consumed by `inquiries:ai-reply` (routes/console.php). Same
+                // literal-before-{inquiry}-wildcard rule as auto-approval above.
+                // Preview may call OpenAI, hence the tighter throttle.
+                // Unanswered Inquiries (admin sidebar): approved listing
+                // inquiries no person has replied to. Literal before {inquiry}.
+                Route::get('/admin/inquiries/unanswered', [UnansweredInquiryController::class, 'index']);
+                Route::get('/admin/inquiries/ai-reply', [InquiryAiReplyController::class, 'show']);
+                Route::put('/admin/inquiries/ai-reply', [InquiryAiReplyController::class, 'update']);
+                Route::post('/admin/inquiries/ai-reply/preview', [InquiryAiReplyController::class, 'preview'])
+                    ->middleware('throttle:10,1');
 
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);

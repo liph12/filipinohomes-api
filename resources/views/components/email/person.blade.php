@@ -6,9 +6,11 @@
 @props(['label' => 'From', 'icon' => 'icon-user', 'name' => null, 'email' => null, 'mobile' => null, 'whatsapp' => null, 'avatar' => null, 'avatarBg' => '245ee0'])
 @php
     $seed = trim((string) $name) !== '' ? $name : 'FH';
-    $avatarSrc = !empty($avatar) ? $avatar
+    // Real photos go through /email/avatar (a square crop) so they aren't
+    // squashed in Gmail/Outlook; the initials fallback is square already.
+    $avatarSrc = !empty($avatar) ? \App\Support\EmailAsset::avatar($avatar)
         : 'https://ui-avatars.com/api/?name='.urlencode($seed).'&background='.$avatarBg.'&color=fff&size=128&bold=true&rounded=true';
-    $ico = fn (string $n) => asset('images/email/'.$n.'.png');
+    $ico = fn (string $n) => \App\Support\EmailAsset::url('images/email/'.$n.'.png');
 @endphp
 <tr>
     <td align="left" valign="top" class="fh-pad" style="background-color:#ffffff;padding:22px 40px 8px;">
@@ -17,7 +19,7 @@
             <tbody>
                 <tr>
                     <td valign="middle" width="96" style="width:96px;padding:16px 0 16px 20px;">
-                        <img src="{{ $avatarSrc }}" alt="{{ $name }}" width="64" height="64" style="display:block;width:64px;height:64px;border-radius:50%;border:0;background:#e5e7eb;" />
+                        <img src="{{ $avatarSrc }}" alt="{{ $name }}" width="64" height="64" style="display:block;width:64px;height:64px;border-radius:50%;border:0;background:#e5e7eb;object-fit:cover;" />
                     </td>
                     <td valign="middle" width="1" style="width:1px;padding:16px 0;"><div style="width:1px;height:56px;background:#e4e9f0;"></div></td>
                     <td valign="middle" style="padding:16px 20px;">
@@ -32,10 +34,10 @@
                             <br />
                             @endif
                             @if (!empty($mobile))
-                            <img src="{{ $ico('icon-phone') }}" width="16" height="16" alt="" style="width:16px;height:16px;border:0;vertical-align:-3px;margin-right:6px;" /><a href="tel:{{ $mobile }}" style="color:#334155;text-decoration:none;">{{ $mobile }}</a>
+                            <img src="{{ $ico('icon-phone') }}" width="16" height="16" alt="" style="width:16px;height:16px;border:0;vertical-align:-3px;margin-right:6px;" /><a href="{{ \App\Support\PhoneLink::tel($mobile) }}" style="color:#334155;text-decoration:none;">{{ $mobile }}</a>
                             @endif
                             @if (!empty($whatsapp))
-                            <img src="{{ $ico('icon-whatsapp') }}" width="16" height="16" alt="WhatsApp" style="width:16px;height:16px;border:0;vertical-align:-3px;margin:0 6px 0 {{ !empty($mobile) ? '18px' : '0' }};" /><a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $whatsapp) }}" target="_blank" style="color:#334155;text-decoration:none;">{{ $whatsapp }}</a>
+                            <img src="{{ $ico('icon-whatsapp') }}" width="16" height="16" alt="WhatsApp" style="width:16px;height:16px;border:0;vertical-align:-3px;margin:0 6px 0 {{ !empty($mobile) ? '18px' : '0' }};" /><a href="{{ \App\Support\PhoneLink::whatsapp($whatsapp) }}" target="_blank" style="color:#334155;text-decoration:none;">{{ $whatsapp }}</a>
                             @endif
                         </div>
                     </td>

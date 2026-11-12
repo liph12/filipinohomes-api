@@ -17,6 +17,7 @@ use App\Models\UserInfo;
 use App\Services\AuditMailService;
 use App\Services\AuditSecurityService;
 use App\Services\ChatRateLimitService;
+use App\Services\Inquiry\InquiryAiReplyService;
 use App\Services\TeamLeadershipService;
 use App\Support\RolePreview;
 use Carbon\Carbon;
@@ -477,6 +478,12 @@ class ChatController extends Controller
 
                     $conversation->save();
 
+                    // Approved on submit → Inquiry Filipinohomes Assistant's first reply
+                    // (after the response, so after this transaction commits).
+                    if ($isListing && $autoAccept) {
+                        app(InquiryAiReplyService::class)->replySoon($conversation->id);
+                    }
+
                     if ($isListing) {
                         $adminUserIds = User::whereHas('role', fn ($q) => $q->where('name', 'admin'))->pluck('id')->toArray();
                         // Every pivot row must declare the SAME set of pivot
@@ -687,6 +694,12 @@ class ChatController extends Controller
                 : sprintf('%s opened a direct message', $user->name);
 
             $conversation->save();
+
+            // Approved on submit → Inquiry Filipinohomes Assistant's first reply
+            // (after the response, so after this transaction commits).
+            if ($isListing && $autoAccept) {
+                app(InquiryAiReplyService::class)->replySoon($conversation->id);
+            }
 
             if ($isListing) {
                 // Attach client + all admin users + team leader (not the agent yet).
