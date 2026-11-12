@@ -407,7 +407,8 @@ final class ExecutiveAnalysisService
         return <<<'RULES'
         NUMBERS — the hard rule. Every number must come from the FACTS and be written ONLY as a placeholder:
           {id}         the fact's value          {id.prev}    its previous value
-          {id.change}  its change in percent      {id.name}    the person, team or place it is about
+          {id.change}  its change in percent      {id.name}    the person, team or place it is about — only
+                                                               where the fact lists a "name:"
         Never type a digit, a percent sign or a spelled-out number such as "zero", "three" or "twice". Use
         only ids listed in FACTS; {id.prev} and {id.change} only where the fact shows them. List the ids each
         bullet uses in fact_ids.

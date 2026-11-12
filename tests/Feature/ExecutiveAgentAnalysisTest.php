@@ -61,7 +61,7 @@ class ExecutiveAgentAnalysisTest extends TestCase
             'headline' => '{leads_answered_rate} of chat leads were answered on FH.',
             'bullets' => [
                 ['text' => '{leads_waiting} leads were never answered on FH.', 'fact_ids' => ['leads_waiting'], 'kind' => 'risk'],
-                ['text' => '{spot_agents} agents work from {spot_agents.name} offices.', 'fact_ids' => ['spot_agents'], 'kind' => 'watch'],
+                ['text' => '{cebu_agents} agents work from {cebu_agents.name} offices.', 'fact_ids' => ['cebu_agents'], 'kind' => 'watch'],
             ],
             'actions' => [
                 ['title' => 'Call back the clients nobody answered', 'text' => 'Team leaders should answer the {leads_waiting} waiting leads today.', 'fact_ids' => ['leads_waiting']],
@@ -105,7 +105,7 @@ class ExecutiveAgentAnalysisTest extends TestCase
         }
 
         $this->assertSame(57, $facts['leads_answered_rate']['value']); // 4 of 7 chat leads
-        $this->assertSame(['Cebu', 6], [$facts['spot_leads']['name'], $facts['spot_leads']['value']]);
+        $this->assertSame(['Cebu', 6], [$facts['cebu_leads']['name'], $facts['cebu_leads']['value']]);
         $this->assertSame(1, $facts['spread_4_9']['value']);
     }
 

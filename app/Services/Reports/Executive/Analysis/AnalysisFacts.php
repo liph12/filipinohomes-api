@@ -156,18 +156,20 @@ final class AnalysisFacts
             $facts[$id] = self::cell("Agents who got {$b['label']} in the period", "{{$id}} agents got {$b['label']}", $b['label'], $b['agents'], 'agents.with_leads', $b['filters']);
         }
 
-        $regions = array_values(array_filter($page['regions']['table']['rows'], fn ($r) => $r['key'] !== 'unassigned'));
-        foreach (array_slice($regions, 0, self::REGIONS) as $i => $row) {
-            $this->region($facts, 'region_'.($i + 1), $row);
-        }
+        // The spotlight (Cebu) under its own name, then the next biggest regions — never one region twice.
         $spot = $page['regions']['spotlight'];
+        $spotId = str_replace('-', '_', $spot['key']);
         if ($spot['row'] !== null) {
-            $this->region($facts, 'spot', $spot['row']);
+            $this->region($facts, $spotId, $spot['row']);
         }
         if ($spot['property'] !== null) {
             $p = $spot['property'];
-            $facts['spot_property_inquiries'] = self::cell("Inquiries about properties in {$p['province']}", '{spot_property_inquiries} inquiries about properties in {spot_property_inquiries.name}', (string) $p['province'], $p['value'], $p['metric'], $p['filters']);
-            $facts['spot_property_share'] = self::percent("Share of all inquiries that were about {$p['province']} properties", '{spot_property_share} of all inquiries', self::rate($p['value'], $p['of']), 'range', 'neutral');
+            $facts["{$spotId}_property_inquiries"] = self::cell("Inquiries about properties in {$p['province']}", "{{$spotId}_property_inquiries} inquiries about properties in {{$spotId}_property_inquiries.name}", (string) $p['province'], $p['value'], $p['metric'], $p['filters']);
+            $facts["{$spotId}_property_share"] = self::percent("Share of all inquiries that were about {$p['province']} properties", "{{$spotId}_property_share} of all inquiries", self::rate($p['value'], $p['of']), 'range', 'neutral');
+        }
+        $regions = array_values(array_filter($page['regions']['table']['rows'], fn ($r) => ! in_array($r['key'], ['unassigned', $spot['key']], true)));
+        foreach (array_slice($regions, 0, self::REGIONS) as $i => $row) {
+            $this->region($facts, 'region_'.($i + 1), $row);
         }
         $facts['agents_no_office'] = self::cell('Roster agents with no office region', '{agents_no_office} agents have no office region', 'No office region', $page['regions']['unassigned'], 'agents.headcount', ['office_region' => 'unassigned']);
 
