@@ -214,6 +214,38 @@ class ExecutiveMetricParityTest extends TestCase
         $this->assertSame(3, $value('usage.new_clients') + $value('usage.unfinished_signups'), 'Every client created in the range is one or the other.');
     }
 
+    public function test_leads_from_every_source(): void
+    {
+        $value = fn (string $key, array $f = []) => $this->engine()->value($key, $this->range, $this->now, $f);
+
+        // Two clients messaged an agent (a fellow agent's message is no lead); a1 answered, nobody answered a6.
+        $this->assertSame(2, $value('direct.received'));
+        $this->assertSame(1, $value('direct.answered'));
+        $this->assertSame(1, $value('direct.waiting'));
+        $this->assertSame(1, $value('briefs.received'));          // the admin's own link has no agent
+        $this->assertSame(1, $value('open_house.registrations')); // an agent registering is no lead
+        $this->assertSame(10, $value('leads.all'));               // 6 inquiries + 2 messages + a brief + a registration
+        $this->assertSame(7, $value('leads.reached'));            // 5 inquiries reached their agent + 2 messages
+        $this->assertSame(4, $value('leads.answered'));           // 3 inquiries + 1 message
+        $this->assertSame(2, $value('leads.waiting'));            // L4's inquiry and the message to a6
+        $this->assertSame(1, $value('leads.to_idle_agents'));     // a6 did nothing in the range
+
+        // a1: 3 inquiries + a message + a brief; a3: 2 inquiries + a registration; a2 and a6: one each.
+        $this->assertSame(4, $value('agents.with_leads'));
+        $this->assertSame([2, 1, 1, 0], array_map(fn ($b) => $value('agents.with_leads', ['leads' => $b]), ['1', '2-3', '4-9', '10-plus']));
+        $this->assertSame(2, $value('agents.unanswered'));        // a3 (L4) and a6
+
+        $this->assertSame(6, $value('leads.all', ['office_region' => 'cebu']));
+        $this->assertSame(1, $value('leads.all', ['office_region' => 'bohol']));
+        $this->assertSame(6, $value('leads.all', ['team_id' => $this->id['alpha']]));
+        $this->assertSame(1, $value('leads.all', ['team_id' => 0]));
+        $this->assertSame(5, $value('leads.all', ['agent_id' => $this->id['a1']]));
+
+        $this->assertSame(1, $value('teams.no_leader'));          // Bravo
+        $this->assertSame(0, $value('agents.never_used'));
+        $this->assertSame(1, $value('agents.dormant_used'));      // a4 posted and signed in before
+    }
+
     public function test_teams_credit_each_agent_once(): void
     {
         $teams = app(TeamDirectory::class);

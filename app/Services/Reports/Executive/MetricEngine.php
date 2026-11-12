@@ -23,6 +23,7 @@ final class MetricEngine
         private readonly ReportQueries $q,
         private readonly PeopleQueries $people,
         private readonly TeamDirectory $teams,
+        private readonly LeadQueries $leads,
     ) {}
 
     /**
@@ -39,12 +40,16 @@ final class MetricEngine
             return [$this->lifecycleSource($key, $range, $now, $filters), 't.chat_id'];
         }
 
+        if ($def['family'] === 'lead') {
+            return [$this->leads->source($key, $range, $now, $filters), 'ld.lead_key'];
+        }
+
         if ($def['family'] === 'user') {
             return [$this->people->applyUserFilters($this->userBase($key, $range), $filters), 'u.id'];
         }
 
         if ($def['family'] === 'agent') {
-            return [$this->people->applyAgentFilters($this->agentBase($key, $range, $now), $filters), 'agents.id'];
+            return [$this->people->applyAgentFilters($this->agentBase($key, $range, $now, $filters), $filters), 'agents.id'];
         }
 
         if ($def['family'] === 'team') {
@@ -168,6 +173,7 @@ final class MetricEngine
                 $roster,
                 $teamsOf($this->people->activeAgents($range)->pluck('agents.id')->all()),
             )),
+            'teams.no_leader' => array_values(array_filter($roster, fn ($team) => $this->teams->leaders($team) === [])),
         };
 
         if (($filters['team_id'] ?? '') !== '') {
@@ -210,7 +216,7 @@ final class MetricEngine
         };
     }
 
-    private function agentBase(string $key, ReportRange $range, Carbon $now): Builder
+    private function agentBase(string $key, ReportRange $range, Carbon $now, array $filters): Builder
     {
         return match ($key) {
             'agents.headcount' => $this->people->headcount(),
@@ -220,6 +226,11 @@ final class MetricEngine
             'agents.active' => $this->people->activeAgents($range),
             'agents.idle' => $this->people->idleAgents($range),
             'agents.dormant_30d' => $this->people->dormantAgents($now),
+            'agents.never_used' => $this->people->neverUsedAgents($now),
+            'agents.dormant_used' => $this->people->dormantUsedAgents($now),
+            'agents.gone_quiet' => $this->people->goneQuietAgents($range),
+            'agents.with_leads' => $this->people->agentsWithLeads($this->leads->perAgent($range, $now), isset($filters['leads']) ? (string) $filters['leads'] : null),
+            'agents.unanswered' => $this->people->agentsWithWaitingLeads($this->leads->waitingAgents($range, $now)),
         };
     }
 

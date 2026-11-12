@@ -67,6 +67,17 @@ final class RowHydrator
                     ? ['key' => 'first_reply', 'label' => 'First reply', 'type' => 'minutes'] : null,
                 ['key' => 'chat', 'label' => 'Conversation', 'type' => 'chat_link'],
             ])),
+            // No phone or email: the drill names the lead; contacting them is the agent's page.
+            'lead' => array_values(array_filter([
+                ['key' => 'received', 'label' => 'Came in', 'type' => 'datetime', 'sortable' => true],
+                ['key' => 'source', 'label' => 'How', 'type' => 'text'],
+                ['key' => 'client', 'label' => 'Client', 'type' => 'person'],
+                ['key' => 'about', 'label' => 'About', 'type' => 'text'],
+                ['key' => 'agent', 'label' => 'Agent', 'type' => 'agent'],
+                in_array($key, ['leads.waiting', 'direct.waiting'], true)
+                    ? ['key' => 'waiting', 'label' => 'Waiting', 'type' => 'duration_hours', 'sortable' => true] : null,
+                ['key' => 'chat', 'label' => 'Conversation', 'type' => 'chat_link'],
+            ])),
             'user' => [
                 ['key' => 'person', 'label' => 'Name', 'type' => 'person'],
                 ['key' => 'role', 'label' => 'Role', 'type' => 'text'],
@@ -166,6 +177,78 @@ final class RowHydrator
                 $row['first_reply'] = $timing[$chatId]['first_reply'];
             }
 
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Lead rows, in the order of $leadKeys (record id × 10 + source digit —
+     * see LeadQueries). `$waitingSince[lead key]` adds how long it has waited.
+     */
+    public function leads(array $leadKeys, array $waitingSince = [], ?Carbon $now = null): array
+    {
+        $now ??= Carbon::now();
+        $ids = [];
+        foreach ($leadKeys as $key) {
+            $ids[$key % 10][] = intdiv($key, 10);
+        }
+        $s = LeadQueries::SOURCES;
+        $listing = $this->q->inquiryDetails($ids[$s['listing']] ?? []);
+        $direct = $this->directDetails($ids[$s['direct']] ?? []);
+        $briefs = $this->briefDetails($ids[$s['brief']] ?? []);
+        $openHouse = $this->registrationDetails($ids[$s['open_house']] ?? []);
+
+        $rows = [];
+        foreach ($leadKeys as $key) {
+            $id = intdiv($key, 10);
+            $row = match ($key % 10) {
+                $s['listing'] => ($d = $listing->get($id)) === null ? null : [
+                    'received' => $this->iso($d->received_at),
+                    'source' => LeadQueries::LABELS['listing'],
+                    'client' => ['id' => (int) $d->client_id, 'name' => $d->client_name, 'avatar' => $this->avatar($d->client_avatar)],
+                    'about' => $d->listing_name,
+                    'agent' => $this->agentCell($d->agent_id, $d->agent_first_name, $d->agent_last_name, $d->agent_user_name, $d->agent_avatar, $d->agent_user_avatar),
+                    'chat' => ['chat_id' => (int) $d->chat_id, 'type' => 'listing', 'listing_name' => $d->listing_name, 'client_name' => $d->client_name],
+                ],
+                $s['direct'] => ($d = $direct->get($id)) === null ? null : [
+                    'received' => $this->iso($d->created_at),
+                    'source' => LeadQueries::LABELS['direct'],
+                    'client' => ['id' => (int) $d->client_id, 'name' => $d->client_name, 'avatar' => $this->avatar($d->client_avatar)],
+                    'about' => match ($d->source) {
+                        'agent_profile' => 'From their profile',
+                        'agent_page' => 'From their My Page',
+                        default => 'A message to the agent',
+                    },
+                    'agent' => $this->agentCell($d->agent_id, $d->first_name, $d->last_name, $d->user_name, $d->avatar, $d->user_avatar),
+                    'chat' => ['chat_id' => (int) $d->id, 'type' => 'agent', 'listing_name' => null, 'client_name' => $d->client_name],
+                ],
+                $s['brief'] => ($d = $briefs->get($id)) === null ? null : [
+                    'received' => $this->iso($d->created_at),
+                    'source' => LeadQueries::LABELS['brief'],
+                    'client' => ['id' => null, 'name' => $d->name, 'avatar' => null],
+                    'about' => $d->kind === 'seller' ? 'Wants to sell' : 'Wants to buy',
+                    'agent' => $this->agentCell($d->agent_id, $d->first_name, $d->last_name, $d->user_name, $d->avatar, $d->user_avatar),
+                    'chat' => null,
+                ],
+                $s['open_house'] => ($d = $openHouse->get($id)) === null ? null : [
+                    'received' => $this->iso($d->created_at),
+                    'source' => LeadQueries::LABELS['open_house'],
+                    'client' => ['id' => $d->user_id !== null ? (int) $d->user_id : null, 'name' => $d->full_name, 'avatar' => $this->avatar($d->client_avatar)],
+                    'about' => $d->title,
+                    'agent' => $this->agentCell($d->agent_id, $d->first_name, $d->last_name, $d->user_name, $d->avatar, $d->user_avatar),
+                    'chat' => null,
+                ],
+                default => null,
+            };
+            if ($row === null) {
+                continue;
+            }
+            if (isset($waitingSince[$key])) {
+                $since = Carbon::parse((string) $waitingSince[$key], 'UTC');
+                $row['waiting'] = round(max(0, $now->getTimestamp() - $since->getTimestamp()) / 3600, 1);
+            }
             $rows[] = $row;
         }
 
@@ -276,6 +359,66 @@ final class RowHydrator
         }
 
         return $rows;
+    }
+
+    // ── Lead details (one primary-key lookup per source) ───────────────────
+
+    /** Direct-message chats with their client and the agent they're credited to (the user's lowest live agent row). */
+    private function directDetails(array $chatIds)
+    {
+        if ($chatIds === []) {
+            return collect();
+        }
+        $agentOfUser = DB::table('agents')->whereNull('deleted_at')->whereNotNull('user_id')
+            ->groupBy('user_id')->select('user_id', DB::raw('MIN(id) as agent_id'));
+
+        return DB::table('chats as c')
+            ->join('users as cu', 'cu.id', '=', 'c.user_id')
+            ->leftJoinSub($agentOfUser, 'au', 'au.user_id', '=', 'c.type_id')
+            ->leftJoin('agents as a', 'a.id', '=', 'au.agent_id')
+            ->leftJoin('users as auser', 'auser.id', '=', 'a.user_id')
+            ->whereIn('c.id', $chatIds)
+            ->get([
+                'c.id', 'c.created_at', 'c.source', 'c.user_id as client_id', 'cu.name as client_name', 'cu.avatar as client_avatar',
+                'a.id as agent_id', 'a.first_name', 'a.last_name', 'a.avatar', 'auser.name as user_name', 'auser.avatar as user_avatar',
+            ])
+            ->keyBy('id');
+    }
+
+    private function briefDetails(array $ids)
+    {
+        if ($ids === []) {
+            return collect();
+        }
+
+        return DB::table('client_briefs as cb')
+            ->leftJoin('agents as a', 'a.id', '=', 'cb.agent_id')
+            ->leftJoin('users as auser', 'auser.id', '=', 'a.user_id')
+            ->whereIn('cb.id', $ids)
+            ->get([
+                'cb.id', 'cb.created_at', 'cb.kind', 'cb.name',
+                'a.id as agent_id', 'a.first_name', 'a.last_name', 'a.avatar', 'auser.name as user_name', 'auser.avatar as user_avatar',
+            ])
+            ->keyBy('id');
+    }
+
+    private function registrationDetails(array $ids)
+    {
+        if ($ids === []) {
+            return collect();
+        }
+
+        return DB::table('buyer_form_registrations as r')
+            ->join('buyer_forms as f', 'f.id', '=', 'r.buyer_form_id')
+            ->leftJoin('users as ru', 'ru.id', '=', 'r.user_id')
+            ->leftJoin('agents as a', 'a.id', '=', 'f.agent_id')
+            ->leftJoin('users as auser', 'auser.id', '=', 'a.user_id')
+            ->whereIn('r.id', $ids)
+            ->get([
+                'r.id', 'r.created_at', 'r.user_id', 'r.full_name', 'ru.avatar as client_avatar', 'f.title',
+                'a.id as agent_id', 'a.first_name', 'a.last_name', 'a.avatar', 'auser.name as user_name', 'auser.avatar as user_avatar',
+            ])
+            ->keyBy('id');
     }
 
     // ── Cells ───────────────────────────────────────────────────────────────

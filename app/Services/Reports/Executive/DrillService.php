@@ -97,6 +97,9 @@ final class DrillService
 
         $select = ["{$id} as id", "MAX({$expr}) as s"];
         $lifecycle = $def['family'] === 'lifecycle';
+        if ($def['family'] === 'lead') {
+            $select[] = 'MAX(ld.since) as waiting_since';
+        }
         if ($lifecycle) {
             $select[] = 'MAX('.self::WAITING_SINCE.') as waiting_since';
             $select[] = 'MAX(t.received_at) as received_at';
@@ -128,6 +131,7 @@ final class DrillService
                 'first_reply' => $key === 'inquiries.first_reply_minutes' && $r->first_agent_at
                     ? MetricEngine::firstReplyMinutes($r->reviewed_at, $r->received_at, $r->first_agent_at) : null,
             ], fn ($v) => $v !== null)])->all() : [], $now),
+            'lead' => $this->rows->leads($ids, $pageRows->mapWithKeys(fn ($r) => [(int) $r->id => $r->waiting_since])->filter()->all(), $now),
             'user' => $this->rows->users($ids),
             'agent' => $this->rows->agents($ids),
         };
@@ -156,6 +160,10 @@ final class DrillService
         }
 
         return match (true) {
+            $def['family'] === 'lead' => in_array($key, ['leads.waiting', 'direct.waiting'], true)
+                // Longest waiting first.
+                ? ['waiting' => ['ld.since', 'asc'], 'received' => ['ld.at', 'desc']]
+                : ['received' => ['ld.at', 'desc']],
             $def['family'] === 'lifecycle' && str_starts_with($key, 'inquiries.hanging.'), $key === 'inquiries.stalled' => [
                 // Longest waiting first: the earliest "waiting since".
                 'waiting' => [self::WAITING_SINCE, 'asc'],
@@ -165,7 +173,7 @@ final class DrillService
             $def['entity'] === 'deal' => ['deal_date' => ['properties.status_change_date', 'desc'], 'price' => ['listings.price', 'desc']],
             $def['entity'] === 'listing' => ['added' => ['listings.created_at', 'desc'], 'price' => ['listings.price', 'desc']],
             $def['entity'] === 'inquiry', $key === 'inquiries.unique_clients' => ['received' => ['chats.created_at', 'desc']],
-            $def['entity'] === 'agent' => $key === 'agents.dormant_30d'
+            $def['entity'] === 'agent' => in_array($key, ['agents.dormant_30d', 'agents.never_used', 'agents.dormant_used'], true)
                 // Longest gone first (never-online agents sort last, see the NULLs rule).
                 ? ['last_online' => ['u.last_online_at', 'asc'], 'joined' => ['agents.created_at', 'desc']]
                 : ['last_online' => ['u.last_online_at', 'desc'], 'joined' => ['agents.created_at', 'desc']],
@@ -227,6 +235,11 @@ final class DrillService
                 'status' => ucfirst((string) $value),
                 'listing_id' => DB::table('listings')->where('id', (int) $value)->value('name') ?? "Listing #{$value}",
                 'role' => ucfirst((string) $value),
+                'leads' => match ((string) $value) {
+                    '1' => '1 lead',
+                    '10-plus' => '10 or more leads',
+                    default => str_replace('-', '–', (string) $value).' leads',
+                },
                 default => (string) $value,
             };
         }

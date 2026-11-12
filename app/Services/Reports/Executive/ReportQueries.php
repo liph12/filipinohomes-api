@@ -142,8 +142,8 @@ class ReportQueries extends ListingInsightsService
      * sold-claims list instead, never "waiting".
      *
      * Returned as a subquery-ready builder selecting chat_id, listing_id,
-     * agent_id, client_id, received_at, conversation fields, the message
-     * facts and `bucket`. Wrap it: DB::query()->fromSub($life, 't').
+     * agent_id, office, client_id, received_at, conversation fields, the
+     * message facts and `bucket`. Wrap it: DB::query()->fromSub($life, 't').
      */
     public function lifecycle(ReportRange $range, Carbon $now, array $filters = []): Builder
     {
@@ -193,6 +193,8 @@ class ReportQueries extends ListingInsightsService
             'chats.id as chat_id',
             'listings.id as listing_id',
             'listings.agent_id as agent_id',
+            // The `office_region` filter's column, so lifecycle rows fold by office exactly as it filters.
+            'owner.region as office',
             'chats.user_id as client_id',
             'chats.created_at as received_at',
             'cv.id as conversation_id',

@@ -14,13 +14,16 @@ use InvalidArgumentException;
  *   ai       how the AI analysis refers to it (lower case, a noun phrase)
  *   hint     one line under the tile: what exactly is counted
  *   unit     count | php_per_sqm | minutes
- *   entity   what a drill row is: listing | deal | inquiry | user | agent | team
- *   family   which engine branch builds it (listing | lifecycle | user | agent | team)
+ *   entity   what a drill row is: listing | deal | inquiry | lead | user | agent | team
+ *   family   which engine branch builds it (listing | lifecycle | lead | user | agent | team)
  *   as_of    range = measured over the dates; now = measured at this moment
  *            (previous-period values are only computed for `range`)
  *   kind     count | median
  *   better   up | down | neutral — which direction a delta is good news
- *   source   the table whose history bounds it (see DATA_SINCE) — sets `partial`
+ *   source   the table whose history bounds it (see DATA_SINCE) — sets `partial`.
+ *            A feature's launch date is not a gap: there were no briefs before
+ *            the Buyer & Seller Link existed, so its metrics carry no source.
+ *   filters  (optional) the drill filters, when they differ from the family's
  */
 final class MetricRegistry
 {
@@ -45,6 +48,7 @@ final class MetricRegistry
     public const FAMILY_FILTERS = [
         'listing' => ReportQueries::FILTERS,
         'lifecycle' => ReportQueries::FILTERS,
+        'lead' => ['team_id', 'office_region', 'agent_id'],
         'agent' => ['team_id', 'office_region', 'agent_id'],
         'user' => ['role'],
         'team' => ['team_id'],
@@ -81,10 +85,28 @@ final class MetricRegistry
         'agents.active' => ['label' => 'Active agents', 'ai' => 'active agents', 'hint' => 'Agents on the roster who signed in, messaged, posted or edited something in these dates.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => 'login_logs'],
         'agents.idle' => ['label' => 'Idle agents', 'ai' => 'idle agents', 'hint' => 'Agents on the roster with no recorded action in these dates.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'range', 'kind' => 'count', 'better' => 'down', 'source' => 'login_logs'],
         'agents.dormant_30d' => ['label' => 'Dormant 30+ days', 'ai' => 'agents who haven\'t opened FH in a month', 'hint' => 'Agents on the roster who haven\'t opened FH in 30 days — as of now.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => null],
+        'agents.never_used' => ['label' => 'Never used FH', 'ai' => 'quiet agents who have never used FH', 'hint' => 'Of the agents who haven\'t opened FH in 30 days: never signed in, messaged, posted or left any other trace — as of now. They need onboarding, not a reminder.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => null],
+        'agents.dormant_used' => ['label' => 'Used FH before', 'ai' => 'quiet agents who used FH before', 'hint' => 'Of the agents who haven\'t opened FH in 30 days: those who did use it before — as of now. The ones to win back.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => null],
+        'agents.gone_quiet' => ['label' => 'Stopped this period', 'ai' => 'agents who were active the period before and did nothing in this one', 'hint' => 'Agents on the roster who did something in the period before these dates, and nothing in these dates.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'range', 'kind' => 'count', 'better' => 'down', 'source' => 'login_logs'],
+        'agents.with_leads' => ['label' => 'Agents with leads', 'ai' => 'agents who got at least one lead', 'hint' => 'Agents (not staff accounts) with at least one lead from any source in these dates.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => 'chats', 'filters' => ['team_id', 'office_region', 'agent_id', 'leads']],
+        'agents.unanswered' => ['label' => 'Agents with unanswered leads', 'ai' => 'agents holding a lead nobody answered', 'hint' => 'Agents (not staff accounts) with a chat lead from these dates that has had no reply for over 24 hours — as of now.', 'unit' => 'count', 'entity' => 'agent', 'family' => 'agent', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => 'chats'],
+
+        // ── Leads, from every source (LeadQueries) ──
+        'leads.all' => ['label' => 'All leads', 'ai' => 'leads from every source', 'hint' => 'Every lead in these dates: clients who asked about a listing, messaged an agent directly, sent a Buyer & Seller Link brief or registered at an open house.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => 'chats'],
+        'leads.reached' => ['label' => 'Chat leads', 'ai' => 'chat leads that reached their agent', 'hint' => 'Listing inquiries approved and passed to the agent, plus messages sent straight to an agent — the leads that could be answered in the FH chat. As of now.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'now', 'kind' => 'count', 'better' => 'up', 'source' => 'chats'],
+        'leads.answered' => ['label' => 'Answered', 'ai' => 'chat leads answered', 'hint' => 'Of the chat leads, those answered in the FH chat — a listing inquiry by anyone on the agent\'s side, a direct message by the agent. Calls and texts can\'t be seen.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'now', 'kind' => 'count', 'better' => 'up', 'source' => 'chats'],
+        'leads.waiting' => ['label' => 'Never answered', 'ai' => 'leads nobody answered for over a day', 'hint' => 'Chat leads with no reply on FH after 24 hours — as of now.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => 'chats'],
+        'leads.to_idle_agents' => ['label' => 'Leads to agents not on FH', 'ai' => 'leads that went to agents who did nothing on FH in the period', 'hint' => 'Leads in these dates whose agent didn\'t sign in, message, post or edit anything in the same dates — nobody was there to answer them.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'range', 'kind' => 'count', 'better' => 'down', 'source' => 'login_logs'],
+        'direct.received' => ['label' => 'Messaged the agent', 'ai' => 'messages clients sent straight to an agent', 'hint' => 'Clients who messaged an agent from the agent\'s profile or My Page in these dates.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => 'chats'],
+        'direct.answered' => ['label' => 'Direct messages answered', 'ai' => 'direct messages the agent answered', 'hint' => 'Of those, the ones the agent replied to in the FH chat — as of now.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'now', 'kind' => 'count', 'better' => 'up', 'source' => 'chats'],
+        'direct.waiting' => ['label' => 'Direct messages not answered', 'ai' => 'direct messages with no reply after a day', 'hint' => 'Direct messages the agent hasn\'t answered after 24 hours — as of now.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => 'chats'],
+        'briefs.received' => ['label' => 'Buyer & Seller Link briefs', 'ai' => 'Buyer & Seller Link briefs', 'hint' => 'Briefs clients sent through an agent\'s Buyer & Seller Link (the link started Nov 4, 2026).', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => null],
+        'open_house.registrations' => ['label' => 'Open-house registrations', 'ai' => 'open-house registrations', 'hint' => 'Clients who registered through an agent\'s Buyer Form.', 'unit' => 'count', 'entity' => 'lead', 'family' => 'lead', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => null],
 
         'teams.total' => ['label' => 'Teams', 'ai' => 'teams', 'hint' => 'Active teams with at least one agent on the roster.', 'unit' => 'count', 'entity' => 'team', 'family' => 'team', 'as_of' => 'now', 'kind' => 'count', 'better' => 'up', 'source' => 'teams'],
         'teams.active' => ['label' => 'Active teams', 'ai' => 'active teams', 'hint' => 'Teams with at least one active agent in these dates.', 'unit' => 'count', 'entity' => 'team', 'family' => 'team', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => 'teams'],
         'teams.inactive' => ['label' => 'Quiet teams', 'ai' => 'teams with no activity', 'hint' => 'Teams where nobody did anything recorded in these dates.', 'unit' => 'count', 'entity' => 'team', 'family' => 'team', 'as_of' => 'range', 'kind' => 'count', 'better' => 'down', 'source' => 'teams'],
+        'teams.no_leader' => ['label' => 'Teams without a leader', 'ai' => 'teams with no leader on record', 'hint' => 'Teams with agents but nobody marked as their leader — as of now.', 'unit' => 'count', 'entity' => 'team', 'family' => 'team', 'as_of' => 'now', 'kind' => 'count', 'better' => 'down', 'source' => 'teams'],
 
         // ── Listings & prices ──
         'listings.added' => ['label' => 'Listings added', 'ai' => 'listings added', 'hint' => 'Listings posted in these dates (For Sale, For Rent, Foreclosure) — the Listings Heatmap\'s count.', 'unit' => 'count', 'entity' => 'listing', 'family' => 'listing', 'as_of' => 'range', 'kind' => 'count', 'better' => 'up', 'source' => null],
@@ -141,7 +163,9 @@ final class MetricRegistry
     /** The filters a metric's drill may carry. */
     public static function filters(string $key): array
     {
-        return self::FAMILY_FILTERS[self::get($key)['family']];
+        $def = self::get($key);
+
+        return $def['filters'] ?? self::FAMILY_FILTERS[$def['family']];
     }
 
     /** True when the range starts before the metric's source has data. */

@@ -173,9 +173,32 @@ trait CreatesExecutiveReportTables
             $table->id();
             $table->string('type');
             $table->unsignedBigInteger('type_id');
+            $table->string('source', 32)->nullable();
             $table->unsignedBigInteger('user_id');
             $table->timestamps();
             $table->softDeletes();
+        });
+        Schema::create('client_briefs', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('agent_id')->nullable(); // null = an admin's own link
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->string('kind', 10);
+            $table->string('name', 200);
+            $table->timestamps();
+        });
+        Schema::create('buyer_forms', function (Blueprint $table) {
+            $table->id();
+            $table->string('title');
+            $table->unsignedBigInteger('agent_id');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        Schema::create('buyer_form_registrations', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('buyer_form_id');
+            $table->unsignedBigInteger('user_id');
+            $table->string('full_name');
+            $table->timestamps();
         });
         Schema::create('conversations', function (Blueprint $table) {
             $table->id();
@@ -379,6 +402,49 @@ trait CreatesExecutiveReportTables
         return $chatId;
     }
 
+    /**
+     * A client's direct message to an agent (to the agent's USER, as the chat
+     * stores it): the chat, its auto-accepted conversation and messages.
+     */
+    protected function makeDirectMessage(int $agentUserId, int $clientId, string $received, array $messages = [], ?string $source = 'agent_profile'): int
+    {
+        $chatId = DB::table('chats')->insertGetId([
+            'type' => 'agent', 'type_id' => $agentUserId, 'source' => $source, 'user_id' => $clientId,
+            'created_at' => $this->utc($received), 'updated_at' => $this->utc($received),
+        ]);
+        $conversationId = DB::table('conversations')->insertGetId([
+            'chat_id' => $chatId, 'status' => 'accepted', 'created_at' => $this->utc($received), 'updated_at' => $this->utc($received),
+        ]);
+        foreach ($messages as $m) {
+            DB::table('messages')->insert([
+                'conversation_id' => $conversationId, 'user_id' => $m[0], 'body' => $m[2] ?? 'Hello',
+                'status' => $m[3] ?? 'active', 'created_at' => $this->utc($m[1]), 'updated_at' => $this->utc($m[1]),
+            ]);
+        }
+
+        return $chatId;
+    }
+
+    /** A Buyer & Seller Link brief; a null agent is an admin's own link. */
+    protected function makeBrief(?int $agentId, string $at, string $kind = 'buyer', string $name = 'Brief Client'): int
+    {
+        return DB::table('client_briefs')->insertGetId([
+            'agent_id' => $agentId, 'kind' => $kind, 'name' => $name, 'created_at' => $this->utc($at), 'updated_at' => $this->utc($at),
+        ]);
+    }
+
+    /** A registration on an agent's Buyer Form (the form is created on first use). */
+    protected function makeRegistration(int $agentId, int $userId, string $at, string $title = 'Open House'): int
+    {
+        $formId = DB::table('buyer_forms')->where('agent_id', $agentId)->where('title', $title)->value('id')
+            ?? DB::table('buyer_forms')->insertGetId(['title' => $title, 'agent_id' => $agentId]);
+
+        return DB::table('buyer_form_registrations')->insertGetId([
+            'buyer_form_id' => $formId, 'user_id' => $userId, 'full_name' => "Registrant {$userId}",
+            'created_at' => $this->utc($at), 'updated_at' => $this->utc($at),
+        ]);
+    }
+
     protected function login(int $userId, string $manila): void
     {
         DB::table('login_logs')->insert(['user_id' => $userId, 'logged_in_at' => $this->utc($manila)]);
@@ -389,10 +455,14 @@ trait CreatesExecutiveReportTables
      * the range Nov 1–10: a duplicate "Carmen", a listing filed under Southern
      * Samar's duplicate Catbalogan, an agent in two teams, a staff-owned
      * listing, a flagged and a private listing (out of ₱/sqm), one inquiry per
-     * hanging bucket, and a sold claim with a lead that came in after it.
+     * hanging bucket, a sold claim with a lead that came in after it, and the
+     * other lead sources: an answered and an unanswered direct message (plus
+     * one from a fellow agent, not a lead), a brief (plus one on an admin's
+     * link) and an open-house registration (plus one by an agent).
      *
-     * @return array<string, int> ids by name (a1…a6 agents, s1 the admin's agent row, u1/u3 users,
-     *                            c1…c4 clients, alpha/bravo/charlie teams, mantra, L1…L10 listings)
+     * @return array<string, int> ids by name (a1…a6 agents, s1 the admin's agent row, u1/u3/u6 users,
+     *                            c1…c4 clients, alpha/bravo/charlie teams, mantra, L1…L10 listings,
+     *                            dm1/dm2 direct-message chats)
      */
     protected function seedExecutiveScenario(): array
     {
@@ -402,9 +472,9 @@ trait CreatesExecutiveReportTables
         [$a3, $u3] = $this->makeAgent(['region' => 'davao'], ['last_online_at' => $recent]);
         [$a4, $u4] = $this->makeAgent(['region' => null], ['last_online_at' => $this->utc('2026-09-01 10:00')]);
         [$a5] = $this->makeAgent(['status' => 'inactive'], ['last_online_at' => $recent]);
-        [$a6] = $this->makeAgent(['region' => 'bohol'], ['last_online_at' => $recent]); // on the roster, did nothing
+        [$a6, $u6] = $this->makeAgent(['region' => 'bohol'], ['last_online_at' => $recent]); // on the roster, did nothing
         [$s1] = $this->makeAgent([], ['last_online_at' => $recent], self::ADMIN);     // staff with an agent row
-        $id = compact('a1', 'a2', 'a3', 'a4', 'a5', 'a6', 's1', 'u1', 'u3');
+        $id = compact('a1', 'a2', 'a3', 'a4', 'a5', 'a6', 's1', 'u1', 'u3', 'u6');
 
         $id['alpha'] = $this->makeTeam('Alpha', [$a1, $a2], leader: $a1);
         $id['bravo'] = $this->makeTeam('Bravo', [$a3]);
@@ -468,6 +538,18 @@ trait CreatesExecutiveReportTables
         $this->makeInquiry($id['L9'], $c3, '2026-11-10 10:00',
             ['agent_user_id' => $u1, 'reviewed_at' => $this->utc('2026-11-10 10:00')],
             [[$c3, '2026-11-10 10:00']]);
+
+        // Direct messages: a1 answered c3's; nobody answered c1's to a6 (who stays idle — the
+        // client's message is the client's activity); a fellow agent's message is no lead.
+        $id['dm1'] = $this->makeDirectMessage($u1, $c3, '2026-11-05 10:00', [[$c3, '2026-11-05 10:00'], [$u1, '2026-11-05 11:00']]);
+        $id['dm2'] = $this->makeDirectMessage($u6, $c1, '2026-11-06 09:00', [[$c1, '2026-11-06 09:00']], 'agent_page');
+        $this->makeDirectMessage($u1, $u3, '2026-11-07 09:00', [[$u3, '2026-11-07 09:00']]);
+        // A brief on a1's link, and one on an admin's own link (no agent).
+        $this->makeBrief($a1, '2026-11-07 12:00', 'buyer', 'Ana Buyer');
+        $this->makeBrief(null, '2026-11-07 13:00');
+        // A client registered at a3's open house; an agent's registration is no lead.
+        $this->makeRegistration($a3, $c2, '2026-11-08 10:00');
+        $this->makeRegistration($a3, $u4, '2026-11-08 11:00');
 
         return $id;
     }

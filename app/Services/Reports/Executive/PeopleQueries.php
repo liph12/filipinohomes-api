@@ -165,6 +165,53 @@ final class PeopleQueries
         });
     }
 
+    /** Dormant agents with no trace of ever using FH — to onboard, not to remind (one all-time scan). */
+    public function neverUsedAgents(Carbon $now): Builder
+    {
+        return $this->dormantAgents($now)
+            ->leftJoinSub($this->realIds(), 'real', 'real.user_id', '=', 'agents.user_id')
+            ->whereNull('real.user_id');
+    }
+
+    /** Dormant agents who did use FH before — the ones to win back (never-used's complement). */
+    public function dormantUsedAgents(Carbon $now): Builder
+    {
+        return $this->dormantAgents($now)->joinSub($this->realIds(), 'real', 'real.user_id', '=', 'agents.user_id');
+    }
+
+    /** Headcount agents active in the period before the range and not in the range — they stopped. */
+    public function goneQuietAgents(ReportRange $range): Builder
+    {
+        return $this->headcount()
+            ->joinSub($this->activityIn($range->previous()), 'was', 'was.user_id', '=', 'agents.user_id')
+            ->leftJoinSub($this->activityIn($range), 'act', 'act.user_id', '=', 'agents.user_id')
+            ->whereNull('act.user_id');
+    }
+
+    /**
+     * Agents with leads in the range — $perAgent is LeadQueries::perAgent()
+     * (agent_id, n); $bucket narrows to a lead-count bucket (`1`, `2-3`, …).
+     */
+    public function agentsWithLeads(Builder $perAgent, ?string $bucket = null): Builder
+    {
+        $query = $this->agents()->joinSub($perAgent, 'wl', 'wl.agent_id', '=', 'agents.id');
+        if ($bucket !== null && isset(LeadQueries::BUCKETS[$bucket])) {
+            [$min, $max] = LeadQueries::BUCKETS[$bucket];
+            $query->where('wl.n', '>=', $min);
+            if ($max !== null) {
+                $query->where('wl.n', '<=', $max);
+            }
+        }
+
+        return $query;
+    }
+
+    /** Agents holding a lead nobody answered — $agentIds is LeadQueries::waitingAgents(). */
+    public function agentsWithWaitingLeads(Builder $agentIds): Builder
+    {
+        return $this->agents()->joinSub($agentIds, 'wt', 'wt.agent_id', '=', 'agents.id');
+    }
+
     /** Agent filters: team (credited team; 0 = no team), office region, one agent. */
     public function applyAgentFilters(Builder $query, array $filters): Builder
     {
@@ -246,7 +293,7 @@ final class PeopleQueries
      * inquiry opened, a favourite, a listing posted (credited to the owner's
      * user), or an audited edit they made. One UNION, joined as a derived table.
      */
-    private function activityIn(ReportRange $range): Builder
+    public function activityIn(ReportRange $range): Builder
     {
         $from = $range->fromUtc();
         $to = $range->toUtc();

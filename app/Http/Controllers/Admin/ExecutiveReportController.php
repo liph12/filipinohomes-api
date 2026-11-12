@@ -8,6 +8,7 @@ use App\Services\Reports\Executive\DrillService;
 use App\Services\Reports\Executive\ExecutiveReportService;
 use App\Services\Reports\Executive\ExplorerService;
 use App\Services\Reports\Executive\Geography;
+use App\Services\Reports\Executive\LeadQueries;
 use App\Services\Reports\Executive\MetricRegistry;
 use App\Services\Reports\Executive\ReportQueries;
 use App\Services\Reports\Executive\ReportRange;
@@ -186,6 +187,7 @@ class ExecutiveReportController extends Controller
             'category' => ['nullable', Rule::in(array_keys(ReportQueries::CATEGORIES))],
             'status' => ['nullable', 'string', 'max:16', 'alpha_dash'],
             'role' => ['nullable', 'string', 'max:16', 'alpha_dash'],
+            'leads' => ['nullable', Rule::in(array_map('strval', array_keys(LeadQueries::BUCKETS)))],
         ];
         $filters = array_filter($request->validate($rules), fn ($v) => $v !== null && $v !== '');
 
