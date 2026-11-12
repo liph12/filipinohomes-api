@@ -65,6 +65,12 @@ Schedule::command('reports:send-website-analytics')
 // hour. The first deploy needs a one-off `reports:scan-sold-claims --max=0`.
 Schedule::command('reports:scan-sold-claims')->hourlyAt(17)->withoutOverlapping(30);
 
+// AI Report — the hub's and the Agents page's analyses written ahead for
+// "Last 30 days" and "This month", so they open ready: at most four OpenAI
+// calls a night. A lock in the shared database keeps a second scheduler host
+// from paying twice; without OPENAI_API_KEY it logs and writes nothing.
+Schedule::command('reports:write-analyses')->dailyAt('05:00')->timezone('Asia/Manila')->withoutOverlapping(60);
+
 // Personal greeting + poster TO each active agent celebrating today. Same
 // 07:00 slot as the admin digest; renders/uploads the poster per agent so
 // it runs in the background.

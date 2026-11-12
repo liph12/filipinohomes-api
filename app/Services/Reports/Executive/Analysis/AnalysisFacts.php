@@ -127,10 +127,157 @@ final class AnalysisFacts
         ];
     }
 
+    /**
+     * The facts for the Agents page (AgentReportService::build()): its tiles,
+     * the answer and working rates, how leads spread, the top office regions
+     * and the Cebu spotlight, the most and least active teams, "No team", and
+     * the agents with the most leads.
+     *
+     * @return array{meta: array, facts: array<string, array>}
+     */
+    public function fromAgents(array $page): array
+    {
+        $facts = [];
+        $stats = [
+            ...$page['overview']['stats'], $page['overview']['roster'], $page['overview']['reached'], $page['overview']['first_reply'],
+            ...$page['leads']['stats'], ...$page['leads']['sources'], ...$page['teams']['stats'], ...$page['quiet']['stats'],
+        ];
+        foreach ($stats as $stat) {
+            $id = str_replace('.', '_', $stat['key']);
+            $facts[$id] ??= self::stat($stat, $id);
+        }
+        $value = fn (string $id) => $facts[$id]['value'] ?? null;
+
+        $facts['leads_answered_rate'] = self::percent('Share of chat leads answered', '{leads_answered_rate} of chat leads were answered', self::rate($value('leads_answered'), $value('leads_reached')), 'now', 'up');
+        $facts['agents_working_rate'] = self::percent('Share of roster agents working', '{agents_working_rate} of agents on the roster did something on FH', self::rate($value('agents_active'), $value('agents_headcount')), 'range', 'up');
+
+        foreach ($page['leads']['spread'] as $b) {
+            $id = 'spread_'.str_replace('-', '_', $b['bucket']);
+            $facts[$id] = self::cell("Agents who got {$b['label']} in the period", "{{$id}} agents got {$b['label']}", $b['label'], $b['agents'], 'agents.with_leads', $b['filters']);
+        }
+
+        $regions = array_values(array_filter($page['regions']['table']['rows'], fn ($r) => $r['key'] !== 'unassigned'));
+        foreach (array_slice($regions, 0, self::REGIONS) as $i => $row) {
+            $this->region($facts, 'region_'.($i + 1), $row);
+        }
+        $spot = $page['regions']['spotlight'];
+        if ($spot['row'] !== null) {
+            $this->region($facts, 'spot', $spot['row']);
+        }
+        if ($spot['property'] !== null) {
+            $p = $spot['property'];
+            $facts['spot_property_inquiries'] = self::cell("Inquiries about properties in {$p['province']}", '{spot_property_inquiries} inquiries about properties in {spot_property_inquiries.name}', (string) $p['province'], $p['value'], $p['metric'], $p['filters']);
+            $facts['spot_property_share'] = self::percent("Share of all inquiries that were about {$p['province']} properties", '{spot_property_share} of all inquiries', self::rate($p['value'], $p['of']), 'range', 'neutral');
+        }
+        $facts['agents_no_office'] = self::cell('Roster agents with no office region', '{agents_no_office} agents have no office region', 'No office region', $page['regions']['unassigned'], 'agents.headcount', ['office_region' => 'unassigned']);
+
+        foreach (['most_active' => 'team_top', 'least_active' => 'team_low'] as $list => $prefix) {
+            foreach (array_slice($page['teams'][$list], 0, self::TEAMS) as $i => $row) {
+                $this->team($facts, $prefix.'_'.($i + 1), $row);
+            }
+        }
+        $noTeam = $page['teams']['no_team'];
+        $facts['no_team_agents'] = self::cell('Roster agents in no team', '{no_team_agents} agents are in no team', 'No team', $noTeam['members'], 'agents.headcount', $noTeam['filters']);
+        $facts['no_team_leads'] = self::cell('Leads that went to agents in no team', '{no_team_leads} leads went to agents in no team', 'No team', $noTeam['leads'], 'leads.all', $noTeam['filters']);
+        $facts['no_team_waiting'] = self::cell('Never-answered leads of agents in no team', '{no_team_waiting} leads to agents in no team were never answered', 'No team', $noTeam['waiting'], 'leads.waiting', $noTeam['filters']);
+
+        $board = collect($page['top']['rows'])->keyBy(fn ($r) => $r['agent']['id']);
+        foreach (array_slice($page['top']['tops']['leads'], 0, self::AGENTS) as $i => $agentId) {
+            $row = $board->get($agentId);
+            if ($row !== null && $row['leads'] > 0) {
+                $id = 'agent_'.($i + 1).'_leads';
+                $facts[$id] = self::cell("Leads to agent {$row['agent']['name']}", "{{$id}} leads went to {{$id}.name}", (string) $row['agent']['name'], $row['leads'], 'leads.all', $row['filters']);
+            }
+        }
+
+        return [
+            'meta' => [
+                'range' => ['start' => $page['range']['start'], 'end' => $page['range']['end']],
+                'previous' => $page['range']['previous'],
+            ],
+            'facts' => $facts,
+        ];
+    }
+
     /** What the facts say, independent of when they were read — equal facts, equal hash. */
     public static function hash(array $facts): string
     {
         return hash('sha256', json_encode($facts['facts']));
+    }
+
+    /**
+     * The facts measured over the range only — what a "these numbers changed"
+     * check compares. "As of now" figures (waiting, dormant) move by the
+     * minute, and an analysis isn't out of date because of them.
+     */
+    public static function stableHash(array $facts): string
+    {
+        return hash('sha256', json_encode(array_filter($facts['facts'], fn ($f) => $f['as_of'] === 'range')));
+    }
+
+    private function region(array &$facts, string $id, array $row): void
+    {
+        $name = (string) $row['office'];
+        $facts["{$id}_agents"] = self::cell("Roster agents at {$name} offices", "{{$id}_agents} agents at {{$id}_agents.name} offices", $name, $row['headcount'], 'agents.headcount', $row['filters']);
+        $facts["{$id}_working"] = self::cell("Agents working at {$name} offices", "{{$id}_working} agents working at {{$id}_working.name} offices", $name, $row['active'], 'agents.active', $row['filters']);
+        $facts["{$id}_leads"] = self::cell("Leads to agents at {$name} offices", "{{$id}_leads} leads to agents at {{$id}_leads.name} offices", $name, $row['leads'], 'leads.all', $row['filters']);
+        $facts["{$id}_answered_rate"] = self::percent("Share of chat leads answered at {$name} offices", "{{$id}_answered_rate} of chat leads answered at {$name} offices", $row['answered_rate'], 'now', 'up') + ['name' => $name];
+        $facts["{$id}_waiting"] = self::cell("Never-answered leads at {$name} offices", "{{$id}_waiting} leads never answered at {{$id}_waiting.name} offices", $name, $row['waiting'], 'leads.waiting', $row['filters']);
+    }
+
+    private function team(array &$facts, string $id, array $row): void
+    {
+        $name = (string) $row['team']['name'];
+        $facts["{$id}_working"] = self::cell("Agents working in team {$name} (of {$row['members']})", "{{$id}_working} agents working in team {{$id}_working.name}", $name, $row['active'], 'agents.active', $row['filters']);
+        $facts["{$id}_members"] = self::cell("Agents in team {$name}", "{{$id}_members} agents in team {{$id}_members.name}", $name, $row['members'], 'agents.headcount', $row['filters']);
+        $facts["{$id}_rate"] = self::percent("Share of team {$name}'s agents working", "{{$id}_rate} of team {$name}'s agents working", $row['active_rate'], 'range', 'up') + ['name' => $name];
+        $facts["{$id}_waiting"] = self::cell("Never-answered leads of team {$name}", "{{$id}_waiting} leads never answered in team {{$id}_waiting.name}", $name, $row['waiting'], 'leads.waiting', $row['filters']);
+    }
+
+    /** A tile as a fact — the same shape fromSummary() gives its tiles. */
+    private static function stat(array $stat, string $id): array
+    {
+        // A range that starts before FH kept this data has no fair comparison.
+        $partial = $stat['partial'] || ($stat['previous_partial'] ?? false);
+        $ai = MetricRegistry::get($stat['key'])['ai'];
+
+        return [
+            'label' => $stat['label'],
+            'say' => $stat['unit'] === 'count' ? "{{$id}} {$ai}" : "{$ai}, {{$id}}",
+            'value' => $stat['value'],
+            'previous' => $partial ? null : ($stat['previous'] ?? null),
+            'change_pct' => $partial ? null : ($stat['change_pct'] ?? null),
+            'sample' => $stat['sample'] ?? null,
+            'unit' => $stat['unit'],
+            'as_of' => $stat['as_of'],
+            'partial' => $partial,
+            'metric' => $stat['key'],
+            'filters' => $stat['filters'] ?? [],
+        ];
+    }
+
+    /** A share in percent — worked out, not a list, so the page shows it without a link. */
+    private static function percent(string $label, string $say, ?int $value, string $asOf, string $better): array
+    {
+        return [
+            'label' => $label,
+            'say' => $say,
+            'value' => $value,
+            'previous' => null,
+            'change_pct' => null,
+            'sample' => null,
+            'unit' => 'percent',
+            'as_of' => $asOf,
+            'partial' => false,
+            'metric' => null,
+            'filters' => [],
+            'better' => $better,
+        ];
+    }
+
+    private static function rate(int|float|null $part, int|float|null $whole): ?int
+    {
+        return $part !== null && $whole ? (int) round($part / $whole * 100) : null;
     }
 
     private static function cell(string $label, string $say, string $name, int|float|null $value, string $metric, array $filters): array
@@ -144,7 +291,7 @@ final class AnalysisFacts
             'change_pct' => null,
             'sample' => null,
             'unit' => 'count',
-            'as_of' => str_starts_with($metric, 'inquiries.hanging') ? 'now' : 'range',
+            'as_of' => MetricRegistry::get($metric)['as_of'] === 'now' ? 'now' : 'range',
             'partial' => false,
             'metric' => $metric,
             'filters' => $filters,

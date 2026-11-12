@@ -144,9 +144,42 @@ class AnalysisValidatorTest extends TestCase
         $this->assertSame(['1,100', '2026-10-01'], [$segments[6]['text'], $segments[6]['range']['start']]);
     }
 
+    public function test_actions_need_a_plain_title_and_stop_at_three(): void
+    {
+        $answer = self::answer(['{agents_dormant_30d} agents have not opened FH in a month.', '{town_1_deals.name} led with {town_1_deals} deals.']);
+        $answer['actions'] = [
+            ['title' => 'Call the dormant agents', 'text' => 'Office heads should call the {agents_dormant_30d} agents this week.', 'fact_ids' => ['agents_dormant_30d']],
+            ['title' => 'Reach {agents_dormant_30d} agents', 'text' => 'Call them.', 'fact_ids' => []],
+            ['title' => 'Coach three teams', 'text' => 'Pair them with active leaders.', 'fact_ids' => []],
+            ['title' => 'Thank the top town', 'text' => '{town_1_deals.name} carried the deals.', 'fact_ids' => ['town_1_deals']],
+            ['title' => 'Post more listings', 'text' => 'Ask every team for new listings.', 'fact_ids' => []],
+            ['title' => 'Check the listings', 'text' => 'Review what was added.', 'fact_ids' => ['listings_added']],
+        ];
+
+        $result = (new AnalysisValidator)->validate($answer, self::FACTS);
+
+        $this->assertSame(['Call the dormant agents', 'Thank the top town', 'Post more listings'], array_column($result['actions'], 'title'));
+        $this->assertSame(['agents_dormant_30d'], $result['actions'][0]['fact_ids']);
+        $this->assertSame(
+            ['action: title_number', 'action: title_number_word', 'action: too_many'],
+            array_column(array_filter($result['rejected'], fn ($r) => str_starts_with($r['reason'], 'action')), 'reason'),
+        );
+    }
+
+    public function test_a_worked_out_share_shows_without_a_link(): void
+    {
+        $facts = self::FACTS;
+        $facts['facts']['answered_rate'] = ['label' => 'Share answered', 'value' => 37, 'previous' => null, 'change_pct' => null, 'sample' => null, 'unit' => 'percent', 'as_of' => 'now', 'partial' => false, 'metric' => null, 'filters' => []];
+
+        $segments = (new AnalysisValidator)->render('{answered_rate} of leads were answered.', $facts);
+
+        $this->assertSame(['type' => 'value', 'text' => '37%', 'fact' => 'answered_rate'], $segments[0]);
+    }
+
     public function test_values_are_written_the_way_the_report_writes_them(): void
     {
         $this->assertSame('₱98,500', AnalysisValidator::format(98500.4, 'php_per_sqm'));
+        $this->assertSame('37%', AnalysisValidator::format(37, 'percent'));
         $this->assertSame('50 min', AnalysisValidator::format(50, 'minutes'));
         $this->assertSame('2h 5m', AnalysisValidator::format(125, 'minutes'));
         $this->assertSame('1.5 days', AnalysisValidator::format(2160, 'minutes'));

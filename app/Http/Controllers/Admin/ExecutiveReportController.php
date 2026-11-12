@@ -158,14 +158,14 @@ class ExecutiveReportController extends Controller
         ));
     }
 
-    /** GET /admin/executive-report/analysis?date_start=&date_end= — the saved AI analysis; never calls OpenAI. */
+    /** GET /admin/executive-report/analysis?scope=overview|agents&date_start=&date_end= — the saved AI analysis; never calls OpenAI. */
     public function analysis(Request $request, ExecutiveAnalysisService $ai): JsonResponse
     {
-        return response()->json($ai->stored($this->range($request), Carbon::now()));
+        return response()->json($ai->stored($this->range($request), Carbon::now(), $this->scope($request)));
     }
 
     /**
-     * POST /admin/executive-report/analysis {date_start, date_end, regenerate?} — write (or reuse) it.
+     * POST /admin/executive-report/analysis {scope?, date_start, date_end, regenerate?} — write (or reuse) it.
      * Always 200 with a `status` (ok | unavailable | error | busy | limited); the route is throttled.
      */
     public function generateAnalysis(Request $request, ExecutiveAnalysisService $ai): JsonResponse
@@ -173,8 +173,14 @@ class ExecutiveReportController extends Controller
         $data = $request->validate(['regenerate' => ['nullable', 'boolean']]);
 
         return response()->json($ai->generate(
-            $this->range($request), Carbon::now(), $request->user()?->id, (bool) ($data['regenerate'] ?? false),
+            $this->range($request), Carbon::now(), $request->user()?->id, (bool) ($data['regenerate'] ?? false), $this->scope($request),
         ));
+    }
+
+    /** Which page's analysis — the hub's (overview, the default) or the Agents page's. */
+    private function scope(Request $request): string
+    {
+        return $request->validate(['scope' => ['nullable', Rule::in(ExecutiveAnalysisService::SCOPES)]])['scope'] ?? 'overview';
     }
 
     /** The requested Manila-day range, or the last 30 days. */

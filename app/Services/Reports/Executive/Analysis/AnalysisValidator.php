@@ -33,6 +33,8 @@ final class AnalysisValidator
 
     public const MAX_BULLETS = 6;
 
+    public const MAX_ACTIONS = 3;
+
     private const PLACEHOLDER = '/\{([a-z][a-z0-9_]*)(?:\.(prev|change|name))?\}/';
 
     /** Counting words a model could slip a made-up number in with ("one" is too common to refuse). */
@@ -92,11 +94,40 @@ final class AnalysisValidator
             ];
         }
 
+        // "This week's actions": a plain title (no numbers at all) and a text held to the bullets' rules.
+        $actions = [];
+        foreach (is_array($raw['actions'] ?? null) ? $raw['actions'] : [] as $action) {
+            $title = is_array($action) && is_string($action['title'] ?? null) ? trim($action['title']) : '';
+            $text = is_array($action) && is_string($action['text'] ?? null) ? trim($action['text']) : '';
+
+            $problem = match (true) {
+                $title === '' || $text === '' => 'empty',
+                mb_strlen($title) > 80 => 'title_too_long',
+                mb_strlen($text) > 320 => 'too_long',
+                count($actions) === self::MAX_ACTIONS => 'too_many',
+                preg_match(self::PLACEHOLDER, $title) === 1 => 'title_number',
+                ($why = $this->problem($title, $known)) !== null => "title_{$why}",
+                default => $this->problem($text, $known),
+            };
+            if ($problem !== null) {
+                $rejected[] = ['text' => mb_substr($title.' — '.$text, 0, 320), 'reason' => "action: {$problem}"];
+
+                continue;
+            }
+
+            $named = array_filter((array) ($action['fact_ids'] ?? []), fn ($id) => is_string($id) && isset($known[$id]));
+            $actions[] = [
+                'title' => $title,
+                'text' => $text,
+                'fact_ids' => array_values(array_unique([...array_column($this->placeholders($text), 0), ...$named])),
+            ];
+        }
+
         $dropped = count(array_filter($rejected, fn ($r) => ! str_starts_with($r['reason'], 'headline')));
 
         return count($bullets) < self::MIN_BULLETS
             ? null
-            : ['headline' => $headline, 'bullets' => $bullets, 'dropped' => $dropped, 'rejected' => $rejected];
+            : ['headline' => $headline, 'bullets' => $bullets, 'actions' => $actions, 'dropped' => $dropped, 'rejected' => $rejected];
     }
 
     /** Why a text can't be shown — null when it can. */
@@ -205,7 +236,7 @@ final class AnalysisValidator
                     // Arrow + size: reads right after "down" / "up", and the arrow keeps the direction.
                     'text' => self::arrowPct((float) $fact['change_pct']),
                     'direction' => $fact['change_pct'] > 0 ? 'up' : ($fact['change_pct'] < 0 ? 'down' : 'flat'),
-                    'better' => MetricRegistry::get($fact['metric'])['better'],
+                    'better' => $fact['better'] ?? MetricRegistry::get($fact['metric'])['better'],
                 ],
                 'prev' => self::metric($id, $fact, $fact['previous'], $facts['meta']['previous']),
                 default => self::metric($id, $fact, $fact['value'], $facts['meta']['range']),
@@ -221,6 +252,11 @@ final class AnalysisValidator
 
     private static function metric(string $id, array $fact, int|float|null $value, array $range): array
     {
+        if ($fact['metric'] === null) {
+            // A worked-out share: shown as a number, but there is no list behind it to open.
+            return ['type' => 'value', 'text' => self::format($value, $fact['unit']), 'fact' => $id];
+        }
+
         return [
             'type' => 'metric',
             'text' => self::format($value, $fact['unit']),
@@ -241,6 +277,7 @@ final class AnalysisValidator
         return match ($unit) {
             'php_per_sqm' => '₱'.number_format((float) $value, 0),
             'minutes' => self::duration((float) $value),
+            'percent' => number_format((float) $value, 0).'%',
             default => number_format((float) $value, floor((float) $value) == $value ? 0 : 1),
         };
     }

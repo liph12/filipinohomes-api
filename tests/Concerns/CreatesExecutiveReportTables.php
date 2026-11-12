@@ -232,8 +232,10 @@ trait CreatesExecutiveReportTables
         });
 
         foreach ([
+            '2026_03_19_053959_create_cache_table.php', // `cache_locks`: the nightly AI run locks in the database
             '2026_11_11_100002_create_listing_sold_claims_table.php',
             '2026_11_11_100003_create_executive_report_analyses_table.php',
+            '2026_11_12_100001_add_scope_to_executive_report_analyses_table.php',
         ] as $file) {
             (require database_path('migrations/'.$file))->up();
         }
