@@ -509,6 +509,10 @@ class ListingController extends Controller
             if (! $atsStatus || strtolower((string) $atsStatus) === 'all') {
                 return $q;
             }
+            // "not_approved" = pending + expired + rejected (the cards' "Not Approved" total).
+            if (strtolower((string) $atsStatus) === 'not_approved') {
+                return $propHas($q, fn ($sub) => $sub->whereIn('ats_status', ['pending', 'expired', 'rejected']));
+            }
             $dbVal = strtolower((string) $atsStatus) === 'approved' ? 'approve' : strtolower((string) $atsStatus);
 
             return $propHas($q, fn ($sub) => $sub->where('ats_status', $dbVal));
@@ -1228,8 +1232,12 @@ class ListingController extends Controller
                 return $q->where('verification_status', $verificationStatus);
             },
             'ats' => function ($q) use ($atsStatus, $propHas) {
-                if (! $atsStatus) {
+                if (! $atsStatus || $atsStatus === 'all') {
                     return $q;
+                }
+                // "not_approved" = pending + expired + rejected (the cards' "Not Approved" total).
+                if ($atsStatus === 'not_approved') {
+                    return $propHas($q, fn ($sub) => $sub->whereIn('ats_status', ['pending', 'expired', 'rejected']));
                 }
 
                 return $propHas($q, fn ($sub) => $sub->where('ats_status', $atsStatus === 'approved' ? 'approve' : $atsStatus));
