@@ -235,6 +235,8 @@ class Listing extends Model implements Auditable
             if (Auth::check()) {
                 $model->updated_by = Auth::id();
             }
+
+            self::reopenReviewOnAgentPriceChange($model);
         });
 
         static::deleting(function ($model) {
@@ -296,6 +298,45 @@ class Listing extends Model implements Auditable
      * still the throwaway `tmp-*` placeholder from the `creating`
      * hook.
      */
+    /**
+     * A Verified / Fully Verified listing whose price is changed by its own
+     * agent goes back to pending review, in the same save (so the regular
+     * audit row records it). Admins changing a price — e.g. on the audit
+     * page — keep the status. Runs for every save path (full edit form,
+     * quick edit); no signed-in user (scheduler, jobs) never triggers it.
+     */
+    private static function reopenReviewOnAgentPriceChange(self $listing): void
+    {
+        if (! in_array($listing->getOriginal('verification_status'), ['verified', 'fully_verified'], true)
+            || $listing->isDirty('verification_status')) {
+            return;
+        }
+
+        $old = $listing->getOriginal('price');
+        $new = $listing->price;
+        if ((float) $old === (float) $new) {
+            return; // "1500000.00" vs 1500000 is no change
+        }
+
+        $user = Auth::user();
+        if (! $user || ($user->role->name ?? null) === 'admin') {
+            return;
+        }
+        $agentId = $user->agent->id ?? null;
+        if ($agentId === null || (int) $agentId !== (int) $listing->agent_id) {
+            return;
+        }
+
+        $listing->verification_status = 'pending_review';
+        $listing->re_submitted_at = now();
+        // What the auditor sees as "edited by agent".
+        $listing->agent_edited_fields = [[
+            'label' => 'Price',
+            'original' => number_format((float) $old, 2, '.', ''),
+            'current' => number_format((float) $new, 2, '.', ''),
+        ]];
+    }
+
     private static function dispatchIndexNowFor(self $listing): void
     {
         if (! config('services.indexnow.enabled')) {

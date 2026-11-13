@@ -12,6 +12,8 @@ Artisan::command('inspire', function () {
 
 Schedule::command('listings:expire-featured')->daily();
 Schedule::command('ats:expiry-reminders')->dailyAt('00:00')->withoutOverlapping();
+// Verified / Fully Verified listings whose ATS has expired → pending review (re-audit).
+Schedule::command('listings:review-expired-ats')->dailyAt('00:05')->withoutOverlapping();
 Schedule::command('agents:recompute-response-metrics')->hourly()->withoutOverlapping();
 
 // Automatic inquiry approver — admin-configured in System Settings (days +
