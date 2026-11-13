@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ECR repository filipinohomes/api for the Filipino Homes API image. Every ECS role (web, worker,
+  scheduler, migrate) runs this one image, tagged with the git commit it was built from.
+
+# Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
+#
+# Deploy (preview first, then apply):
+#   aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-ecr \
+#     --template-file infra/aws/filipinohomes-ecr.yaml --tags Project=filipinohomes --no-execute-changeset
+#
+# Tags are immutable: a tag, once pushed, always means the same image, so a release or a rollback
+# can't be changed underneath ECS. Push a new tag instead of overwriting one.
+#
+# The repository is kept if the stack is deleted (DeletionPolicy: Retain), so images survive a
+# mistaken delete. To remove it for good, delete the stack, then:
+#   aws ecr delete-repository --region ap-southeast-1 --repository-name filipinohomes/api --force
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: filipinohomes/api
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      # Keeps the 30 newest images for rollbacks (about $3 a month at ~1 GB each).
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images after 7 days",
+                "selection": {"tagStatus": "untagged", "countType": "sinceImagePushed", "countUnit": "days", "countNumber": 7},
+                "action": {"type": "expire"}
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep the 30 most recent images",
+                "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 30},
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: filipinohomes/api
+
+Outputs:
+  RepositoryName:
+    Value: !Ref Repository
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryName"
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryUri"
+  RepositoryArn:
+    Value: !GetAtt Repository.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryArn"

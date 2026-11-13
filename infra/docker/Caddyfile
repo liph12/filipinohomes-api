@@ -1,0 +1,12 @@
+# FrankenPHP in classic mode (one PHP request per HTTP request, no Octane), serving public/ over
+# plain HTTP on port 8080. TLS ends at the load balancer.
+{
+	admin off
+	auto_https off
+	frankenphp
+}
+
+:8080 {
+	root * /app/public
+	php_server
+}
