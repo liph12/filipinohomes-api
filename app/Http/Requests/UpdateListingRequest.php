@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests;
 
+use App\Models\AssumeDetail;
+
 use Illuminate\Foundation\Http\FormRequest;
 use App\Models\PropertySubtype;
 
@@ -93,6 +95,26 @@ class UpdateListingRequest extends FormRequest
             'is_featured' => 'sometimes|boolean',
             // Accept flexible structures; normalization happens in service
             'nearby_facilities' => 'sometimes|array',
+            'assume' => 'nullable|array',
+            'assume.stage' => 'nullable|in:equity,loan',
+            'assume.total_contract_price' => 'nullable|numeric|min:0',
+            'assume.amount_paid_to_date' => 'nullable|numeric|min:0',
+            'assume.remaining_equity_monthly' => 'nullable|numeric|min:0',
+            'assume.remaining_equity_months' => 'nullable|integer|min:0|max:120',
+            'assume.loan_balance' => 'nullable|numeric|min:0',
+            'assume.existing_monthly_amortization' => 'nullable|numeric|min:0',
+            'assume.transfer_fee' => 'nullable|numeric|min:0',
+            'assume.reservation_fee' => 'nullable|numeric|min:0',
+            'assume.other_fees' => 'nullable|numeric|min:0',
+            'assume.lender_type' => 'nullable|in:bank,pag_ibig,in_house,not_yet',
+            'assume.lender_name' => 'nullable|string|max:255',
+            'assume.loan_status' => 'nullable|in:not_applied,in_process,approved,released',
+            'assume.arrears_status' => 'nullable|in:none,1_2_months,3_plus_months',
+            'assume.arrears_amount' => 'nullable|numeric|min:0',
+            'assume.developer_allows_transfer' => 'nullable|in:yes_written,pending,no',
+            'assume.developer_name' => 'nullable|string|max:255',
+            'assume.turnover_status' => 'nullable|in:rfo,under_construction',
+            'assume.turnover_date' => 'nullable|date',
             'ats_status'        => 'sometimes|in:approve,pending,expired,rejected',
     ];
     } 

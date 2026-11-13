@@ -59,6 +59,8 @@ class FullListingController extends Controller
             'property.nearbyFacility',
             'property.project',
             'category',
+            // So the wizard can hydrate the assume step when editing.
+            'assumeDetail',
             'agent.user',
         ]);
 

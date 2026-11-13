@@ -238,6 +238,9 @@ class ListingController extends Controller
                 'property.barangay.city.province',
                 'property.furnishing',
                 'category',
+                // "For Assume" money — the card shows cash-out AND all-in, so
+                // without this every pasalo card would lazy-load its own row.
+                'assumeDetail',
                 'agent' => function ($q) {
                     $q->withCount('listings');
                 },
@@ -272,6 +275,8 @@ class ListingController extends Controller
                 // project card shown below the agent on the detail page.
                 'property.project' => fn ($q) => $q->withCount(['properties' => fn ($p) => $p->where('is_project', true)]),
                 'category',
+                // The detail page renders the full assume money breakdown.
+                'assumeDetail',
                 'agent' => function ($q) {
                     $q->withCount('listings');
                 },
@@ -2599,6 +2604,7 @@ class ListingController extends Controller
                 'property.nearbyFacility',
                 'property.barangay.city.province',
                 'category',
+                'assumeDetail',
                 'agent.user',
             ])
             ->firstOrFail();

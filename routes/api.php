@@ -13,6 +13,7 @@ use App\Http\Controllers\AmenityController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AppConfigController;
+use App\Http\Controllers\AssumeSettingsController;
 use App\Http\Controllers\AppVersionController;
 use App\Http\Controllers\AiVisibilityController;
 use App\Http\Controllers\AudienceInsightsController;
@@ -229,6 +230,9 @@ Route::middleware('strip.tags')->group(function () {
         // Mobile bootstrap config (maintenance + forced-update) and the public
         // app-downloads listing. Both must be reachable pre-login.
         Route::get('/app-config', [AppConfigController::class, 'show']);
+        // The rates every "For Assume" estimate is priced with. Public so the
+        // listing wizard's live preview matches what the server will publish.
+        Route::get('/assume-config', [AssumeSettingsController::class, 'config']);
         Route::get('/app-versions', [AppVersionController::class, 'index']);
         Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
         Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
@@ -681,6 +685,10 @@ Route::middleware('strip.tags')->group(function () {
             Route::post('/favorites/{listingId}', [FavoriteController::class, 'toggle']);
             Route::get('/favorites', [FavoriteController::class, 'index']);
             Route::post('/admin/maintenance-toggle', [MaintenanceController::class, 'toggle']);
+            // Bank / Pag-IBIG rates behind the For Assume computation. Editable
+            // here because the Pag-IBIG promo rate expires 31 Dec 2026.
+            Route::get('/admin/assume-settings', [AssumeSettingsController::class, 'show']);
+            Route::put('/admin/assume-settings', [AssumeSettingsController::class, 'update']);
             Route::post('/page/agents', [PageBuilderController::class, 'store']);
             Route::patch('/page/agents/{id}', [PageBuilderController::class, 'update']);
             Route::delete('/page/agents/{id}', [PageBuilderController::class, 'destroy']);

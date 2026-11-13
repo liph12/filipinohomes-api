@@ -18,6 +18,9 @@ class CategorySeeder extends Seeder
             ['id' => 1, 'name' => 'For Sale'],
             ['id' => 2, 'name' => 'For Rent'],
             ['id' => 3, 'name' => 'Foreclosure'],
+            // Pasalo: the buyer pays a cash-out and takes over the balance
+            // still owed. See 2026_11_13_000001_add_for_assume_category.
+            ['id' => 4, 'name' => 'For Assume'],
         ];
 
         foreach ($statuses as $status) {

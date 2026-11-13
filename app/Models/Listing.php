@@ -752,6 +752,12 @@ class Listing extends Model implements Auditable
         return $this->belongsTo(Category::class);
     }
 
+    /** The money behind a "For Assume" (pasalo) listing — see AssumeDetail. */
+    public function assumeDetail()
+    {
+        return $this->hasOne(AssumeDetail::class);
+    }
+
     public function agent()
     {
         return $this->belongsTo(Agent::class);
