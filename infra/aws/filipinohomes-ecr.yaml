@@ -16,6 +16,12 @@ Description: >-
 # mistaken delete. To remove it for good, delete the stack, then:
 #   aws ecr delete-repository --region ap-southeast-1 --repository-name filipinohomes/api --force
 
+Parameters:
+  CiPushRoleName:
+    Type: String
+    Default: filipinohomes-github-ecr-push-role
+    Description: The only principal allowed to push, the CI role (stack filipinohomes-github).
+
 Resources:
   Repository:
     Type: AWS::ECR::Repository
@@ -47,6 +53,25 @@ Resources:
               }
             ]
           }
+      # Only the CI role may push, and it only trusts runs on main in the GitHub repository. So an
+      # image gets here only through a push or merge to main: whoever can do that on GitHub can
+      # publish an image, and nobody else can, IAM users and admins included. Other systems' CI roles
+      # in this account have push rights on every repository, so without this they could push a tag
+      # here before CI does. Reads (ECS pulls, scanning) are untouched.
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyGitHubMainPushes
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:PutImage
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${CiPushRoleName}"
       Tags:
         - Key: Name
           Value: filipinohomes/api

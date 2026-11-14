@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  IAM role that GitHub Actions in orenji-neko/filipinohomes-api assumes, through the account's
+  GitHub OIDC provider, to push the API image to ECR. Only workflow runs on main can assume it.
+
+# Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
+#
+# Deploy after filipinohomes-ecr exists (preview first, then apply):
+#   aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-github \
+#     --template-file infra/aws/filipinohomes-github.yaml --capabilities CAPABILITY_NAMED_IAM \
+#     --tags Project=filipinohomes --no-execute-changeset
+#
+# The fork has GitHub's immutable OIDC subjects on, so the token names the owner and repo by
+# numeric ID. A repo renamed or re-created under the same name can't assume this role.
+
+Parameters:
+  GitHubSubject:
+    Type: String
+    Default: repo:orenji-neko@112786278/filipinohomes-api@1456292808:ref:refs/heads/main
+    Description: The only OIDC token subject allowed to assume the role (workflow runs on main).
+  EcrStackName:
+    Type: String
+    Default: filipinohomes-ecr
+    Description: Stack that exports the ECR repository ARN.
+
+Resources:
+  EcrPushRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: filipinohomes-github-ecr-push-role
+      Description: GitHub Actions on main in orenji-neko/filipinohomes-api pushes filipinohomes/api images.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": !Ref GitHubSubject
+      Policies:
+        - PolicyName: ecr-push
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PushAndInspectApiImages
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:DescribeImages
+                  - ecr:DescribeImageScanFindings
+                Resource:
+                  Fn::ImportValue: !Sub "${EcrStackName}-RepositoryArn"
+      Tags:
+        - Key: Name
+          Value: filipinohomes-github-ecr-push-role
+
+Outputs:
+  EcrPushRoleArn:
+    Value: !GetAtt EcrPushRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EcrPushRoleArn"

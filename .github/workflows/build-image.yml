@@ -1,0 +1,126 @@
+name: Build image
+
+# Builds the API image and tests it without a database on every push to main and to ci/**
+# branches. On main only, it then pushes the image to ECR as filipinohomes/api:<commit SHA>.
+#
+# AWS access uses the AWS CLI only: GitHub's OIDC token is exchanged for
+# filipinohomes-github-ecr-push-role, which accepts only runs on main, so no AWS keys are stored.
+# Credentials are fetched only after the tests pass. This repo is public, so its logs are too:
+# the role ARN is a secret and the AWS account ID is masked.
+
+on:
+  push:
+    branches: [main, "ci/**"]
+  workflow_dispatch:
+
+# One run per commit, so runs for different commits never cancel each other.
+concurrency:
+  group: build-image-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-southeast-1
+  AWS_DEFAULT_REGION: ap-southeast-1
+  ECR_REPOSITORY: filipinohomes/api
+  IMAGE: filipinohomes/api:${{ github.sha }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: |
+          docker build --platform linux/amd64 --provenance=false \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "$IMAGE" .
+
+      - name: Test (no database)
+        run: tests/docker/smoke-test.sh "$IMAGE"
+
+      - name: Log in to AWS (GitHub OIDC token, AWS CLI)
+        if: github.ref == 'refs/heads/main'
+        env:
+          ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          token=$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "::add-mask::$token"
+          read -r key secret session < <(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --web-identity-token "$token" --duration-seconds 3600 \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+          echo "::add-mask::$key"; echo "::add-mask::$secret"; echo "::add-mask::$session"
+          {
+            echo "AWS_ACCESS_KEY_ID=$key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret"
+            echo "AWS_SESSION_TOKEN=$session"
+          } >> "$GITHUB_ENV"
+          account=$(AWS_ACCESS_KEY_ID=$key AWS_SECRET_ACCESS_KEY=$secret AWS_SESSION_TOKEN=$session \
+            aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$account"
+          echo "REGISTRY=$account.dkr.ecr.$AWS_REGION.amazonaws.com" >> "$GITHUB_ENV"
+
+      # Tags are immutable in ECR, so a re-run for a commit that's already pushed has nothing to push.
+      # Only this role can push to the repository, so an existing tag was pushed by this workflow.
+      - name: Check whether this commit's image is already in ECR
+        if: github.ref == 'refs/heads/main'
+        id: existing
+        run: |
+          set -uo pipefail
+          if out=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+                   --image-ids imageTag="$GITHUB_SHA" 2>&1); then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE is already in ECR; nothing to push." >> "$GITHUB_STEP_SUMMARY"
+          elif grep -q ImageNotFoundException <<<"$out"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$out"; exit 1
+          fi
+
+      - name: Push to ECR
+        if: github.ref == 'refs/heads/main' && steps.existing.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+          docker tag "$IMAGE" "$REGISTRY/$IMAGE"
+          docker push "$REGISTRY/$IMAGE"
+
+      # Reports only: a scan hiccup marks this step with a warning but doesn't fail the run.
+      - name: Scan results
+        if: github.ref == 'refs/heads/main' && steps.existing.outputs.skip == 'false'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          status=PENDING
+          for _ in $(seq 1 30); do
+            status=$(aws ecr describe-image-scan-findings --repository-name "$ECR_REPOSITORY" \
+              --image-id imageTag="$GITHUB_SHA" --query 'imageScanStatus.status' --output text 2>/dev/null || echo PENDING)
+            [ "$status" = PENDING ] || [ "$status" = IN_PROGRESS ] || break
+            sleep 10
+          done
+          digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$GITHUB_SHA" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          counts=$(aws ecr describe-image-scan-findings --repository-name "$ECR_REPOSITORY" --image-id imageTag="$GITHUB_SHA" \
+            --query 'imageScanFindings.findingSeverityCounts' --output json 2>/dev/null || echo null)
+          {
+            echo "### $IMAGE"
+            echo "- Digest: \`$digest\`"
+            echo "- ECR basic scan ($status): \`$(jq -c . <<<"$counts")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = COMPLETE ] || { echo "::warning::ECR scan status is $status"; exit 1; }
+
+      - name: Log out of ECR
+        if: always() && github.ref == 'refs/heads/main'
+        run: docker logout "${REGISTRY:-none}" || true

@@ -10,11 +10,16 @@
 # single image manifest in ECR):
 #   docker build --platform linux/amd64 --provenance=false -t filipinohomes/api:local .
 
-ARG FRANKENPHP_IMAGE=dunglas/frankenphp:1.13.4-php8.3-bookworm
+# Base images are pinned by digest as well as tag, so a commit always builds from the same bases.
+# Bump the tag and the digest together.
+#
+# Debian 13 (trixie), the current Debian release: Debian 12's ffmpeg, ghostscript and libtiff carried
+# 3 critical and dozens of high CVEs in ECR's scan.
+ARG FRANKENPHP_IMAGE=dunglas/frankenphp:1.13.4-php8.3-trixie@sha256:1202855937a80746c89cb82598df72c204f67162ed7af9ace1b5cb7791496d04
 
 # Frontend assets. Only the welcome page uses @vite, but without public/build/manifest.json
 # "/" fails with a 500.
-FROM node:22.23.3-bookworm-slim AS assets
+FROM node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9 AS assets
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -35,7 +40,7 @@ RUN install-php-extensions pdo_mysql gd exif zip pcntl redis
 # Production Composer dependencies, then the optimised autoloader. `composer install` also checks
 # that every PHP extension the locked packages need is present in the runtime above.
 FROM runtime AS vendor
-COPY --from=composer:2.10.3 /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2.10.3@sha256:2cf275428757e5435a667bfc0d038b14520ca02be2b1b70d44a05c8c19e2de48 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist --no-interaction --no-progress
