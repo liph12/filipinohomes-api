@@ -16,6 +16,7 @@ class Agent extends Model implements Auditable
     protected $fillable = [
         'first_name',
         'middle_name',
+        'suffix',
         'last_name',
         'mobile_no',
         'whats_app_no',
