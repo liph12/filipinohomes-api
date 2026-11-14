@@ -11,6 +11,10 @@ name: Build image
 on:
   push:
     branches: [main, "ci/**"]
+    # AWS templates and scripts aren't in the image (.dockerignore), so a push that changes only
+    # them builds nothing. A push that also changes anything else still builds.
+    paths-ignore:
+      - "infra/aws/**"
   workflow_dispatch:
 
 # One run per commit, so runs for different commits never cancel each other.
