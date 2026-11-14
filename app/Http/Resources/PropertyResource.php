@@ -66,6 +66,8 @@ class PropertyResource extends JsonResource
             'project'               => $this->whenLoaded('project', fn () => new ProjectResource($this->project)),
             'property'              => $attributes,
             'furnishing'            => new FurnishingResource($this->furnishing),
+            // pre_selling | under_construction | rfo | null (Property::TURNOVER_SUBTYPES).
+            'turnover_status'       => $this->turnover_status,
             'nearby_facilities'     => NearbyFacilityResource::make($this->whenLoaded('nearbyFacility')),
         ];
     }

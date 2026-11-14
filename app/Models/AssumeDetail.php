@@ -75,11 +75,11 @@ class AssumeDetail extends Model
     }
 
     /**
-     * The "For Assume" category name. The id is pinned to 4 by
+     * The pasalo category name (was "For Assume" until 2026-11-14). The id is pinned to 4 by
      * 2026_11_13_000001_add_for_assume_category, but resolve by NAME so a
      * differently-seeded environment still works; the id is only the fallback.
      */
-    public const CATEGORY_NAME = 'For Assume';
+    public const CATEGORY_NAME = 'Assume Balance';
     public const CATEGORY_ID_FALLBACK = 4;
 
     public static function categoryId(): int

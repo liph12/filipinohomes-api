@@ -233,7 +233,7 @@ class ProjectByProvinceService extends ProjectInsightsService
         return match ($name) {
             'For Sale'    => 'for_sale',
             'For Rent'    => 'for_rent',
-            'Foreclosure' => 'foreclosure',
+            'Foreclosed' => 'foreclosure',
             default       => null,
         };
     }

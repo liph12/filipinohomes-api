@@ -108,7 +108,7 @@ class ListingHeatmapService extends ListingInsightsService
     private const CATEGORIES = [
         'for_sale' => 'For Sale',
         'for_rent' => 'For Rent',
-        'foreclosure' => 'Foreclosure',
+        'foreclosure' => 'Foreclosed',
     ];
 
     /**

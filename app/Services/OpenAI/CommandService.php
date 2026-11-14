@@ -800,7 +800,7 @@ class CommandService extends CacheService
                             ],
                             'category' => [
                                 'type' => 'string',
-                                'description' => 'One of "For Sale", "For Rent", "Foreclosure" — "Foreclosure" when the user says foreclosed, foreclosure, bank-acquired or pasalo-free bank property; "For Sale" when they say buy, purchase, budget to buy; "For Rent" when they say rent, lease, monthly. Return "" when the message does not say which.'
+                                'description' => 'One of "For Sale", "For Rent", "Foreclosed" — "Foreclosed" when the user says foreclosed, foreclosure, bank-acquired or pasalo-free bank property; "For Sale" when they say buy, purchase, budget to buy; "For Rent" when they say rent, lease, monthly. Return "" when the message does not say which.'
                             ],
                             'address' => [
                                 'type' => 'string',

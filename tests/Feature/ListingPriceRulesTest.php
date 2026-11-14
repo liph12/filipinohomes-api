@@ -15,7 +15,7 @@ use Tests\TestCase;
  * Price Insights and the Listings Heatmap's area details both quote "typical"
  * prices, and they must agree on which listings count: public, not flagged,
  * priced inside the floor and ceiling of their own category (For Rent ₱1k to
- * ₱10M a month; For Sale and Foreclosure ₱100k to ₱5B). These tests pin those
+ * ₱10M a month; For Sale and Foreclosed ₱100k to ₱5B). These tests pin those
  * rules at every edge through Price Insights' own methods, so the rules can
  * live in one shared place without the tile's numbers moving.
  */
@@ -101,7 +101,7 @@ class ListingPriceRulesTest extends TestCase
         DB::table('categories')->insert([
             ['id' => 1, 'name' => 'For Sale'],
             ['id' => 2, 'name' => 'For Rent'],
-            ['id' => 3, 'name' => 'Foreclosure'],
+            ['id' => 3, 'name' => 'Foreclosed'],
         ]);
         DB::table('property_types')->insert(['id' => 1, 'name' => 'House']);
         DB::table('property_subtypes')->insert(['id' => 1, 'name' => 'House and Lot', 'property_type_id' => 1]);
@@ -129,7 +129,7 @@ class ListingPriceRulesTest extends TestCase
         [2, 25_000, 'public', 'fully_verified'],    // in
         [2, 50_000, 'public', 'flagged'],           // out
         [2, 20_000, 'private', null],               // out
-        // Foreclosure: the For Sale floor and ceiling.
+        // Foreclosed: the For Sale floor and ceiling.
         [3, 99_000, 'public', null],                // out
         [3, 1_500_000, 'public', null],             // in
         [3, 6_000_000_000, 'public', null],         // out
@@ -179,7 +179,7 @@ class ListingPriceRulesTest extends TestCase
         // ₱1k, ₱25k, ₱100k, ₱1.5M, ₱2M, ₱4M, ₱10M, ₱5B → (₱1.5M + ₱2M) / 2.
         $this->assertEquals(1_750_000, $byPlace['data'][0]['median_price']);
 
-        $this->assertSame(1, $insights->listings(['city_id' => 1, 'category' => 'Foreclosure'])['meta']['total']);
+        $this->assertSame(1, $insights->listings(['city_id' => 1, 'category' => 'Foreclosed'])['meta']['total']);
         $this->assertSame(4, $insights->listings(['city_id' => 1, 'category' => 'For Sale'])['meta']['total']);
         $this->assertSame(3, $insights->listings(['city_id' => 1, 'category' => 'For Rent'])['meta']['total']);
     }

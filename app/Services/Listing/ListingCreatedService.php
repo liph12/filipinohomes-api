@@ -44,7 +44,7 @@ class ListingCreatedService extends ListingInsightsService
                 DB::raw("$bucketExpr as bucket"),
                 DB::raw("SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
                 DB::raw("SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
-                DB::raw("SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
+                DB::raw("SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure"),
                 DB::raw('COUNT(listings.id) as c')
             )
             ->groupByRaw($bucketExpr)
@@ -72,7 +72,7 @@ class ListingCreatedService extends ListingInsightsService
             'categories' => [
                 ['key' => 'for_sale', 'label' => 'For Sale', 'data' => $forSale],
                 ['key' => 'for_rent', 'label' => 'For Rent', 'data' => $forRent],
-                ['key' => 'foreclosure', 'label' => 'Foreclosure', 'data' => $foreclosure],
+                ['key' => 'foreclosure', 'label' => 'Foreclosed', 'data' => $foreclosure],
             ],
             'total' => $total,
             'meta' => [

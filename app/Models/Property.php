@@ -46,6 +46,7 @@ class Property extends Model implements Auditable
         'is_project',
         'property_attribute_id',
         'furnishing_id',
+        'turnover_status',
         'updated_at',
         'created_at',
         'photos_variants_generated_at',
@@ -81,6 +82,31 @@ class Property extends Model implements Auditable
         return $this->belongsTo(Project::class, 'project_id');
     }
 
+    /**
+     * Where Pre-selling / RFO (turnover_status) applies, by type → subtype names.
+     * '*' = every subtype. Land is left out: "Ready for occupancy" doesn't fit a
+     * lot. Keep in sync with TURNOVER_SUBTYPES in the frontend (types/Listing.ts).
+     */
+    public const TURNOVER_SUBTYPES = [
+        'condominium' => '*',
+        'house' => ['townhouse', 'house and lot', 'apartment'],
+        'commercial' => ['office', 'space'],
+    ];
+
+    public static function allowsTurnover(?int $propertyAttributeId): bool
+    {
+        if (! $propertyAttributeId) {
+            return false;
+        }
+        $subtype = PropertySubtype::with('type:id,name')
+            ->whereKey(PropertyAttribute::whereKey($propertyAttributeId)->value('property_subtype_id'))
+            ->first(['id', 'name', 'property_type_id']);
+        $allowed = self::TURNOVER_SUBTYPES[strtolower((string) $subtype?->type?->name)] ?? null;
+
+        return $allowed === '*'
+            || (is_array($allowed) && in_array(strtolower((string) $subtype?->name), $allowed, true));
+    }
+
     protected static function booted()
     {
         // Clear the stale variant flag when photos change (see Listing).
@@ -93,6 +119,11 @@ class Property extends Model implements Auditable
         static::saving(function ($model) {
             if (!empty($model->ats_expiration_date) && \Illuminate\Support\Carbon::parse($model->ats_expiration_date)->isPast()) {
                 $model->ats_status = 'expired';
+            }
+
+            // Pre-selling / RFO only where it applies (see TURNOVER_SUBTYPES).
+            if ($model->turnover_status !== null && ! self::allowsTurnover($model->property_attribute_id)) {
+                $model->turnover_status = null;
             }
         });
 

@@ -67,7 +67,7 @@ class RelinkBarangayBoundaries extends Command
     protected $description = 'Link barangay boundary polygons to cities and barangays rows, town-first';
 
     /** Listing categories the admin maps count. Mirrors ListingInsightsService. */
-    private const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    private const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     /** Rows per UPDATE statement when writing links. */
     private const WRITE_CHUNK = 500;

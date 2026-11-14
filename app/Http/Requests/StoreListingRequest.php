@@ -79,6 +79,7 @@ class StoreListingRequest extends FormRequest
             'project.id' => 'nullable|exists:projects,id',
             'project.name' => 'nullable|string|max:255',
             'furnishing_id' => 'nullable|exists:furnishings,id',
+            'turnover_status' => 'nullable|in:pre_selling,under_construction,rfo',
             'category_id' => 'required|exists:categories,id',
             'visibility' => 'in:public,private',
             'seo_tags'   => 'nullable|array',

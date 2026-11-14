@@ -219,7 +219,7 @@ class DashboardAgentlessUserTest extends TestCase
             'leased' => 0,
             'private_listings' => 0,
             'agent' => 0,
-            'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosure' => 0],
+            'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosed' => 0],
         ], $response->json());
     }
 
@@ -250,7 +250,7 @@ class DashboardAgentlessUserTest extends TestCase
             'leased' => 0,
             'private_listings' => 0,
             'agent' => 0,
-            'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosure' => 0],
+            'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosed' => 0],
         ]);
     }
 
@@ -316,7 +316,7 @@ class DashboardAgentlessUserTest extends TestCase
             'leased' => 0,
             'private_listings' => 1,
             'agent' => 1,
-            'category' => ['For Sale' => 3, 'For Rent' => 1, 'Foreclosure' => 0],
+            'category' => ['For Sale' => 3, 'For Rent' => 1, 'Foreclosed' => 0],
         ], $response->json());
     }
 

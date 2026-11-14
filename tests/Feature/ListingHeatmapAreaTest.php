@@ -41,7 +41,7 @@ use Tests\TestCase;
  */
 class ListingHeatmapAreaTest extends TestCase
 {
-    private const CATEGORY_NAMES = ['for_sale' => 'For Sale', 'for_rent' => 'For Rent', 'foreclosure' => 'Foreclosure'];
+    private const CATEGORY_NAMES = ['for_sale' => 'For Sale', 'for_rent' => 'For Rent', 'foreclosure' => 'Foreclosed'];
 
     /** Every town with a barangay tier in the fixture. */
     private const CITIES = [1, 2, 3, 4, 7, 9, 10];
@@ -252,7 +252,7 @@ class ListingHeatmapAreaTest extends TestCase
         DB::table('categories')->insert([
             ['id' => 1, 'name' => 'For Sale'],
             ['id' => 2, 'name' => 'For Rent'],
-            ['id' => 3, 'name' => 'Foreclosure'],
+            ['id' => 3, 'name' => 'Foreclosed'],
             // Never counted by the heatmap; All Listings shows it by default.
             ['id' => 4, 'name' => 'Pre-Selling'],
         ]);

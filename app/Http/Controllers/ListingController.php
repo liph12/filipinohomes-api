@@ -478,7 +478,7 @@ class ListingController extends Controller
                 return $q;
             }
 
-            return $q->whereHas('category', fn ($sub) => $sub->where('name', $category));
+            return $q->whereHas('category', fn ($sub) => $sub->where('name', \App\Models\Category::currentName((string) $category)));
         };
 
         $applyFeatured = function ($q) use ($featured) {
@@ -1185,7 +1185,7 @@ class ListingController extends Controller
                     return $q;
                 }
 
-                return $q->whereHas('category', fn ($sub) => $sub->where('name', $category));
+                return $q->whereHas('category', fn ($sub) => $sub->where('name', \App\Models\Category::currentName((string) $category)));
             },
             'featured' => function ($q) use ($featured) {
                 if ($featured === null || $featured === '' || strtolower((string) $featured) === 'all') {
@@ -1585,7 +1585,7 @@ class ListingController extends Controller
                 'leased' => 0,
                 'private_listings' => 0,
                 'agent' => 0,
-                'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosure' => 0],
+                'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosed' => 0],
             ]));
         }
 
@@ -1605,7 +1605,7 @@ class ListingController extends Controller
         $statistics['private_listings'] = (clone $baseQuery)->where('visibility', 'private')->count();
         $statistics['agent'] = 1;
 
-        // Category breakdown (For Sale / For Rent / Foreclosure) for the
+        // Category breakdown (For Sale / For Rent / Foreclosed) for the
         // dashboard Category card — scoped to this agent's own listings.
         $categoryCountsRaw = Listing::where('agent_id', $agentId)
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -1615,7 +1615,7 @@ class ListingController extends Controller
         $statistics['category'] = [
             'For Sale' => (int) ($categoryCountsRaw['For Sale'] ?? 0),
             'For Rent' => (int) ($categoryCountsRaw['For Rent'] ?? 0),
-            'Foreclosure' => (int) ($categoryCountsRaw['Foreclosure'] ?? 0),
+            'Foreclosed' => (int) ($categoryCountsRaw['Foreclosed'] ?? 0),
         ];
 
         return response()->json($statistics);

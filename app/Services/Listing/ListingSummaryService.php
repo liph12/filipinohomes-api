@@ -33,7 +33,7 @@ class ListingSummaryService extends ListingInsightsService
                 COUNT(listings.id) as total,
                 SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale,
                 SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent,
-                SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure,
+                SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure,
                 SUM(CASE WHEN properties.status = 'sold' THEN 1 ELSE 0 END) as sold,
                 SUM(CASE WHEN properties.status = 'rented' THEN 1 ELSE 0 END) as rented,
                 SUM(CASE WHEN properties.status = 'leased' THEN 1 ELSE 0 END) as leased,
@@ -42,7 +42,7 @@ class ListingSummaryService extends ListingInsightsService
                 SUM(CASE WHEN listings.created_at >= ? THEN 1 ELSE 0 END) as month_total,
                 SUM(CASE WHEN categories.name = 'For Sale' AND listings.created_at >= ? THEN 1 ELSE 0 END) as month_for_sale,
                 SUM(CASE WHEN categories.name = 'For Rent' AND listings.created_at >= ? THEN 1 ELSE 0 END) as month_for_rent,
-                SUM(CASE WHEN categories.name = 'Foreclosure' AND listings.created_at >= ? THEN 1 ELSE 0 END) as month_foreclosure
+                SUM(CASE WHEN categories.name = 'Foreclosed' AND listings.created_at >= ? THEN 1 ELSE 0 END) as month_foreclosure
             ", [$monthStart, $monthStart, $monthStart, $monthStart])
             ->first();
 

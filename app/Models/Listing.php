@@ -572,6 +572,7 @@ class Listing extends Model implements Auditable
 
         if ($categories = $request->input('categories')) {
             $cats = is_array($categories) ? $categories : explode(',', $categories);
+            $cats = array_map(fn ($c) => Category::currentName((string) $c), $cats);
             $query->whereHas('category', fn ($q) => $q->whereIn('name', $cats));
         }
 

@@ -34,7 +34,7 @@ class OwnerPulseService
 
     private const DEALS = ['sold', 'rented', 'leased'];
 
-    private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     /** Rows in the dashboard's two city lists (they show ~5 and scroll for the rest). */
     private const CITY_ROWS = 20;

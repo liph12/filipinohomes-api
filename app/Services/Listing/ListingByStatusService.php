@@ -252,7 +252,7 @@ class ListingByStatusService extends ListingInsightsService
         $categoryFilter = match (strtolower($category)) {
             'for-sale' => 'For Sale',
             'for-rent' => 'For Rent',
-            'foreclosure' => 'Foreclosure',
+            'foreclosure' => 'Foreclosed',
             default => null,
         };
         $visibilityFilter = in_array($visibility, ['public', 'private'], true) ? $visibility : null;

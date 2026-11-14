@@ -74,6 +74,7 @@ class UpdateListingRequest extends FormRequest
             'project.id'          => 'nullable|exists:projects,id',
             'project.name'        => 'nullable|string|max:255',
             'furnishing_id'       => 'nullable|exists:furnishings,id',
+            'turnover_status'     => 'nullable|in:pre_selling,under_construction,rfo',
             'category_id'         => 'sometimes|exists:categories,id',
             'visibility'          => 'sometimes|in:public,private',
             'status'              => 'sometimes|in:active,rented,sold,leased',

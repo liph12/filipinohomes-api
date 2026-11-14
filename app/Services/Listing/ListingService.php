@@ -373,6 +373,7 @@ class ListingService
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
             'furnishing_id'        => $furnishingId,
+            'turnover_status'      => $data['turnover_status'] ?? null,
             'address_id'           => $data['address_id'] ?? null,
         ]);
 
@@ -567,7 +568,7 @@ class ListingService
 
             $propertyFields = [
                 'address', 'photos', 'amenities', 'description',
-                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'agent_ats_remarks', 'is_project', 'furnishing_id','address_id'
+                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'agent_ats_remarks', 'is_project', 'furnishing_id', 'turnover_status', 'address_id'
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
@@ -810,8 +811,8 @@ class ListingService
      * Keep the listing's assume terms in step with its category.
      *
      * Writing it here rather than in the controller means create and update
-     * share one rule, including the cleanup: switch a listing away from For
-     * Assume and its assume row goes, so a stale loan balance can never
+     * share one rule, including the cleanup: switch a listing away from
+     * Assume Balance and its assume row goes, so a stale loan balance can never
      * resurface on a plain For Sale listing later.
      *
      * cash_out_price is mirrored from listings.price — on these listings the
@@ -825,7 +826,7 @@ class ListingService
         $isAssume = AssumeDetail::isAssumeCategory($listing->category_id);
 
         if (! $isAssume) {
-            // Category moved away from For Assume (or never was) — drop any row.
+            // Category moved away from Assume Balance (or never was) — drop any row.
             return (bool) AssumeDetail::where('listing_id', $listing->id)->delete();
         }
 
@@ -854,6 +855,20 @@ class ListingService
 
         $row = AssumeDetail::updateOrCreate(['listing_id' => $listing->id], $payload);
 
-        return $row->wasRecentlyCreated || $row->wasChanged();
+        // The Assume Terms step is where these listings answer turnover (the
+        // attributes step hides its own picker), so copy it onto the property:
+        // one place to read it from for every listing. Property's saving hook
+        // still drops it for subtypes where turnover doesn't apply.
+        $propertyChanged = false;
+        $property = $listing->property;
+        if ($property && array_key_exists('turnover_status', $payload)) {
+            $property->turnover_status = $row->turnover_status ?: null;
+            if ($property->isDirty('turnover_status')) {
+                $property->save();
+                $propertyChanged = $property->wasChanged('turnover_status');
+            }
+        }
+
+        return $row->wasRecentlyCreated || $row->wasChanged() || $propertyChanged;
     }
 }

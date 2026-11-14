@@ -32,6 +32,6 @@ class DashboardWithoutAgentTest extends TestCase
         $this->assertSame(0, $data['total']);
         $this->assertSame(0, $data['active']);
         $this->assertSame(0, $data['agent']);
-        $this->assertSame(['For Sale' => 0, 'For Rent' => 0, 'Foreclosure' => 0], $data['category']);
+        $this->assertSame(['For Sale' => 0, 'For Rent' => 0, 'Foreclosed' => 0], $data['category']);
     }
 }
