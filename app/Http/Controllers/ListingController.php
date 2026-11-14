@@ -1498,30 +1498,72 @@ class ListingController extends Controller
         return $statistics;
     }
 
+    /**
+     * Listings per property subtype for the admin dashboard's "Properties by
+     * type" cards. Two grouped queries (listings, then inquiries) instead of
+     * 7 counts per subtype — that loop was ~230 queries, each a round trip to
+     * the database, and the slowest part of the dashboard.
+     *
+     * Same rules as createPropertyStatistics(): listings created in the range
+     * whose property and attribute rows aren't soft-deleted, status read off
+     * properties.status.
+     */
     public function propertyStatistics($start, $end)
     {
-        $subTypes = PropertySubtype::get();
+        $totals = ['active' => 0, 'total' => 0, 'rented' => 0, 'sold' => 0, 'leased' => 0, 'inquiries' => 0, 'views' => 0];
+        $subTypes = PropertySubtype::with('type:id,name')->get();
+        if ($subTypes->isEmpty()) {
+            return ['data' => [], 'totals' => $totals];
+        }
+
+        $scoped = fn () => DB::table('listings')
+            ->join('properties', function ($j) {
+                $j->on('properties.id', '=', 'listings.property_id')->whereNull('properties.deleted_at');
+            })
+            ->join('property_attributes', function ($j) {
+                $j->on('property_attributes.id', '=', 'properties.property_attribute_id')->whereNull('property_attributes.deleted_at');
+            })
+            ->whereNull('listings.deleted_at')
+            ->whereBetween('listings.created_at', [$start, $end]);
+
+        $bySubtype = $scoped()
+            ->groupBy('property_attributes.property_subtype_id')
+            ->selectRaw("property_attributes.property_subtype_id as subtype_id,
+                COUNT(*) as total,
+                SUM(properties.status = 'active') as active,
+                SUM(properties.status = 'rented') as rented,
+                SUM(properties.status = 'sold') as sold,
+                SUM(properties.status = 'leased') as leased,
+                COALESCE(SUM(listings.clicks), 0) as views")
+            ->get()
+            ->keyBy('subtype_id');
+
+        $inquiries = $scoped()
+            ->join('listing_inquiries', 'listing_inquiries.listing_id', '=', 'listings.id')
+            ->groupBy('property_attributes.property_subtype_id')
+            ->selectRaw('property_attributes.property_subtype_id as subtype_id, COUNT(*) as n')
+            ->pluck('n', 'subtype_id');
+
         $statistics = [];
-        $totals = [
-            'active' => 0,
-            'total' => 0,
-            'rented' => 0,
-            'sold' => 0,
-            'leased' => 0,
-            'inquiries' => 0,
-            'views' => 0,
-        ];
 
         foreach ($subTypes as $st) {
-            $stat = $this->createPropertyStatistics($start, $end, $st->id);
+            $row = $bySubtype->get($st->id);
+            $stat = [
+                'active' => (int) ($row->active ?? 0),
+                'total' => (int) ($row->total ?? 0),
+                'views' => (int) ($row->views ?? 0),
+                'inquiries' => (int) ($inquiries[$st->id] ?? 0),
+                'rented' => (int) ($row->rented ?? 0),
+                'sold' => (int) ($row->sold ?? 0),
+                'leased' => (int) ($row->leased ?? 0),
+            ];
             $statistics[] = [
                 'type' => $st->type->name,
                 'subType' => $st->name,
                 'statistics' => $stat,
             ];
-
             foreach ($totals as $key => $value) {
-                $totals[$key] += $stat[$key] ?? 0;
+                $totals[$key] += $stat[$key];
             }
         }
 
