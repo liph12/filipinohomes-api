@@ -38,6 +38,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Scheduled Command Output
+    |--------------------------------------------------------------------------
+    |
+    | Laravel runs each scheduled command with its output, stderr included,
+    | sent to /dev/null, which also swallows log lines on the stderr channel.
+    | When this is set, routes/console.php sends that output here instead. The
+    | ECS scheduler sets /proc/1/fd/1, the container's own output; the shell
+    | that runs the command opens it (PHP itself can't open /proc fd links).
+    |
+    */
+
+    'schedule_output' => env('LOG_SCHEDULE_OUTPUT'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Log Channels
     |--------------------------------------------------------------------------
     |

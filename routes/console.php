@@ -188,3 +188,12 @@ Schedule::command('agents:deactivate-dormant')
     ->dailyAt('02:30')
     ->timezone('Asia/Manila')
     ->withoutOverlapping(10);
+
+// Keep this last, so it covers every entry above. On ECS (LOG_SCHEDULE_OUTPUT, see
+// config/logging.php) each command's output and stderr log lines go to the scheduler
+// container's log instead of /dev/null. Unset, nothing changes.
+if ($scheduleOutput = config('logging.schedule_output')) {
+    foreach (Schedule::events() as $event) {
+        $event->appendOutputTo($scheduleOutput);
+    }
+}

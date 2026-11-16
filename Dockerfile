@@ -3,8 +3,8 @@
 # Filipino Homes API. One image runs every role; the ECS task definition picks the command:
 #   web        (default) FrankenPHP serving public/ on port 8080
 #   worker     php artisan queue:work …
-#   scheduler  php artisan schedule:work
-#   migrate    php artisan migrate --force
+#   scheduler  filipinohomes-scheduler (php artisan schedule:work, waiting for running commands on stop)
+#   artisan    one-off commands (php artisan migrate:status, migrate --force, …)
 #
 # Build from the repo root (linux/amd64 for x86 ECS instances; --provenance=false keeps it a
 # single image manifest in ECR):
@@ -60,6 +60,9 @@ COPY --from=vendor /app /app
 COPY --from=assets /app/public/build /app/public/build
 COPY infra/docker/Caddyfile /etc/frankenphp/Caddyfile
 COPY --chmod=755 infra/docker/entrypoint.sh /usr/local/bin/filipinohomes-entrypoint
+COPY --chmod=755 infra/docker/scheduler.sh /usr/local/bin/filipinohomes-scheduler
+# --chmod also sets the mode of the directory COPY creates, which needs the x bit to be entered.
+COPY --chmod=755 infra/docker/env-from-secret.php /usr/local/lib/filipinohomes/env-from-secret.php
 RUN useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin app \
  && setcap -r /usr/local/bin/frankenphp \
  && mkdir -p /config/caddy /data/caddy \

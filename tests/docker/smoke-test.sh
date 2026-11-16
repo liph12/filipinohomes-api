@@ -16,7 +16,7 @@ envs=(
 )
 
 fail() { echo "FAIL: $*"; docker logs fh-smoke 2>&1 | tail -50 || true; exit 1; }
-trap 'docker rm -f fh-smoke >/dev/null 2>&1 || true' EXIT
+trap 'docker rm -f fh-smoke fh-sched >/dev/null 2>&1 || true' EXIT
 # HTTP status of a path, or 000 if the request fails or takes longer than 10 seconds.
 status() { curl -s -o /dev/null --max-time 10 -w '%{http_code}' "$base$1" || true; }
 
@@ -59,6 +59,43 @@ list=$(docker run --rm --network none "${envs[@]}" -e CACHE_STORE=array "$image"
 count=$(grep -c 'artisan' <<<"$list" || true)
 [ "$count" -gt 0 ] || fail "schedule:list shows no commands"
 echo "ok scheduler lists $count commands"
+
+echo "--- settings from one JSON variable (how ECS passes the filipinohomes/api secret)"
+json='{"APP_NAME":"Filipino \"Homes\" $HOME ${APP_ENV} #x \\n","MULTI":"line1\nline2","EMPTY":"",'
+json+='"UNICODE":"Se\u00f1or \u2605","LOG_CHANNEL":"single","NOVALUE":null,"AWS_DEFAULT_REGION":"us-east-1"}'
+# The ECS agent sets AWS_DEFAULT_REGION in every container; the secret's value must still win.
+docker run --rm --network none "${envs[@]}" -e AWS_DEFAULT_REGION=ap-southeast-1 -e FILIPINOHOMES_ENV_JSON="$json" \
+  -v "$here/env-test.php:/tmp/env-test.php:ro" "$image" php /tmp/env-test.php || fail "settings from JSON"
+if out=$(docker run --rm --network none "${envs[@]}" -e FILIPINOHOMES_ENV_JSON='{"DB_PASSWORD":"s3cret-value",' \
+           "$image" true 2>&1); then
+  fail "invalid JSON was accepted"
+fi
+if grep -q 's3cret-value' <<<"$out"; then fail "an error message shows a setting's value"; fi
+echo "ok invalid JSON stops the container without showing values"
+
+echo "--- scheduler: a scheduled command's output and errors reach the container log"
+# Runs one scheduled entry the way the scheduler does (through the shell, output redirected). It
+# fails without a database; its error must show up in the container's output, not /dev/null.
+# --init, like InitProcessEnabled in the ECS task definitions: PID 1 is then the init process.
+logs=$(docker run --rm --init --network none "${envs[@]}" -e CACHE_STORE=array \
+  -e LOG_SCHEDULE_OUTPUT=/proc/1/fd/1 "$image" \
+  php artisan schedule:test --name=listings:expire-featured 2>&1) || true
+grep -q 'SQLSTATE' <<<"$logs" || { echo "$logs" | tail -20; fail "the scheduled command's error didn't reach the container log"; }
+echo "ok LOG_SCHEDULE_OUTPUT=/proc/1/fd/1 sends scheduled commands' output to the container log"
+
+echo "--- scheduler: stopping it waits for a command that's still running"
+docker run -d --name fh-sched --init --network none "${envs[@]}" -e CACHE_STORE=array "$image" \
+  filipinohomes-scheduler >/dev/null
+sleep 5
+[ "$(docker inspect -f '{{.State.Running}}' fh-sched)" = true ] || fail "the scheduler stopped on its own"
+# Stands in for a scheduled command: an artisan process that runs for 6 seconds.
+docker exec -d fh-sched php -r 'sleep(6);' artisan
+sleep 1
+start=$(date +%s)
+docker stop -t 30 fh-sched >/dev/null
+took=$(( $(date +%s) - start ))
+[ "$took" -ge 4 ] && [ "$took" -lt 25 ] || fail "stopping the scheduler took ${took}s, expected about 5"
+echo "ok the scheduler waited ${took}s for the running command, then stopped"
 
 echo "--- ffmpeg video, ghostscript PDF and GD images, through the app's own code"
 docker run --rm --network none "${envs[@]}" -v "$here/media-test.php:/tmp/media-test.php:ro" "$image" \
