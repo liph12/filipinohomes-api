@@ -165,6 +165,38 @@ class AiVisibilityService
     }
 
     /**
+     * Just the totals and the daily trend of report() — what the admin dashboard's
+     * AI Visibility card shows — from ONE scan of ai_events instead of report()'s
+     * six (sources, trend, distinct paths, the grouped top-pages table, the listing
+     * lookup, suspicious count). Same numbers: totals are the trend summed, and
+     * both use report()'s 'pages' category and DATE(created_at) buckets.
+     *
+     * @return array{totals: array<string,int>, trend: list<array<string,mixed>>, meta: array<string,string>}
+     */
+    public function summary(Carbon $from, Carbon $to): array
+    {
+        $rows = $this->inCategory(DB::table('ai_events')->whereBetween('created_at', [$from, $to]), 'pages')
+            ->select(DB::raw('DATE(created_at) as d'), 'kind', DB::raw('COUNT(*) as c'))
+            ->groupBy('d', 'kind')
+            ->orderBy('d')
+            ->get();
+
+        $totals = array_fill_keys(AiEvent::KINDS, 0);
+        $trend = [];
+        foreach ($rows as $row) {
+            $totals[$row->kind] = ($totals[$row->kind] ?? 0) + (int) $row->c;
+            $trend[$row->d] ??= ['date' => $row->d, 'view' => 0, 'crawl' => 0, 'click' => 0];
+            $trend[$row->d][$row->kind] = (int) $row->c;
+        }
+
+        return [
+            'totals' => $totals,
+            'trend' => array_values($trend),
+            'meta' => ['from' => $from->toDateString(), 'to' => $to->toDateString(), 'category' => 'pages'],
+        ];
+    }
+
+    /**
      * The admin "AI Visibility" report for [from, to] (inclusive days).
      * Top pages are paginated ($perPage a page) and sorted by `$sort`.
      * `$category` picks real pages (default) or scanners posing as AI bots;

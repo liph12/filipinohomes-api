@@ -6,6 +6,7 @@ use App\Services\Audience\AiVisibilityService;
 use App\Services\Audience\TrafficSourceService;
 use App\Services\Listing\AgentInsightsService;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -102,12 +103,12 @@ class OwnerPulseService
                 'channels' => $this->traffic->range($from30->toDateString(), $today->toDateString())->visitorsByChannel()
                     ->map(fn ($c, $channel) => ['channel' => $channel, 'value' => (int) $c])->values()->all(),
             ],
-            'ai' => collect($this->ai->report(
-                \Illuminate\Support\Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
-                \Illuminate\Support\Carbon::parse($today->toDateString())->endOfDay(),
-                1,
-                1,
-            ))->only(['totals', 'trend', 'meta'])->all(),
+            // summary(), not report(): the card needs only totals + trend, and report()'s
+            // top-pages/sources scans were ~half of this whole request on prod.
+            'ai' => $this->ai->summary(
+                Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
+                Carbon::parse($today->toDateString())->endOfDay(),
+            ),
             'shelf' => $this->shelf(),
             'recent_deals' => $this->recentDeals(),
             'most_active' => $this->mostActive($from30, $today),
