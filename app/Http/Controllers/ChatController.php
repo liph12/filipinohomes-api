@@ -587,6 +587,9 @@ class ChatController extends Controller
         // create a BRAND-NEW chat row (the $existing branch above
         // never reaches here, so re-inquiries on the same listing /
         // agent reuse the existing chat and don't consume a slot).
+        // The check runs inside the create transaction below, under
+        // a lock on the sender's user row, so parallel requests can't
+        // all pass the count before any of them has inserted.
         //
         // Admins bypass — moderation paths must remain unconstrained.
         // Agents and clients are both subject to the cap. See
@@ -594,34 +597,6 @@ class ChatController extends Controller
         // "Feat: Daily inquiry cap + block-scope dialog…" for the
         // shape and rationale.
         $isAdmin = $user->role?->name === 'admin';
-        if (! $isAdmin) {
-            $rateLimit = app(ChatRateLimitService::class);
-            if ($rateLimit->exhausted((int) $user->id)) {
-                app(AuditSecurityService::class)->recordRateLimitHit(
-                    $user,
-                    'inquiry_daily_cap',
-                    sprintf(
-                        '%s hit the daily %d-conversation cap',
-                        $user->name,
-                        ChatRateLimitService::DAILY_LIMIT,
-                    ),
-                    [
-                        'attempted_type' => $validated['type'],
-                        'target_user_id' => (int) $validated['target_user_id'],
-                        'attempted_type_id' => (int) $validated['type_id'],
-                    ],
-                );
-
-                return response()->json([
-                    'message' => sprintf(
-                        'Daily limit reached. You can open up to %d new conversations per day. Try again tomorrow.',
-                        ChatRateLimitService::DAILY_LIMIT,
-                    ),
-                    'limit' => ChatRateLimitService::DAILY_LIMIT,
-                    'remaining' => 0,
-                ], 429);
-            }
-        }
 
         // Trusted senders skip the Pending Review step entirely. Two senders
         // qualify (see shouldAutoAcceptListingInquiry below):
@@ -651,7 +626,16 @@ class ChatController extends Controller
             }
         }
 
-        $chat = DB::transaction(function () use ($validated, $user, $autoAccept, $originGeo) {
+        $chat = DB::transaction(function () use ($validated, $user, $autoAccept, $originGeo, $isAdmin) {
+            if (! $isAdmin) {
+                // Lock first: a second request from this user waits here
+                // until the first commits, then its count includes that chat.
+                User::whereKey($user->id)->lockForUpdate()->value('id');
+                if (app(ChatRateLimitService::class)->exhausted((int) $user->id)) {
+                    return null;
+                }
+            }
+
             $chat = Chat::create([
                 'type' => $validated['type'],
                 'type_id' => $validated['type_id'],
@@ -760,15 +744,34 @@ class ChatController extends Controller
             return $chat;
         });
 
-        $chat->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
+        // Daily cap reached (checked inside the transaction above).
+        if ($chat === null) {
+            app(AuditSecurityService::class)->recordRateLimitHit(
+                $user,
+                'inquiry_daily_cap',
+                sprintf(
+                    '%s hit the daily %d-conversation cap',
+                    $user->name,
+                    ChatRateLimitService::DAILY_LIMIT,
+                ),
+                [
+                    'attempted_type' => $validated['type'],
+                    'target_user_id' => (int) $validated['target_user_id'],
+                    'attempted_type_id' => (int) $validated['type_id'],
+                ],
+            );
 
-        // Increment the daily counter AFTER the chat is committed.
-        // Doing it pre-commit would leak a slot if the transaction
-        // rolled back; doing it post-commit matches what actually
-        // got created. Admins still bypass.
-        if (! $isAdmin) {
-            app(ChatRateLimitService::class)->recordNewChat((int) $user->id);
+            return response()->json([
+                'message' => sprintf(
+                    'Daily limit reached. You can open up to %d new conversations per day. Try again tomorrow.',
+                    ChatRateLimitService::DAILY_LIMIT,
+                ),
+                'limit' => ChatRateLimitService::DAILY_LIMIT,
+                'remaining' => 0,
+            ], 429);
         }
+
+        $chat->load(['user', 'listing', 'activeConversation.latestMessage.user', 'activeConversation.users', 'activeConversation.agentUser']);
 
         // Email fan-out fires AFTER the DB transaction commits.
         //   - Trusted sender (admin or team leader in scope) → acceptance
