@@ -181,6 +181,9 @@ Route::middleware('strip.tags')->group(function () {
             // Which nearby-facilities provider is on (Google / OpenStreetMap) —
             // read by the frontend's /api/nearby-places route handler.
             Route::get('/maps/config', [\App\Http\Controllers\MapSettingsController::class, 'config']);
+            // Centre + box of a picked barangay / city / province from our own boundary
+            // shapes (by ID) — the location pickers use it instead of geocoding.
+            Route::get('/locations/geo', \App\Http\Controllers\LocationGeoController::class);
 
             // Buyers & Sellers Link: a client's brief (no login; honeypot in the
             // controller, five per IP per ten minutes here) and the city search
