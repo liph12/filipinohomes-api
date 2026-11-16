@@ -446,30 +446,52 @@ class OwnerPulseService
      */
     private function topViewedCities(CarbonImmutable $from): array
     {
-        $city = 'COALESCE(projects.city_id, property_cities.id)';
-        $base = fn () => $this->listingQuery()
+        // Each listing's city (and all-time clicks), resolved ONCE. Then add up per city in PHP —
+        // instead of two GROUP BYs over the full listings × projects × barangays × cities join,
+        // which took ~5 s on prod.
+        $listings = $this->listingQuery()
             ->leftJoin('projects', fn ($j) => $j->on('projects.id', '=', 'properties.project_id')->whereNull('projects.deleted_at'))
             ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
             ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
-            ->join('cities', 'cities.id', '=', DB::raw($city))
-            ->leftJoin('provinces', 'provinces.id', '=', 'cities.province_id');
+            ->whereRaw('COALESCE(projects.city_id, property_cities.id) IS NOT NULL')
+            ->get(['listings.id', 'listings.clicks', DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id')]);
 
-        $allTime = $base()
-            ->groupBy('cities.id', 'cities.name', 'provinces.name')
-            ->orderByDesc('views')->limit(self::CITY_ROWS)
-            ->get([DB::raw('cities.id as id'), DB::raw('cities.name as city'), DB::raw('provinces.name as province'), DB::raw('SUM(listings.clicks) as views'), DB::raw('COUNT(*) as listings')]);
+        // A project's city_id may point at a city that no longer exists: those listings drop out,
+        // as the inner join on cities did.
+        $cities = DB::table('cities')->leftJoin('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->whereIn('cities.id', $listings->pluck('city_id')->unique()->values())
+            ->get(['cities.id', 'cities.name as city', 'provinces.name as province'])->keyBy('id');
 
-        $recent = Schema::hasTable('listing_view_days')
-            ? $base()->join('listing_view_days as v', 'v.listing_id', '=', 'listings.id')
-                ->where('v.date', '>=', $from->toDateString())
-                ->groupBy('cities.id', 'cities.name', 'provinces.name')
-                ->orderByDesc('views')->limit(self::CITY_ROWS)
-                ->get([DB::raw('cities.id as id'), DB::raw('cities.name as city'), DB::raw('provinces.name as province'), DB::raw('SUM(v.views) as views'), DB::raw('COUNT(DISTINCT listings.id) as listings')])
+        // Last 30 days' views per listing (primary key leads with date, so this is a range read).
+        $recentViews = Schema::hasTable('listing_view_days')
+            ? DB::table('listing_view_days')->where('date', '>=', $from->toDateString())
+                ->groupBy('listing_id')->pluck(DB::raw('SUM(views)'), 'listing_id')
             : collect();
 
-        $shape = fn ($rows) => $rows->map(fn ($r) => ['id' => (int) $r->id, 'city' => $r->city, 'province' => $r->province, 'views' => (int) $r->views, 'listings' => (int) $r->listings])->all();
+        $allTime = [];
+        $recent = [];
+        foreach ($listings as $l) {
+            $cityId = (int) $l->city_id;
+            if (! $cities->has($cityId)) {
+                continue;
+            }
+            $allTime[$cityId]['views'] = ($allTime[$cityId]['views'] ?? 0) + (int) $l->clicks;
+            $allTime[$cityId]['listings'] = ($allTime[$cityId]['listings'] ?? 0) + 1;
+            if ($recentViews->has($l->id)) {
+                $recent[$cityId]['views'] = ($recent[$cityId]['views'] ?? 0) + (int) $recentViews[$l->id];
+                $recent[$cityId]['listings'] = ($recent[$cityId]['listings'] ?? 0) + 1;
+            }
+        }
 
-        return ['all_time' => $shape($allTime), 'last_30d' => $shape($recent)];
+        $top = function (array $byCity) use ($cities): array {
+            uksort($byCity, fn ($a, $b) => [$byCity[$b]['views'], $a] <=> [$byCity[$a]['views'], $b]);
+
+            return collect(array_slice($byCity, 0, self::CITY_ROWS, true))
+                ->map(fn ($v, $id) => ['id' => $id, 'city' => $cities[$id]->city, 'province' => $cities[$id]->province, 'views' => $v['views'], 'listings' => $v['listings']])
+                ->values()->all();
+        };
+
+        return ['all_time' => $top($allTime), 'last_30d' => $top($recent)];
     }
 
     /**
