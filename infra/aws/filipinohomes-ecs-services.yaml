@@ -118,12 +118,14 @@ Resources:
 
   # ── Roles ─────────────────────────────────────────────────────────────────────────────────────
 
-  # Used by ECS itself to start a task: pull the image and read the secret.
+  # Used by ECS itself to start a task: pull the image and read the secret. On EC2 the agent also
+  # gives this role's credentials to Docker's awslogs driver, which writes the containers' output
+  # to CloudWatch Logs. Without the logs permissions here, non-blocking mode drops every line.
   TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: filipinohomes-ecs-task-execution-role
-      Description: ECS starts Filipino Homes tasks - pulls filipinohomes/api and reads the filipinohomes/api secret.
+      Description: ECS starts Filipino Homes tasks - pulls filipinohomes/api, reads the filipinohomes/api secret, writes container logs.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -158,6 +160,17 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   Fn::ImportValue: !Sub "${SecretsStackName}-ApiSecretArn"
+              - Sid: WriteContainerLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                # Each log group's Arn ends in :*, which covers its log streams.
+                Resource:
+                  - !GetAtt WebLogGroup.Arn
+                  - !GetAtt WorkerLogGroup.Arn
+                  - !GetAtt SchedulerLogGroup.Arn
+                  - !GetAtt ArtisanLogGroup.Arn
       Tags:
         - Key: Name
           Value: filipinohomes-ecs-task-execution-role
