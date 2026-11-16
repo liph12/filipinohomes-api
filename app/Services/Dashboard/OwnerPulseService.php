@@ -507,8 +507,12 @@ class OwnerPulseService
             ->where('visits.created_at', '>=', $from->startOfDay()->utc())
             ->where(fn ($q) => $q->whereNull('visits.user_id')->orWhere('roles.name', 'client'));
 
-        $total = (int) $base()->distinct()->count('visits.visitor_id');
-        $known = (int) $base()->whereNotNull('visits.city')->where('visits.city', '!=', '')->distinct()->count('visits.visitor_id');
+        // All visitors and those with a known city in ONE pass over the visits (was two).
+        $counts = $base()->selectRaw(
+            "COUNT(DISTINCT visits.visitor_id) as total, COUNT(DISTINCT CASE WHEN visits.city IS NOT NULL AND visits.city != '' THEN visits.visitor_id END) as known"
+        )->first();
+        $total = (int) $counts->total;
+        $known = (int) $counts->known;
         $cities = $base()->whereNotNull('visits.city')->where('visits.city', '!=', '')
             ->groupBy('visits.city', 'visits.region', 'visits.country')
             ->orderByDesc('visitors')->limit(self::CITY_ROWS)
