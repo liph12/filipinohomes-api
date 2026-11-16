@@ -43,7 +43,7 @@ class ListingByProvinceService extends ListingInsightsService
                 DB::raw('COUNT(listings.id) as listing_count'),
                 DB::raw("SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
                 DB::raw("SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
-                DB::raw("SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
+                DB::raw("SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure"),
                 DB::raw("SUM(CASE WHEN properties.status = 'sold' THEN 1 ELSE 0 END) as sold"),
                 DB::raw("SUM(CASE WHEN properties.status = 'rented' THEN 1 ELSE 0 END) as rented"),
                 DB::raw("SUM(CASE WHEN properties.status = 'leased' THEN 1 ELSE 0 END) as leased"),

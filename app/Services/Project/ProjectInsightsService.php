@@ -15,12 +15,12 @@ use Illuminate\Support\Facades\DB;
  *   properties.deleted_at IS NULL
  *   projects.deleted_at IS NULL (via leftJoin condition)
  *
- * "Standard categories" = For Sale / For Rent / Foreclosure. Other categories
+ * "Standard categories" = For Sale / For Rent / Foreclosed. Other categories
  * (e.g., legacy / archived) are excluded from all counts and lists.
  */
 abstract class ProjectInsightsService
 {
-    protected const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    protected const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
     protected const TRANSACTION_STATUSES = ['sold', 'rented', 'leased'];
 
     /**

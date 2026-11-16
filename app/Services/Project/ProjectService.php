@@ -155,7 +155,7 @@ class ProjectService
                  COUNT(*) as public_listings_count,
                  SUM(categories.name = 'For Sale') as sale_count,
                  SUM(categories.name = 'For Rent') as rent_count,
-                 SUM(categories.name = 'Foreclosure') as foreclosure_count"
+                 SUM(categories.name = 'Foreclosed') as foreclosure_count"
             )
             ->groupBy('properties.project_id');
     }

@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use App\Models\AssumeDetail;
 use App\Models\NearbyFacility;
 
 class ListingService
@@ -143,6 +144,8 @@ class ListingService
                     $facilitiesPayload
                 );
             }
+
+            $this->syncAssumeDetail($listing, $data);
 
             return $listing;
         });
@@ -370,6 +373,7 @@ class ListingService
             'is_project'           => $data['is_project'] ?? false,
             'property_attribute_id' => $propertyAttributeId,
             'furnishing_id'        => $furnishingId,
+            'turnover_status'      => $data['turnover_status'] ?? null,
             'address_id'           => $data['address_id'] ?? null,
         ]);
 
@@ -564,7 +568,7 @@ class ListingService
 
             $propertyFields = [
                 'address', 'photos', 'amenities', 'description',
-                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'agent_ats_remarks', 'is_project', 'furnishing_id','address_id'
+                'geo_coordinates', 'ats_expiration_date', 'ats_attachments', 'ats_remarks', 'agent_ats_remarks', 'is_project', 'furnishing_id', 'turnover_status', 'address_id'
             ];
             $propertyData         = array_intersect_key($data, array_flip($propertyFields));
             $propertyData['name'] = $propertyName;
@@ -678,9 +682,12 @@ class ListingService
                 );
             }
 
+            $assumeChanged = $this->syncAssumeDetail($listing, $data);
+
             $wasActuallyUpdated = $listing->wasChanged() ||
                                   $property->wasChanged()  ||
-                                  $propertyAttribute->wasChanged();
+                                  $propertyAttribute->wasChanged() ||
+                                  $assumeChanged;
 
             $listing->load(['property.propertyAttribute.subtype.type', 'category', 'agent']);
             $listing->was_actually_updated = $wasActuallyUpdated;
@@ -798,5 +805,70 @@ class ListingService
     protected function stableHash($val): string
     {
         return md5(json_encode($this->deepSortedCopy($val)) ?: '');
+    }
+
+    /**
+     * Keep the listing's assume terms in step with its category.
+     *
+     * Writing it here rather than in the controller means create and update
+     * share one rule, including the cleanup: switch a listing away from
+     * Assume Balance and its assume row goes, so a stale loan balance can never
+     * resurface on a plain For Sale listing later.
+     *
+     * cash_out_price is mirrored from listings.price — on these listings the
+     * price IS the cash-out, and storing it on both sides lets the computation
+     * run without loading the listing.
+     *
+     * @return bool whether anything actually changed (feeds the caller's dirty check)
+     */
+    private function syncAssumeDetail(Listing $listing, array $data): bool
+    {
+        $isAssume = AssumeDetail::isAssumeCategory($listing->category_id);
+
+        if (! $isAssume) {
+            // Category moved away from Assume Balance (or never was) — drop any row.
+            return (bool) AssumeDetail::where('listing_id', $listing->id)->delete();
+        }
+
+        $input = $data['assume'] ?? null;
+        if (! is_array($input)) {
+            return false;
+        }
+
+        $fields = [
+            'stage', 'total_contract_price', 'amount_paid_to_date',
+            'remaining_equity_monthly', 'remaining_equity_months', 'loan_balance',
+            'existing_monthly_amortization', 'transfer_fee', 'reservation_fee', 'other_fees',
+            'lender_type', 'lender_name', 'loan_status', 'arrears_status', 'arrears_amount',
+            'developer_allows_transfer', 'developer_name', 'turnover_status', 'turnover_date',
+        ];
+
+        $payload = array_intersect_key($input, array_flip($fields));
+        // Fees are NOT nullable in the table (they default to 0) — an agent
+        // clearing the box must mean zero, not NULL.
+        foreach (['transfer_fee', 'reservation_fee', 'other_fees'] as $fee) {
+            if (array_key_exists($fee, $payload) && $payload[$fee] === null) {
+                $payload[$fee] = 0;
+            }
+        }
+        $payload['cash_out_price'] = $listing->price;
+
+        $row = AssumeDetail::updateOrCreate(['listing_id' => $listing->id], $payload);
+
+        // The Assume Terms step is where these listings answer turnover (the
+        // attributes step hides its own picker), so copy it onto the property:
+        // one place to read it from for every listing. Property's saving hook
+        // still drops it for subtypes where turnover doesn't apply.
+        $propertyChanged = false;
+        $property = $listing->property;
+        if ($property && array_key_exists('turnover_status', $payload)) {
+            $property->turnover_status = $row->turnover_status ?: null;
+            if ($property->isDirty('turnover_status')) {
+                $property->save();
+                $propertyChanged = $property->wasChanged('turnover_status');
+            }
+        }
+
+        return $row->wasRecentlyCreated || $row->wasChanged() || $propertyChanged;
     }
 }

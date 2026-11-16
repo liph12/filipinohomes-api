@@ -951,6 +951,7 @@ class AgentController extends Controller
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
+            'suffix' => 'nullable|string|max:20',
             'mobile_no' => 'required|string|max:20',
             'whats_app_no' => 'nullable|string|max:20',
             'address' => 'nullable|string|max:500',

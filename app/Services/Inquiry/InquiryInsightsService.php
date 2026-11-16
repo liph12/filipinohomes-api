@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\DB;
  */
 abstract class InquiryInsightsService
 {
-    protected const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    protected const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     protected ?string $dateFrom = null;     // 'YYYY-MM-DD'
     protected ?string $dateTo = null;       // 'YYYY-MM-DD'
@@ -352,13 +352,13 @@ abstract class InquiryInsightsService
         return match ($name) {
             'For Sale'    => 'for_sale',
             'For Rent'    => 'for_rent',
-            'Foreclosure' => 'foreclosure',
+            'Foreclosed' => 'foreclosure',
             default       => null,
         };
     }
 
     /**
-     * Category-aware price bucket CASE expression. Sale/Foreclosure use the
+     * Category-aware price bucket CASE expression. Sale/Foreclosed use the
      * ₱-millions ladder; For Rent uses the ₱-thousands/month ladder — the two
      * scales must never share an axis.
      */

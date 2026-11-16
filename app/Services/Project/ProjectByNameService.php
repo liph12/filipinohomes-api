@@ -21,7 +21,7 @@ class ProjectByNameService extends ProjectInsightsService
         return match (strtolower($raw)) {
             'for-sale'    => 'For Sale',
             'for-rent'    => 'For Rent',
-            'foreclosure' => 'Foreclosure',
+            'foreclosure' => 'Foreclosed',
             default       => null,
         };
     }
@@ -118,7 +118,7 @@ class ProjectByNameService extends ProjectInsightsService
                 DB::raw('COUNT(listings_filtered.id) as total_listings'),
                 DB::raw("SUM(CASE WHEN listings_filtered.category_name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
                 DB::raw("SUM(CASE WHEN listings_filtered.category_name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
-                DB::raw("SUM(CASE WHEN listings_filtered.category_name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
+                DB::raw("SUM(CASE WHEN listings_filtered.category_name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure"),
                 DB::raw("SUM(CASE WHEN properties.status = 'sold' AND listings_filtered.id IS NOT NULL THEN 1 ELSE 0 END) as sold"),
                 DB::raw("SUM(CASE WHEN properties.status = 'rented' AND listings_filtered.id IS NOT NULL THEN 1 ELSE 0 END) as rented"),
                 DB::raw("SUM(CASE WHEN properties.status = 'leased' AND listings_filtered.id IS NOT NULL THEN 1 ELSE 0 END) as leased")
@@ -301,7 +301,7 @@ class ProjectByNameService extends ProjectInsightsService
                 DB::raw('COUNT(listings.id) as total_listings'),
                 DB::raw("SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
                 DB::raw("SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
-                DB::raw("SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
+                DB::raw("SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure"),
                 DB::raw("SUM(CASE WHEN properties.status = 'sold' THEN 1 ELSE 0 END) as sold"),
                 DB::raw("SUM(CASE WHEN properties.status = 'rented' THEN 1 ELSE 0 END) as rented"),
                 DB::raw("SUM(CASE WHEN properties.status = 'leased' THEN 1 ELSE 0 END) as leased")

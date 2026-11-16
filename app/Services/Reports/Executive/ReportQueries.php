@@ -38,7 +38,7 @@ class ReportQueries extends ListingInsightsService
     public const CATEGORIES = [
         'for_sale' => 'For Sale',
         'for_rent' => 'For Rent',
-        'foreclosure' => 'Foreclosure',
+        'foreclosure' => 'Foreclosed',
     ];
 
     public const DEAL_STATUSES = ['sold', 'rented', 'leased'];

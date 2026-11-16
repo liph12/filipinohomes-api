@@ -1,5 +1,7 @@
 <?php
 namespace App\Http\Resources;
+
+use App\Services\Listing\AssumeComputation;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentResource;
@@ -67,7 +69,34 @@ class ListingResource extends JsonResource
             'lr_status_changed_at' => $this->when($isAdmin, $this->lr_status_changed_at?->toDateTimeString()),
             'property'            => new PropertyResource($this->property),
             'category'            => new CategoryResource($this->category),
-            'agent'               => new AgentResource($this->agent)
+            'agent'               => new AgentResource($this->agent),
+            // "For Assume" money. Raw fields plus every derived figure, so the
+            // listing page, the cards and the /pasalo hub all read one source
+            // and can never quote different monthlies for the same unit.
+            // Absent unless the relation was eager-loaded.
+            'assume'              => $this->whenLoaded('assumeDetail', function () {
+                if (! $this->assumeDetail) {
+                    return null;
+                }
+
+                $floorArea = $this->property?->propertyAttribute?->floor_area;
+
+                return array_merge(
+                    $this->assumeDetail->only([
+                        'stage', 'total_contract_price', 'amount_paid_to_date',
+                        'remaining_equity_monthly', 'remaining_equity_months', 'loan_balance',
+                        'existing_monthly_amortization', 'transfer_fee', 'reservation_fee',
+                        'other_fees', 'lender_type', 'lender_name', 'loan_status',
+                        'arrears_status', 'arrears_amount', 'developer_allows_transfer',
+                        'developer_name', 'turnover_status',
+                    ]),
+                    ['turnover_date' => $this->assumeDetail->turnover_date?->toDateString()],
+                    ['computed' => app(AssumeComputation::class)->compute(
+                        $this->assumeDetail,
+                        $floorArea !== null ? (float) $floorArea : null
+                    )]
+                );
+            }),
         ];
     }
 }

@@ -250,7 +250,7 @@ trait CreatesExecutiveReportTables
         DB::table('categories')->insert([
             ['id' => 1, 'name' => 'For Sale'],
             ['id' => 2, 'name' => 'For Rent'],
-            ['id' => 3, 'name' => 'Foreclosure'],
+            ['id' => 3, 'name' => 'Foreclosed'],
         ]);
         DB::table('property_types')->insert([
             ['id' => 1, 'name' => 'Condominium'],

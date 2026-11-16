@@ -238,6 +238,9 @@ class ListingController extends Controller
                 'property.barangay.city.province',
                 'property.furnishing',
                 'category',
+                // "For Assume" money — the card shows cash-out AND all-in, so
+                // without this every pasalo card would lazy-load its own row.
+                'assumeDetail',
                 'agent' => function ($q) {
                     $q->withCount('listings');
                 },
@@ -272,6 +275,8 @@ class ListingController extends Controller
                 // project card shown below the agent on the detail page.
                 'property.project' => fn ($q) => $q->withCount(['properties' => fn ($p) => $p->where('is_project', true)]),
                 'category',
+                // The detail page renders the full assume money breakdown.
+                'assumeDetail',
                 'agent' => function ($q) {
                     $q->withCount('listings');
                 },
@@ -473,7 +478,7 @@ class ListingController extends Controller
                 return $q;
             }
 
-            return $q->whereHas('category', fn ($sub) => $sub->where('name', $category));
+            return $q->whereHas('category', fn ($sub) => $sub->where('name', \App\Models\Category::currentName((string) $category)));
         };
 
         $applyFeatured = function ($q) use ($featured) {
@@ -1180,7 +1185,7 @@ class ListingController extends Controller
                     return $q;
                 }
 
-                return $q->whereHas('category', fn ($sub) => $sub->where('name', $category));
+                return $q->whereHas('category', fn ($sub) => $sub->where('name', \App\Models\Category::currentName((string) $category)));
             },
             'featured' => function ($q) use ($featured) {
                 if ($featured === null || $featured === '' || strtolower((string) $featured) === 'all') {
@@ -1493,30 +1498,72 @@ class ListingController extends Controller
         return $statistics;
     }
 
+    /**
+     * Listings per property subtype for the admin dashboard's "Properties by
+     * type" cards. Two grouped queries (listings, then inquiries) instead of
+     * 7 counts per subtype — that loop was ~230 queries, each a round trip to
+     * the database, and the slowest part of the dashboard.
+     *
+     * Same rules as createPropertyStatistics(): listings created in the range
+     * whose property and attribute rows aren't soft-deleted, status read off
+     * properties.status.
+     */
     public function propertyStatistics($start, $end)
     {
-        $subTypes = PropertySubtype::get();
+        $totals = ['active' => 0, 'total' => 0, 'rented' => 0, 'sold' => 0, 'leased' => 0, 'inquiries' => 0, 'views' => 0];
+        $subTypes = PropertySubtype::with('type:id,name')->get();
+        if ($subTypes->isEmpty()) {
+            return ['data' => [], 'totals' => $totals];
+        }
+
+        $scoped = fn () => DB::table('listings')
+            ->join('properties', function ($j) {
+                $j->on('properties.id', '=', 'listings.property_id')->whereNull('properties.deleted_at');
+            })
+            ->join('property_attributes', function ($j) {
+                $j->on('property_attributes.id', '=', 'properties.property_attribute_id')->whereNull('property_attributes.deleted_at');
+            })
+            ->whereNull('listings.deleted_at')
+            ->whereBetween('listings.created_at', [$start, $end]);
+
+        $bySubtype = $scoped()
+            ->groupBy('property_attributes.property_subtype_id')
+            ->selectRaw("property_attributes.property_subtype_id as subtype_id,
+                COUNT(*) as total,
+                SUM(properties.status = 'active') as active,
+                SUM(properties.status = 'rented') as rented,
+                SUM(properties.status = 'sold') as sold,
+                SUM(properties.status = 'leased') as leased,
+                COALESCE(SUM(listings.clicks), 0) as views")
+            ->get()
+            ->keyBy('subtype_id');
+
+        $inquiries = $scoped()
+            ->join('listing_inquiries', 'listing_inquiries.listing_id', '=', 'listings.id')
+            ->groupBy('property_attributes.property_subtype_id')
+            ->selectRaw('property_attributes.property_subtype_id as subtype_id, COUNT(*) as n')
+            ->pluck('n', 'subtype_id');
+
         $statistics = [];
-        $totals = [
-            'active' => 0,
-            'total' => 0,
-            'rented' => 0,
-            'sold' => 0,
-            'leased' => 0,
-            'inquiries' => 0,
-            'views' => 0,
-        ];
 
         foreach ($subTypes as $st) {
-            $stat = $this->createPropertyStatistics($start, $end, $st->id);
+            $row = $bySubtype->get($st->id);
+            $stat = [
+                'active' => (int) ($row->active ?? 0),
+                'total' => (int) ($row->total ?? 0),
+                'views' => (int) ($row->views ?? 0),
+                'inquiries' => (int) ($inquiries[$st->id] ?? 0),
+                'rented' => (int) ($row->rented ?? 0),
+                'sold' => (int) ($row->sold ?? 0),
+                'leased' => (int) ($row->leased ?? 0),
+            ];
             $statistics[] = [
                 'type' => $st->type->name,
                 'subType' => $st->name,
                 'statistics' => $stat,
             ];
-
             foreach ($totals as $key => $value) {
-                $totals[$key] += $stat[$key] ?? 0;
+                $totals[$key] += $stat[$key];
             }
         }
 
@@ -1580,7 +1627,7 @@ class ListingController extends Controller
                 'leased' => 0,
                 'private_listings' => 0,
                 'agent' => 0,
-                'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosure' => 0],
+                'category' => ['For Sale' => 0, 'For Rent' => 0, 'Foreclosed' => 0],
             ]));
         }
 
@@ -1600,7 +1647,7 @@ class ListingController extends Controller
         $statistics['private_listings'] = (clone $baseQuery)->where('visibility', 'private')->count();
         $statistics['agent'] = 1;
 
-        // Category breakdown (For Sale / For Rent / Foreclosure) for the
+        // Category breakdown (For Sale / For Rent / Foreclosed) for the
         // dashboard Category card — scoped to this agent's own listings.
         $categoryCountsRaw = Listing::where('agent_id', $agentId)
             ->join('categories', 'categories.id', '=', 'listings.category_id')
@@ -1610,7 +1657,7 @@ class ListingController extends Controller
         $statistics['category'] = [
             'For Sale' => (int) ($categoryCountsRaw['For Sale'] ?? 0),
             'For Rent' => (int) ($categoryCountsRaw['For Rent'] ?? 0),
-            'Foreclosure' => (int) ($categoryCountsRaw['Foreclosure'] ?? 0),
+            'Foreclosed' => (int) ($categoryCountsRaw['Foreclosed'] ?? 0),
         ];
 
         return response()->json($statistics);
@@ -2599,6 +2646,7 @@ class ListingController extends Controller
                 'property.nearbyFacility',
                 'property.barangay.city.province',
                 'category',
+                'assumeDetail',
                 'agent.user',
             ])
             ->firstOrFail();

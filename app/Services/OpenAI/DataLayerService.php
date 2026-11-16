@@ -534,7 +534,7 @@ class DataLayerService
         $catWord = match ($cat) {
             'For Sale' => ' for sale',
             'For Rent' => ' for rent',
-            'Foreclosure' => ' foreclosed',
+            'Foreclosed' => ' foreclosed',
             default => '',
         };
         $noun = $total === 1 ? 'listing' : 'listings';

@@ -474,7 +474,7 @@ class ProjectController extends Controller
         $categoryName = match ($activeUnitType) {
             'sale' => 'For Sale',
             'rent' => 'For Rent',
-            'foreclosure' => 'Foreclosure',
+            'foreclosure' => 'Foreclosed',
             default => null,
         };
 
@@ -542,7 +542,7 @@ class ProjectController extends Controller
                 COUNT(*) as total,
                 SUM(categories.name = 'For Sale') as sale,
                 SUM(categories.name = 'For Rent') as rent,
-                SUM(categories.name = 'Foreclosure') as foreclosure
+                SUM(categories.name = 'Foreclosed') as foreclosure
             ")
             ->first();
 

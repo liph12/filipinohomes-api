@@ -56,7 +56,7 @@ class InquiryLocationService extends InquiryInsightsService
         'COUNT(DISTINCT chats.user_id) as unique_clients',
         "SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale",
         "SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent",
-        "SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure",
+        "SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure",
         'MIN(listings.price) as price_min',
         'MAX(listings.price) as price_max',
     ];
@@ -259,7 +259,7 @@ class InquiryLocationService extends InquiryInsightsService
         return [
             'top_category' => $this->topCategory($row),
             // Per-row category counts so the table can show For Sale / For Rent /
-            // Foreclosure as their own columns (not just the top one).
+            // Foreclosed as their own columns (not just the top one).
             'by_category'  => [
                 'for_sale'    => (int) ($row->for_sale ?? 0),
                 'for_rent'    => (int) ($row->for_rent ?? 0),

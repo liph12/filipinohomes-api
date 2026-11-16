@@ -36,6 +36,7 @@ class AgentResource extends JsonResource
             'first_name' => $this->first_name,
             'middle_name' => $this->middle_name,
             'last_name' => $this->last_name,
+            'suffix' => $this->suffix,
             'full_name' => collect([$this->first_name, $this->middle_name, $this->last_name])
                 ->filter()
                 ->join(' ')

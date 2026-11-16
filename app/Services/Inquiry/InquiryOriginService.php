@@ -111,7 +111,7 @@ class InquiryOriginService extends InquiryInsightsService
         'COUNT(DISTINCT chats.user_id) as unique_clients',
         "SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale",
         "SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent",
-        "SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure",
+        "SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure",
         'MIN(listings.price) as price_min',
         'MAX(listings.price) as price_max',
     ];

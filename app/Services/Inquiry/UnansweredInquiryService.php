@@ -339,7 +339,7 @@ class UnansweredInquiryService
                 'name' => $r->listing_name,
                 'code' => $r->listing_code,
                 'location' => $location,
-                'category' => $r->category,      // For Sale / For Rent / Foreclosure
+                'category' => $r->category,      // For Sale / For Rent / Foreclosed
                 'type' => $r->property_type,     // e.g. Condominium
                 'subtype' => $r->property_subtype, // e.g. Penthouse
                 'price' => is_numeric($r->listing_price) && (float) $r->listing_price > 0 ? (float) $r->listing_price : null,

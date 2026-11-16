@@ -11,7 +11,7 @@ namespace App\Services\Listing;
  *
  * A believable price is on a PUBLIC listing that is not flagged, inside the
  * floor and ceiling of the listing's OWN category: For Rent from ₱1k to ₱10M a
- * month; For Sale and Foreclosure from ₱100k to ₱5B. The floors keep
+ * month; For Sale and Foreclosed from ₱100k to ₱5B. The floors keep
  * placeholder prices (₱1, ₱999) out; the ceilings keep typos out — a ₱150B
  * house (CEB-16102) and an ₱84B one (NOR-15747) alone dragged the house
  * average to ₱60M, and the dearest real listing is under ₱1B.

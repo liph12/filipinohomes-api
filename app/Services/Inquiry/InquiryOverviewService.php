@@ -23,7 +23,7 @@ class InquiryOverviewService extends InquiryInsightsService
             ->selectRaw("
                 SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale,
                 SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent,
-                SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure
+                SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure
             ")
             ->first();
 

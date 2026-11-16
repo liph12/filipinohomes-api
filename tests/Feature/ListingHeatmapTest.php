@@ -196,7 +196,7 @@ class ListingHeatmapTest extends TestCase
         DB::table('categories')->insert([
             ['id' => 1, 'name' => 'For Sale'],
             ['id' => 2, 'name' => 'For Rent'],
-            ['id' => 3, 'name' => 'Foreclosure'],
+            ['id' => 3, 'name' => 'Foreclosed'],
             // Present on purpose: a non-standard category must never be counted.
             ['id' => 4, 'name' => 'Pre-Selling'],
         ]);
@@ -1223,7 +1223,7 @@ class ListingHeatmapTest extends TestCase
         DB::table('properties')->whereIn('id', [100, 101])->update(['status' => 'sold']);   // Cebu City, For Sale
         DB::table('properties')->where('id', 104)->update(['status' => 'rented']);          // Talisay, For Rent
         DB::table('properties')->where('id', 105)->update(['status' => 'leased']);          // Talisay, For Rent
-        DB::table('properties')->where('id', 107)->update(['status' => 'sold']);            // Catbalogan 5, Foreclosure
+        DB::table('properties')->where('id', 107)->update(['status' => 'sold']);            // Catbalogan 5, Foreclosed
         DB::table('properties')->where('id', 108)->update(['status' => 'leased']);          // Calbayog, For Sale
         // Never counted, whatever their status: a non-standard category and a
         // soft-deleted listing.

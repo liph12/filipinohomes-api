@@ -6,6 +6,7 @@ use App\Services\Audience\AiVisibilityService;
 use App\Services\Audience\TrafficSourceService;
 use App\Services\Listing\AgentInsightsService;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -34,7 +35,7 @@ class OwnerPulseService
 
     private const DEALS = ['sold', 'rented', 'leased'];
 
-    private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     /** Rows in the dashboard's two city lists (they show ~5 and scroll for the rest). */
     private const CITY_ROWS = 20;
@@ -48,20 +49,176 @@ class OwnerPulseService
         private AiVisibilityService $ai,
     ) {}
 
+    /**
+     * Each dashboard card's data, served on its own (GET /admin/dashboard/pulse/{section}) so a card
+     * shows as soon as ITS data is ready. The first six are cheap; the last four are the heavy ones —
+     * the frontend loads overview straight away and activity / views / origins only when scrolled to.
+     */
+    public const SECTIONS = ['leads', 'agents', 'traffic', 'ai', 'shelf', 'deals', 'overview', 'activity', 'views', 'origins'];
+
+    /** The cheap cards — the ones core() leaves out. */
+    private const CHEAP = ['leads', 'agents', 'traffic', 'ai', 'shelf', 'deals'];
+
+    /** Everything in one payload — the original single-request dashboard, kept for older frontends. */
     public function pulse(): array
+    {
+        $out = $this->core();
+        foreach (self::CHEAP as $name) {
+            $out[$name === 'deals' ? 'recent_deals' : $name] = $this->section($name);
+        }
+
+        return $out;
+    }
+
+    /** One card's data; $name is one of SECTIONS. */
+    public function section(string $name): array
     {
         $today = CarbonImmutable::now(self::TZ)->startOfDay();
         $from30 = $today->subDays(29);
 
-        $series = $this->daily($from30, $today);
-        $byDay = collect($series)->keyBy('date');
-        $t = $byDay[$today->toDateString()] ?? null;
-        $y = $byDay[$today->subDay()->toDateString()] ?? null;
-        $last7 = collect($series)->filter(fn ($d) => $d['date'] < $today->toDateString())->take(-7);
+        return match ($name) {
+            'leads' => $this->leads($today),
+            'agents' => $this->agentForce($from30),
+            // Last 30 days, visitors per channel.
+            'traffic' => [
+                'channels' => $this->traffic->range($from30->toDateString(), $today->toDateString())->visitorsByChannel()
+                    ->map(fn ($c, $channel) => ['channel' => $channel, 'value' => (int) $c])->values()->all(),
+            ],
+            // summary(), not report(): the card needs only totals + trend, and report()'s
+            // top-pages/sources scans were ~half of the whole pulse on prod.
+            'ai' => $this->ai->summary(
+                Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
+                Carbon::parse($today->toDateString())->endOfDay(),
+            ),
+            'shelf' => $this->shelf(),
+            'deals' => $this->recentDeals(),
+            // Performance Overview chart + This Month.
+            'overview' => $this->overview($today),
+            'activity' => $this->mostActive($from30, $today),
+            'views' => [
+                'total' => (int) DB::table('listings')->whereNull('deleted_at')->sum('clicks'),
+                'tracked_since' => $this->viewDays()->min('date'),
+                'top_cities' => $this->topViewedCities($from30),
+            ],
+            'origins' => $this->visitorOrigins($from30),
+            default => throw new \InvalidArgumentException("Unknown pulse section [{$name}]"),
+        };
+    }
 
-        $metrics = ['listings', 'inquiries', 'clients', 'returning', 'deals', 'views'];
+    /**
+     * The heavy cards in one payload (chart, this month, most active, cities) — what the frontend
+     * fetched before it loaded those per card; kept so a not-yet-updated frontend keeps working.
+     */
+    public function core(): array
+    {
+        return $this->section('overview') + [
+            'most_active' => $this->section('activity'),
+            'views' => $this->section('views'),
+            'visitor_origins' => $this->section('origins'),
+            'clients_total' => (int) DB::table('users')->join('roles', 'roles.id', '=', 'users.role_id')->where('roles.name', 'client')->count(),
+        ];
+    }
+
+    /** The Agent force card: active agents and how many used the platform, listed, closed, never listed. */
+    private function agentForce(CarbonImmutable $from30): array
+    {
+        $split = $this->agents->summary([])['split'];
+
+        return [
+            'active' => $split['agents'],
+            'online_7d' => (int) DB::table('agents')->join('users', 'users.id', '=', 'agents.user_id')
+                ->whereNull('agents.deleted_at')->where('agents.status', 'active')
+                ->where('users.last_online_at', '>=', now()->subDays(7))->count(),
+            'listed_30d' => (int) DB::table('listings')->join('agents', 'agents.id', '=', 'listings.agent_id')
+                ->whereNull('listings.deleted_at')->where('agents.status', 'active')
+                ->where('listings.created_at', '>=', $from30->utc())->distinct()->count('listings.agent_id'),
+            'no_listings' => $split['no_listings'],
+            'closed' => $split['closed'],
+        ];
+    }
+
+    /**
+     * The Performance Overview chart (last 30 days, per day) and This Month (month to date vs the
+     * same days last month), from ONE per-day pass per table over the whole window both need —
+     * instead of a per-day pass plus a separate COUNT per month. Month figures are those days
+     * summed, which is exact: every metric here is a plain count bucketed by Philippine day.
+     * The exception is "returning" over a month (distinct clients across the whole period, not
+     * summable from days), which keeps its own query per month.
+     */
+    private function overview(CarbonImmutable $today): array
+    {
+        $from30 = $today->subDays(29);
+        $mtdStart = $today->startOfMonth();
+        $days = $today->day;
+        $prevStart = $mtdStart->subMonth();
+        $prevEnd = $prevStart->addDays(min($days, $prevStart->daysInMonth) - 1);
+        $from = $prevStart->lt($from30) ? $prevStart : $from30;
+
+        $byDay = [
+            'listings' => $this->countByDay($this->listingQuery(), 'listings.created_at', $from, $today),
+            'inquiries' => $this->countByDay($this->inquiryQuery(), 'chats.created_at', $from, $today),
+            'unreplied' => $this->countByDay($this->unrepliedQuery(), 'chats.created_at', $from, $today),
+            'clients' => $this->countByDay($this->clientQuery(), 'users.created_at', $from, $today),
+            'deals' => DB::table('properties')->whereNull('deleted_at')->whereIn('status', self::DEALS)
+                ->whereBetween('status_change_date', [$from->toDateString(), $today->toDateString()])
+                ->selectRaw('DATE(status_change_date) as d, COUNT(*) as n')->groupBy('d')->pluck('n', 'd'),
+            'views' => $this->viewDays()
+                ->whereBetween('date', [$from->toDateString(), $today->toDateString()])
+                ->selectRaw('date as d, SUM(views) as n')->groupBy('date')->pluck('n', 'd'),
+        ];
+
+        // Returning clients per day: logged in that day, registered before it. Chart only.
+        $local = "DATE(CONVERT_TZ(login_logs.logged_in_at, '+00:00', '".self::OFFSET."'))";
+        $returning = $this->returningQuery()
+            ->whereBetween('login_logs.logged_in_at', [$from30->startOfDay()->utc(), $today->endOfDay()->utc()])
+            ->whereRaw("DATE(CONVERT_TZ(users.created_at, '+00:00', '".self::OFFSET."')) < {$local}")
+            ->selectRaw("{$local} as d, COUNT(DISTINCT login_logs.user_id) as n")->groupBy('d')->pluck('n', 'd');
+
+        $series = [];
+        for ($d = $from30; $d->lte($today); $d = $d->addDay()) {
+            $k = $d->toDateString();
+            $series[] = [
+                'date' => $k,
+                'listings' => (int) ($byDay['listings'][$k] ?? 0),
+                'inquiries' => (int) ($byDay['inquiries'][$k] ?? 0),
+                'clients' => (int) ($byDay['clients'][$k] ?? 0),
+                'returning' => (int) ($returning[$k] ?? 0),
+                'deals' => (int) ($byDay['deals'][$k] ?? 0),
+                'views' => (int) ($byDay['views'][$k] ?? 0),
+            ];
+        }
+
+        $month = function (CarbonImmutable $start, CarbonImmutable $end) use ($byDay): array {
+            $sum = function (string $metric) use ($byDay, $start, $end): int {
+                $n = 0;
+                for ($d = $start; $d->lte($end); $d = $d->addDay()) {
+                    $n += (int) ($byDay[$metric][$d->toDateString()] ?? 0);
+                }
+
+                return $n;
+            };
+
+            return [
+                'listings' => $sum('listings'),
+                'inquiries' => $sum('inquiries'),
+                'unreplied' => $sum('unreplied'),
+                'clients' => $sum('clients'),
+                // Distinct over the whole period — can't be added up from days.
+                'returning' => (int) $this->returningQuery()
+                    ->whereBetween('login_logs.logged_in_at', [$start->startOfDay()->utc(), $end->endOfDay()->utc()])
+                    ->where('users.created_at', '<', $start->startOfDay()->utc())
+                    ->distinct()->count('login_logs.user_id'),
+                'deals' => $sum('deals'),
+                'views' => $sum('views'),
+            ];
+        };
+
+        $byDate = collect($series)->keyBy('date');
+        $t = $byDate[$today->toDateString()] ?? null;
+        $y = $byDate[$today->subDay()->toDateString()] ?? null;
+        $last7 = collect($series)->filter(fn ($d) => $d['date'] < $today->toDateString())->take(-7);
         $todayBlock = [];
-        foreach ($metrics as $m) {
+        foreach (['listings', 'inquiries', 'clients', 'returning', 'deals', 'views'] as $m) {
             $todayBlock[$m] = [
                 'today' => $t[$m] ?? 0,
                 'yesterday' => $y[$m] ?? 0,
@@ -69,118 +226,25 @@ class OwnerPulseService
             ];
         }
 
-        // Month to date vs the same number of days last month.
-        $mtdStart = $today->startOfMonth();
-        $days = $today->day;
-        $prevStart = $mtdStart->subMonth();
-        $prevEnd = $prevStart->addDays(min($days, $prevStart->daysInMonth) - 1);
-        $mtd = $this->totals($mtdStart, $today);
-        $prev = $this->totals($prevStart, $prevEnd);
-
-        $split = $this->agents->summary([])['split'];
-
         return [
             'as_of' => CarbonImmutable::now(self::TZ)->toIso8601String(),
             'today' => $todayBlock,
             'series' => $series,
-            'month' => ['current' => $mtd, 'previous' => $prev, 'days' => $days],
-            'leads' => $this->leads($today),
-            'agents' => [
-                'active' => $split['agents'],
-                'online_7d' => (int) DB::table('agents')->join('users', 'users.id', '=', 'agents.user_id')
-                    ->whereNull('agents.deleted_at')->where('agents.status', 'active')
-                    ->where('users.last_online_at', '>=', now()->subDays(7))->count(),
-                'listed_30d' => (int) DB::table('listings')->join('agents', 'agents.id', '=', 'listings.agent_id')
-                    ->whereNull('listings.deleted_at')->where('agents.status', 'active')
-                    ->where('listings.created_at', '>=', $from30->utc())->distinct()->count('listings.agent_id'),
-                'no_listings' => $split['no_listings'],
-                'closed' => $split['closed'],
-            ],
-            // AI Visibility + Traffic Source cards (last 30 days) — in the pulse so the whole dashboard
-            // arrives in one cached request instead of those two waiting on the full Audience report.
-            'traffic' => [
-                'channels' => $this->traffic->range($from30->toDateString(), $today->toDateString())->visitorsByChannel()
-                    ->map(fn ($c, $channel) => ['channel' => $channel, 'value' => (int) $c])->values()->all(),
-            ],
-            'ai' => collect($this->ai->report(
-                \Illuminate\Support\Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
-                \Illuminate\Support\Carbon::parse($today->toDateString())->endOfDay(),
-                1,
-                1,
-            ))->only(['totals', 'trend', 'meta'])->all(),
-            'shelf' => $this->shelf(),
-            'recent_deals' => $this->recentDeals(),
-            'most_active' => $this->mostActive($from30, $today),
-            'views' => [
-                'total' => (int) DB::table('listings')->whereNull('deleted_at')->sum('clicks'),
-                'tracked_since' => $this->viewDays()->min('date'),
-                'top_cities' => $this->topViewedCities($from30),
-            ],
-            'visitor_origins' => $this->visitorOrigins($from30),
-            'clients_total' => (int) DB::table('users')->join('roles', 'roles.id', '=', 'users.role_id')->where('roles.name', 'client')->count(),
+            'month' => ['current' => $month($mtdStart, $today), 'previous' => $month($prevStart, $prevEnd), 'days' => $days],
         ];
     }
 
-    /** Per Philippine day between $from and $to (inclusive): listings, inquiries, new clients, deals. */
-    private function daily(CarbonImmutable $from, CarbonImmutable $to): array
+    /** Client inquiries that nobody but the client has written in yet. */
+    private function unrepliedQuery()
     {
-        $listings = $this->countByDay($this->listingQuery(), 'listings.created_at', $from, $to);
-        $inquiries = $this->countByDay($this->inquiryQuery(), 'chats.created_at', $from, $to);
-        $clients = $this->countByDay($this->clientQuery(), 'users.created_at', $from, $to);
-        $local = "DATE(CONVERT_TZ(login_logs.logged_in_at, '+00:00', '".self::OFFSET."'))";
-        $returning = $this->returningQuery()
-            ->whereBetween('login_logs.logged_in_at', [$from->startOfDay()->utc(), $to->endOfDay()->utc()])
-            ->whereRaw("DATE(CONVERT_TZ(users.created_at, '+00:00', '".self::OFFSET."')) < {$local}")
-            ->selectRaw("{$local} as d, COUNT(DISTINCT login_logs.user_id) as n")->groupBy('d')->pluck('n', 'd');
-        $deals = DB::table('properties')->whereNull('deleted_at')->whereIn('status', self::DEALS)
-            ->whereBetween('status_change_date', [$from->toDateString(), $to->toDateString()])
-            ->selectRaw('DATE(status_change_date) as d, COUNT(*) as n')->groupBy('d')->pluck('n', 'd');
-        $views = $this->viewDays()
-            ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
-            ->selectRaw('date as d, SUM(views) as n')->groupBy('date')->pluck('n', 'd');
-
-        $out = [];
-        for ($d = $from; $d->lte($to); $d = $d->addDay()) {
-            $k = $d->toDateString();
-            $out[] = [
-                'date' => $k,
-                'listings' => (int) ($listings[$k] ?? 0),
-                'inquiries' => (int) ($inquiries[$k] ?? 0),
-                'clients' => (int) ($clients[$k] ?? 0),
-                'returning' => (int) ($returning[$k] ?? 0),
-                'deals' => (int) ($deals[$k] ?? 0),
-                'views' => (int) ($views[$k] ?? 0),
-            ];
-        }
-
-        return $out;
-    }
-
-    private function totals(CarbonImmutable $from, CarbonImmutable $to): array
-    {
-        $sum = fn ($q, string $col) => (int) (clone $q)->whereBetween($col, [$from->startOfDay()->utc(), $to->endOfDay()->utc()])->count();
-
-        return [
-            'listings' => $sum($this->listingQuery(), 'listings.created_at'),
-            'inquiries' => $sum($this->inquiryQuery(), 'chats.created_at'),
-            // Client inquiries from the period that nobody but the client has written in yet.
-            'unreplied' => $sum($this->inquiryQuery()
-                ->join('conversations', 'conversations.chat_id', '=', 'chats.id')
-                ->whereNull('conversations.deleted_at')
-                ->whereNotExists(fn ($q) => $q->from('messages')
-                    ->whereColumn('messages.conversation_id', 'conversations.id')
-                    ->whereColumn('messages.user_id', '!=', 'chats.user_id')
-                    // The Inquiry Filipinohomes Assistant's replies aren't a human answer.
-                    ->where('messages.automated', false)), 'chats.created_at'),
-            'clients' => $sum($this->clientQuery(), 'users.created_at'),
-            'returning' => (int) $this->returningQuery()
-                ->whereBetween('login_logs.logged_in_at', [$from->startOfDay()->utc(), $to->endOfDay()->utc()])
-                ->where('users.created_at', '<', $from->startOfDay()->utc())
-                ->distinct()->count('login_logs.user_id'),
-            'deals' => (int) DB::table('properties')->whereNull('deleted_at')->whereIn('status', self::DEALS)
-                ->whereBetween('status_change_date', [$from->toDateString(), $to->toDateString()])->count(),
-            'views' => (int) $this->viewDays()->whereBetween('date', [$from->toDateString(), $to->toDateString()])->sum('views'),
-        ];
+        return $this->inquiryQuery()
+            ->join('conversations', 'conversations.chat_id', '=', 'chats.id')
+            ->whereNull('conversations.deleted_at')
+            ->whereNotExists(fn ($q) => $q->from('messages')
+                ->whereColumn('messages.conversation_id', 'conversations.id')
+                ->whereColumn('messages.user_id', '!=', 'chats.user_id')
+                // The Inquiry Filipinohomes Assistant's replies aren't a human answer.
+                ->where('messages.automated', false));
     }
 
     /**
@@ -382,30 +446,52 @@ class OwnerPulseService
      */
     private function topViewedCities(CarbonImmutable $from): array
     {
-        $city = 'COALESCE(projects.city_id, property_cities.id)';
-        $base = fn () => $this->listingQuery()
+        // Each listing's city (and all-time clicks), resolved ONCE. Then add up per city in PHP —
+        // instead of two GROUP BYs over the full listings × projects × barangays × cities join,
+        // which took ~5 s on prod.
+        $listings = $this->listingQuery()
             ->leftJoin('projects', fn ($j) => $j->on('projects.id', '=', 'properties.project_id')->whereNull('projects.deleted_at'))
             ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
             ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
-            ->join('cities', 'cities.id', '=', DB::raw($city))
-            ->leftJoin('provinces', 'provinces.id', '=', 'cities.province_id');
+            ->whereRaw('COALESCE(projects.city_id, property_cities.id) IS NOT NULL')
+            ->get(['listings.id', 'listings.clicks', DB::raw('COALESCE(projects.city_id, property_cities.id) as city_id')]);
 
-        $allTime = $base()
-            ->groupBy('cities.id', 'cities.name', 'provinces.name')
-            ->orderByDesc('views')->limit(self::CITY_ROWS)
-            ->get([DB::raw('cities.id as id'), DB::raw('cities.name as city'), DB::raw('provinces.name as province'), DB::raw('SUM(listings.clicks) as views'), DB::raw('COUNT(*) as listings')]);
+        // A project's city_id may point at a city that no longer exists: those listings drop out,
+        // as the inner join on cities did.
+        $cities = DB::table('cities')->leftJoin('provinces', 'provinces.id', '=', 'cities.province_id')
+            ->whereIn('cities.id', $listings->pluck('city_id')->unique()->values())
+            ->get(['cities.id', 'cities.name as city', 'provinces.name as province'])->keyBy('id');
 
-        $recent = Schema::hasTable('listing_view_days')
-            ? $base()->join('listing_view_days as v', 'v.listing_id', '=', 'listings.id')
-                ->where('v.date', '>=', $from->toDateString())
-                ->groupBy('cities.id', 'cities.name', 'provinces.name')
-                ->orderByDesc('views')->limit(self::CITY_ROWS)
-                ->get([DB::raw('cities.id as id'), DB::raw('cities.name as city'), DB::raw('provinces.name as province'), DB::raw('SUM(v.views) as views'), DB::raw('COUNT(DISTINCT listings.id) as listings')])
+        // Last 30 days' views per listing (primary key leads with date, so this is a range read).
+        $recentViews = Schema::hasTable('listing_view_days')
+            ? DB::table('listing_view_days')->where('date', '>=', $from->toDateString())
+                ->groupBy('listing_id')->pluck(DB::raw('SUM(views)'), 'listing_id')
             : collect();
 
-        $shape = fn ($rows) => $rows->map(fn ($r) => ['id' => (int) $r->id, 'city' => $r->city, 'province' => $r->province, 'views' => (int) $r->views, 'listings' => (int) $r->listings])->all();
+        $allTime = [];
+        $recent = [];
+        foreach ($listings as $l) {
+            $cityId = (int) $l->city_id;
+            if (! $cities->has($cityId)) {
+                continue;
+            }
+            $allTime[$cityId]['views'] = ($allTime[$cityId]['views'] ?? 0) + (int) $l->clicks;
+            $allTime[$cityId]['listings'] = ($allTime[$cityId]['listings'] ?? 0) + 1;
+            if ($recentViews->has($l->id)) {
+                $recent[$cityId]['views'] = ($recent[$cityId]['views'] ?? 0) + (int) $recentViews[$l->id];
+                $recent[$cityId]['listings'] = ($recent[$cityId]['listings'] ?? 0) + 1;
+            }
+        }
 
-        return ['all_time' => $shape($allTime), 'last_30d' => $shape($recent)];
+        $top = function (array $byCity) use ($cities): array {
+            uksort($byCity, fn ($a, $b) => [$byCity[$b]['views'], $a] <=> [$byCity[$a]['views'], $b]);
+
+            return collect(array_slice($byCity, 0, self::CITY_ROWS, true))
+                ->map(fn ($v, $id) => ['id' => $id, 'city' => $cities[$id]->city, 'province' => $cities[$id]->province, 'views' => $v['views'], 'listings' => $v['listings']])
+                ->values()->all();
+        };
+
+        return ['all_time' => $top($allTime), 'last_30d' => $top($recent)];
     }
 
     /**
@@ -421,8 +507,12 @@ class OwnerPulseService
             ->where('visits.created_at', '>=', $from->startOfDay()->utc())
             ->where(fn ($q) => $q->whereNull('visits.user_id')->orWhere('roles.name', 'client'));
 
-        $total = (int) $base()->distinct()->count('visits.visitor_id');
-        $known = (int) $base()->whereNotNull('visits.city')->where('visits.city', '!=', '')->distinct()->count('visits.visitor_id');
+        // All visitors and those with a known city in ONE pass over the visits (was two).
+        $counts = $base()->selectRaw(
+            "COUNT(DISTINCT visits.visitor_id) as total, COUNT(DISTINCT CASE WHEN visits.city IS NOT NULL AND visits.city != '' THEN visits.visitor_id END) as known"
+        )->first();
+        $total = (int) $counts->total;
+        $known = (int) $counts->known;
         $cities = $base()->whereNotNull('visits.city')->where('visits.city', '!=', '')
             ->groupBy('visits.city', 'visits.region', 'visits.country')
             ->orderByDesc('visitors')->limit(self::CITY_ROWS)

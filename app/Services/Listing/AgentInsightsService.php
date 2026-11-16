@@ -21,7 +21,7 @@ class AgentInsightsService
 {
     public const STATUSES = ['active', 'resigned', 'deactivated'];
 
-    private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     /** @return array{data: list<array<string, mixed>>, meta: array<string, mixed>} */
     public function agents(array $params, ?array $agentIds = null): array

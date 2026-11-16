@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Audience\AiVisibilityService;
+use App\Services\Audience\TrafficSourceService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -256,7 +257,7 @@ class AiVisibilityTest extends TestCase
         $this->postJson('/api/track/visit', ['visitor_id' => 'r-3', 'referrer' => 'android-app://com.linkedin.android/'])->assertJson(['channel' => 'referral']);
         $this->postJson('/api/track/visit', ['visitor_id' => 'r-4', 'utm_source' => 'partnersite'])->assertJson(['channel' => 'referral']);
 
-        $refs = collect(app(\App\Services\Audience\TrafficSourceService::class)
+        $refs = collect(app(TrafficSourceService::class)
             ->range(now()->subDay()->toDateString(), now()->toDateString())
             ->channels()['referrers'])->keyBy('name');
 
@@ -268,14 +269,14 @@ class AiVisibilityTest extends TestCase
         DB::table('roles')->insert(['id' => 1, 'name' => 'client']);
         DB::table('users')->insert(['id' => 99, 'role_id' => 1, 'created_at' => now()->subYear()]);
         DB::table('visits')->insert(['visitor_id' => 'r-4', 'channel' => 'direct', 'user_id' => 99, 'created_at' => now()]);
-        $acq = app(\App\Services\Audience\TrafficSourceService::class)
+        $acq = app(TrafficSourceService::class)
             ->range(now()->subDay()->toDateString(), now()->toDateString())->channels();
         $this->assertSame(4, $acq['unique_visitors']);
         $this->assertSame(3, $acq['anonymous_visitors']);
 
         // A device saved on an account at signup isn't anonymous, even with no logged-in visit (old rows).
         DB::table('users')->insert(['id' => 100, 'role_id' => 1, 'visitor_id' => 'r-1', 'created_at' => now()->subYear()]);
-        $this->assertSame(2, app(\App\Services\Audience\TrafficSourceService::class)
+        $this->assertSame(2, app(TrafficSourceService::class)
             ->range(now()->subDay()->toDateString(), now()->toDateString())->channels()['anonymous_visitors']);
     }
 
@@ -296,5 +297,29 @@ class AiVisibilityTest extends TestCase
         $this->getJson('/api/admin/ai-visibility')->assertOk()
             ->assertJsonPath('totals.crawl', 3)
             ->assertJsonPath('suspicious_total', 3);
+    }
+
+    public function test_summary_matches_the_full_reports_totals_and_trend(): void
+    {
+        // Spread over three days, all three kinds, two sources, plus probes that
+        // must be left out of both — the dashboard card swaps report() for summary().
+        $rows = [
+            ['view', 'chatgpt', '/a', 0], ['view', 'chatgpt', '/a', 0], ['click', 'perplexity', '/b', 0],
+            ['crawl', 'chatgpt', '/a', 1], ['crawl', 'chatgpt', '/c', 1], ['view', 'perplexity', '/b', 1],
+            ['click', 'chatgpt', '/a', 2],
+            ['crawl', 'chatgpt', '/%2eenv', 0], ['crawl', 'chatgpt', '/proc/self/environ', 2],
+        ];
+        foreach ($rows as [$kind, $source, $path, $daysAgo]) {
+            DB::table('ai_events')->insert(['kind' => $kind, 'source' => $source, 'agent' => null, 'path' => $path, 'created_at' => now()->subDays($daysAgo)->startOfDay()->addHours(10)]);
+        }
+
+        $service = app(AiVisibilityService::class);
+        $from = now()->subDays(29)->startOfDay();
+        $to = now()->endOfDay();
+
+        $summary = $service->summary($from, $to);
+        $this->assertSame(collect($service->report($from, $to, 1, 1))->only(['totals', 'trend', 'meta'])->all(), $summary);
+        $this->assertSame(['view' => 3, 'crawl' => 2, 'click' => 2], $summary['totals']);
+        $this->assertCount(3, $summary['trend']);
     }
 }

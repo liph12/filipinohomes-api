@@ -15,11 +15,11 @@ use Illuminate\Support\Facades\DB;
  *
  * Per-request scope (agent/date/location) is stored on the instance and applied
  * centrally in baseListingQuery() so every sub-query of a single call stays
- * consistent. "Standard categories" = For Sale / For Rent / Foreclosure.
+ * consistent. "Standard categories" = For Sale / For Rent / Foreclosed.
  */
 abstract class ListingInsightsService
 {
-    protected const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    protected const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     protected const TRANSACTION_STATUSES = ['sold', 'rented', 'leased'];
 
@@ -207,7 +207,7 @@ abstract class ListingInsightsService
         return [
             DB::raw("SUM(CASE WHEN categories.name = 'For Sale' THEN 1 ELSE 0 END) as for_sale"),
             DB::raw("SUM(CASE WHEN categories.name = 'For Rent' THEN 1 ELSE 0 END) as for_rent"),
-            DB::raw("SUM(CASE WHEN categories.name = 'Foreclosure' THEN 1 ELSE 0 END) as foreclosure"),
+            DB::raw("SUM(CASE WHEN categories.name = 'Foreclosed' THEN 1 ELSE 0 END) as foreclosure"),
         ];
     }
 
@@ -288,7 +288,7 @@ abstract class ListingInsightsService
         return match ($name) {
             'For Sale' => 'for_sale',
             'For Rent' => 'for_rent',
-            'Foreclosure' => 'foreclosure',
+            'Foreclosed' => 'foreclosure',
             default => null,
         };
     }

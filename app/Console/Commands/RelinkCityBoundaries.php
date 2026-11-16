@@ -59,7 +59,7 @@ class RelinkCityBoundaries extends Command
     protected $description = 'Re-link city/municipality boundary polygons to cities rows, province-first';
 
     /** Listing categories the admin maps count. Mirrors ListingInsightsService. */
-    private const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    private const STANDARD_CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     /**
      * How far (in SRID-0 degrees, ~111 km each) pass 3 may reach for a province.

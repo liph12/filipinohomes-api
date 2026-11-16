@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\DB;
  * visibility public + not flagged, agent-status gate, all soft-delete tables
  * excluded (listings/properties/property_attributes), and NO property.status
  * filter (the public browse leaves active_only opt-in, so it shows all
- * statuses). For Sale / For Rent only (Foreclosure has no URL slug in the
+ * statuses). For Sale / For Rent only (Foreclosed has no URL slug in the
  * frontend).
  */
 class FacilityCountService

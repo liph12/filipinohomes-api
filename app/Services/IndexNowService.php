@@ -59,7 +59,7 @@ class IndexNowService
      * (src/app/api/sitemap/facilities/[page]/route.ts). Category/type/city/
      * province arrive as raw display names (e.g. "For Sale", "Condominium",
      * "Cebu City", "Cebu") straight from facility_listing_counts. Returns
-     * null for a category with no URL tier (e.g. Foreclosure).
+     * null for a category with no URL tier (e.g. Foreclosed).
      */
     public function nearFacilityUrl(
         string $category,

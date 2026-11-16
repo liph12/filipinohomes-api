@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
  * many listings, the average and the median price, and the average and median price per square metre.
  *
  * Same hygiene as the public price guide (PriceGuideService): public, unflagged listings with a real
- * price (For Sale and Foreclosure ≥ ₱100k, For Rent ≥ ₱1k, so placeholder prices stay out; "All" is the
+ * price (For Sale and Foreclosed ≥ ₱100k, For Rent ≥ ₱1k, so placeholder prices stay out; "All" is the
  * three together, each against its own floor), and ₱/sqm only where the
  * area is at least 10 sqm — floor area for buildings, lot area for land. The price rules live in
  * {@see ListingPriceRules}, shared with the Listings Heatmap's area details. Medians are reported beside
@@ -23,7 +23,7 @@ class ListingPriceInsightsService extends ListingInsightsService
     public const LEVELS = ['province', 'city', 'barangay'];
 
     /** Selectable categories; anything else (incl. none / "All") means all three together. */
-    public const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosure'];
+    public const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
     private const MIN_AREA_SQM = 10;
 

@@ -34,7 +34,7 @@ class ComputeBarangayCounts extends Command
         // One GROUP BY over the publicly-listed predicate used by
         // SitemapController@locationCounts (visibility public, not flagged,
         // soft-deletes excluded, NO property.status filter — the public browse
-        // shows all statuses). For Sale / For Rent only: Foreclosure has no
+        // shows all statuses). For Sale / For Rent only: Foreclosed has no
         // URL tier in the frontend yet.
         $cohorts = DB::table('listings')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
