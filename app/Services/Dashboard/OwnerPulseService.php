@@ -49,7 +49,55 @@ class OwnerPulseService
         private AiVisibilityService $ai,
     ) {}
 
+    /**
+     * The dashboard cards that are cheap on their own — each served by its own request
+     * (GET /admin/dashboard/pulse/{section}) so they show at once instead of waiting
+     * for core()'s heavy series / ranking / city queries.
+     */
+    public const SECTIONS = ['leads', 'agents', 'traffic', 'ai', 'shelf', 'deals'];
+
+    /** Everything in one payload — the original single-request dashboard, kept for older frontends. */
     public function pulse(): array
+    {
+        $out = $this->core();
+        foreach (self::SECTIONS as $name) {
+            $out[$name === 'deals' ? 'recent_deals' : $name] = $this->section($name);
+        }
+
+        return $out;
+    }
+
+    /** One cheap card's data; $name is one of SECTIONS. */
+    public function section(string $name): array
+    {
+        $today = CarbonImmutable::now(self::TZ)->startOfDay();
+        $from30 = $today->subDays(29);
+
+        return match ($name) {
+            'leads' => $this->leads($today),
+            'agents' => $this->agentForce($from30),
+            // Last 30 days, visitors per channel.
+            'traffic' => [
+                'channels' => $this->traffic->range($from30->toDateString(), $today->toDateString())->visitorsByChannel()
+                    ->map(fn ($c, $channel) => ['channel' => $channel, 'value' => (int) $c])->values()->all(),
+            ],
+            // summary(), not report(): the card needs only totals + trend, and report()'s
+            // top-pages/sources scans were ~half of the whole pulse on prod.
+            'ai' => $this->ai->summary(
+                Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
+                Carbon::parse($today->toDateString())->endOfDay(),
+            ),
+            'shelf' => $this->shelf(),
+            'deals' => $this->recentDeals(),
+            default => throw new \InvalidArgumentException("Unknown pulse section [{$name}]"),
+        };
+    }
+
+    /**
+     * The heavy part of the dashboard: the 30-day chart, this month vs last, most active,
+     * most viewed cities and where visitors come from.
+     */
+    public function core(): array
     {
         $today = CarbonImmutable::now(self::TZ)->startOfDay();
         $from30 = $today->subDays(29);
@@ -78,39 +126,11 @@ class OwnerPulseService
         $mtd = $this->totals($mtdStart, $today);
         $prev = $this->totals($prevStart, $prevEnd);
 
-        $split = $this->agents->summary([])['split'];
-
         return [
             'as_of' => CarbonImmutable::now(self::TZ)->toIso8601String(),
             'today' => $todayBlock,
             'series' => $series,
             'month' => ['current' => $mtd, 'previous' => $prev, 'days' => $days],
-            'leads' => $this->leads($today),
-            'agents' => [
-                'active' => $split['agents'],
-                'online_7d' => (int) DB::table('agents')->join('users', 'users.id', '=', 'agents.user_id')
-                    ->whereNull('agents.deleted_at')->where('agents.status', 'active')
-                    ->where('users.last_online_at', '>=', now()->subDays(7))->count(),
-                'listed_30d' => (int) DB::table('listings')->join('agents', 'agents.id', '=', 'listings.agent_id')
-                    ->whereNull('listings.deleted_at')->where('agents.status', 'active')
-                    ->where('listings.created_at', '>=', $from30->utc())->distinct()->count('listings.agent_id'),
-                'no_listings' => $split['no_listings'],
-                'closed' => $split['closed'],
-            ],
-            // AI Visibility + Traffic Source cards (last 30 days) — in the pulse so the whole dashboard
-            // arrives in one cached request instead of those two waiting on the full Audience report.
-            'traffic' => [
-                'channels' => $this->traffic->range($from30->toDateString(), $today->toDateString())->visitorsByChannel()
-                    ->map(fn ($c, $channel) => ['channel' => $channel, 'value' => (int) $c])->values()->all(),
-            ],
-            // summary(), not report(): the card needs only totals + trend, and report()'s
-            // top-pages/sources scans were ~half of this whole request on prod.
-            'ai' => $this->ai->summary(
-                Carbon::parse($from30->toDateString())->startOfDay(), // same parsing as AiVisibilityController
-                Carbon::parse($today->toDateString())->endOfDay(),
-            ),
-            'shelf' => $this->shelf(),
-            'recent_deals' => $this->recentDeals(),
             'most_active' => $this->mostActive($from30, $today),
             'views' => [
                 'total' => (int) DB::table('listings')->whereNull('deleted_at')->sum('clicks'),
@@ -119,6 +139,24 @@ class OwnerPulseService
             ],
             'visitor_origins' => $this->visitorOrigins($from30),
             'clients_total' => (int) DB::table('users')->join('roles', 'roles.id', '=', 'users.role_id')->where('roles.name', 'client')->count(),
+        ];
+    }
+
+    /** The Agent force card: active agents and how many used the platform, listed, closed, never listed. */
+    private function agentForce(CarbonImmutable $from30): array
+    {
+        $split = $this->agents->summary([])['split'];
+
+        return [
+            'active' => $split['agents'],
+            'online_7d' => (int) DB::table('agents')->join('users', 'users.id', '=', 'agents.user_id')
+                ->whereNull('agents.deleted_at')->where('agents.status', 'active')
+                ->where('users.last_online_at', '>=', now()->subDays(7))->count(),
+            'listed_30d' => (int) DB::table('listings')->join('agents', 'agents.id', '=', 'listings.agent_id')
+                ->whereNull('listings.deleted_at')->where('agents.status', 'active')
+                ->where('listings.created_at', '>=', $from30->utc())->distinct()->count('listings.agent_id'),
+            'no_listings' => $split['no_listings'],
+            'closed' => $split['closed'],
         ];
     }
 

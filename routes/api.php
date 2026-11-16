@@ -1159,6 +1159,9 @@ Route::middleware('strip.tags')->group(function () {
                 // ── Website Analytics (GA4) dashboard ───────────────────
                 // Server-cached GA Data API reports (10 min; realtime 45 s).
                 Route::get('/admin/dashboard/pulse', \App\Http\Controllers\Admin\DashboardPulseController::class);
+                Route::get('/admin/dashboard/pulse/core', [\App\Http\Controllers\Admin\DashboardPulseController::class, 'core']);
+                Route::get('/admin/dashboard/pulse/{section}', [\App\Http\Controllers\Admin\DashboardPulseController::class, 'section'])
+                    ->whereIn('section', \App\Services\Dashboard\OwnerPulseService::SECTIONS);
                 Route::get('/admin/client-insights', \App\Http\Controllers\Admin\ClientInsightsController::class);
                 Route::get('/admin/client-insights/replies', [\App\Http\Controllers\Admin\ClientInsightsController::class, 'replies']);
                 Route::get('/admin/client-insights/missed-reply', [\App\Http\Controllers\Admin\ClientInsightsController::class, 'missedReply']);
