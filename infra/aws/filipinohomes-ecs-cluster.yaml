@@ -117,11 +117,15 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: filipinohomes-lt
+      # Stack tags don't reach a launch template or what it launches, so Project is set here too.
+      # (The ASG propagates its own tags to the instances.)
       TagSpecifications:
         - ResourceType: launch-template
           Tags:
             - Key: Name
               Value: filipinohomes-lt
+            - Key: Project
+              Value: filipinohomes
       LaunchTemplateData:
         ImageId: !Ref AmiId
         InstanceType: !Ref InstanceType
@@ -149,12 +153,21 @@ Resources:
             Tags:
               - Key: Name
                 Value: filipinohomes-ecs-instance
+              - Key: Project
+                Value: filipinohomes
+          - ResourceType: network-interface
+            Tags:
+              - Key: Name
+                Value: filipinohomes-ecs-instance
+              - Key: Project
+                Value: filipinohomes
         # ECS agent settings:
         # - STOP_TIMEOUT applies to containers without their own stopTimeout (the worker), so a
         #   queue job of up to 15 minutes (RunSeoCommand) can finish when ECS stops the worker.
         #   A task definition can't set more than 120 seconds itself.
         # - RESERVED_MEMORY keeps 256 MiB for the OS out of what ECS places tasks into.
         # - Image tags are immutable in ECR, so a tag already on the instance is never re-pulled.
+        # - The container instance gets the EC2 instance's tags (Name, Project) when it registers.
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
@@ -164,6 +177,7 @@ Resources:
             ECS_RESERVED_MEMORY=256
             ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
             ECS_ENABLE_TASK_IAM_ROLE=true
+            ECS_CONTAINER_INSTANCE_PROPAGATE_TAGS_FROM=ec2_instance
             EOF
 
   AutoScalingGroup:
