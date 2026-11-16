@@ -158,6 +158,10 @@ Route::middleware('strip.tags')->group(function () {
         // AI-assistant visibility: live fetches by ChatGPT-User & co. (server-to-server
         // from the web's proxy.ts, build-token gated) and clicks from an assistant.
         Route::post('/track/ai-fetch', [AiVisibilityController::class, 'storeFetch']);
+        // Google Maps billing is off → the web switches the map provider to OpenStreetMap
+        // (server-to-server, build-token gated in the controller).
+        Route::post('/maps/fallback', [\App\Http\Controllers\MapSettingsController::class, 'fallback'])
+            ->middleware('throttle:30,1');
         Route::post('/track/ai-click', [AiVisibilityController::class, 'storeClick']);
         Route::get('/blogs', [PostController::class, 'index']);
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
@@ -174,6 +178,10 @@ Route::middleware('strip.tags')->group(function () {
 
         // Guest-token-protected public routes
         Route::middleware('verify.guest.token')->group(function () {
+            // Which nearby-facilities provider is on (Google / OpenStreetMap) —
+            // read by the frontend's /api/nearby-places route handler.
+            Route::get('/maps/config', [\App\Http\Controllers\MapSettingsController::class, 'config']);
+
             // Buyers & Sellers Link: a client's brief (no login; honeypot in the
             // controller, five per IP per ten minutes here) and the city search
             // the brief's area picker uses.
@@ -1158,6 +1166,9 @@ Route::middleware('strip.tags')->group(function () {
 
                 // ── Website Analytics (GA4) dashboard ───────────────────
                 // Server-cached GA Data API reports (10 min; realtime 45 s).
+                // System Settings → Maps: nearby-facilities provider (Google / OpenStreetMap).
+                Route::get('/admin/map-settings', [\App\Http\Controllers\MapSettingsController::class, 'show']);
+                Route::put('/admin/map-settings', [\App\Http\Controllers\MapSettingsController::class, 'update']);
                 Route::get('/admin/dashboard/pulse', \App\Http\Controllers\Admin\DashboardPulseController::class);
                 Route::get('/admin/dashboard/pulse/core', [\App\Http\Controllers\Admin\DashboardPulseController::class, 'core']);
                 Route::get('/admin/dashboard/pulse/{section}', [\App\Http\Controllers\Admin\DashboardPulseController::class, 'section'])
