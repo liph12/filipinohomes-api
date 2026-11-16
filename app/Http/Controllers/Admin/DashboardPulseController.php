@@ -11,9 +11,9 @@ use Illuminate\Support\Facades\Cache;
  * The admin main dashboard's "Business pulse" (OwnerPulseService).
  *
  *  - GET /admin/dashboard/pulse            everything in one payload (older frontends), cached a minute
- *  - GET /admin/dashboard/pulse/core       the heavy part (chart, this month, most active, cities), cached a minute
- *  - GET /admin/dashboard/pulse/{section}  one cheap card (OwnerPulseService::SECTIONS), live — so those
- *                                          cards show at once instead of waiting for core
+ *  - GET /admin/dashboard/pulse/core       the heavy cards in one payload (older frontends), cached a minute
+ *  - GET /admin/dashboard/pulse/{section}  one card (OwnerPulseService::SECTIONS), live — each card
+ *                                          shows as soon as its own data is ready
  */
 class DashboardPulseController extends Controller
 {
