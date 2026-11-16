@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  IAM role that GitHub Actions in orenji-neko/filipinohomes-api assumes, through the account's
-  GitHub OIDC provider, to push the API image to ECR. Only workflow runs on main can assume it.
+  IAM roles that GitHub Actions in orenji-neko/filipinohomes-api assumes, through the account's
+  GitHub OIDC provider, to push the API image to ECR and to deploy it to ECS. Only workflow runs
+  on main can assume them.
 
 # Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
 #
@@ -11,7 +12,13 @@ Description: >-
 #     --tags Project=filipinohomes --no-execute-changeset
 #
 # The fork has GitHub's immutable OIDC subjects on, so the token names the owner and repo by
-# numeric ID. A repo renamed or re-created under the same name can't assume this role.
+# numeric ID. A repo renamed or re-created under the same name can't assume these roles.
+#
+# The deploy role (.github/workflows/deploy-ecs.yml) updates filipinohomes-ecs-services with a new
+# ImageTag on the stack's current template. The stack has no CloudFormation service role, so
+# CloudFormation acts with this role's permissions: it can register task definitions, update the
+# Filipino Homes services and run the artisan task, but not create or change anything else, even
+# if a workflow sent it a different template. Template changes stay manual.
 
 Parameters:
   GitHubSubject:
@@ -22,6 +29,18 @@ Parameters:
     Type: String
     Default: filipinohomes-ecr
     Description: Stack that exports the ECR repository ARN.
+  ServicesStackName:
+    Type: String
+    Default: filipinohomes-ecs-services
+    Description: The stack the deploy role updates.
+  AlbStackName:
+    Type: String
+    Default: filipinohomes-alb
+    Description: Stack whose LoadBalancerDnsName output the deploy workflow checks after a deploy.
+  ClusterName:
+    Type: String
+    Default: filipinohomes-ecs
+    Description: The ECS cluster the services and the artisan task run in.
 
 Resources:
   EcrPushRole:
@@ -67,8 +86,115 @@ Resources:
         - Key: Name
           Value: filipinohomes-github-ecr-push-role
 
+  EcsDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: filipinohomes-github-ecs-deploy-role
+      Description: GitHub Actions on main in orenji-neko/filipinohomes-api deploys filipinohomes/api images to ECS.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": !Ref GitHubSubject
+      Policies:
+        - PolicyName: ecs-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: UpdateServicesStack
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:UpdateStack
+                Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ServicesStackName}/*"
+              - Sid: ReadAlbStack
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AlbStackName}/*"
+              - Sid: CheckImage
+                Effect: Allow
+                Action: ecr:DescribeImages
+                Resource:
+                  Fn::ImportValue: !Sub "${EcrStackName}-RepositoryArn"
+              # What CloudFormation's ECS handlers need to replace a task definition (new image)
+              # and point a service at it, including a rollback. These actions don't support
+              # resource-level permissions.
+              - Sid: TaskDefinitions
+                Effect: Allow
+                Action:
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DeregisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                Resource: "*"
+              - Sid: TagTaskDefinitionsAndServices
+                Effect: Allow
+                Action:
+                  - ecs:TagResource
+                  - ecs:UntagResource
+                  - ecs:ListTagsForResource
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/filipinohomes-*:*"
+                  - !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${ClusterName}/filipinohomes-*"
+              - Sid: UpdateServices
+                Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                  - ecs:ListServiceDeployments
+                  - ecs:DescribeServiceDeployments
+                  - ecs:StopServiceDeployment
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${ClusterName}/filipinohomes-*"
+                  - !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service-deployment/${ClusterName}/filipinohomes-*"
+              # The migrations check: one artisan task (migrate:status) in the cluster, and its log.
+              - Sid: RunArtisanTask
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/filipinohomes-artisan:*"
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}"
+              - Sid: WatchArtisanTask
+                Effect: Allow
+                Action: ecs:DescribeTasks
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*"
+              - Sid: ReadArtisanLog
+                Effect: Allow
+                Action: logs:GetLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/filipinohomes/artisan:log-stream:*"
+              - Sid: TaskRolesRead
+                Effect: Allow
+                Action: iam:GetRole
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/filipinohomes-ecs-task-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/filipinohomes-ecs-task-execution-role"
+              - Sid: TaskRolesPassToEcs
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/filipinohomes-ecs-task-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/filipinohomes-ecs-task-execution-role"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+      Tags:
+        - Key: Name
+          Value: filipinohomes-github-ecs-deploy-role
+
 Outputs:
   EcrPushRoleArn:
     Value: !GetAtt EcrPushRole.Arn
     Export:
       Name: !Sub "${AWS::StackName}-EcrPushRoleArn"
+  EcsDeployRoleArn:
+    Value: !GetAtt EcsDeployRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EcsDeployRoleArn"

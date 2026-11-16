@@ -17,12 +17,17 @@ Description: >-
 # FILIPINOHOMES_ENV_JSON, which the image's entrypoint expands into one variable per setting
 # (infra/docker/env-from-secret.php). The Environment entries below override the secret's values.
 #
-# Releasing a new image, when it has migrations:
+# Releasing a new image: a push to main does it (.github/workflows/build-image.yml, then
+# deploy-ecs.yml). The workflow does steps 1, 2 and 4 below on this stack's current template,
+# changing only ImageTag and ArtisanImageTag. If step 2 finds pending migrations it stops; run
+# step 3 by hand, then re-run the workflow. By hand, the steps are:
 #   1. Deploy with ArtisanImageTag=<new sha> only. The services keep running the old image.
 #   2. Run `php artisan migrate:status` with it (below) and read which migrations are pending.
 #   3. Run `php artisan migrate --force` the same way.
 #   4. Deploy with ImageTag=<new sha> and ArtisanImageTag="" (artisan follows ImageTag again).
-# Without migrations, step 4 alone is enough.
+# Without migrations, step 4 alone is enough. Template changes (anything besides the image) are
+# always deployed by hand with the command above; leave ImageTag out of --parameter-overrides
+# so it keeps the image the workflow deployed.
 #
 # One-off artisan command (the default command is migrate:status, which changes nothing; the
 # cluster's default capacity provider places it):

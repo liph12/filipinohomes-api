@@ -1,7 +1,9 @@
 name: Build image
 
 # Builds the API image and tests it without a database on every push to main and to ci/**
-# branches. On main only, it then pushes the image to ECR as filipinohomes/api:<commit SHA>.
+# branches. On main only, it then pushes the image to ECR as filipinohomes/api:<commit SHA> and
+# deploys it to ECS (deploy-ecs.yml), which stops before changing the services if the new code
+# has pending migrations.
 #
 # AWS access uses the AWS CLI only: GitHub's OIDC token is exchanged for
 # filipinohomes-github-ecr-push-role, which accepts only runs on main, so no AWS keys are stored.
@@ -128,3 +130,12 @@ jobs:
       - name: Log out of ECR
         if: always() && github.ref == 'refs/heads/main'
         run: docker logout "${REGISTRY:-none}" || true
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy-ecs.yml
+    with:
+      image_tag: ${{ github.sha }}
+    secrets:
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
