@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  VPC peering between shared-vpc (10.0.0.0/16) and the default VPC (172.31.0.0/16), where the
+  LR database and the older LR servers run. Each system in shared-vpc adds its own routes over it.
+
+# Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
+#
+# Deploy (preview first, then apply):
+#   aws cloudformation deploy --region ap-southeast-1 --stack-name shared-vpc-peering-default \
+#     --template-file infra/aws/shared-vpc-peering-default.yaml --tags Project=shared --no-execute-changeset
+#
+# CloudFormation can't set the DNS option. After the stack is created, let shared-vpc resolve
+# default-VPC hostnames (such as the LR database endpoint) to private IPs:
+#   aws ec2 modify-vpc-peering-connection-options --region ap-southeast-1 \
+#     --vpc-peering-connection-id <PeeringConnectionId output> \
+#     --accepter-peering-connection-options AllowDnsResolutionFromRemoteVpc=true
+#
+# Remove only after every stack that imports shared-vpc-peering-default-PeeringConnectionId is deleted.
+
+Parameters:
+  SharedVpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0ae2cdd0ef178e6de
+    Description: shared-vpc (formerly homes-news-vpc).
+  DefaultVpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0200ba2495e7744b6
+    Description: The account's default VPC, where lrdblaravelinstance runs.
+
+Resources:
+  PeeringConnection:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref SharedVpcId
+      PeerVpcId: !Ref DefaultVpcId
+      Tags:
+        - Key: Name
+          Value: shared-pcx-default-vpc
+
+Outputs:
+  PeeringConnectionId:
+    Value: !Ref PeeringConnection
+    Export:
+      Name: !Sub "${AWS::StackName}-PeeringConnectionId"

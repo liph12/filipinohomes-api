@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Lets the Filipino Homes private subnets in shared-vpc reach the LR database over the shared
+  peering connection: one route in the default VPC's main route table and one inbound MySQL
+  rule on the database's security group. Deleting this stack removes exactly these two changes.
+
+# Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
+#
+# Deploy after filipinohomes-network exists (preview first, then apply):
+#   aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-lr-db-access \
+#     --template-file infra/aws/filipinohomes-lr-db-access.yaml --tags Project=filipinohomes --no-execute-changeset
+# On an existing stack, pass --parameter-overrides to change a parameter's deployed value.
+#
+# Remove:
+#   aws cloudformation delete-stack --region ap-southeast-1 --stack-name filipinohomes-lr-db-access
+
+Parameters:
+  PeeringExportName:
+    Type: String
+    Default: shared-vpc-peering-default-PeeringConnectionId
+    Description: Export of the shared-vpc-peering-default stack.
+  SourceCidr:
+    Type: String
+    Default: 10.0.160.0/21
+    Description: The Filipino Homes private subnets in shared-vpc (10.0.160.0/22 and 10.0.164.0/22).
+  DefaultVpcRouteTableId:
+    Type: String
+    Default: rtb-081253d57f5fd624b
+    Description: The default VPC's main (and only) route table.
+  DbSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Default: sg-06c8bb63ece0e23f5
+    Description: The security group on lrdblaravelinstance.
+
+Resources:
+  RouteToFilipinoHomes:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DefaultVpcRouteTableId
+      DestinationCidrBlock: !Ref SourceCidr
+      VpcPeeringConnectionId:
+        Fn::ImportValue: !Ref PeeringExportName
+
+  DbMysqlFromFilipinoHomes:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DbSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: !Ref SourceCidr
+      Description: Filipino Homes ECS (shared-vpc 10.0.160.0/21)
