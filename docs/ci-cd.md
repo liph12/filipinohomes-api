@@ -71,6 +71,26 @@ The role ARNs contain the account ID. The repository is public, so the ARNs are 
 
 ### Procedure: set a GitHub secret
 
+Only the owner of the repository `orenji-neko/filipinohomes-api` can set its secrets.
+
+#### AWS console and GitHub web interface
+
+> [!CAUTION]
+> The ARN contains the AWS account ID. Do not paste it in a public place, for example an issue, a commit or a chat.
+
+1. Open **CloudFormation > Stacks > filipinohomes-github**, and select the **Outputs** tab.
+2. Copy the value of the output:
+   - `EcsDeployRoleArn` for the secret `AWS_DEPLOY_ROLE_ARN`
+   - `EcrPushRoleArn` for the secret `AWS_ROLE_ARN`
+3. On GitHub, open the repository `orenji-neko/filipinohomes-api`.
+4. Open **Settings > Secrets and variables > Actions**.
+5. Select **New repository secret**. To change a secret that exists, select its pencil icon.
+6. In **Name**, write the secret name. In **Secret**, paste the ARN.
+7. Select **Add secret** or **Update secret**.
+8. Make sure that the secret shows in the list of repository secrets.
+
+#### AWS CLI and `gh`
+
 1. Get the ARN from the output of the stack `filipinohomes-github`, and write it into the secret. This example sets `AWS_DEPLOY_ROLE_ARN`:
 
    ```bash
@@ -117,6 +137,8 @@ Stack: `filipinohomes-ecr`.
 | Lifecycle | Keep the 30 newest images. Remove untagged images after 7 days. |
 | Deletion policy | `Retain` |
 | Encryption | AES-256 |
+
+To see the images in the console, open **Amazon ECR > Private registry > Repositories > filipinohomes/api**. The list shows the tag (commit SHA), the push time and the scan status of each image. Open an image to see its scan findings.
 
 The repository policy denies a push from all principals except `filipinohomes-github-ecr-push-role`. This rule also applies to administrators. Other systems in the account have CI roles that can push to all repositories. Without this policy, they could push a tag before CI pushes it. The policy does not stop pulls or scans.
 

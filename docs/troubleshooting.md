@@ -26,6 +26,32 @@ MSYS_NO_PATHCONV=1 aws logs tail /ecs/filipinohomes/web --region ap-southeast-1
 
 **Solution:** Put `PYTHONUTF8=1` before the command.
 
+## AWS console
+
+### The console shows no Filipino Homes resources
+
+**Cause:** The Region selector shows a different Region.
+
+**Solution:** At the top of the console, set the Region selector to **Asia Pacific (Singapore) ap-southeast-1**.
+
+### A one-off task from the console runs the wrong command
+
+**Cause:** The field **Command override** uses each comma as a separator. A comma in the PHP code or in a value cuts the command into wrong parts.
+
+**Solution:** Remove the commas from the command. If that is not possible, use the AWS CLI in a terminal or in AWS CloudShell. Refer to [operations.md](operations.md#procedure-run-a-one-off-artisan-command).
+
+### The desired count of a service is different from the stack parameter
+
+**Cause:** A person changed the desired tasks in the ECS console (**Update service**), or with `aws ecs update-service --desired-count`.
+
+**Solution:** Set the count again with the stack parameter. Refer to [operations.md](operations.md#procedure-change-the-number-of-tasks).
+
+### The task page does not show **Connect**
+
+**Cause:** The console version, or your permissions, do not support ECS Exec from the console.
+
+**Solution:** Open AWS CloudShell, and use the AWS CLI command. Refer to [operations.md](operations.md#procedure-open-a-shell-in-a-container).
+
 ## Containers
 
 ### CloudWatch Logs has no output from a container
@@ -70,6 +96,8 @@ Docker tries again each 32 seconds. After the fix, the tasks that run send their
 
 ### The deploy workflow stops at the AWS login, and the role ARN is empty
 
+The log shows `Invalid length for parameter RoleArn, value: 0`.
+
 **Cause:** The GitHub secret `AWS_DEPLOY_ROLE_ARN` does not exist.
 
 **Solution:** Set the secret. Refer to [ci-cd.md](ci-cd.md#procedure-set-a-github-secret).
@@ -80,7 +108,7 @@ Docker tries again each 32 seconds. After the fix, the tasks that run send their
 
 **Solution:**
 
-1. Show the stack events:
+1. Show the stack events. In the console, open **CloudFormation > Stacks > filipinohomes-ecs-services > Events**. With the AWS CLI:
 
    ```bash
    aws cloudformation describe-stack-events --region ap-southeast-1 --stack-name filipinohomes-ecs-services \

@@ -30,9 +30,10 @@ When the deploy workflow finds pending migrations, it stops. The artisan task th
 1. Read the names of the pending migrations in the job summary.
 2. Show the SQL of the migrations. Use the procedure [run a one-off artisan command](operations.md#procedure-run-a-one-off-artisan-command) with this command:
 
-   ```json
-   ["php", "artisan", "migrate", "--pretend", "--force"]
-   ```
+   | Tool | Command |
+   |---|---|
+   | AWS console (**Command override**) | `php,artisan,migrate,--pretend,--force` |
+   | AWS CLI (`command` in the override) | `["php","artisan","migrate","--pretend","--force"]` |
 
    With `--pretend`, Laravel shows the SQL and does not run it.
 
@@ -40,9 +41,10 @@ When the deploy workflow finds pending migrations, it stops. The artisan task th
 4. Get approval for the SQL from the owner of the LR database.
 5. Run the migrations. Use the same procedure with this command:
 
-   ```json
-   ["php", "artisan", "migrate", "--force"]
-   ```
+   | Tool | Command |
+   |---|---|
+   | AWS console (**Command override**) | `php,artisan,migrate,--force` |
+   | AWS CLI (`command` in the override) | `["php","artisan","migrate","--force"]` |
 
 6. Make sure that the exit code of the task is 0.
 7. Read the log of the task. Make sure that each migration shows `DONE`.
@@ -60,6 +62,7 @@ When the deploy workflow finds pending migrations, it stops. The artisan task th
 
 1. Find the commit SHA of the previous image. Use one of these sources:
    - The job summary of the last deployment shows `Previous image`.
+   - In the AWS console, open **Amazon ECR > Private registry > Repositories > filipinohomes/api**. Sort the images by **Pushed at**. The image tag is the commit SHA.
    - This command shows the 10 newest images in ECR:
 
      ```bash
@@ -84,8 +87,25 @@ Each service has the deployment circuit breaker. If the new tasks do not start o
 
 Use this procedure only if GitHub Actions is not available.
 
+### AWS console
+
+The console method uses the current template of the stack. It changes only the image parameters.
+
+1. Open **Amazon ECR > Private registry > Repositories > filipinohomes/api**. Make sure that an image has the tag `<commit-sha>`.
+2. Open **CloudFormation > Stacks > filipinohomes-ecs-services**.
+3. Select **Stack actions > Create change set for current stack**, and select **Use current template**.
+4. Set `ArtisanImageTag` to `<commit-sha>`. Do not change other parameters.
+5. Select **Next** two times. Select the box that acknowledges the IAM resources, and select **Submit**.
+6. Open the change set, and select **Execute change set**. Wait until the stack status is `UPDATE_COMPLETE`.
+7. Run `php artisan migrate:status` with the artisan task. Refer to [operations.md](operations.md#procedure-run-a-one-off-artisan-command).
+8. If a migration is pending, do steps 2 to 7 of [run pending migrations](#procedure-run-pending-migrations).
+9. Do steps 3 to 6 again. In step 4, set `ImageTag` to `<commit-sha>`, and set `ArtisanImageTag` to empty.
+10. Examine the services. Refer to [operations.md](operations.md#procedure-examine-the-services).
+
+### AWS CLI
+
 > [!CAUTION]
-> This procedure deploys the template on your workstation. Make sure that your working tree is the same as `origin/main`.
+> This method deploys the template on your workstation. Make sure that your working tree is the same as `origin/main`.
 
 1. Make sure that ECR has the image of the commit:
 

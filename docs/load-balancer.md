@@ -62,6 +62,25 @@ An ACM certificate for `api.filipinohomes.com` was requested on 2026-11-16, with
 > [!CAUTION]
 > ACM stops the validation if it does not find the record in 72 hours. The status then changes to `VALIDATION_TIMED_OUT`. You must then request a new certificate and do this procedure again.
 
+The procedure has three parts:
+
+1. Get the validation record from ACM.
+2. Add the record in Cloudflare, and wait for the certificate.
+3. Add the certificate to the load balancer.
+
+### Part 1: get the validation record (AWS console)
+
+1. Open **Certificate Manager > List certificates**.
+2. Open the certificate for `api.filipinohomes.com`.
+3. Read the status. It must be **Pending validation**.
+4. In the **Domains** section, read **CNAME name** and **CNAME value**.
+5. Copy the certificate ARN from the **Certificate status** section. You use it in part 3.
+
+> [!CAUTION]
+> Do not select **Create records in Route 53**. The DNS zone of `filipinohomes.com` is in Cloudflare, not in Route 53.
+
+### Part 1: get the validation record (AWS CLI)
+
 1. Find the ARN and the status of the certificate:
 
    ```bash
@@ -77,16 +96,39 @@ An ACM certificate for `api.filipinohomes.com` was requested on 2026-11-16, with
      --query "Certificate.DomainValidationOptions[0].ResourceRecord"
    ```
 
-3. In Cloudflare, add this record as a CNAME record.
-4. Set the proxy status of the record to **DNS only**.
-5. Keep the record after the validation. ACM uses it again when it renews the certificate.
-6. Wait until the status of the certificate is `ISSUED`:
+### Part 2: add the record in Cloudflare
 
-   ```bash
-   aws acm wait certificate-validated --region ap-southeast-1 --certificate-arn <certificate-arn>
-   ```
+1. Log in to the Cloudflare dashboard at <https://dash.cloudflare.com>.
+2. Select the zone `filipinohomes.com`.
+3. Open **DNS > Records**, and select **Add record**.
+4. Set **Type** to `CNAME`.
+5. In **Name**, write the CNAME name without `.filipinohomes.com.` at the end. Example: `_43708d31d23974e80f3f36aed3d02c5a.api`.
+6. In **Target**, write the CNAME value without the dot at the end.
+7. Set **Proxy status** to **DNS only** (grey cloud).
+8. Keep **TTL** at **Auto**, and select **Save**.
+9. Do not change the record `api`. The validation record is a different record.
+10. Keep the validation record after the validation. ACM uses it again when it renews the certificate.
+11. Wait until the status of the certificate is **Issued**. ACM can take some minutes. In the AWS CLI, use:
 
-7. Make a change set that adds the certificate. Keep `HttpAction=forward`:
+    ```bash
+    aws acm wait certificate-validated --region ap-southeast-1 --certificate-arn <certificate-arn>
+    ```
+
+### Part 3: add the certificate to the load balancer (AWS console)
+
+1. Open **CloudFormation > Stacks > filipinohomes-alb**.
+2. Select **Stack actions > Create change set for current stack**.
+3. Select **Use current template**, and select **Next**.
+4. Set `CertificateArn` to the certificate ARN. Keep `HttpAction` at `forward`.
+5. Select **Next** two times, and select **Submit**.
+6. Open the change set. Make sure that it only adds the listener on port 443.
+7. Select **Execute change set**, and wait until the stack status is `UPDATE_COMPLETE`.
+8. Open **EC2 > Load Balancers > filipinohomes-alb**, and select the **Listeners and rules** tab.
+9. Make sure that there is a listener `HTTPS:443`.
+
+### Part 3: add the certificate to the load balancer (AWS CLI)
+
+1. Make a change set that adds the certificate. Keep `HttpAction=forward`:
 
    ```bash
    aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-alb \
@@ -94,8 +136,8 @@ An ACM certificate for `api.filipinohomes.com` was requested on 2026-11-16, with
      --parameter-overrides CertificateArn=<certificate-arn> --no-execute-changeset
    ```
 
-8. Read and run the change set. Refer to [stacks.md](stacks.md#procedure-deploy-a-template-change).
-9. Make sure that there is a listener on port 443:
+2. Read and run the change set. Refer to [stacks.md](stacks.md#procedure-deploy-a-template-change).
+3. Make sure that there is a listener on port 443:
 
    ```bash
    aws elbv2 describe-listeners --region ap-southeast-1 \
@@ -112,16 +154,18 @@ An ACM certificate for `api.filipinohomes.com` was requested on 2026-11-16, with
 1. In Cloudflare, set the SSL/TLS mode for `api.filipinohomes.com` to **Full (strict)**.
 
    > [!NOTE]
-   > The SSL/TLS mode on the overview page applies to all hostnames in the zone. To change it for `api.filipinohomes.com` only, use a Cloudflare configuration rule.
+   > The SSL/TLS mode on the overview page applies to all hostnames in the zone. To change it for `api.filipinohomes.com` only, use a Cloudflare configuration rule (**Rules > Configuration Rules**).
 
 2. Make sure that `https://api.filipinohomes.com/up` gives the code 200.
-3. Make a change set with `HttpAction=redirect`:
+3. Set `HttpAction` to `redirect` on the stack `filipinohomes-alb`:
+   - **AWS console:** do steps 1 to 7 of part 3 above, but change only `HttpAction` to `redirect`.
+   - **AWS CLI:**
 
-   ```bash
-   aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-alb \
-     --template-file infra/aws/filipinohomes-alb.yaml --tags Project=filipinohomes \
-     --parameter-overrides HttpAction=redirect --no-execute-changeset
-   ```
+     ```bash
+     aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-alb \
+       --template-file infra/aws/filipinohomes-alb.yaml --tags Project=filipinohomes \
+       --parameter-overrides HttpAction=redirect --no-execute-changeset
+     ```
 
 4. Read and run the change set.
 
@@ -129,12 +173,14 @@ An ACM certificate for `api.filipinohomes.com` was requested on 2026-11-16, with
 
 - The DNS zone of `filipinohomes.com` is in Cloudflare. The zone of `filipinohomes.ph` is in Route 53.
 - At the cutover, `api.filipinohomes.com` becomes a proxied CNAME record to the DNS name of the load balancer.
-- The stack output `LoadBalancerDnsName` gives the DNS name:
+- To get the DNS name of the load balancer, use one of these:
+  - **AWS console:** open **CloudFormation > Stacks > filipinohomes-alb > Outputs**, and read `LoadBalancerDnsName`. You can also open **EC2 > Load Balancers > filipinohomes-alb**, and read **DNS name**.
+  - **AWS CLI:**
 
-  ```bash
-  aws cloudformation describe-stacks --region ap-southeast-1 --stack-name filipinohomes-alb \
-    --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue" --output text
-  ```
+    ```bash
+    aws cloudformation describe-stacks --region ap-southeast-1 --stack-name filipinohomes-alb \
+      --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue" --output text
+    ```
 
 - Do not write this DNS name in the repository. The deploy workflow also hides it in its logs.
 

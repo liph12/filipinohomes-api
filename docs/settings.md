@@ -56,7 +56,10 @@ To change these values, change the template `infra/aws/filipinohomes-ecs-service
 
 ## Procedure: show the names of the settings
 
-This command shows the names only. It does not show the values.
+> [!CAUTION]
+> The AWS console has no view with the names only. **Retrieve secret value** shows all values on the screen. Use the AWS CLI command below, in a terminal or in AWS CloudShell.
+
+This command shows the names only. It does not show the values. In CloudShell, use `python3` in place of `python`.
 
 ```bash
 aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id filipinohomes/api \
@@ -65,6 +68,17 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id filipino
 ```
 
 ## Procedure: change the settings
+
+There are two methods:
+
+| Method | Use it for | Tool |
+|---|---|---|
+| A: the script | Many changes, or a full new `.env` file | AWS CLI on a workstation |
+| B: the AWS console | One or two values | Web browser |
+
+The production `.env` file is the source of the secret. Both methods must keep the file and the secret the same.
+
+### Method A: the script (AWS CLI)
 
 The script `infra/aws/scripts/put-env-secret.py` writes a `.env` file into the secret. It reads the file with the same rules as Laravel (a port of `vlucas/phpdotenv` 5.6.3). It never prints a value.
 
@@ -93,9 +107,28 @@ The script `infra/aws/scripts/put-env-secret.py` writes a `.env` file into the s
 
 The AWS user must have the permissions `secretsmanager:GetSecretValue` and `secretsmanager:PutSecretValue`.
 
+### Method B: the AWS console
+
+> [!CAUTION]
+> The console shows all values on the screen. Make sure that nobody else can see your screen. Do not make a screenshot.
+
+> [!CAUTION]
+> Also change the value in the production `.env` file. If you do not, the next run of the script (method A) replaces your change with the old value.
+
+1. Open **Secrets Manager > Secrets > filipinohomes/api**.
+2. In **Secret value**, select **Retrieve secret value**.
+3. Select **Edit**.
+4. On the **Key/value** tab, change the value. To add a setting, select **Add row**.
+5. Write the value as Laravel reads it, with no quotes from the `.env` syntax. Example: for `APP_NAME="Filipino Homes"`, write `Filipino Homes`.
+6. Select **Save**. Secrets Manager makes a new version.
+7. Change the same value in the production `.env` file.
+8. Start new tasks for each service. Refer to [operations.md](operations.md#procedure-start-new-tasks).
+
 ## Procedure: go back to the previous value
 
 Secrets Manager keeps the previous value with the label `AWSPREVIOUS`.
+
+The console cannot move a version label. Use the AWS CLI in a terminal or in AWS CloudShell.
 
 1. Show the versions and their labels:
 

@@ -39,7 +39,7 @@ These changes are not in a template. If you make the setup again, do them by han
 
 | Change | Reason |
 |---|---|
-| The DNS option `AllowDnsResolutionFromRemoteVpc=true` on the accepter side of `shared-pcx-default-vpc` | CloudFormation cannot set this option. The command is in `infra/aws/shared-vpc-peering-default.yaml`. |
+| The DNS option `AllowDnsResolutionFromRemoteVpc=true` on the accepter side of `shared-pcx-default-vpc` | CloudFormation cannot set this option. The command is in `infra/aws/shared-vpc-peering-default.yaml`. In the console: **VPC > Peering connections > shared-pcx-default-vpc > Actions > Edit DNS settings**. |
 | The names and the `FormerName` tags of the shared parts of `shared-vpc` | These parts were in the VPC of homes-news before. Refer to [network.md](network.md). |
 | The ACM certificate for `api.filipinohomes.com` | A person requested it on 2026-11-16. Refer to [load-balancer.md](load-balancer.md). |
 | The tags on the launch template | CloudFormation sets the tags of a launch template only when it creates the launch template. |
@@ -57,7 +57,27 @@ The GitHub OIDC provider `token.actions.githubusercontent.com` is an account res
 > Deploy only templates from the `main` branch. Then the repository and AWS agree.
 
 > [!CAUTION]
-> For `filipinohomes-ecs-services`, do not put `ImageTag` in `--parameter-overrides`. If you do not give it, the stack keeps the image that the deploy workflow deployed.
+> For `filipinohomes-ecs-services`, do not change `ImageTag`. If you keep its current value, the stack keeps the image that the deploy workflow deployed.
+
+### AWS console
+
+1. Open **CloudFormation > Stacks**, and select the stack.
+2. Select **Stack actions > Create change set for current stack**.
+3. Select **Replace current template** and **Upload a template file**.
+4. Select the file `infra/aws/<stack>.yaml` from the `main` branch, and select **Next**.
+5. Keep the current parameter values, or change only the values that you must change. Select **Next**.
+6. On the options page, keep the tags and the other values. Select **Next**.
+7. If the page shows an acknowledgement for IAM resources, select the box.
+8. Select **Submit**. CloudFormation makes the change set.
+9. Open the change set, and read the **Changes** tab.
+10. Make sure that the change set adds, changes and removes only the resources that you expect.
+11. Select **Execute change set**.
+12. On the **Events** tab, wait until the stack status is `UPDATE_COMPLETE`.
+13. Examine the changed resources in their consoles.
+
+To change only a parameter, select **Use current template** in step 3.
+
+### AWS CLI
 
 1. Make a change set. Add `--capabilities CAPABILITY_NAMED_IAM` if the stack contains IAM resources:
 
@@ -116,6 +136,12 @@ Delete the stacks in the opposite sequence of the table.
 7. Delete `shared-vpc-peering-default` only after all stacks that import its export are deleted. Other systems can use it.
 8. If you must also remove the ECR repository or the secret, delete them by hand. Their stacks do not delete them.
 
+To delete a stack in the console, open **CloudFormation > Stacks**, select the stack, and select **Delete**. To change a count before the delete, refer to [operations.md](operations.md#procedure-change-the-number-of-tasks).
+
 ## Drift detection
+
+To find drift in the console, open **CloudFormation > Stacks**, select the stack, and select **Stack actions > Detect drift**. Then select **Stack actions > View drift results**.
+
+To find drift with the AWS CLI, use `aws cloudformation detect-stack-drift` and then `aws cloudformation describe-stack-resource-drifts`.
 
 On 2026-11-16, all stacks were `IN_SYNC` with one exception. Drift detection shows the tag `AmazonECSManaged` on the Auto Scaling group as removed. This result is not correct. The tag is there, but its value is empty, and drift detection shows empty tags as removed. Ignore this result.
