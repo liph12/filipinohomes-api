@@ -1,0 +1,123 @@
+<?php
+
+namespace Tests\Feature;
+
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Tests\Concerns\CreatesAuthTables;
+use Tests\TestCase;
+
+/**
+ * GET /fh-one/listings — the open listings API for fhone: no token at all, every listing that
+ * isn't deleted (any visibility / status / audit result), newest first, paginated.
+ */
+class FhoneListingsApiTest extends TestCase
+{
+    use CreatesAuthTables;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->createAuthTables();
+        foreach (['property_types', 'property_subtypes', 'furnishings', 'categories'] as $t) {
+            Schema::create($t, function (Blueprint $table) use ($t) {
+                $table->id();
+                $table->string('name')->nullable();
+                if ($t === 'property_subtypes') {
+                    $table->unsignedBigInteger('property_type_id')->nullable();
+                }
+                $table->timestamps();
+            });
+        }
+        Schema::create('property_attributes', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('property_subtype_id')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('properties', function (Blueprint $table) {
+            $table->id();
+            $table->string('status')->default('active');
+            $table->date('status_change_date')->nullable();
+            $table->unsignedBigInteger('property_attribute_id')->nullable();
+            $table->unsignedBigInteger('furnishing_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        Schema::create('listings', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('property_id');
+            $table->unsignedBigInteger('agent_id')->nullable();
+            $table->unsignedBigInteger('category_id')->nullable();
+            $table->string('code')->nullable();
+            $table->string('name')->nullable();
+            $table->string('slug')->nullable();
+            $table->decimal('price', 15, 2)->nullable();
+            $table->string('visibility')->default('public');
+            $table->string('verification_status')->nullable();
+            $table->text('featured_photo')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+    }
+
+    /** A listing (and its property); returns the listing id. */
+    private function listing(string $code, array $listing = [], array $property = []): int
+    {
+        $propertyId = DB::table('properties')->insertGetId($property + ['status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+
+        return DB::table('listings')->insertGetId($listing + [
+            'property_id' => $propertyId,
+            'code' => $code,
+            'name' => "Listing $code",
+            'slug' => strtolower($code),
+            'visibility' => 'public',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function codes($response): array
+    {
+        return collect($response->json('data'))->pluck('code')->sort()->values()->all();
+    }
+
+    public function test_it_needs_no_token_and_returns_every_listing_that_is_not_deleted(): void
+    {
+        $this->listing('PUBLIC');
+        $this->listing('PRIVATE', ['visibility' => 'private']);
+        $this->listing('SOLD', [], ['status' => 'sold']);
+        $this->listing('TRASHED', ['deleted_at' => now()]);                // listing soft-deleted
+        $this->listing('PROP-TRASHED', [], ['deleted_at' => now()]);       // property soft-deleted
+        $this->listing('PROP-DELETED', [], ['status' => 'deleted']);       // property marked deleted
+
+        // No guest token, no login.
+        $res = $this->getJson('/api/fh-one/listings')->assertOk();
+
+        $this->assertSame(['PRIVATE', 'PUBLIC', 'SOLD'], $this->codes($res));
+        $this->assertSame(3, $res->json('meta.total'));
+        $private = collect($res->json('data'))->firstWhere('code', 'PRIVATE');
+        $this->assertSame('private', $private['visibility']);
+        $this->assertArrayHasKey('status', $private);
+        $this->assertArrayHasKey('updated_at', $private);
+    }
+
+    public function test_filters_and_paging(): void
+    {
+        $this->listing('A', [], ['status' => 'active']);
+        $this->listing('B', ['visibility' => 'private'], ['status' => 'sold']);
+        $this->listing('C', ['updated_at' => now()->subMonth()], ['status' => 'rented']);
+
+        $this->assertSame(['B', 'C'], $this->codes($this->getJson('/api/fh-one/listings?status=sold,rented')->assertOk()));
+        $this->assertSame(['B'], $this->codes($this->getJson('/api/fh-one/listings?visibility=private')->assertOk()));
+        $this->assertSame(['A', 'B'], $this->codes($this->getJson('/api/fh-one/listings?updated_since='.now()->subDay()->toDateString())->assertOk()));
+
+        $page = $this->getJson('/api/fh-one/listings?per_page=2&page=2')->assertOk();
+        $this->assertCount(1, $page->json('data'));
+        $this->assertSame(2, $page->json('meta.last_page'));
+
+        $this->getJson('/api/fh-one/listings?per_page=500')->assertStatus(422);
+        $this->getJson('/api/fh-one/listings?status=Robert%27);DROP')->assertStatus(422);
+    }
+}

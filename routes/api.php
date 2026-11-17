@@ -108,6 +108,11 @@ Route::middleware('strip.tags')->group(function () {
         Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
     });
 
+    // Open listings API for fhone (our own app): NO token of any kind — every non-deleted
+    // listing, paginated. Open to anyone, so limited per IP.
+    Route::get('/fh-one/listings', [\App\Http\Controllers\FhoneListingController::class, 'index'])
+        ->middleware('throttle:60,1');
+
     Route::middleware('throttle:api')->group(function () {
         // Issues a short-lived HMAC guest token for public API access
         Route::post('/guest-token', [GuestTokenController::class, 'issue']);
