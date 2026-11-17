@@ -54,6 +54,14 @@ class AppServiceProvider extends ServiceProvider
             );
         });
 
+        // FH One's own limit, one bucket per key (VerifyFhOneKey runs first and names it).
+        // Unlike 'api', no token lifts it: a key that misbehaves is slowed whatever else it holds.
+        RateLimiter::for('fhone', function (Request $request) {
+            return Limit::perMinute((int) config('fhone.rate_limit', 120))->by(
+                'fhone:'.($request->attributes->get('fhone.key') ?? $request->ip())
+            );
+        });
+
         // Optional: auth limiter
         RateLimiter::for('auth', function (Request $request) {
             // Normalised: MySQL matches emails case-insensitively, so a raw

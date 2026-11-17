@@ -7,11 +7,11 @@ use App\Models\Listing;
 use Illuminate\Http\Request;
 
 /**
- * GET /fh-one/listings — the open listings API for fhone (our own app).
+ * GET /fh-one/listings — the listings API for FH One (our own app).
  *
- * No token of any kind (no guest token, no login): anyone can call it, so it is rate-limited
- * per IP in routes/api.php. Returns EVERY listing that isn't deleted — any visibility (public or
- * not), any status, any audit result — newest first, paginated.
+ * Needs FH One's key (VerifyFhOneKey) and is limited per key; both are set in routes/api.php.
+ * Returns EVERY listing that isn't deleted — any visibility (public or not), any status, any
+ * audit result — newest first, paginated.
  *
  * "Deleted" = the listing is soft-deleted, its property is soft-deleted, or its property's
  * status is 'deleted' (how the rest of the app treats a removed listing).

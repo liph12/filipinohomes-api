@@ -231,6 +231,7 @@ final class DrillService
                 'agent_id' => $this->agentName((int) $value),
                 'type_id' => (int) $value === 0 ? 'Unspecified type' : (DB::table('property_types')->where('id', (int) $value)->value('name') ?? "Type #{$value}"),
                 'project_id' => (int) $value === 0 ? 'Not in a project' : (DB::table('projects')->where('id', (int) $value)->value('name') ?? "Project #{$value}"),
+                'project_ids' => $this->projectsLabel((array) $value),
                 'category' => ReportQueries::CATEGORIES[$value] ?? (string) $value,
                 'status' => ucfirst((string) $value),
                 'listing_id' => DB::table('listings')->where('id', (int) $value)->value('name') ?? "Listing #{$value}",
@@ -245,6 +246,18 @@ final class DrillService
         }
 
         return $labels;
+    }
+
+    /** One project's name, or "N projects". */
+    private function projectsLabel(array $ids): string
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+
+        if (count($ids) === 1) {
+            return DB::table('projects')->where('id', $ids[0])->value('name') ?? "Project #{$ids[0]}";
+        }
+
+        return count($ids).' projects';
     }
 
     private function agentName(int $agentId): string

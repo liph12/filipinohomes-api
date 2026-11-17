@@ -46,7 +46,7 @@ class ReportQueries extends ListingInsightsService
     /** Every filter a drill may carry; MetricRegistry narrows it per metric. */
     public const FILTERS = [
         'city_id', 'province_id', 'psa_region', 'island', 'office_region', 'team_id',
-        'agent_id', 'type_id', 'project_id', 'category', 'status', 'listing_id',
+        'agent_id', 'type_id', 'project_id', 'project_ids', 'category', 'status', 'listing_id',
     ];
 
     public function __construct(
@@ -389,6 +389,12 @@ class ReportQueries extends ListingInsightsService
                     break;
                 case 'project_id':
                     (int) $value === 0 ? $query->whereNull('projects.id') : $query->where('projects.id', (int) $value);
+                    break;
+                case 'project_ids':
+                    // Several projects at once, for example everything one developer built.
+                    // Only real ids count; a list with none matches nothing.
+                    $projects = array_values(array_filter(array_map('intval', (array) $value), fn (int $id) => $id > 0));
+                    $query->whereIn('projects.id', $projects ?: [0]);
                     break;
                 case 'category':
                     $query->where('categories.name', self::CATEGORIES[$value] ?? (string) $value);

@@ -108,10 +108,26 @@ Route::middleware('strip.tags')->group(function () {
         Route::post('/auth-request-verify-otp', [UserController::class, 'authRequestVerifyOtp']);
     });
 
-    // Open listings API for fhone (our own app): NO token of any kind — every non-deleted
-    // listing, paginated. Open to anyone, so limited per IP.
-    Route::get('/fh-one/listings', [\App\Http\Controllers\FhoneListingController::class, 'index'])
-        ->middleware('throttle:60,1');
+    // FH One (the group's AI platform) reads FH only through here. Every call carries FH One's own key
+    // (VerifyFhOneKey) and is limited per key (the 'fhone' limiter). Read-only.
+    //   /listings   every non-deleted listing, paginated
+    //   /v1/...     numbers from the AI Report's own code: catalog, value, breakdown, records, lookups
+    Route::prefix('fh-one')->middleware(['verify.fhone', 'throttle:fhone'])->group(function () {
+        Route::get('/listings', [\App\Http\Controllers\FhoneListingController::class, 'index']);
+
+        Route::prefix('v1')->group(function () {
+            Route::get('/health', \App\Http\Controllers\FhOne\HealthController::class);
+            Route::get('/metrics', [\App\Http\Controllers\FhOne\MetricController::class, 'catalog']);
+            Route::get('/metrics/{metric}', [\App\Http\Controllers\FhOne\MetricController::class, 'show'])
+                ->where('metric', '[a-z0-9_.]+');
+            Route::get('/metrics/{metric}/breakdown', [\App\Http\Controllers\FhOne\MetricController::class, 'breakdown'])
+                ->where('metric', '[a-z0-9_.]+');
+            Route::get('/metrics/{metric}/records', [\App\Http\Controllers\FhOne\MetricController::class, 'records'])
+                ->where('metric', '[a-z0-9_.]+');
+            Route::get('/lookup/{type}', [\App\Http\Controllers\FhOne\LookupController::class, 'index'])
+                ->where('type', '[a-z]+');
+        });
+    });
 
     Route::middleware('throttle:api')->group(function () {
         // Issues a short-lived HMAC guest token for public API access

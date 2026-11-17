@@ -74,12 +74,21 @@ return Application::configure(basePath: dirname(__DIR__))
             // is that $request->ip() resolves to the real visitor.
         ], headers: SymfonyRequest::HEADER_X_FORWARDED_FOR);
 
+        // Laravel runs `throttle` ahead of route middleware it doesn't know. FH One's limit is per
+        // key, so the key has to be checked first, or every key would share one bucket per IP and
+        // unauthenticated calls would eat into a good key's allowance.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            prepend: \App\Http\Middleware\VerifyFhOneKey::class,
+        );
+
         $middleware->alias([
             'strip.tags'           => \App\Http\Middleware\StripHtmlTags::class,
             'verify.guest.token'   => \App\Http\Middleware\VerifyGuestToken::class,
             'verify.fh.agent.token' => \App\Http\Middleware\VerifyFhAgentToken::class,
             'verify.service.token' => \App\Http\Middleware\VerifyServiceToken::class,
             'verify.lr.token'      => \App\Http\Middleware\VerifyLrToken::class,
+            'verify.fhone'         => \App\Http\Middleware\VerifyFhOneKey::class,
             'agent.active'         => \App\Http\Middleware\EnsureAgentActive::class,
         ]);
     })

@@ -142,6 +142,12 @@ final class Geography
         return $this->data()['cityGroups'][$group] ?? [$id];
     }
 
+    /** @return array<int, string> town group id => name, for every town */
+    public function townNames(): array
+    {
+        return $this->data()['cityNames'];
+    }
+
     public function cityName(?int $groupId): ?string
     {
         return $groupId === null ? null : ($this->data()['cityNames'][$groupId] ?? null);
