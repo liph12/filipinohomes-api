@@ -33,10 +33,9 @@ Since 2026-11-17, the AWS roles trust the fork and upstream. Both `main` branche
 | # | Item | Why | Owner | Reference |
 |---|---|---|---|---|
 | 2.1 | Review and merge the pull request from the fork | It adds the image, the workflows, the AWS templates and these documents to upstream | Team | - |
-| 2.2 | Add the GitHub secrets `AWS_ROLE_ARN` and `AWS_DEPLOY_ROLE_ARN` to upstream. Get the values from the AWS operator in a private message. | Without them, the workflow in upstream stops at the AWS login. Only the owner of a personal repository can set its secrets. | `liph12` | [ci-cd.md](ci-cd.md#procedure-set-a-github-secret) |
-| 2.3 | Turn on immutable OIDC subjects in upstream, then change `UpstreamGitHubSubject` to the ID form | The name form is less safe | `liph12`, then AWS operator | [ci-cd.md](ci-cd.md#procedure-use-the-immutable-subject-of-upstream) |
-| 2.4 | Add branch protection to `main` in upstream | Six people can push to `main`, and each push deploys to production | `liph12` | [ci-cd.md](ci-cd.md#iam-roles-for-github-actions) |
-| 2.5 | Merge the upstream commits `eda25d8` and `556c296` into the fork. After that, keep the two `main` branches the same. | The services run the code of the last deployment from either repository | AWS operator | [ci-cd.md](ci-cd.md#procedure-merge-the-upstream-changes-into-the-fork) |
+| 2.2 | Turn on immutable OIDC subjects in upstream, then change `UpstreamGitHubSubject` to the ID form | The name form is less safe | `liph12`, then AWS operator | [ci-cd.md](ci-cd.md#procedure-use-the-immutable-subject-of-upstream) |
+| 2.3 | Add branch protection to `main` in upstream | Six people can push to `main`, and each push deploys to production | `liph12` | [ci-cd.md](ci-cd.md#iam-roles-for-github-actions) |
+| 2.4 | Merge the upstream commits `eda25d8` and `556c296` into the fork. After that, keep the two `main` branches the same. | The services run the code of the last deployment from either repository | AWS operator | [ci-cd.md](ci-cd.md#procedure-merge-the-upstream-changes-into-the-fork) |
 
 ## 3. Before the cutover
 
@@ -78,4 +77,5 @@ Since 2026-11-17, the AWS roles trust the fork and upstream. Both `main` branche
 | 2026-11-17 | Documents in `docs/` |
 | 2026-11-17 | The three network templates committed to Git |
 | 2026-11-17 | The AWS roles trust upstream (`liph12/filipinohomes-api`) as well as the fork |
+| 2026-11-17 | GitHub secrets `AWS_ROLE_ARN` and `AWS_DEPLOY_ROLE_ARN` set in upstream (with `gh`, by a collaborator) |
 | 2026-11-17 | Builds skip pushes that change only `docs/**`. The comment about the queue worker in `filipinohomes-ecs-services.yaml` is correct. |

@@ -76,7 +76,7 @@ Each of the two repositories must have these secrets:
 | Repository | Who can set the secrets | Status on 2026-11-17 |
 |---|---|---|
 | `orenji-neko/filipinohomes-api` | The owner, `orenji-neko` | Set |
-| `liph12/filipinohomes-api` | The owner, `liph12` only. It is a personal repository, so collaborators cannot set secrets. | Not set |
+| `liph12/filipinohomes-api` | The owner, in the web interface or with `gh`. A collaborator with write access, with `gh` only. | Set |
 
 If a repository has no secrets, its `Build image` workflow stops at the AWS login. It pushes nothing and deploys nothing.
 
@@ -84,7 +84,7 @@ The role ARNs contain the account ID. The repositories are public, so the ARNs a
 
 ### Procedure: set a GitHub secret
 
-Only the owner of a personal repository can set its secrets.
+In a personal repository, only the owner can open **Settings** in the web interface. A collaborator with write access can set secrets with `gh` (the GitHub API).
 
 #### AWS console and GitHub web interface
 
