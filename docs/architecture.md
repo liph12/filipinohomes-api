@@ -83,4 +83,4 @@ This is the path after the cutover:
 | Health check `/up` without the database | If the database has a problem, the load balancer does not remove all containers from service. |
 | The shared NAT gateway | The account is at its limit of Elastic IP addresses in this Region. For this reason, Filipino Homes uses the NAT gateway of `shared-vpc` and has no NAT gateway of its own. |
 | No automatic migrations | The LR database contains production data for many applications. The image never runs migrations when it starts. The deploy workflow stops when a migration is pending. A person runs the migrations. |
-| Only `main` can publish an image | Only the CI role can push to the ECR repository, and only workflow runs on `main` can use that role. |
+| Only `main` can publish an image | Only the CI role can push to the ECR repository. Only workflow runs on `main` of the fork and of upstream can use that role. The services run the image of the last deployment from either repository. |

@@ -17,8 +17,9 @@ Description: >-
 # FILIPINOHOMES_ENV_JSON, which the image's entrypoint expands into one variable per setting
 # (infra/docker/env-from-secret.php). The Environment entries below override the secret's values.
 #
-# Releasing a new image: a push to main does it (.github/workflows/build-image.yml, then
-# deploy-ecs.yml). The workflow does steps 1, 2 and 4 below on this stack's current template,
+# Releasing a new image: a push to main, in the fork or in upstream, does it
+# (.github/workflows/build-image.yml, then deploy-ecs.yml). The services run whichever main
+# deployed last. The workflow does steps 1, 2 and 4 below on this stack's current template,
 # changing only ImageTag and ArtisanImageTag. If step 2 finds pending migrations it stops; run
 # step 3 by hand, then re-run the workflow. By hand, the steps are:
 #   1. Deploy with ArtisanImageTag=<new sha> only. The services keep running the old image.
@@ -42,9 +43,9 @@ Description: >-
 #     --container web --interactive --command "runuser -u app -- php artisan about"
 #
 # The worker and the scheduler start at 0 tasks. The scheduler sends live NATCON and birthday
-# mail, so it may only run here once the current server's cron no longer runs it. Production has
-# had no queue worker, so every queued job is still in the jobs table: check it before starting
-# the worker, or the worker sends all of them.
+# mail, so it may only run here once the current server's cron no longer runs it. No worker has
+# processed the queue since 2026-10-31, so the jobs table holds a large backlog, nearly all
+# IndexNow pings: read docs/queue-backlog.md before starting the worker, or it sends all of them.
 
 Parameters:
   ImageTag:

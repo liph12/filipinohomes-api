@@ -120,6 +120,21 @@ The log shows `Invalid length for parameter RoleArn, value: 0`.
 3. If an update failed, correct the cause.
 4. Start the workflow again.
 
+### The services run a different commit, but nobody deployed from this repository
+
+**Cause:** The fork and upstream both deploy. A push to `main` in the other repository deployed its commit.
+
+**Solution:**
+
+1. In the other repository, open **Actions > Build image**, and find the last run.
+2. Merge the changes between the two repositories. Then both `main` branches contain the same code. Refer to [ci-cd.md](ci-cd.md).
+
+### A deployment stops because another update runs on the stack
+
+**Cause:** The fork and upstream deployed at the same time. The concurrency limit of GitHub applies to one repository only.
+
+**Solution:** Wait until the other deployment stops. Then start the deployment again.
+
 ### `migrate:status --pending` always gives the exit code 0
 
 **Cause:** Without a value, `--pending` only filters the list.

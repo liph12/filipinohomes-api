@@ -6,17 +6,20 @@ name: Build image
 # has pending migrations.
 #
 # AWS access uses the AWS CLI only: GitHub's OIDC token is exchanged for
-# filipinohomes-github-ecr-push-role, which accepts only runs on main, so no AWS keys are stored.
-# Credentials are fetched only after the tests pass. This repo is public, so its logs are too:
-# the role ARN is a secret and the AWS account ID is masked.
+# filipinohomes-github-ecr-push-role, which accepts only runs on main in the fork
+# (orenji-neko/filipinohomes-api) and in upstream (liph12/filipinohomes-api), so no AWS keys are
+# stored. Each repository needs the secrets AWS_ROLE_ARN and AWS_DEPLOY_ROLE_ARN; without them,
+# this workflow stops at the AWS login. Credentials are fetched only after the tests pass. The
+# repos are public, so their logs are too: the role ARN is a secret and the AWS account ID is masked.
 
 on:
   push:
     branches: [main, "ci/**"]
-    # AWS templates and scripts aren't in the image (.dockerignore), so a push that changes only
-    # them builds nothing. A push that also changes anything else still builds.
+    # AWS templates, scripts and the docs aren't in the image (.dockerignore), so a push that
+    # changes only them builds nothing. A push that also changes anything else still builds.
     paths-ignore:
       - "infra/aws/**"
+      - "docs/**"
   workflow_dispatch:
 
 # One run per commit, so runs for different commits never cancel each other.

@@ -26,16 +26,17 @@ Status on 2026-11-17.
 | 1.4 | Start the worker on ECS (`WorkerCount=1`) | No worker processed a job after 2026-10-31. Users do not get notifications. | AWS operator | [queue-backlog.md](queue-backlog.md#4-start-the-worker) |
 | 1.5 | Add the ACM validation record in Cloudflare | The deadline is about 2026-11-19 13:31 (UTC+8). After it, the certificate request stops. | Cloudflare admin | [load-balancer.md](load-balancer.md#procedure-add-https) |
 
-## 2. Before the pull request to upstream
+## 2. Deployment from upstream
+
+Since 2026-11-17, the AWS roles trust the fork and upstream. Both `main` branches deploy. Refer to [ci-cd.md](ci-cd.md).
 
 | # | Item | Why | Owner | Reference |
 |---|---|---|---|---|
-| 2.1 | Commit `infra/aws/filipinohomes-network.yaml`, `infra/aws/filipinohomes-lr-db-access.yaml` and `infra/aws/shared-vpc-peering-default.yaml` | The documents describe 9 stacks. Only 6 templates are in Git. | AWS operator | [stacks.md](stacks.md) |
-| 2.2 | Let the AWS steps of the workflows run only in `orenji-neko/filipinohomes-api` (condition `github.repository`) | In upstream, each push to `main` would start the workflow, and the AWS login would fail | AWS operator | [ci-cd.md](ci-cd.md) |
-| 2.3 | Correct the comment "Production has had no queue worker" in `infra/aws/filipinohomes-ecs-services.yaml` | A worker operated until 2026-10-31 | AWS operator | [queue-backlog.md](queue-backlog.md) |
-| 2.4 | Add `docs/**` to `paths-ignore` in `build-image.yml`, and `docs` to `.dockerignore` | A change to the documents only builds and deploys a new image | AWS operator | [ci-cd.md](ci-cd.md#workflow-build-image) |
-| 2.5 | Merge the upstream commits `eda25d8` and `556c296` into the fork | The fork is 2 commits behind upstream. The merge has no conflicts and no migrations. | AWS operator | [ci-cd.md](ci-cd.md#procedure-merge-the-upstream-changes-into-the-fork) |
-| 2.6 | Ask the team if the AWS templates and the documents must be in upstream | Only the fork can deploy. The AWS roles trust the fork only. | AWS operator, Team | [ci-cd.md](ci-cd.md#iam-roles-for-github-actions) |
+| 2.1 | Review and merge the pull request from the fork | It adds the image, the workflows, the AWS templates and these documents to upstream | Team | - |
+| 2.2 | Add the GitHub secrets `AWS_ROLE_ARN` and `AWS_DEPLOY_ROLE_ARN` to upstream. Get the values from the AWS operator in a private message. | Without them, the workflow in upstream stops at the AWS login. Only the owner of a personal repository can set its secrets. | `liph12` | [ci-cd.md](ci-cd.md#procedure-set-a-github-secret) |
+| 2.3 | Turn on immutable OIDC subjects in upstream, then change `UpstreamGitHubSubject` to the ID form | The name form is less safe | `liph12`, then AWS operator | [ci-cd.md](ci-cd.md#procedure-use-the-immutable-subject-of-upstream) |
+| 2.4 | Add branch protection to `main` in upstream | Six people can push to `main`, and each push deploys to production | `liph12` | [ci-cd.md](ci-cd.md#iam-roles-for-github-actions) |
+| 2.5 | Merge the upstream commits `eda25d8` and `556c296` into the fork. After that, keep the two `main` branches the same. | The services run the code of the last deployment from either repository | AWS operator | [ci-cd.md](ci-cd.md#procedure-merge-the-upstream-changes-into-the-fork) |
 
 ## 3. Before the cutover
 
@@ -75,3 +76,6 @@ Status on 2026-11-17.
 | 2026-11-16 | Load balancer, ECS cluster, services. Database access from ECS tested. |
 | 2026-11-17 | GitHub secret `AWS_DEPLOY_ROLE_ARN` set. First automatic deployment (`7c9b4b8`) complete. |
 | 2026-11-17 | Documents in `docs/` |
+| 2026-11-17 | The three network templates committed to Git |
+| 2026-11-17 | The AWS roles trust upstream (`liph12/filipinohomes-api`) as well as the fork |
+| 2026-11-17 | Builds skip pushes that change only `docs/**`. The comment about the queue worker in `filipinohomes-ecs-services.yaml` is correct. |

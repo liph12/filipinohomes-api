@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  IAM roles that GitHub Actions in orenji-neko/filipinohomes-api assumes, through the account's
-  GitHub OIDC provider, to push the API image to ECR and to deploy it to ECS. Only workflow runs
-  on main can assume them.
+  IAM roles that GitHub Actions in orenji-neko/filipinohomes-api and in liph12/filipinohomes-api
+  assume, through the account's GitHub OIDC provider, to push the API image to ECR and to deploy it
+  to ECS. Only workflow runs on main can assume them.
 
 # Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
 #
@@ -11,8 +11,17 @@ Description: >-
 #     --template-file infra/aws/filipinohomes-github.yaml --capabilities CAPABILITY_NAMED_IAM \
 #     --tags Project=filipinohomes --no-execute-changeset
 #
-# The fork has GitHub's immutable OIDC subjects on, so the token names the owner and repo by
-# numeric ID. A repo renamed or re-created under the same name can't assume these roles.
+# Two repositories are trusted: the fork (orenji-neko/filipinohomes-api) and upstream
+# (liph12/filipinohomes-api). A push to main in either one builds, pushes and deploys that
+# commit, so the services run whichever main pushed last. Each repository needs the GitHub secrets
+# AWS_ROLE_ARN and AWS_DEPLOY_ROLE_ARN (this stack's outputs).
+#
+# The fork has GitHub's immutable OIDC subjects on, so its token names the owner and repo by
+# numeric ID, and a repo renamed or re-created under the same name can't assume these roles.
+# Upstream still sends the name-based subject. Once its owner turns on immutable subjects (the
+# repository's GitHub Actions OIDC settings; only the owner can), redeploy with
+#   UpstreamGitHubSubject=repo:liph12@71587999/filipinohomes-api@1116602811:ref:refs/heads/main
+# An empty UpstreamGitHubSubject trusts the fork only.
 #
 # The deploy role (.github/workflows/deploy-ecs.yml) updates filipinohomes-ecs-services with a new
 # ImageTag on the stack's current template. The stack has no CloudFormation service role, so
@@ -24,7 +33,13 @@ Parameters:
   GitHubSubject:
     Type: String
     Default: repo:orenji-neko@112786278/filipinohomes-api@1456292808:ref:refs/heads/main
-    Description: The only OIDC token subject allowed to assume the role (workflow runs on main).
+    Description: OIDC token subject of workflow runs on main in the fork.
+  UpstreamGitHubSubject:
+    Type: String
+    Default: repo:liph12/filipinohomes-api:ref:refs/heads/main
+    Description: >-
+      OIDC token subject of workflow runs on main in upstream. Name-based until upstream turns on
+      immutable subjects (see the header). Empty trusts the fork only.
   EcrStackName:
     Type: String
     Default: filipinohomes-ecr
@@ -42,12 +57,15 @@ Parameters:
     Default: filipinohomes-ecs
     Description: The ECS cluster the services and the artisan task run in.
 
+Conditions:
+  TrustUpstream: !Not [!Equals [!Ref UpstreamGitHubSubject, ""]]
+
 Resources:
   EcrPushRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: filipinohomes-github-ecr-push-role
-      Description: GitHub Actions on main in orenji-neko/filipinohomes-api pushes filipinohomes/api images.
+      Description: GitHub Actions on main in the fork or upstream filipinohomes-api pushes filipinohomes/api images.
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -59,7 +77,7 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
-                "token.actions.githubusercontent.com:sub": !Ref GitHubSubject
+                "token.actions.githubusercontent.com:sub": !If [TrustUpstream, [!Ref GitHubSubject, !Ref UpstreamGitHubSubject], !Ref GitHubSubject]
       Policies:
         - PolicyName: ecr-push
           PolicyDocument:
@@ -90,7 +108,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: filipinohomes-github-ecs-deploy-role
-      Description: GitHub Actions on main in orenji-neko/filipinohomes-api deploys filipinohomes/api images to ECS.
+      Description: GitHub Actions on main in the fork or upstream filipinohomes-api deploys filipinohomes/api images to ECS.
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -102,7 +120,7 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
-                "token.actions.githubusercontent.com:sub": !Ref GitHubSubject
+                "token.actions.githubusercontent.com:sub": !If [TrustUpstream, [!Ref GitHubSubject, !Ref UpstreamGitHubSubject], !Ref GitHubSubject]
       Policies:
         - PolicyName: ecs-deploy
           PolicyDocument:

@@ -4,7 +4,7 @@ This document describes how to release a new version, how to run migrations and 
 
 ## Summary
 
-- A push or a merge to `main` releases the code. Refer to [ci-cd.md](ci-cd.md).
+- A push or a merge to `main` releases the code. This applies to the fork and to upstream. The services run the code of the last deployment. Refer to [ci-cd.md](ci-cd.md).
 - A release changes the image of the web, worker and scheduler services, and of the artisan task. It does not change the service counts.
 - If the new code has pending migrations, the release stops before it changes the services. A person runs the migrations.
 - To roll back, deploy the image of a previous commit.

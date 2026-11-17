@@ -15,6 +15,7 @@ storage
 bootstrap/cache/*
 tests
 infra/aws
+docs
 Dockerfile
 .dockerignore
 *.log

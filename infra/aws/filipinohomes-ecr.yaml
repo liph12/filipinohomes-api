@@ -53,9 +53,10 @@ Resources:
               }
             ]
           }
-      # Only the CI role may push, and it only trusts runs on main in the GitHub repository. So an
-      # image gets here only through a push or merge to main: whoever can do that on GitHub can
-      # publish an image, and nobody else can, IAM users and admins included. Other systems' CI roles
+      # Only the CI role may push, and it only trusts runs on main in the fork and in upstream
+      # (stack filipinohomes-github). So an image gets here only through a push or merge to main in
+      # one of them: whoever can do that on GitHub can publish an image, and nobody else can, IAM
+      # users and admins included. Other systems' CI roles
       # in this account have push rights on every repository, so without this they could push a tag
       # here before CI does. Reads (ECS pulls, scanning) are untouched.
       RepositoryPolicyText:

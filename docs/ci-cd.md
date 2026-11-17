@@ -4,11 +4,15 @@ This document describes the GitHub Actions workflows, their IAM roles, the ECR r
 
 ## Summary
 
-- A push to `main` starts the workflow `Build image`.
+- Two repositories can build and deploy: the fork `orenji-neko/filipinohomes-api` and upstream `liph12/filipinohomes-api`.
+- A push to `main` in one of these repositories starts the workflow `Build image`.
 - The workflow builds the image, tests it, and pushes it to ECR as `filipinohomes/api:<commit-sha>`.
 - Then it calls the workflow `Deploy to ECS`, which deploys the image to the services.
 - The workflows store no AWS keys. They get temporary credentials with the GitHub OIDC token.
-- Only workflow runs on `main` of `orenji-neko/filipinohomes-api` can get these credentials.
+- Only workflow runs on `main` of the two repositories can get these credentials.
+
+> [!CAUTION]
+> The services run the image of the last deployment, from either repository. If the two `main` branches contain different code, each push changes the running code to the code of that repository. Merge the changes between the two repositories frequently. Then both `main` branches contain the same code.
 
 ## Workflow: Build image
 
@@ -19,7 +23,7 @@ File: `.github/workflows/build-image.yml`.
 | Push to `main` | Build, test, push to ECR, deploy |
 | Push to a `ci/**` branch | Build and test only |
 | Manual start (`workflow_dispatch`) on `main` | Build, test, push to ECR, deploy |
-| Push that changes only `infra/aws/**` | No run. These files are not in the image. |
+| Push that changes only `infra/aws/**` or `docs/**` | No run. These files are not in the image. |
 
 Steps of the job `build`:
 
@@ -44,7 +48,7 @@ File: `.github/workflows/deploy-ecs.yml`.
 | Called by `Build image` | The commit SHA of the push |
 | Manual start on `main`: **Actions > Deploy to ECS > Run workflow** | A full commit SHA (40 characters) whose image is in ECR |
 
-Only one deployment runs at a time. If many deployments wait, only the newest one runs.
+In each repository, only one deployment runs at a time. If many deployments wait, only the newest one runs. If the two repositories deploy at the same time, one deployment can stop with an error. It changes nothing. Start it again.
 
 Steps:
 
@@ -62,27 +66,36 @@ The workflow changes only `ImageTag` and `ArtisanImageTag`. It uses the current 
 
 ## GitHub secrets
 
+Each of the two repositories must have these secrets:
+
 | Secret | Value | Used by |
 |---|---|---|
 | `AWS_ROLE_ARN` | The ARN of `filipinohomes-github-ecr-push-role` | `Build image` |
 | `AWS_DEPLOY_ROLE_ARN` | The ARN of `filipinohomes-github-ecs-deploy-role` | `Deploy to ECS` |
 
-The role ARNs contain the account ID. The repository is public, so the ARNs are secrets. The workflows also hide the account ID, the DNS name of the load balancer and the output of the artisan task in their logs.
+| Repository | Who can set the secrets | Status on 2026-11-17 |
+|---|---|---|
+| `orenji-neko/filipinohomes-api` | The owner, `orenji-neko` | Set |
+| `liph12/filipinohomes-api` | The owner, `liph12` only. It is a personal repository, so collaborators cannot set secrets. | Not set |
+
+If a repository has no secrets, its `Build image` workflow stops at the AWS login. It pushes nothing and deploys nothing.
+
+The role ARNs contain the account ID. The repositories are public, so the ARNs are secrets. The workflows also hide the account ID, the DNS name of the load balancer and the output of the artisan task in their logs.
 
 ### Procedure: set a GitHub secret
 
-Only the owner of the repository `orenji-neko/filipinohomes-api` can set its secrets.
+Only the owner of a personal repository can set its secrets.
 
 #### AWS console and GitHub web interface
 
 > [!CAUTION]
-> The ARN contains the AWS account ID. Do not paste it in a public place, for example an issue, a commit or a chat.
+> The ARN contains the AWS account ID. Do not paste it in a public place, for example an issue, a pull request, a commit or a public chat. Send it to the repository owner in a private message.
 
 1. Open **CloudFormation > Stacks > filipinohomes-github**, and select the **Outputs** tab.
 2. Copy the value of the output:
    - `EcsDeployRoleArn` for the secret `AWS_DEPLOY_ROLE_ARN`
    - `EcrPushRoleArn` for the secret `AWS_ROLE_ARN`
-3. On GitHub, open the repository `orenji-neko/filipinohomes-api`.
+3. On GitHub, open the repository.
 4. Open **Settings > Secrets and variables > Actions**.
 5. Select **New repository secret**. To change a secret that exists, select its pencil icon.
 6. In **Name**, write the secret name. In **Secret**, paste the ARN.
@@ -96,27 +109,32 @@ Only the owner of the repository `orenji-neko/filipinohomes-api` can set its sec
    ```bash
    aws cloudformation describe-stacks --region ap-southeast-1 --stack-name filipinohomes-github \
      --query "Stacks[0].Outputs[?OutputKey=='EcsDeployRoleArn'].OutputValue" --output text \
-     | gh secret set AWS_DEPLOY_ROLE_ARN -R orenji-neko/filipinohomes-api
+     | gh secret set AWS_DEPLOY_ROLE_ARN -R <owner>/filipinohomes-api
    ```
 
 2. For `AWS_ROLE_ARN`, use the output key `EcrPushRoleArn`.
 3. Make sure that the secret exists:
 
    ```bash
-   gh secret list -R orenji-neko/filipinohomes-api
+   gh secret list -R <owner>/filipinohomes-api
    ```
 
 ## IAM roles for GitHub Actions
 
 Stack: `filipinohomes-github`.
 
-Both roles trust the GitHub OIDC provider of the account. Each role accepts only one token subject:
+Both roles trust the GitHub OIDC provider of the account. Each role accepts only these token subjects:
 
-```text
-repo:orenji-neko@<owner-id>/filipinohomes-api@<repository-id>:ref:refs/heads/main
-```
+| Parameter | Repository | Subject |
+|---|---|---|
+| `GitHubSubject` | Fork | `repo:orenji-neko@112786278/filipinohomes-api@1456292808:ref:refs/heads/main` |
+| `UpstreamGitHubSubject` | Upstream | `repo:liph12/filipinohomes-api:ref:refs/heads/main` |
 
-The repository uses the immutable OIDC subjects of GitHub, which contain numeric IDs. If a person makes a new repository with the same name, that repository cannot get the roles.
+The fork uses the immutable OIDC subjects of GitHub, which contain numeric IDs. If a person makes a new repository with the same name, that repository cannot get the roles.
+
+Upstream sends the subject with names, not IDs. This is less safe. Only its owner can change it: turn on immutable subjects in the GitHub Actions OIDC settings of the repository. Then do the procedure [use the immutable subject of upstream](#procedure-use-the-immutable-subject-of-upstream).
+
+If `UpstreamGitHubSubject` is empty, the roles trust the fork only.
 
 | Role | Permissions |
 |---|---|
@@ -124,6 +142,27 @@ The repository uses the immutable OIDC subjects of GitHub, which contain numeric
 | `filipinohomes-github-ecs-deploy-role` | Update the stack `filipinohomes-ecs-services`, register task definitions, update the `filipinohomes-*` services, run the task `filipinohomes-artisan`, read its log, pass the two task roles to ECS |
 
 The stack `filipinohomes-ecs-services` has no CloudFormation service role. For this reason, CloudFormation uses the permissions of the deploy role. The deploy role cannot make or change other resources. This is also true if a workflow sends a different template. Template changes stay manual. Refer to [stacks.md](stacks.md#procedure-deploy-a-template-change).
+
+> [!CAUTION]
+> Each person who can push to `main` in one of the two repositories can deploy to production. On 2026-11-17, six people could push to upstream, and its `main` branch had no protection. Use branch protection on `main` to control who can deploy.
+
+### Procedure: use the immutable subject of upstream
+
+Do this procedure after the owner of upstream turns on immutable OIDC subjects.
+
+1. Change the parameter `UpstreamGitHubSubject` of `filipinohomes-github` to this value:
+
+   ```text
+   repo:liph12@71587999/filipinohomes-api@1116602811:ref:refs/heads/main
+   ```
+
+   - **AWS console:** use **Create change set for current stack** with **Use current template**. Refer to [stacks.md](stacks.md#procedure-deploy-a-template-change).
+   - **AWS CLI:** add `--parameter-overrides UpstreamGitHubSubject=<value>` to the deploy command in [stacks.md](stacks.md#procedure-deploy-a-template-change).
+
+2. Make sure that the change set modifies only `EcrPushRole` and `EcsDeployRole`, with no replacement.
+3. Run the change set.
+4. Push a commit to `main` in upstream. Make sure that the AWS login of `Build image` passes.
+5. Change the default value of `UpstreamGitHubSubject` in `infra/aws/filipinohomes-github.yaml` to the same value.
 
 ## ECR repository
 
@@ -138,6 +177,8 @@ Stack: `filipinohomes-ecr`.
 | Deletion policy | `Retain` |
 | Encryption | AES-256 |
 
+The 30 newest images come from both repositories. For this reason, a rollback can go back to fewer commits of one repository.
+
 To see the images in the console, open **Amazon ECR > Private registry > Repositories > filipinohomes/api**. The list shows the tag (commit SHA), the push time and the scan status of each image. Open an image to see its scan findings.
 
 The repository policy denies a push from all principals except `filipinohomes-github-ecr-push-role`. This rule also applies to administrators. Other systems in the account have CI roles that can push to all repositories. Without this policy, they could push a tag before CI pushes it. The policy does not stop pulls or scans.
@@ -150,12 +191,14 @@ The repository policy denies a push from all principals except `filipinohomes-gi
 | Remote | Repository | Function |
 |---|---|---|
 | `origin` | `orenji-neko/filipinohomes-api` (public fork) | The AWS and ECS work. CI builds and deploys from its `main`. |
-| `upstream` | `liph12/filipinohomes-api` | The feature work of the team |
+| `upstream` | `liph12/filipinohomes-api` | The feature work of the team. CI builds and deploys from its `main` when it has the secrets. |
+
+Changes from the fork go to upstream through pull requests.
 
 ### Procedure: merge the upstream changes into the fork
 
 > [!CAUTION]
-> Do not push to `upstream`. Do not rebase `main`. Its commits are on GitHub, and CI built images from them.
+> Do not push to `upstream` directly. Use a pull request. Do not rebase `main`. Its commits are on GitHub, and CI built images from them.
 
 1. Get the upstream changes:
 
