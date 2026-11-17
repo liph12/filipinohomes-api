@@ -230,7 +230,7 @@ return [
         'quality' => 88,
         'thumb_width' => 640,
         'thumb_quality' => 78,
-        'max_upload_kb' => 50 * 1024,   // 50MB; full-size event camera shots
+        'max_upload_kb' => 35 * 1024,   // 35MB; bigger photos are shrunk in the browser first
         'match_threshold' => (float) env('NATCON_GALLERY_MATCH_THRESHOLD', 90),
         // Hits per probe. Priced per call, not per hit, so generous: the public
         // search filters by album AFTER this cap, and a person in 300 photos
