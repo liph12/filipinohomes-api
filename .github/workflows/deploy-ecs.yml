@@ -1,0 +1,224 @@
+name: Deploy to ECS
+
+# Deploys a filipinohomes/api image that's already in ECR: the web, worker and scheduler services
+# and the artisan task definition all move to it. build-image.yml calls this after a push to main
+# has built, tested and pushed that commit's image. To redeploy, or to roll back to an earlier
+# commit's image, run it by hand on main: Actions > Deploy to ECS > Run workflow.
+#
+# It changes only the ImageTag and ArtisanImageTag parameters of the filipinohomes-ecs-services
+# stack, on the stack's current template. Template changes and the service counts stay manual
+# (infra/aws/filipinohomes-ecs-services.yaml).
+#
+# Migrations: it first points the artisan task at the new image and runs
+# `php artisan migrate:status --pending=1`. If a migration is pending it stops there, before the
+# services change; it never runs migrate itself. Run the migrations by hand (see the services
+# template's header), then re-run this workflow.
+#
+# AWS access uses the AWS CLI only: GitHub's OIDC token is exchanged for
+# filipinohomes-github-ecs-deploy-role (infra/aws/filipinohomes-github.yaml), which accepts only
+# runs on main. This repo is public, so its logs are too: the role ARN is a secret, the account
+# ID and the load balancer's address are masked, and artisan output is reduced to migration names.
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Commit SHA of the image to deploy (the tag of filipinohomes/api in ECR).
+        required: true
+        type: string
+    secrets:
+      AWS_DEPLOY_ROLE_ARN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Full 40-character commit SHA whose image is in ECR
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-southeast-1
+  AWS_DEFAULT_REGION: ap-southeast-1
+  STACK: filipinohomes-ecs-services
+  ALB_STACK: filipinohomes-alb
+  CLUSTER: filipinohomes-ecs
+  ECR_REPOSITORY: filipinohomes/api
+  IMAGE_TAG: ${{ inputs.image_tag }}
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # One deploy at a time. A newer deploy waits for the running one; if several are waiting,
+    # only the newest runs.
+    concurrency:
+      group: filipinohomes-ecs-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Check the image tag
+        run: |
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::image_tag must be a full 40-character commit SHA"; exit 1; }
+
+      - name: Log in to AWS (GitHub OIDC token, AWS CLI)
+        env:
+          ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          token=$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "::add-mask::$token"
+          read -r key secret session < <(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "github-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --web-identity-token "$token" --duration-seconds 3600 \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+          echo "::add-mask::$key"; echo "::add-mask::$secret"; echo "::add-mask::$session"
+          {
+            echo "AWS_ACCESS_KEY_ID=$key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret"
+            echo "AWS_SESSION_TOKEN=$session"
+          } >> "$GITHUB_ENV"
+          account=$(AWS_ACCESS_KEY_ID=$key AWS_SECRET_ACCESS_KEY=$secret AWS_SESSION_TOKEN=$session \
+            aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$account"
+
+      - name: Check the image is in ECR
+        run: |
+          aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" >/dev/null \
+            || { echo "::error::$ECR_REPOSITORY:$IMAGE_TAG isn't in ECR"; exit 1; }
+
+      - name: Check what's deployed
+        id: current
+        run: |
+          set -euo pipefail
+          read -r status image artisan < <(aws cloudformation describe-stacks --stack-name "$STACK" --query \
+            "Stacks[0].[StackStatus, Parameters[?ParameterKey=='ImageTag'].ParameterValue|[0], Parameters[?ParameterKey=='ArtisanImageTag'].ParameterValue|[0]]" \
+            --output text)
+          echo "Stack $STACK: $status, services on $image, artisan on ${artisan:-the same}"
+          case "$status" in
+            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE) ;;
+            *) echo "::error::$STACK is $status; deploy when it's in a COMPLETE state"; exit 1 ;;
+          esac
+          if [ "$image" = "$IMAGE_TAG" ] && { [ -z "$artisan" ] || [ "$artisan" = None ]; }; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE_TAG is already deployed; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "previous=$image" >> "$GITHUB_OUTPUT"
+          fi
+          # Shared by the steps below: updates the stack's image parameters on its current template
+          # and waits. Every other parameter keeps its value.
+          cat > "$RUNNER_TEMP/update-stack.sh" <<'EOF'
+          update_stack() {  # update_stack <ImageTag, or - to keep it> <ArtisanImageTag, "" = follow ImageTag>
+            local image=$1 artisan=$2 params out started
+            params=$(aws cloudformation describe-stacks --stack-name "$STACK" \
+                       --query 'Stacks[0].Parameters[].ParameterKey' --output json |
+              jq -c --arg image "$image" --arg artisan "$artisan" 'map(
+                if . == "ImageTag" and $image != "-" then {ParameterKey: ., ParameterValue: $image}
+                elif . == "ArtisanImageTag" then {ParameterKey: ., ParameterValue: $artisan}
+                else {ParameterKey: ., UsePreviousValue: true} end)')
+            started=$(date -u +%Y-%m-%dT%H:%M:%S)
+            if ! out=$(aws cloudformation update-stack --stack-name "$STACK" --use-previous-template \
+                         --capabilities CAPABILITY_NAMED_IAM --parameters "$params" 2>&1); then
+              if grep -q 'No updates are to be performed' <<<"$out"; then echo "Already set; no change."; return 0; fi
+              echo "$out"; return 1
+            fi
+            if ! aws cloudformation wait stack-update-complete --stack-name "$STACK"; then
+              echo "::error::The stack update failed; CloudFormation rolled it back. Failures:"
+              aws cloudformation describe-stack-events --stack-name "$STACK" --max-items 60 --output json |
+                jq -r --arg started "$started" '.StackEvents[]
+                  | select(.Timestamp >= $started and (.ResourceStatus | contains("FAILED")))
+                  | "\(.LogicalResourceId): \(.ResourceStatusReason)"'
+              return 1
+            fi
+          }
+          EOF
+
+      - name: Point the artisan task at the new image
+        if: steps.current.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          . "$RUNNER_TEMP/update-stack.sh"
+          update_stack - "$IMAGE_TAG"
+
+      - name: Check for pending migrations
+        if: steps.current.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          read -r task failure < <(aws ecs run-task --cluster "$CLUSTER" --task-definition filipinohomes-artisan \
+            --started-by "github-${GITHUB_RUN_ID}" \
+            --overrides '{"containerOverrides":[{"name":"artisan","command":["php","artisan","migrate:status","--pending=1"]}]}' \
+            --query '[tasks[0].taskArn, failures[0].reason]' --output text)
+          if [ -z "$task" ] || [ "$task" = None ]; then
+            echo "::error::Couldn't start the artisan task: $failure"; exit 1
+          fi
+          echo "Artisan task ${task##*/}: php artisan migrate:status --pending=1"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task"
+          read -r code reason < <(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task" \
+            --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
+          # The container's output, reduced to the names of pending migrations (the logs are public).
+          pending=""
+          for _ in 1 2 3 4 5; do
+            lines=$(aws logs get-log-events --log-group-name /ecs/filipinohomes/artisan \
+                      --log-stream-name "artisan/artisan/${task##*/}" --start-from-head \
+                      --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n' || true)
+            [ -n "$lines" ] && break
+            sleep 3
+          done
+          pending=$(grep -E '^\s*[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{6}_[A-Za-z0-9_]+ .*Pending\s*$' <<<"$lines" \
+                      | awk '{print $1}' || true)
+          if [ "$code" = 0 ]; then
+            echo "No pending migrations."
+          elif [ -n "$pending" ]; then
+            echo "::error::Pending migrations; the services were not changed. Run them by hand with the artisan task (it now uses this image), then re-run this workflow."
+            echo "$pending"
+            {
+              echo "### Stopped: pending migrations"
+              echo "The artisan task now uses \`$IMAGE_TAG\`; the services still run the previous image."
+              echo '```'; echo "$pending"; echo '```'
+              echo "Run \`php artisan migrate --force\` with the artisan task (see infra/aws/filipinohomes-ecs-services.yaml), then re-run this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else
+            echo "::error::migrate:status failed (exit code $code, $reason). Its output is in CloudWatch Logs: /ecs/filipinohomes/artisan, stream artisan/artisan/${task##*/}."
+            exit 1
+          fi
+
+      - name: Deploy the services
+        if: steps.current.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          . "$RUNNER_TEMP/update-stack.sh"
+          # CloudFormation waits until each service has replaced its tasks and the load balancer's
+          # health checks pass. If the new tasks fail, ECS rolls back to the previous image and the
+          # stack update fails.
+          update_stack "$IMAGE_TAG" ""
+
+      - name: Check the web service
+        if: steps.current.outputs.skip == 'false'
+        env:
+          PREVIOUS: ${{ steps.current.outputs.previous }}
+        run: |
+          set -euo pipefail
+          read -r running desired taskdef < <(aws ecs describe-services --cluster "$CLUSTER" --services filipinohomes-web \
+            --query 'services[0].[runningCount, desiredCount, taskDefinition]' --output text)
+          image=$(aws ecs describe-task-definition --task-definition "$taskdef" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          [ "${image##*:}" = "$IMAGE_TAG" ] || { echo "::error::filipinohomes-web runs ${image##*:}, not $IMAGE_TAG"; exit 1; }
+          dns=$(aws cloudformation describe-stacks --stack-name "$ALB_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDnsName'].OutputValue|[0]" --output text)
+          echo "::add-mask::$dns"
+          up=$(curl -s -o /dev/null --max-time 15 -w '%{http_code}' "http://$dns/up" || true)
+          [ "$up" = 200 ] || { echo "::error::/up through the load balancer returned $up"; exit 1; }
+          {
+            echo "### Deployed \`$IMAGE_TAG\` to ECS"
+            echo "- Previous image: \`$PREVIOUS\`"
+            echo "- filipinohomes-web: $running of $desired tasks running; /up through the load balancer: $up"
+            echo "- Worker and scheduler counts are unchanged."
+          } >> "$GITHUB_STEP_SUMMARY"

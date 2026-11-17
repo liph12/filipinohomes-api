@@ -63,6 +63,12 @@ return Application::configure(basePath: dirname(__DIR__))
             // Local reverse proxy, if any (loopback can't be spoofed externally)
             '127.0.0.1',
             '::1',
+            // The AWS load balancer (filipinohomes-alb) in shared-vpc's public subnets. It adds
+            // the Cloudflare edge's IP to X-Forwarded-For, and only it can reach the ECS
+            // containers (security group filipinohomes-sg-ecs). These private ranges can't
+            // reach the current server.
+            '10.0.0.0/20',
+            '10.0.16.0/20',
             // Only trust the client-IP header — leaves scheme/host/port
             // detection exactly as it is today, so the sole production change
             // is that $request->ip() resolves to the real visitor.

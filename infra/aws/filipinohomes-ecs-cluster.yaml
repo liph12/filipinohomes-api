@@ -1,0 +1,266 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Filipino Homes ECS cluster on EC2: the cluster, its instances' security group, IAM role and
+  launch template, the Auto Scaling group in the Filipino Homes private subnets, and the capacity
+  provider that grows and shrinks that group to fit the tasks.
+
+# Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
+#
+# Deploy after filipinohomes-network and filipinohomes-alb exist (preview first, then apply):
+#   aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-ecs-cluster \
+#     --template-file infra/aws/filipinohomes-ecs-cluster.yaml --capabilities CAPABILITY_NAMED_IAM \
+#     --tags Project=filipinohomes --no-execute-changeset
+# On an existing stack, pass --parameter-overrides to change a parameter's deployed value.
+#
+# Instances:
+# - The ECS-optimized Amazon Linux 2023 AMI, looked up from AWS's public SSM parameter each time
+#   the stack is deployed. A new AMI makes a new launch template version, which only new
+#   instances use. To move running instances to it, refresh the group. ECS keeps scale-in
+#   protection on instances with tasks, so the refresh has to replace protected instances; it
+#   starts each new instance first, and ECS drains the old one's tasks before it's terminated:
+#     aws autoscaling start-instance-refresh --region ap-southeast-1 --auto-scaling-group-name filipinohomes-asg \
+#       --preferences '{"ScaleInProtectedInstances":"Refresh","MinHealthyPercentage":100,"MaxHealthyPercentage":200}'
+# - No SSH key and no public IP. For a shell on an instance use Session Manager
+#   (aws ssm start-session --target <instance-id>); for a shell in a container, ECS Exec.
+# - IMDSv2 only, with a hop limit of 1: containers on Docker's bridge network are one hop further
+#   away, so they can't get the instance role's credentials. Tasks get their own role from ECS.
+#
+# Remove: delete filipinohomes-ecs-services first. Instances are protected from scale-in while
+# tasks run on them (ECS manages this), so scale the services to 0 before deleting this stack.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: filipinohomes-network
+    Description: Stack that exports the VPC and private subnet IDs.
+  AlbStackName:
+    Type: String
+    Default: filipinohomes-alb
+    Description: Stack that exports the ALB's security group.
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    Description: >-
+      x86_64 (the image is built for linux/amd64). t3.medium has 2 vCPUs and 4 GiB; the current
+      server (t2.xlarge) averaged under 3% CPU over the 14 days before 2026-11-14.
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
+    Description: ECS-optimized Amazon Linux 2023 (x86_64), resolved at each deploy.
+  RootVolumeGiB:
+    Type: Number
+    Default: 30
+    MinValue: 30
+    Description: The AMI's minimum is 30 GiB. Holds Docker images and container writable layers.
+  MinSize:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: >-
+      With 1, both web containers usually share one instance in one zone, like the current
+      single server. 2 keeps an instance in each zone, so losing one instance doesn't stop the API.
+  MaxSize:
+    Type: Number
+    Default: 3
+    MinValue: 1
+
+Resources:
+  # ── Instances ─────────────────────────────────────────────────────────────────────────────────
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: filipinohomes-sg-ecs
+      GroupDescription: Filipino Homes ECS instances - container ports from the ALB only
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 32768
+          ToPort: 65535
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${AlbStackName}-AlbSecurityGroupId"
+          Description: Container dynamic host ports, from filipinohomes-sg-alb
+      # Default egress (all traffic): the database over the peering connection, AWS APIs and the
+      # internet through the shared NAT gateway, S3 through the gateway endpoint.
+      Tags:
+        - Key: Name
+          Value: filipinohomes-sg-ecs
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: filipinohomes-ecs-instance-role
+      Description: Filipino Homes ECS instances - ECS agent, image pulls, container logs, Session Manager.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Tags:
+        - Key: Name
+          Value: filipinohomes-ecs-instance-role
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: filipinohomes-ecs-instance-role
+      Roles:
+        - !Ref InstanceRole
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: filipinohomes-lt
+      # Stack tags don't reach a launch template or what it launches, so Project is set here too.
+      # (The ASG propagates its own tags to the instances.)
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Name
+              Value: filipinohomes-lt
+            - Key: Project
+              Value: filipinohomes
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref InstanceSecurityGroup
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeType: gp3
+              VolumeSize: !Ref RootVolumeGiB
+              Encrypted: true
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: filipinohomes-ecs-instance
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: filipinohomes-ecs-instance
+              - Key: Project
+                Value: filipinohomes
+          - ResourceType: network-interface
+            Tags:
+              - Key: Name
+                Value: filipinohomes-ecs-instance
+              - Key: Project
+                Value: filipinohomes
+        # ECS agent settings:
+        # - STOP_TIMEOUT applies to containers without their own stopTimeout (the worker), so a
+        #   queue job of up to 15 minutes (RunSeoCommand) can finish when ECS stops the worker.
+        #   A task definition can't set more than 120 seconds itself.
+        # - RESERVED_MEMORY keeps 256 MiB for the OS out of what ECS places tasks into.
+        # - Image tags are immutable in ECR, so a tag already on the instance is never re-pulled.
+        # - The container instance gets the EC2 instance's tags (Name, Project) when it registers.
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            cat >> /etc/ecs/ecs.config <<'EOF'
+            ECS_CLUSTER=${Cluster}
+            ECS_CONTAINER_STOP_TIMEOUT=16m
+            ECS_RESERVED_MEMORY=256
+            ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
+            ECS_ENABLE_TASK_IAM_ROLE=true
+            ECS_CONTAINER_INSTANCE_PROPAGATE_TAGS_FROM=ec2_instance
+            EOF
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: filipinohomes-asg
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      # No DesiredCapacity: the capacity provider sets it, and a stack update leaves it alone.
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1Id"
+        - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2Id"
+      # Required by the capacity provider's managed termination protection: ECS removes the
+      # protection only from instances it has drained.
+      NewInstancesProtectedFromScaleIn: true
+      Tags:
+        - Key: Name
+          Value: filipinohomes-ecs-instance
+          PropagateAtLaunch: true
+        # ECS adds this tag to groups it manages; declaring it keeps CloudFormation from seeing drift.
+        - Key: AmazonECSManaged
+          Value: ""
+          PropagateAtLaunch: true
+
+  # ── Cluster ───────────────────────────────────────────────────────────────────────────────────
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: filipinohomes-ecs
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: Name
+          Value: filipinohomes-ecs
+
+  CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: filipinohomes-cp
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        # Keep exactly enough instances for the tasks' reserved CPU and memory, one at a time.
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
+          InstanceWarmupPeriod: 180
+        ManagedTerminationProtection: ENABLED
+        ManagedDraining: ENABLED
+      Tags:
+        - Key: Name
+          Value: filipinohomes-cp
+
+  ClusterCapacityProviders:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref Cluster
+      CapacityProviders:
+        - !Ref CapacityProvider
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !Ref CapacityProvider
+          Weight: 1
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+    Export:
+      Name: !Sub "${AWS::StackName}-ClusterName"
+  CapacityProviderName:
+    Value: !Ref CapacityProvider
+    Export:
+      Name: !Sub "${AWS::StackName}-CapacityProviderName"
+  InstanceSecurityGroupId:
+    Value: !Ref InstanceSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-InstanceSecurityGroupId"
+  AutoScalingGroupName:
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-AutoScalingGroupName"

@@ -1,0 +1,543 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Filipino Homes API on ECS: task roles, log groups, task definitions and the web, worker and
+  scheduler services, plus a task definition for one-off artisan commands (migrations).
+
+# Names follow the shared AWS naming scheme (NAMING.md, kept outside this repo for now).
+#
+# Deploy after filipinohomes-ecs-cluster, filipinohomes-alb, filipinohomes-secrets and
+# filipinohomes-ecr exist, with an image tag that's in ECR (a commit SHA on main):
+#   aws cloudformation deploy --region ap-southeast-1 --stack-name filipinohomes-ecs-services \
+#     --template-file infra/aws/filipinohomes-ecs-services.yaml --capabilities CAPABILITY_NAMED_IAM \
+#     --tags Project=filipinohomes --parameter-overrides ImageTag=<sha> --no-execute-changeset
+# On an existing stack, `deploy` keeps each parameter's previous value unless you pass
+# --parameter-overrides, so changing a default here doesn't change the deployed value.
+#
+# Settings: every container gets the whole filipinohomes/api secret as one variable,
+# FILIPINOHOMES_ENV_JSON, which the image's entrypoint expands into one variable per setting
+# (infra/docker/env-from-secret.php). The Environment entries below override the secret's values.
+#
+# Releasing a new image: a push to main, in the fork or in upstream, does it
+# (.github/workflows/build-image.yml, then deploy-ecs.yml). The services run whichever main
+# deployed last. The workflow does steps 1, 2 and 4 below on this stack's current template,
+# changing only ImageTag and ArtisanImageTag. If step 2 finds pending migrations it stops; run
+# step 3 by hand, then re-run the workflow. By hand, the steps are:
+#   1. Deploy with ArtisanImageTag=<new sha> only. The services keep running the old image.
+#   2. Run `php artisan migrate:status` with it (below) and read which migrations are pending.
+#   3. Run `php artisan migrate --force` the same way.
+#   4. Deploy with ImageTag=<new sha> and ArtisanImageTag="" (artisan follows ImageTag again).
+# Without migrations, step 4 alone is enough. Template changes (anything besides the image) are
+# always deployed by hand with the command above; leave ImageTag out of --parameter-overrides
+# so it keeps the image the workflow deployed.
+#
+# One-off artisan command (the default command is migrate:status, which changes nothing; the
+# cluster's default capacity provider places it):
+#   aws ecs run-task --region ap-southeast-1 --cluster filipinohomes-ecs --task-definition filipinohomes-artisan \
+#     --overrides '{"containerOverrides":[{"name":"artisan","command":["php","artisan","migrate","--force"]}]}'
+#   aws logs tail --region ap-southeast-1 /ecs/filipinohomes/artisan --follow
+#
+# A shell in a running container (ECS Exec; needs the Session Manager plugin locally). Sessions
+# run as root and without the expanded settings, so run artisan as the app user (it reads the
+# config cache built at start); otherwise files it creates under storage/ belong to root:
+#   aws ecs execute-command --region ap-southeast-1 --cluster filipinohomes-ecs --task <task-id> \
+#     --container web --interactive --command "runuser -u app -- php artisan about"
+#
+# The worker and the scheduler start at 0 tasks. The scheduler sends live NATCON and birthday
+# mail, so it may only run here once the current server's cron no longer runs it. No worker has
+# processed the queue since 2026-10-31, so the jobs table holds a large backlog, nearly all
+# IndexNow pings: read docs/queue-backlog.md before starting the worker, or it sends all of them.
+
+Parameters:
+  ImageTag:
+    Type: String
+    AllowedPattern: "[A-Za-z0-9_.-]{1,128}"
+    Description: Tag of filipinohomes/api in ECR for the services (a commit SHA on main).
+  ArtisanImageTag:
+    Type: String
+    Default: ""
+    AllowedPattern: "[A-Za-z0-9_.-]{0,128}"
+    Description: Tag for one-off artisan tasks. Empty means the same as ImageTag.
+  WebCount:
+    Type: Number
+    Default: 2
+    MinValue: 0
+  WorkerCount:
+    Type: Number
+    Default: 0
+    AllowedValues: [0, 1]
+    Description: Queue workers for the default queue. Read the note above before setting 1.
+  SchedulerCount:
+    Type: Number
+    Default: 0
+    AllowedValues: [0, 1]
+    Description: Never more than 1, and only after the current server's cron is off.
+  CacheStore:
+    Type: String
+    Default: database
+    Description: >-
+      Laravel's CACHE_STORE for every container, overriding the secret's "file": file caches
+      aren't shared between containers, so a cache cleared by one would stay stale in the others.
+      The database store uses the cache and cache_locks tables.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+  ClusterStackName:
+    Type: String
+    Default: filipinohomes-ecs-cluster
+  AlbStackName:
+    Type: String
+    Default: filipinohomes-alb
+  SecretsStackName:
+    Type: String
+    Default: filipinohomes-secrets
+  EcrStackName:
+    Type: String
+    Default: filipinohomes-ecr
+
+Conditions:
+  ArtisanFollowsImageTag: !Equals [!Ref ArtisanImageTag, ""]
+
+Resources:
+  # ── Logs ──────────────────────────────────────────────────────────────────────────────────────
+
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/filipinohomes/web
+      RetentionInDays: !Ref LogRetentionDays
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/filipinohomes/worker
+      RetentionInDays: !Ref LogRetentionDays
+  SchedulerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/filipinohomes/scheduler
+      RetentionInDays: !Ref LogRetentionDays
+  ArtisanLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/filipinohomes/artisan
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ── Roles ─────────────────────────────────────────────────────────────────────────────────────
+
+  # Used by ECS itself to start a task: pull the image and read the secret. On EC2 the agent also
+  # gives this role's credentials to Docker's awslogs driver, which writes the containers' output
+  # to CloudWatch Logs. Without the logs permissions here, non-blocking mode drops every line.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: filipinohomes-ecs-task-execution-role
+      Description: ECS starts Filipino Homes tasks - pulls filipinohomes/api, reads the filipinohomes/api secret, writes container logs.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+      Policies:
+        - PolicyName: start-tasks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PullApiImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource:
+                  Fn::ImportValue: !Sub "${EcrStackName}-RepositoryArn"
+              - Sid: ReadApiSecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::ImportValue: !Sub "${SecretsStackName}-ApiSecretArn"
+              - Sid: WriteContainerLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                # Each log group's Arn ends in :*, which covers its log streams.
+                Resource:
+                  - !GetAtt WebLogGroup.Arn
+                  - !GetAtt WorkerLogGroup.Arn
+                  - !GetAtt SchedulerLogGroup.Arn
+                  - !GetAtt ArtisanLogGroup.Arn
+      Tags:
+        - Key: Name
+          Value: filipinohomes-ecs-task-execution-role
+
+  # The app's own role. The app calls S3 and other AWS services with the keys in its settings,
+  # so this only allows ECS Exec (a shell in a running container) and logging its sessions to the
+  # container's log group.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: filipinohomes-ecs-task-role
+      Description: Filipino Homes containers - ECS Exec only; the app uses the AWS keys in its settings.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+      Policies:
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ExecSessions
+                Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: "*"
+              - Sid: ExecSessionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/filipinohomes/*"
+              - Sid: ExecSessionLogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: filipinohomes-ecs-task-role
+
+  # ── Task definitions ──────────────────────────────────────────────────────────────────────────
+  # Bridge networking: containers share the instance's network, and the web container gets a
+  # dynamic host port that ECS registers in the target group. InitProcessEnabled runs an init
+  # process as PID 1 that forwards stop signals and reaps the processes the scheduler leaves
+  # behind (runInBackground). Memory: MemoryReservation is what ECS places tasks by; Memory is
+  # the hard limit where the container is killed.
+
+  WebTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: filipinohomes-web
+      NetworkMode: bridge
+      RequiresCompatibilities: [EC2]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: web
+          Image: !Sub
+            - "${RepositoryUri}:${ImageTag}"
+            - RepositoryUri:
+                Fn::ImportValue: !Sub "${EcrStackName}-RepositoryUri"
+          Essential: true
+          Cpu: 512
+          MemoryReservation: 768
+          Memory: 2048
+          PortMappings:
+            - ContainerPort: 8080
+              HostPort: 0
+              Protocol: tcp
+          StopTimeout: 30
+          LinuxParameters:
+            InitProcessEnabled: true
+          Secrets:
+            - Name: FILIPINOHOMES_ENV_JSON
+              ValueFrom:
+                Fn::ImportValue: !Sub "${SecretsStackName}-ApiSecretArn"
+          Environment:
+            - Name: LOG_CHANNEL
+              Value: stderr
+            - Name: CACHE_STORE
+              Value: !Ref CacheStore
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WebLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+              mode: non-blocking
+              max-buffer-size: 4m
+      Tags:
+        - Key: Name
+          Value: filipinohomes-web
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: filipinohomes-worker
+      NetworkMode: bridge
+      RequiresCompatibilities: [EC2]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Sub
+            - "${RepositoryUri}:${ImageTag}"
+            - RepositoryUri:
+                Fn::ImportValue: !Sub "${EcrStackName}-RepositoryUri"
+          # The default queue only: the backfill queues (region-backfill, image-variants,
+          # photo-migration) are drained by hand with a one-off artisan task.
+          # --memory restarts the worker after a job leaves it above 384 MB, below PHP's 512M limit.
+          Command: [php, artisan, queue:work, --queue=default, --memory=384]
+          Essential: true
+          Cpu: 256
+          MemoryReservation: 512
+          Memory: 1536
+          # No StopTimeout: the instance's ECS_CONTAINER_STOP_TIMEOUT (16 minutes) applies, so on
+          # SIGTERM queue:work can finish the job it's running before it exits.
+          LinuxParameters:
+            InitProcessEnabled: true
+          Secrets:
+            - Name: FILIPINOHOMES_ENV_JSON
+              ValueFrom:
+                Fn::ImportValue: !Sub "${SecretsStackName}-ApiSecretArn"
+          Environment:
+            - Name: LOG_CHANNEL
+              Value: stderr
+            - Name: CACHE_STORE
+              Value: !Ref CacheStore
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+              mode: non-blocking
+              max-buffer-size: 4m
+      Tags:
+        - Key: Name
+          Value: filipinohomes-worker
+
+  SchedulerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: filipinohomes-scheduler
+      NetworkMode: bridge
+      RequiresCompatibilities: [EC2]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: scheduler
+          Image: !Sub
+            - "${RepositoryUri}:${ImageTag}"
+            - RepositoryUri:
+                Fn::ImportValue: !Sub "${EcrStackName}-RepositoryUri"
+          # php artisan schedule:work, which on stop waits for running commands (infra/docker/scheduler.sh).
+          Command: [filipinohomes-scheduler]
+          Essential: true
+          Cpu: 256
+          MemoryReservation: 512
+          Memory: 2048
+          # The most a task definition may set. Commands still running after it are killed.
+          StopTimeout: 120
+          LinuxParameters:
+            InitProcessEnabled: true
+          Secrets:
+            - Name: FILIPINOHOMES_ENV_JSON
+              ValueFrom:
+                Fn::ImportValue: !Sub "${SecretsStackName}-ApiSecretArn"
+          Environment:
+            - Name: LOG_CHANNEL
+              Value: stderr
+            - Name: CACHE_STORE
+              Value: !Ref CacheStore
+            # Laravel runs each scheduled command with its output, stderr included, sent to
+            # /dev/null. This sends it to PID 1's stdout, the container's log, instead
+            # (config/logging.php, routes/console.php).
+            - Name: LOG_SCHEDULE_OUTPUT
+              Value: /proc/1/fd/1
+            # withoutOverlapping locks stay in this container, so a container stopped mid-run
+            # doesn't leave locks in the database that block the command for up to 24 hours.
+            # There's only ever one scheduler.
+            - Name: SCHEDULE_CACHE_DRIVER
+              Value: file
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref SchedulerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: scheduler
+              mode: non-blocking
+              max-buffer-size: 4m
+      Tags:
+        - Key: Name
+          Value: filipinohomes-scheduler
+
+  ArtisanTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: filipinohomes-artisan
+      NetworkMode: bridge
+      RequiresCompatibilities: [EC2]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: artisan
+          Image: !Sub
+            - "${RepositoryUri}:${Tag}"
+            - RepositoryUri:
+                Fn::ImportValue: !Sub "${EcrStackName}-RepositoryUri"
+              Tag: !If [ArtisanFollowsImageTag, !Ref ImageTag, !Ref ArtisanImageTag]
+          # Changes nothing; pass the real command with --overrides.
+          Command: [php, artisan, migrate:status]
+          Essential: true
+          Cpu: 256
+          MemoryReservation: 512
+          Memory: 2048
+          LinuxParameters:
+            InitProcessEnabled: true
+          Secrets:
+            - Name: FILIPINOHOMES_ENV_JSON
+              ValueFrom:
+                Fn::ImportValue: !Sub "${SecretsStackName}-ApiSecretArn"
+          Environment:
+            - Name: LOG_CHANNEL
+              Value: stderr
+            - Name: CACHE_STORE
+              Value: !Ref CacheStore
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ArtisanLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: artisan
+              mode: non-blocking
+              max-buffer-size: 4m
+      Tags:
+        - Key: Name
+          Value: filipinohomes-artisan
+
+  # ── Services ──────────────────────────────────────────────────────────────────────────────────
+  # A deployment that keeps failing to start tasks rolls back to the previous task definition.
+
+  WebService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: filipinohomes-web
+      Cluster:
+        Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+      TaskDefinition: !Ref WebTaskDefinition
+      DesiredCount: !Ref WebCount
+      CapacityProviderStrategy:
+        - CapacityProvider:
+            Fn::ImportValue: !Sub "${ClusterStackName}-CapacityProviderName"
+          Weight: 1
+      LoadBalancers:
+        - ContainerName: web
+          ContainerPort: 8080
+          TargetGroupArn:
+            Fn::ImportValue: !Sub "${AlbStackName}-WebTargetGroupArn"
+      HealthCheckGracePeriodSeconds: 60
+      # New containers start alongside the old ones (the capacity provider adds an instance if
+      # they don't fit), and at least half keep serving throughout.
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      PlacementStrategies:
+        - Type: spread
+          Field: attribute:ecs.availability-zone
+        - Type: spread
+          Field: instanceId
+      EnableExecuteCommand: true
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Name
+          Value: filipinohomes-web
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: filipinohomes-worker
+      Cluster:
+        Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+      TaskDefinition: !Ref WorkerTaskDefinition
+      DesiredCount: !Ref WorkerCount
+      CapacityProviderStrategy:
+        - CapacityProvider:
+            Fn::ImportValue: !Sub "${ClusterStackName}-CapacityProviderName"
+          Weight: 1
+      # The new worker starts before the old one stops, which finishes its current job first.
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      AvailabilityZoneRebalancing: DISABLED
+      EnableExecuteCommand: true
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Name
+          Value: filipinohomes-worker
+
+  SchedulerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: filipinohomes-scheduler
+      Cluster:
+        Fn::ImportValue: !Sub "${ClusterStackName}-ClusterName"
+      TaskDefinition: !Ref SchedulerTaskDefinition
+      DesiredCount: !Ref SchedulerCount
+      CapacityProviderStrategy:
+        - CapacityProvider:
+            Fn::ImportValue: !Sub "${ClusterStackName}-CapacityProviderName"
+          Weight: 1
+      # Stop the old scheduler before starting the new one: two must never run at once.
+      # Rebalancing across zones would need room for a second scheduler, so it's off.
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      AvailabilityZoneRebalancing: DISABLED
+      EnableExecuteCommand: true
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Name
+          Value: filipinohomes-scheduler
+
+Outputs:
+  WebServiceName:
+    Value: !GetAtt WebService.Name
+  WorkerServiceName:
+    Value: !GetAtt WorkerService.Name
+  SchedulerServiceName:
+    Value: !GetAtt SchedulerService.Name
+  ArtisanTaskDefinitionArn:
+    Value: !Ref ArtisanTaskDefinition
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-TaskExecutionRoleArn"
+  TaskRoleArn:
+    Value: !GetAtt TaskRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-TaskRoleArn"

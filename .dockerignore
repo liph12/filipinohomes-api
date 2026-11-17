@@ -1,0 +1,22 @@
+# Keep secrets, local state and build output out of the image. The Dockerfile recreates
+# storage/ and bootstrap/cache empty.
+.git
+.github
+.vscode
+.idea
+.env
+.env.*
+node_modules
+vendor
+public/build
+public/hot
+public/storage
+storage
+bootstrap/cache/*
+tests
+infra/aws
+docs
+Dockerfile
+.dockerignore
+*.log
+.phpunit.result.cache
