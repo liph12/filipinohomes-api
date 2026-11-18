@@ -49,6 +49,18 @@ class Agent extends Model implements Auditable
         'lr_state',
     ];
 
+    /**
+     * The LR sync's bookkeeping (agents:sync-lr-status). Never serialised:
+     * FullListingController::show returns the whole agent to any agent or
+     * admin, and LR's view of who is employed is nobody else's business.
+     */
+    protected $hidden = [
+        'lr_employment_lookup',
+        'lr_employment_status',
+        'lr_employment_checked_at',
+        'lr_employment_changed_at',
+    ];
+
     protected $casts = [
         'socials' => 'array',
         'avatar' => 'array',
@@ -56,6 +68,8 @@ class Agent extends Model implements Auditable
         'profile_updated_at' => 'datetime',
         'birthdate' => 'date',
         'birthdate_checked_at' => 'datetime',
+        'lr_employment_checked_at' => 'datetime',
+        'lr_employment_changed_at' => 'datetime',
         'response_metrics_updated_at' => 'datetime',
         'within_1h_response_pct' => 'float',
         'unanswered_response_pct' => 'float',

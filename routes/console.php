@@ -191,6 +191,43 @@ Schedule::command('agents:deactivate-dormant')
     ->timezone('Asia/Manila')
     ->withoutOverlapping(10);
 
+// ── Leuterio Realty → agent status ──────────────────────────────────────────
+//
+// Two commands, kept apart on purpose (config/lr_status.php has the why):
+//
+//   agents:sync-lr-status   asks LR about each agent and RECORDS the answer in
+//                           agents.lr_employment_*. Never touches agents.status.
+//   agents:apply-lr-status  the only thing that demotes. Scheduled as a REPORT
+//                           only (no --force) and logged, not emailed — two
+//                           hosts running this schedule would send it twice.
+//                           Applying is always a reviewed, by-hand batch:
+//                           agents:apply-lr-status --force --status=… --from-csv=…
+//
+// Both are OFF until LR_STATUS_SYNC_ENABLED=true: this schedule goes live on
+// the next scheduler deploy, which can land before the migration has run. The
+// flag is read when the scheduler RUNS, not when this file loads, because
+// `schedule:list` runs without a database in CI.
+//
+// :40 keeps the sync clear of natcon:hydrate-awardees and
+// birthdays:backfill-birthdates (both at :00), which share LR's 60 req/min —
+// and so do real sign-ins. withoutOverlapping(90): a run can take half an hour,
+// and the default 24 h file mutex would outlive a crashed one (see above); the
+// command also takes a lock in the shared database, since file locks are per host.
+// runInBackground: a foreground event holds up everything scheduled after it in
+// the same schedule:run — and, on a host whose scheduler is one long loop rather
+// than a process a minute, every later run too (the NATCON outbox drain among them).
+Schedule::command('agents:sync-lr-status')
+    ->hourlyAt(40)
+    ->withoutOverlapping(90)
+    ->runInBackground()
+    ->when(fn () => (bool) config('lr_status.enabled'));
+
+Schedule::command('agents:apply-lr-status')
+    ->dailyAt('02:45')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping(30)
+    ->when(fn () => (bool) config('lr_status.enabled'));
+
 // Keep this last, so it covers every entry above. On ECS (LOG_SCHEDULE_OUTPUT, see
 // config/logging.php) each command's output and stderr log lines go to the scheduler
 // container's log instead of /dev/null. Unset, nothing changes.

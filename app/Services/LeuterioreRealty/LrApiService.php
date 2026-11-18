@@ -2,10 +2,15 @@
 
 namespace App\Services\LeuterioreRealty;
 
+use App\Support\LrAgentStatus;
 use Illuminate\Support\Facades\Http;
 
 class LrApiService
 {
+    public const LOOKUP_FOUND = 'found';
+    public const LOOKUP_NOT_FOUND = 'not_found';
+    public const LOOKUP_ERROR = 'error';
+
     private const BASE_URL = 'https://api.leuteriorealty.com/lr/v1/public/api/agent';
     // v2 endpoint exposes richer agent detail (birthday, gender).
     private const AGENT_DETAIL_URL = 'https://api.leuteriorealty.com/lr/v2/public/api/agents';
@@ -57,6 +62,86 @@ class LrApiService
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    /**
+     * What LR says about one agent's status, as a discriminated result.
+     *
+     * fetchAgentByEmail() collapses a miss, a 429 and an outage into null, which
+     * is fine for a login path and wrong here: this feeds a sync that demotes
+     * people, and reading "LR is rate-limiting us" as "this agent left" would
+     * hide a working agent's listings. So only a clean answer counts:
+     *
+     *   found     — HTTP 200 with a top-level `status` (its value may be null)
+     *               in a payload that names the address asked about.
+     *               `status` comes back normalised; '' when LR has none.
+     *   not_found — {"success":false,"message":"User not found."} (HTTP 403 today).
+     *               About 58% of FH's agents get this, so it never means "left".
+     *   error     — 429, 5xx, any other 403, a timeout, a payload without
+     *               `status`, or one about a different address. Retry later;
+     *               never act on it.
+     *
+     * `remaining` is LR's X-RateLimit-Remaining (60 requests a minute per IP,
+     * shared with real sign-ins), so the caller can back off before it starves
+     * them. Raw payloads are never returned: they carry personal data.
+     *
+     * @return array{result: string, status: ?string, http_status: ?int, remaining: ?int, error: ?string}
+     */
+    public function lookupAgentStatus(string $email): array
+    {
+        $email = strtolower(trim($email));
+
+        try {
+            // A hit routinely takes 2–12 s; a miss answers in about 0.3 s.
+            $res = Http::timeout(30)->acceptJson()->get(self::BASE_URL . '/' . urlencode($email));
+        } catch (\Throwable $e) {
+            return $this->statusLookup(self::LOOKUP_ERROR, error: 'transport: ' . $e->getMessage());
+        }
+
+        $code = $res->status();
+        $remaining = is_numeric($header = $res->header('X-RateLimit-Remaining')) ? (int) $header : null;
+        $body = $res->json();
+
+        if (is_array($body) && ($body['success'] ?? null) === false && ($body['message'] ?? null) === 'User not found.') {
+            return $this->statusLookup(self::LOOKUP_NOT_FOUND, http: $code, remaining: $remaining);
+        }
+
+        if (! $res->successful()) {
+            return $this->statusLookup(self::LOOKUP_ERROR, http: $code, remaining: $remaining, error: "http {$code}");
+        }
+
+        if (! is_array($body) || ! array_key_exists('status', $body)) {
+            return $this->statusLookup(self::LOOKUP_ERROR, http: $code, remaining: $remaining, error: 'malformed payload');
+        }
+
+        // The answer must be about the agent we asked about. A payload for a
+        // different address — or one that doesn't say whose it is — is never
+        // trusted: demoting someone on another person's record is the one
+        // mistake a retry can't undo. (LR echoes the address back; 22 of 22
+        // sampled hits matched.)
+        $about = is_string($body['email'] ?? null) ? strtolower(trim($body['email'])) : '';
+        if ($about !== $email) {
+            return $this->statusLookup(self::LOOKUP_ERROR, http: $code, remaining: $remaining, error: 'identity mismatch');
+        }
+
+        return $this->statusLookup(
+            self::LOOKUP_FOUND,
+            status: LrAgentStatus::normalize($body['status']),
+            http: $code,
+            remaining: $remaining,
+        );
+    }
+
+    /** @return array{result: string, status: ?string, http_status: ?int, remaining: ?int, error: ?string} */
+    private function statusLookup(string $result, ?string $status = null, ?int $http = null, ?int $remaining = null, ?string $error = null): array
+    {
+        return [
+            'result' => $result,
+            'status' => $status,
+            'http_status' => $http,
+            'remaining' => $remaining,
+            'error' => $error !== null ? substr($error, 0, 500) : null,
+        ];
     }
 
     public function isAllowedRole(array $lrData): bool

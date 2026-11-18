@@ -55,6 +55,11 @@ trait CreatesAuthTables
             $table->string('gender')->nullable();
             $table->date('member_since')->nullable();
             $table->timestamp('profile_updated_at')->nullable();
+            // The LR sync's bookkeeping (agents:sync-lr-status).
+            $table->string('lr_employment_lookup', 16)->nullable();
+            $table->string('lr_employment_status', 32)->nullable();
+            $table->timestamp('lr_employment_checked_at')->nullable();
+            $table->timestamp('lr_employment_changed_at')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
