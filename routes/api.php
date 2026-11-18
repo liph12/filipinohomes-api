@@ -127,6 +127,8 @@ Route::middleware('strip.tags')->group(function () {
                 ->where('metric', '[a-z0-9_.]+');
             Route::get('/lookup/{type}', [\App\Http\Controllers\FhOne\LookupController::class, 'index'])
                 ->where('type', '[a-z]+');
+            // Projects that have listings, searchable (?q=) and paged like /records.
+            Route::get('/projects', [\App\Http\Controllers\FhOne\ProjectController::class, 'index']);
         });
     });
 

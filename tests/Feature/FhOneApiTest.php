@@ -93,7 +93,7 @@ class FhOneApiTest extends TestCase
     {
         foreach ([
             '/filipinohomes/listings', 'v1/health', 'v1/metrics', 'v1/metrics/deals.sold', 'v1/metrics/deals.sold/breakdown?by=team',
-            'v1/metrics/deals.sold/records', 'v1/lookup/teams',
+            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects',
         ] as $path) {
             $this->hit($path, [], null)
                 ->assertStatus(401)
@@ -689,6 +689,43 @@ class FhOneApiTest extends TestCase
         $this->assertNotEmpty($this->api('lookup/provinces')->json('data'));
         $this->assertNotEmpty($this->api('lookup/types')->json('data'));
         $this->assertSame('type_id', $this->api('lookup/types')->json('filter'));
+    }
+
+    // ── Projects with listings ──────────────────────────────────────────────
+
+    public function test_projects_lists_only_projects_with_listings_and_searches(): void
+    {
+        DB::table('projects')->insert(['name' => 'Empty Tower', 'slug' => 'empty-tower']);
+
+        $all = $this->hit('v1/projects', ['per_page' => 200])->assertOk()
+            ->assertJsonPath('filter', 'project_id')->assertJsonPath('meta.per_page', 200);
+        $names = array_column($all->json('rows'), 'name');
+        $this->assertContains('Mantra', $names);
+        $this->assertNotContains('Empty Tower', $names);
+        $this->assertSame(count($names), $all->json('meta.total'));
+
+        // `live` is listings.live's own number for that project, and the id is the project_id filter.
+        $mantra = collect($all->json('rows'))->firstWhere('name', 'Mantra');
+        $this->assertSame($this->id['mantra'], $mantra['id']);
+        $this->assertGreaterThanOrEqual(1, $mantra['listings']);
+        $this->assertEquals(
+            $this->api('metrics/listings.live', ['project_id' => $mantra['id']])->json('value'),
+            $mantra['live'],
+        );
+
+        // Search is case-insensitive, by name.
+        $this->assertSame(['Mantra'], array_column($this->hit('v1/projects', ['q' => 'MANT'])->json('rows'), 'name'));
+        $this->assertSame([], $this->hit('v1/projects', ['q' => 'empty'])->json('rows'));
+        // A search is text, never SQL.
+        $this->hit('v1/projects', ['q' => "x' OR '1'='1"])->assertOk()->assertJsonPath('rows', []);
+        $this->hit('v1/projects', ['q' => '%%'])->assertOk()->assertJsonPath('rows', []);
+
+        // Paging and sorting.
+        $this->hit('v1/projects', ['per_page' => 1])->assertOk()->assertJsonCount(1, 'rows')
+            ->assertJsonPath('meta.last_page', $all->json('meta.total'));
+        $this->hit('v1/projects', ['sort' => 'name'])->assertOk()->assertJsonPath('sort', ['by' => 'name', 'dir' => 'asc']);
+        $this->hit('v1/projects', ['per_page' => 201])->assertStatus(422);
+        $this->hit('v1/projects', ['sort' => 'price'])->assertStatus(422);
     }
 
     public function test_an_unknown_lookup_or_an_overlong_search_is_refused(): void
