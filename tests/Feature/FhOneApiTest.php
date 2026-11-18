@@ -60,14 +60,16 @@ class FhOneApiTest extends TestCase
         parent::tearDown();
     }
 
-    /** A call with the key (or with none, or another one). */
+    /** A call with the key (or with none, or another one). A path starting with "/" is outside /fh-one. */
     private function hit(string $path, array $query = [], ?string $key = self::KEY, array $headers = []): TestResponse
     {
         if ($key !== null) {
             $headers += ['Authorization' => 'Bearer '.$key];
         }
 
-        return $this->getJson('/api/fh-one/'.$path.($query ? '?'.http_build_query($query) : ''), $headers);
+        $url = str_starts_with($path, '/') ? '/api'.$path : '/api/fh-one/'.$path;
+
+        return $this->getJson($url.($query ? '?'.http_build_query($query) : ''), $headers);
     }
 
     private function api(string $path, array $query = [], ?string $key = self::KEY): TestResponse
@@ -90,7 +92,7 @@ class FhOneApiTest extends TestCase
     public function test_every_endpoint_needs_the_key(): void
     {
         foreach ([
-            'listings', 'v1/health', 'v1/metrics', 'v1/metrics/deals.sold', 'v1/metrics/deals.sold/breakdown?by=team',
+            '/filipinohomes/listings', 'v1/health', 'v1/metrics', 'v1/metrics/deals.sold', 'v1/metrics/deals.sold/breakdown?by=team',
             'v1/metrics/deals.sold/records', 'v1/lookup/teams',
         ] as $path) {
             $this->hit($path, [], null)

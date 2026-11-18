@@ -5,7 +5,7 @@ namespace App\Http\Resources;
 use Illuminate\Http\Request;
 
 /**
- * One listing for the open listings API used by fhone (GET /fh-one/listings).
+ * One listing for the listings API used by FH One (GET /filipinohomes/listings).
  *
  * The partner-feed shape (ExternalListingResource: listing details, status, audit result and the
  * listing agent's card) plus `visibility`, because this endpoint returns every listing that isn't

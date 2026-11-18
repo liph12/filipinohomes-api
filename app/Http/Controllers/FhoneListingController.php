@@ -7,7 +7,7 @@ use App\Models\Listing;
 use Illuminate\Http\Request;
 
 /**
- * GET /fh-one/listings — the listings API for FH One (our own app).
+ * GET /filipinohomes/listings — the listings API for FH One (our own app).
  *
  * Needs FH One's key (VerifyFhOneKey) and is limited per key; both are set in routes/api.php.
  * Returns EVERY listing that isn't deleted — any visibility (public or not), any status, any

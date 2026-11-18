@@ -10,7 +10,7 @@ use Tests\Concerns\CreatesAuthTables;
 use Tests\TestCase;
 
 /**
- * GET /fh-one/listings — the listings API for FH One: every listing that isn't deleted (any
+ * GET /filipinohomes/listings — the listings API for FH One: every listing that isn't deleted (any
  * visibility / status / audit result), newest first, paginated. It needs FH One's key
  * (FhOneApiTest covers who is let in); here every call carries a good one.
  */
@@ -99,7 +99,7 @@ class FhoneListingsApiTest extends TestCase
         $this->listing('PROP-TRASHED', [], ['deleted_at' => now()]);       // property soft-deleted
         $this->listing('PROP-DELETED', [], ['status' => 'deleted']);       // property marked deleted
 
-        $res = $this->getJson('/api/fh-one/listings')->assertOk();
+        $res = $this->getJson('/api/filipinohomes/listings')->assertOk();
 
         $this->assertSame(['PRIVATE', 'PUBLIC', 'SOLD'], $this->codes($res));
         $this->assertSame(3, $res->json('meta.total'));
@@ -115,15 +115,15 @@ class FhoneListingsApiTest extends TestCase
         $this->listing('B', ['visibility' => 'private'], ['status' => 'sold']);
         $this->listing('C', ['updated_at' => now()->subMonth()], ['status' => 'rented']);
 
-        $this->assertSame(['B', 'C'], $this->codes($this->getJson('/api/fh-one/listings?status=sold,rented')->assertOk()));
-        $this->assertSame(['B'], $this->codes($this->getJson('/api/fh-one/listings?visibility=private')->assertOk()));
-        $this->assertSame(['A', 'B'], $this->codes($this->getJson('/api/fh-one/listings?updated_since='.now()->subDay()->toDateString())->assertOk()));
+        $this->assertSame(['B', 'C'], $this->codes($this->getJson('/api/filipinohomes/listings?status=sold,rented')->assertOk()));
+        $this->assertSame(['B'], $this->codes($this->getJson('/api/filipinohomes/listings?visibility=private')->assertOk()));
+        $this->assertSame(['A', 'B'], $this->codes($this->getJson('/api/filipinohomes/listings?updated_since='.now()->subDay()->toDateString())->assertOk()));
 
-        $page = $this->getJson('/api/fh-one/listings?per_page=2&page=2')->assertOk();
+        $page = $this->getJson('/api/filipinohomes/listings?per_page=2&page=2')->assertOk();
         $this->assertCount(1, $page->json('data'));
         $this->assertSame(2, $page->json('meta.last_page'));
 
-        $this->getJson('/api/fh-one/listings?per_page=500')->assertStatus(422);
-        $this->getJson('/api/fh-one/listings?status=Robert%27);DROP')->assertStatus(422);
+        $this->getJson('/api/filipinohomes/listings?per_page=500')->assertStatus(422);
+        $this->getJson('/api/filipinohomes/listings?status=Robert%27);DROP')->assertStatus(422);
     }
 }

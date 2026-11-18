@@ -110,11 +110,12 @@ Route::middleware('strip.tags')->group(function () {
 
     // FH One (the group's AI platform) reads FH only through here. Every call carries FH One's own key
     // (VerifyFhOneKey) and is limited per key (the 'fhone' limiter). Read-only.
-    //   /listings   every non-deleted listing, paginated
-    //   /v1/...     numbers from the AI Report's own code: catalog, value, breakdown, records, lookups
-    Route::prefix('fh-one')->middleware(['verify.fhone', 'throttle:fhone'])->group(function () {
-        Route::get('/listings', [\App\Http\Controllers\FhoneListingController::class, 'index']);
+    //   /filipinohomes/listings   every non-deleted listing, paginated
+    //   /fh-one/v1/...            numbers from the AI Report's own code: catalog, value, breakdown, records, lookups
+    Route::get('/filipinohomes/listings', [\App\Http\Controllers\FhoneListingController::class, 'index'])
+        ->middleware(['verify.fhone', 'throttle:fhone']);
 
+    Route::prefix('fh-one')->middleware(['verify.fhone', 'throttle:fhone'])->group(function () {
         Route::prefix('v1')->group(function () {
             Route::get('/health', \App\Http\Controllers\FhOne\HealthController::class);
             Route::get('/metrics', [\App\Http\Controllers\FhOne\MetricController::class, 'catalog']);
