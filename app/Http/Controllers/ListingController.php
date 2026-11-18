@@ -1880,7 +1880,7 @@ class ListingController extends Controller
             'date_start' => 'nullable|date',
             'date_end' => 'nullable|date|after_or_equal:date_start',
             // Optional: one agent status (Agent Insights' "All agents" dropdown). Omitted = every agent.
-            'status' => 'nullable|in:active,resigned,deactivated',
+            'status' => 'nullable|in:'.implode(',', AgentInsightsService::STATUSES),
         ]);
 
         $start = $validated['date_start'] ?? '2000-01-01';
@@ -2460,7 +2460,27 @@ class ListingController extends Controller
         // to act on once everything is checked.
         $status = $validated['verification_status'] ?? null;
         $emailSent = false;
-        if ($status === 'flagged' || $status === 'verified') {
+
+        // An agent who is switched off (resigned, terminated, inactive,
+        // deactivated) can't act on an audit — EnsureAgentActive 403s all but
+        // their profile — so neither the email nor the push is worth sending.
+        // Skip both and say why in the response, so the auditor isn't left
+        // assuming the agent was told. Admins are never blocked.
+        $outcomeNotifies = in_array($status, ['flagged', 'verified', 'fully_verified'], true);
+        $skippedFor = null;
+        if ($outcomeNotifies) {
+            $listing->loadMissing('agent.user.role');
+            $skippedFor = $listing->agent?->isBlocked() ? $listing->agent->status : null;
+        }
+        if ($skippedFor !== null) {
+            Log::info('Listing audit notification skipped — agent is not active', [
+                'listing_id' => $listing->id,
+                'audit_status' => $status,
+                'agent_status' => $skippedFor,
+            ]);
+        }
+
+        if ($skippedFor === null && ($status === 'flagged' || $status === 'verified')) {
             try {
                 $listing->load('agent.user.role', 'property.propertyAttribute.subtype.type');
                 $agentUser = optional($listing->agent)->user;
@@ -2542,7 +2562,7 @@ class ListingController extends Controller
         // The mobile listing route is keyed on the listing id. Non-fatal — a push
         // failure must not roll back the saved audit status. Gated by the agent's
         // "Listing verification" category toggle inside ExpoPushService.
-        if (in_array($status, ['flagged', 'verified', 'fully_verified'], true)) {
+        if ($skippedFor === null && $outcomeNotifies) {
             try {
                 $agentUser = optional($listing->agent)->user
                     ?? optional($listing->load('agent.user')->agent)->user;
@@ -2588,7 +2608,16 @@ class ListingController extends Controller
             }
         }
 
-        return response()->json(['data' => $listing->fresh(), 'email_sent' => $emailSent]);
+        return response()->json([
+            'data' => $listing->fresh(),
+            'email_sent' => $emailSent,
+            // Why nobody was told, when the agent is switched off — the audit
+            // modal shows it. null whenever the agent was (or needed to be) notified.
+            'notification_skipped' => $skippedFor === null ? null : [
+                'reason' => "agent_{$skippedFor}",
+                'message' => "Agent is {$skippedFor} — no email or push was sent.",
+            ],
+        ]);
     }
 
     /**
@@ -2914,7 +2943,7 @@ class ListingController extends Controller
     /** Agent Insights: headcount + close rate by gender and age, for one agent status (default active). */
     public function insightsAgentsDemographics(Request $request, AgentInsightsService $insights): JsonResponse
     {
-        $status = in_array($request->query('status'), ['all', 'active', 'resigned', 'deactivated'], true) ? $request->query('status') : 'active';
+        $status = in_array($request->query('status'), ['all', ...AgentInsightsService::STATUSES], true) ? $request->query('status') : 'active';
 
         return response()->json($insights->demographics($this->insightsAgentParams($request), $this->resolveInsightsAgentScope($request), $status));
     }

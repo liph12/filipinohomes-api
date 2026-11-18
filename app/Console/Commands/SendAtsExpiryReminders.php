@@ -14,9 +14,13 @@ class SendAtsExpiryReminders extends Command
     protected $signature   = 'ats:expiry-reminders';
     protected $description = 'Email agents when a listing ATS is about to expire (7 days out) or has expired today';
 
+    /** Listings whose agent is switched off, so no reminder was sent. */
+    private int $skipped = 0;
+
     public function handle(): int
     {
         $today = Carbon::today();
+        $this->skipped = 0;
 
         // 7 days out: still-approved ATS about to lapse → reminder.
         $soon = $this->notifyForDate($today->copy()->addDays(7), 'soon', ['approve']);
@@ -25,7 +29,7 @@ class SendAtsExpiryReminders extends Command
         // auto-flips ats_status to "expired" once past) → expired notice.
         $expired = $this->notifyForDate($today->copy(), 'expired', ['approve', 'expired']);
 
-        $this->info("ATS reminders sent — expiring soon: {$soon}, expired: {$expired}.");
+        $this->info("ATS reminders sent — expiring soon: {$soon}, expired: {$expired}; skipped (agent not active): {$this->skipped}.");
         return self::SUCCESS;
     }
 
@@ -59,6 +63,20 @@ class SendAtsExpiryReminders extends Command
         try {
             $agentUser = optional($listing->agent)->user;
             if (! $agentUser || ! $agentUser->email) {
+                return false;
+            }
+
+            // A switched-off agent (resigned, terminated, inactive, deactivated)
+            // can't renew anything — EnsureAgentActive blocks them — so don't
+            // nag. An admin's own listings still get the reminder.
+            if ($listing->agent->isBlocked()) {
+                $this->skipped++;
+                Log::info('ATS expiry email skipped — agent is not active', [
+                    'listing_id'   => $listing->id,
+                    'mode'         => $mode,
+                    'agent_status' => $listing->agent->status,
+                ]);
+
                 return false;
             }
 

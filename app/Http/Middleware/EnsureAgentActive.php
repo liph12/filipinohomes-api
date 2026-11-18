@@ -2,12 +2,14 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Agent;
 use Closure;
 use Illuminate\Http\Request;
 
 /**
- * Blocks inactive/resigned agents from acting on the API while still letting
- * them log in and see WHY they're blocked. The allowlist keeps the
+ * Blocks agents whose status isn't `active` (inactive, resigned, deactivated,
+ * terminated, or any status added later) from acting on the API while still
+ * letting them log in and see WHY they're blocked. The allowlist keeps the
  * account-blocked modal working (profile reads power AuthGuard + the modal),
  * lets the agent log out, and lets an impersonating admin exit the session.
  * Everything else returns 403.
@@ -17,8 +19,6 @@ use Illuminate\Http\Request;
  */
 class EnsureAgentActive
 {
-    private const BLOCKED_STATUSES = ['inactive', 'resigned', 'deactivated'];
-
     /** [method, path] pairs a blocked agent may still call. */
     private const ALLOWED = [
         ['GET',  'api/agent/profile'],
@@ -36,7 +36,7 @@ class EnsureAgentActive
         if (
             $user
             && $user->role?->name !== 'admin'
-            && in_array($user->agent?->status, self::BLOCKED_STATUSES, true)
+            && Agent::isBlockedStatus($user->agent?->status)
             && ! $this->isAllowed($request)
         ) {
             $status = $user->agent->status;

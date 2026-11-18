@@ -10,6 +10,13 @@ class Agent extends Model implements Auditable
     use HasFactory, SoftDeletes;
     use LogsActivity;
 
+    /**
+     * Every value agents.status can hold, in the enum's order. The column is a
+     * MySQL enum altered by raw SQL, so AgentStatusesTest checks this against
+     * the latest enum migration — change both together.
+     */
+    public const STATUSES = ['active', 'inactive', 'resigned', 'deactivated', 'terminated'];
+
     protected string $auditCategory = 'agents';
     protected array $auditLabelAttributes = ['first_name', 'last_name'];
 
@@ -57,6 +64,28 @@ class Agent extends Model implements Auditable
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /**
+     * Whether a status switches the account off: anything but `active`, so a
+     * status added later is blocked by default instead of silently let
+     * through. No status at all (a user with no agent row) is not blocked.
+     */
+    public static function isBlockedStatus(?string $status): bool
+    {
+        return $status !== null && $status !== 'active';
+    }
+
+    /**
+     * This agent is switched off (resigned, terminated, inactive, deactivated):
+     * no platform access, no public listings, and nothing worth emailing.
+     * Admins are never blocked — they also work as agents, and a stray status
+     * on an admin's own agent row must not lock them out (same rule as
+     * EnsureAgentActive).
+     */
+    public function isBlocked(): bool
+    {
+        return self::isBlockedStatus($this->status) && ! ($this->user?->isAdmin() ?? false);
     }
 
     public function listings()

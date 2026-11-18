@@ -187,6 +187,30 @@ class AgentStatusUpdateTest extends TestCase
         $this->assertSame('inactive', $agent->fresh()->status);
     }
 
+    public function test_terminated_is_accepted_and_not_restricted_by_recent_login(): void
+    {
+        // Unlike `deactivated` (reserved for dormancy), terminated is an admin
+        // decision — an agent seen two days ago can still be terminated.
+        Sanctum::actingAs($this->makeUser('admin'));
+        $agent = $this->makeAgent(Carbon::now()->subDays(2)->toDateTimeString());
+
+        $this->patchJson("/api/agents/{$agent->id}/status", ['status' => 'terminated'])
+            ->assertOk();
+
+        $this->assertSame('terminated', $agent->fresh()->status);
+    }
+
+    public function test_an_unknown_status_is_rejected(): void
+    {
+        Sanctum::actingAs($this->makeUser('admin'));
+        $agent = $this->makeAgent(null);
+
+        $this->patchJson("/api/agents/{$agent->id}/status", ['status' => 'fired'])
+            ->assertStatus(422);
+
+        $this->assertSame('active', $agent->fresh()->status);
+    }
+
     public function test_non_admin_cannot_change_status_at_all(): void
     {
         Sanctum::actingAs($this->makeUser('agent'));

@@ -110,7 +110,7 @@ class AgentController extends Controller
 
         // Management quick filter: exact agent status. Used by the Agents
         // Management dropdown (Default / Fastest reply / … / status picks).
-        if (($status = $request->query('status')) && in_array($status, ['active', 'inactive', 'resigned', 'deactivated'], true)) {
+        if (($status = $request->query('status')) && in_array($status, Agent::STATUSES, true)) {
             $query->where('agents.status', $status);
         }
 
@@ -1034,7 +1034,7 @@ class AgentController extends Controller
 
         $agent = Agent::withTrashed()->findOrFail($id);
         $validated = $request->validate([
-            'status' => 'required|in:active,inactive,resigned,deactivated',
+            'status' => 'required|in:'.implode(',', Agent::STATUSES),
         ]);
         $old = $agent->status;
 

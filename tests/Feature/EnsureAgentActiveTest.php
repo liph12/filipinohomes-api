@@ -69,6 +69,25 @@ class EnsureAgentActiveTest extends TestCase
         $this->assertSame(200, $this->run_($this->requestAs($user, 'POST', '/api/logout')));
     }
 
+    public function test_terminated_agent_is_blocked_but_can_see_profile_and_logout(): void
+    {
+        $user = $this->agentUser('terminated');
+
+        $this->assertSame(403, $this->run_($this->requestAs($user, 'POST', '/api/listings')));
+        $this->assertSame(403, $this->run_($this->requestAs($user, 'GET', '/api/my-listings')));
+        $this->assertSame(200, $this->run_($this->requestAs($user, 'GET', '/api/agent/profile')));
+        $this->assertSame(200, $this->run_($this->requestAs($user, 'POST', '/api/logout')));
+    }
+
+    public function test_any_status_other_than_active_is_blocked(): void
+    {
+        // Blocking is "not active", not a list of known-bad statuses: a status
+        // added later must be blocked by default, not silently let through.
+        $user = $this->agentUser('on_leave');
+
+        $this->assertSame(403, $this->run_($this->requestAs($user, 'POST', '/api/listings')));
+    }
+
     public function test_blocked_agent_can_still_see_profile_and_logout(): void
     {
         $user = $this->agentUser('resigned');
@@ -102,6 +121,7 @@ class EnsureAgentActiveTest extends TestCase
         $user = $this->agentUser('resigned', 'admin');
 
         $this->assertSame(200, $this->run_($this->requestAs($user, 'POST', '/api/listings')));
+        $this->assertSame(200, $this->run_($this->requestAs($this->agentUser('terminated', 'admin'), 'POST', '/api/listings')));
     }
 
     public function test_guest_and_agentless_user_pass(): void
@@ -124,5 +144,16 @@ class EnsureAgentActiveTest extends TestCase
 
         $this->assertSame('resigned', $response->getData(true)['account_status']);
         $this->assertStringContainsString('resigned', $response->getData(true)['message']);
+    }
+
+    public function test_terminated_response_names_the_status(): void
+    {
+        $response = (new EnsureAgentActive())->handle(
+            $this->requestAs($this->agentUser('terminated'), 'POST', '/api/listings'),
+            fn () => response()->json(['ok' => true]),
+        );
+
+        $this->assertSame('terminated', $response->getData(true)['account_status']);
+        $this->assertStringContainsString('terminated', $response->getData(true)['message']);
     }
 }

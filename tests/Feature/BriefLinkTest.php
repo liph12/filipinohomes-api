@@ -232,6 +232,14 @@ class BriefLinkTest extends TestCase
         $this->getJson('/api/brief-links/neil-allan-mary')->assertNotFound();
     }
 
+    public function test_a_terminated_agents_link_is_gone(): void
+    {
+        $this->link($this->agent, ['slug' => 'neil-allan-mary']);
+        $this->agent->update(['status' => 'terminated']);
+
+        $this->getJson('/api/brief-links/neil-allan-mary')->assertNotFound();
+    }
+
     // ── a buyer's brief ───────────────────────────────────────────────────
 
     public function test_a_buyer_brief_is_stored_clean_graded_and_emailed_to_the_agent(): void

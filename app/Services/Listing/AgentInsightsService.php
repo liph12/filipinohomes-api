@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\DB;
  */
 class AgentInsightsService
 {
-    public const STATUSES = ['active', 'resigned', 'deactivated'];
+    public const STATUSES = ['active', 'resigned', 'deactivated', 'terminated'];
 
     private const CATEGORIES = ['For Sale', 'For Rent', 'Foreclosed'];
 
@@ -276,7 +276,7 @@ class AgentInsightsService
      * headcount by gender and age bracket together with each group's close rate — one payload so both
      * halves of the card always describe the same agents.
      *
-     * @param  'all'|'active'|'resigned'|'deactivated'  $status
+     * @param  'all'|'active'|'resigned'|'deactivated'|'terminated'  $status
      */
     public function demographics(array $params, ?array $agentIds, string $status): array
     {

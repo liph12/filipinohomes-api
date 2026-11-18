@@ -19,8 +19,6 @@ final class Briefs
     /** Codes use an alphabet with no look-alikes (0/o, 1/l/i). */
     private const CODE_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
 
-    private const BLOCKED_AGENT = ['inactive', 'resigned', 'deactivated'];
-
     // ── Definitions ─────────────────────────────────────────────────────
 
     /** Both briefs as the site needs them: options as {value, label}. */
@@ -324,7 +322,7 @@ final class Briefs
     public static function ownerFace(?Agent $agent, ?User $user): ?array
     {
         $admin = $user !== null && $user->isAdmin();
-        if (! $admin && (! $agent || in_array($agent->status, self::BLOCKED_AGENT, true))) {
+        if (! $admin && (! $agent || Agent::isBlockedStatus($agent->status))) {
             return null;
         }
         $user ??= $agent?->user;

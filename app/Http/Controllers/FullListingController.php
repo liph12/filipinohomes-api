@@ -307,6 +307,18 @@ class FullListingController extends Controller
                 return;
             }
 
+            // A switched-off agent (resigned, terminated, inactive, deactivated)
+            // can't act on it — EnsureAgentActive blocks them. Admins still get theirs.
+            if ($listing->agent->isBlocked()) {
+                Log::info('ATS status email skipped — agent is not active', [
+                    'listing_id'   => $listing->id,
+                    'status'       => $rawStatus,
+                    'agent_status' => $listing->agent->status,
+                ]);
+
+                return;
+            }
+
             // Backend enum → display label ("approve" → "Approved").
             $display = ucfirst($rawStatus === 'approve' ? 'approved' : $rawStatus);
 
