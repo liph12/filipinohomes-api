@@ -40,7 +40,7 @@ class MakeFhOneKey extends Command
 
         $this->components->info("Key \"{$name}\" works through {$lastDay} (Manila time).");
         $this->newLine();
-        $this->line('1. Put this in FH One\'s settings as FILIPINOHOMES_API_TOKEN. It is shown only now:');
+        $this->line('1. Paste this into FH One, under Settings, as the API key of each API that reads this server. It is shown only now:');
         $this->newLine();
         $this->line('   '.$secret);
         $this->newLine();
@@ -48,7 +48,7 @@ class MakeFhOneKey extends Command
         $this->newLine();
         $this->line('   '.FhOneKeys::entry($name, $secret, $lastDay));
         $this->newLine();
-        $this->line('Then run `php artisan config:clear` if the config is cached. To replace a key without a gap, add the new entry first, switch FH One, then remove the old one.');
+        $this->line('Then run `php artisan config:clear` if the config is cached. To replace a key without a gap, add the new entry first, change the key in FH One\'s Settings, then remove the old entry.');
 
         return self::SUCCESS;
     }

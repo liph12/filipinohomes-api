@@ -106,6 +106,10 @@ class FhOneKeysTest extends TestCase
 
         // The hash of the key is in the entry; the key itself appears once, on its own line.
         $this->assertSame(1, substr_count($output, $key[0]));
+
+        // It says where the key goes: the Settings of FH One, where each API is added, not a setting in a file.
+        $this->assertStringContainsString('FH One, under Settings', $output);
+        $this->assertStringNotContainsString('FILIPINOHOMES_API_TOKEN', $output);
     }
 
     public function test_make_key_refuses_a_bad_name_or_a_silly_lifetime(): void
