@@ -2,6 +2,7 @@
 
 namespace App\Services\FhOne;
 
+use App\Http\Requests\FhOne\MetricBatchRequest;
 use App\Services\Reports\Executive\Geography;
 use App\Services\Reports\Executive\LeadQueries;
 use App\Services\Reports\Executive\MetricRegistry;
@@ -52,6 +53,8 @@ final class MetricCatalog
                 'fh_signal' => 'What agents recorded on FH, used as a stand-in for the real thing. It shows the direction; totals may run low.',
                 'fh_record' => 'FH\'s own records, counted as they stand.',
             ],
+            // What the API can do beyond one metric at a time, so FH One can use it when it is there and do without when it is not.
+            'capabilities' => ['batch' => ['max_ids' => MetricBatchRequest::MAX_IDS]],
             'metrics' => array_map(fn (string $key) => $this->metric($key), MetricRegistry::keys()),
             'filters' => $this->filters(),
             'breakdowns' => BreakdownService::DIMENSIONS,

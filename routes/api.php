@@ -119,6 +119,8 @@ Route::middleware('strip.tags')->group(function () {
         Route::prefix('v1')->group(function () {
             Route::get('/health', \App\Http\Controllers\FhOne\HealthController::class);
             Route::get('/metrics', [\App\Http\Controllers\FhOne\MetricController::class, 'catalog']);
+            // Before /metrics/{metric}, which would take "batch" for a metric.
+            Route::get('/metrics/batch', [\App\Http\Controllers\FhOne\MetricController::class, 'batch']);
             Route::get('/metrics/{metric}', [\App\Http\Controllers\FhOne\MetricController::class, 'show'])
                 ->where('metric', '[a-z0-9_.]+');
             Route::get('/metrics/{metric}/breakdown', [\App\Http\Controllers\FhOne\MetricController::class, 'breakdown'])

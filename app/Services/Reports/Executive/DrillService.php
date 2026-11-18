@@ -4,8 +4,8 @@ namespace App\Services\Reports\Executive;
 
 use App\Support\OfficeRegionMap;
 use App\Support\RegionMap;
+use App\Support\SingleFlight;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -46,7 +46,8 @@ final class DrillService
         // the clock even for a past range, so it never keeps past 10 minutes.
         $ttl = $def['as_of'] === 'now' ? min(600, $range->ttl($now)) : $range->ttl($now);
 
-        return Cache::remember($cacheKey, $ttl, function () use ($def, $key, $range, $now, $filters, $page, $perPage, $sort, $dir) {
+        // The same page asked for twice at once is worked out once.
+        return SingleFlight::remember($cacheKey, $ttl, function () use ($def, $key, $range, $now, $filters, $page, $perPage, $sort, $dir) {
             $result = $def['family'] === 'team'
                 ? $this->teamPage($key, $range, $now, $filters, $page, $perPage)
                 : $this->sqlPage($def, $key, $range, $now, $filters, $page, $perPage, $sort, $dir);

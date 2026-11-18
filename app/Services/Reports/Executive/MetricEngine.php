@@ -61,6 +61,7 @@ final class MetricEngine
             'listings.added_by_staff' => [$this->q->listingsAdded($range)
                 ->where(fn ($w) => $w->whereNull('owner_role.name')->orWhere('owner_role.name', '<>', 'agent')), 'listings.id'],
             'listings.live' => [$this->q->liveListings(), 'listings.id'],
+            'listings.total' => [$this->q->listingBase(), 'listings.id'],
             'listings.ppsqm_sale' => [PricePerSqm::pricedRows($this->q->listingsAdded($range)->where('categories.name', 'For Sale')), 'listings.id'],
             'listings.ppsqm_rent' => [PricePerSqm::pricedRows($this->q->listingsAdded($range)->where('categories.name', 'For Rent')), 'listings.id'],
             'deals.total' => [$this->q->deals($range), 'listings.id'],

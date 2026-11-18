@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\FhOne;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\FhOne\MetricBatchRequest;
 use App\Http\Requests\FhOne\MetricRequest;
 use App\Services\FhOne\BreakdownService;
 use App\Services\FhOne\InvalidAsk;
@@ -25,6 +26,17 @@ class MetricController extends Controller
     public function catalog(MetricCatalog $catalog): JsonResponse
     {
         return response()->json($catalog->describe());
+    }
+
+    /**
+     * GET /metrics/batch?ids=a,b,c&compare_ids=a&date_start=&date_end=&<filter>=
+     *
+     * Many values for the same dates and filters, each exactly as GET /metrics/{metric} gives it,
+     * worked out together. A metric that cannot be answered is in `errors`, the others in `results`.
+     */
+    public function batch(MetricBatchRequest $request): JsonResponse
+    {
+        return $this->answer(fn () => $this->metrics->batch($request->ids(), $request->compareIds(), $request->range(), $request->filters()));
     }
 
     /** GET /metrics/{metric}?date_start=&date_end=&compare=previous&<filter>= */

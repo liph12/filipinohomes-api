@@ -93,7 +93,7 @@ class FhOneApiTest extends TestCase
     {
         foreach ([
             '/filipinohomes/listings', 'v1/health', 'v1/metrics', 'v1/metrics/deals.sold', 'v1/metrics/deals.sold/breakdown?by=team',
-            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects',
+            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects', 'v1/metrics/batch?ids=deals.sold',
         ] as $path) {
             $this->hit($path, [], null)
                 ->assertStatus(401)
@@ -317,6 +317,156 @@ class FhOneApiTest extends TestCase
             $this->assertSame((int) $expected, $records->json('meta.total'), "{$key}: the records don't count what the number says");
             $this->assertSame($key, $records->json('metric'));
         }
+    }
+
+    public function test_all_listings_counts_every_listing_that_is_not_deleted_live_or_not(): void
+    {
+        $live = $this->api('metrics/listings.live')->assertOk()->json('value');
+        $all = $this->api('metrics/listings.total')->assertOk()
+            ->assertJsonPath('label', 'All listings')
+            ->assertJsonPath('measured', 'now')
+            ->assertJsonPath('trust', 'fh_record')
+            ->json('value');
+
+        // The admin's Total Listings: every listing with a category and a property that is not deleted.
+        $this->assertSame(DB::table('listings')->whereNull('deleted_at')->count(), $all);
+        // Live is the part of it that is public and still available, so All is never fewer.
+        $this->assertGreaterThan($live, $all);
+
+        // A deleted listing is in neither.
+        DB::table('listings')->where('id', DB::table('listings')->min('id'))->update(['deleted_at' => $this->now]);
+        Cache::flush();
+
+        $this->assertSame($all - 1, $this->api('metrics/listings.total')->json('value'));
+
+        // Its records are the listings it counts.
+        $this->assertSame($all - 1, $this->api('metrics/listings.total/records', ['per_page' => 1])->json('meta.total'));
+    }
+
+    // ── Many at once ────────────────────────────────────────────────────────
+
+    /** The queries run while `$work` does. */
+    private function queriesDuring(callable $work): int
+    {
+        $count = 0;
+        DB::listen(function () use (&$count): void {
+            $count++;
+        });
+
+        $work();
+
+        return $count;
+    }
+
+    public function test_a_batch_gives_every_metric_exactly_as_a_call_for_each_does(): void
+    {
+        $ids = MetricRegistry::keys();
+
+        $batch = $this->api('metrics/batch', $this->dated(['ids' => implode(',', $ids), 'compare_ids' => 'listings.added,deals.sold']))->assertOk();
+
+        $results = $batch->json('results');
+
+        $this->assertSame([], $batch->json('errors'));
+        $this->assertSame($ids, array_keys($results), 'the results come in the order they were asked for');
+
+        // What each number is when it is worked out on its own, from nothing kept.
+        Cache::flush();
+
+        foreach ($ids as $id) {
+            $compare = in_array($id, ['listings.added', 'deals.sold'], true) ? ['compare' => 'previous'] : [];
+
+            $this->assertEquals(
+                $this->api("metrics/{$id}", $this->dated($compare))->assertOk()->json(),
+                $results[$id],
+                "{$id}: the batch and a call of its own disagree",
+            );
+        }
+
+        // Only the two that asked for it carry the previous period.
+        $this->assertNotNull($results['listings.added']['compare']);
+        $this->assertNull($results['leads.all']['compare']);
+    }
+
+    public function test_a_batch_works_out_its_numbers_together_where_a_call_each_would_start_over_each_time(): void
+    {
+        $ids = ['agents.headcount', 'agents.posting', 'agents.active', 'agents.idle', 'agents.dormant_30d', 'agents.never_used', 'agents.dormant_used', 'agents.gone_quiet', 'agents.with_leads', 'agents.unanswered', 'leads.all', 'leads.reached', 'leads.answered', 'leads.waiting'];
+
+        Cache::flush();
+        $together = $this->queriesDuring(fn () => $this->api('metrics/batch', $this->dated(['ids' => implode(',', $ids)]))->assertOk());
+
+        Cache::flush();
+        $apart = $this->queriesDuring(function () use ($ids): void {
+            foreach ($ids as $id) {
+                $this->api("metrics/{$id}", $this->dated())->assertOk();
+            }
+        });
+
+        $this->assertLessThan($apart, $together, "a batch ran {$together} queries and a call each {$apart}: the batch is not sharing");
+    }
+
+    public function test_what_a_batch_works_out_is_kept_for_single_calls_and_the_other_way_round(): void
+    {
+        $this->api('metrics/batch', $this->dated(['ids' => 'listings.added,deals.sold']))->assertOk();
+
+        // A call for one of them now finds it kept: no query at all.
+        $this->assertSame(0, $this->queriesDuring(fn () => $this->api('metrics/listings.added', $this->dated())->assertOk()));
+
+        // And a number a single call kept is not worked out again by a batch that includes it.
+        Cache::flush();
+        $this->api('metrics/deals.total', $this->dated())->assertOk();
+
+        $this->assertSame(0, $this->queriesDuring(fn () => $this->api('metrics/batch', $this->dated(['ids' => 'deals.total']))->assertOk()));
+    }
+
+    public function test_a_batch_says_what_it_cannot_answer_and_still_answers_the_rest(): void
+    {
+        $team = $this->id['team_a'] ?? 1;
+        $batch = $this->api('metrics/batch', $this->dated(['ids' => 'deals.sold,no.such.metric,usage.total_users', 'team_id' => $team]))->assertOk();
+        $errors = $batch->json('errors');
+        $results = $batch->json('results');
+
+        // A metric FH has no such filter for is told so, in the field it is about, and so is one it has not heard of.
+        $this->assertSame('unknown_metric', $errors['no.such.metric']['error']);
+        $this->assertSame('invalid_filter', $errors['usage.total_users']['error']);
+        $this->assertSame('filters', $errors['usage.total_users']['field']);
+        $this->assertSame(['deals.sold'], array_keys($results));
+        $this->assertSame($this->api('metrics/deals.sold', $this->dated(['team_id' => $team]))->json('value'), $results['deals.sold']['value']);
+    }
+
+    public function test_a_batch_refuses_what_it_cannot_make_sense_of(): void
+    {
+        $many = implode(',', array_map(fn (int $n): string => "m.n{$n}", range(1, 61)));
+
+        foreach ([
+            'no ids' => [[], 'ids'],
+            'an empty list' => [['ids' => ''], 'ids'],
+            'too many' => [['ids' => $many], 'ids'],
+            'capitals and spaces' => [['ids' => 'Deals.Sold, listings.added'], 'ids'],
+            'a comparison with nothing to compare' => [['ids' => 'deals.sold', 'compare_ids' => 'listings.added'], 'compare_ids'],
+            'a parameter nobody knows' => [['ids' => 'deals.sold', 'colour' => 'red'], 'query'],
+            'a filter that is not one' => [['ids' => 'deals.sold', 'team_id' => 'abc'], 'team_id'],
+        ] as $label => [$query, $field]) {
+            $this->api('metrics/batch', $this->dated($query))->assertStatus(422)->assertJsonValidationErrors($field, responseKey: 'errors');
+            $this->assertTrue(true, $label);
+        }
+    }
+
+    public function test_the_catalog_says_the_batch_is_there_and_how_many_it_takes(): void
+    {
+        $this->assertSame(['batch' => ['max_ids' => 60]], $this->api('metrics')->assertOk()->json('capabilities'));
+    }
+
+    public function test_a_number_is_worked_out_once_at_a_time_and_the_hold_is_let_go(): void
+    {
+        $this->api('metrics/listings.live', $this->dated())->assertOk();
+
+        $range = $this->range();
+        $name = 'fhone:v1:value:'.sha1(json_encode(['listings.live', $range->key(), [], false])).':build';
+
+        // Nobody is left holding it: another build of the same number starts at once.
+        $lock = Cache::lock($name, 5);
+        $this->assertTrue($lock->get());
+        $lock->release();
     }
 
     public function test_a_value_carries_its_definition_trust_dates_and_when_it_was_computed(): void

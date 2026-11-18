@@ -5,10 +5,11 @@ namespace App\Services\FhOne;
 use App\Services\Reports\Executive\DrillService;
 use App\Services\Reports\Executive\ExecutiveReportService;
 use App\Services\Reports\Executive\MetricRegistry;
+use App\Services\Reports\Executive\ReportContext;
 use App\Services\Reports\Executive\ReportRange;
+use App\Support\SingleFlight;
 use Closure;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 
 /**
@@ -42,36 +43,97 @@ final class MetricService
     {
         $this->checkFilters($key, $filters);
 
-        return $this->remember('value', [$key, $range->key(), $filters, $compare], function (Carbon $now) use ($key, $range, $filters, $compare) {
-            $def = MetricRegistry::get($key);
-            $stat = $this->reports->context($range, $now, $filters)->stat($key, $compare);
+        return $this->remember('value', [$key, $range->key(), $filters, $compare], fn (Carbon $now) => $this->valuePayload($key, $range, $filters, $compare, $this->reports->context($range, $now, $filters)));
+    }
 
-            return [
-                'metric' => $key,
-                'label' => $def['label'],
-                'definition' => $def['hint'],
-                'unit' => $def['unit'],
-                'kind' => $def['kind'],
-                'measured' => $def['as_of'],
-                'better' => $def['better'],
-                'trust' => MetricCatalog::trust($key),
-                'value' => $stat['value'],
-                // For a median: how many records it was taken over.
-                'sample' => $stat['sample'] ?? null,
-                // The dates start before FH began recording this, so the number runs low.
-                'partial' => $stat['partial'],
-                'data_since' => $def['source'] !== null ? MetricRegistry::DATA_SINCE[$def['source']] : null,
-                'compare' => isset($stat['previous']) ? [
-                    'range' => $range->previous()->toArray(),
-                    'value' => $stat['previous'],
-                    'change_pct' => $stat['change_pct'],
-                    'partial' => $stat['previous_partial'],
-                ] : null,
-                'range' => $range->toArray(),
-                'filters' => (object) $filters,
-                'filter_labels' => (object) $this->drill->filterLabels($filters),
-            ];
-        });
+    /**
+     * Many metrics for the same dates and filters in one go, each exactly as
+     * value() gives it (and kept under the same name, so a number asked for
+     * here is the one a single call finds, and the other way round).
+     *
+     * What is worth doing here is the sharing: the numbers are worked out from
+     * ONE ReportContext, whose row sets (the live listings, every agent's
+     * activity) are built once and read by every metric that needs them,
+     * where a call each would build them again each time.
+     *
+     * A metric that cannot be answered (not one of ours, or a filter that does
+     * not suit it) is said so in `errors`, by its id, and does not spoil the
+     * others.
+     *
+     * @param  list<string>  $ids
+     * @param  list<string>  $compare  the ids of those that also want the previous period beside them
+     * @param  array<string, mixed>  $filters
+     * @return array{results: array<string, array<string, mixed>>, errors: array<string, array{error: string, message: string, field?: string}>, generated_at: string}
+     */
+    public function batch(array $ids, array $compare, ReportRange $range, array $filters): array
+    {
+        $results = [];
+        $errors = [];
+        $context = null;
+
+        foreach (array_values(array_unique($ids)) as $key) {
+            if (! MetricRegistry::has($key)) {
+                $errors[$key] = ['error' => 'unknown_metric', 'message' => "There is no metric '{$key}'. GET /api/fh-one/v1/metrics lists them."];
+
+                continue;
+            }
+
+            try {
+                $this->checkFilters($key, $filters);
+            } catch (InvalidAsk $e) {
+                $errors[$key] = ['error' => 'invalid_filter', 'field' => $e->field, 'message' => $e->getMessage()];
+
+                continue;
+            }
+
+            $wantsCompare = in_array($key, $compare, true);
+
+            $results[$key] = $this->remember('value', [$key, $range->key(), $filters, $wantsCompare], function (Carbon $now) use ($key, $range, $filters, $wantsCompare, &$context) {
+                $context ??= $this->reports->context($range, $now, $filters);
+
+                return $this->valuePayload($key, $range, $filters, $wantsCompare, $context);
+            });
+        }
+
+        return ['results' => $results, 'errors' => $errors, 'generated_at' => Carbon::now()->setTimezone(ReportRange::TZ)->toIso8601String()];
+    }
+
+    /**
+     * One metric's value as FH One is given it.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    private function valuePayload(string $key, ReportRange $range, array $filters, bool $compare, ReportContext $context): array
+    {
+        $def = MetricRegistry::get($key);
+        $stat = $context->stat($key, $compare);
+
+        return [
+            'metric' => $key,
+            'label' => $def['label'],
+            'definition' => $def['hint'],
+            'unit' => $def['unit'],
+            'kind' => $def['kind'],
+            'measured' => $def['as_of'],
+            'better' => $def['better'],
+            'trust' => MetricCatalog::trust($key),
+            'value' => $stat['value'],
+            // For a median: how many records it was taken over.
+            'sample' => $stat['sample'] ?? null,
+            // The dates start before FH began recording this, so the number runs low.
+            'partial' => $stat['partial'],
+            'data_since' => $def['source'] !== null ? MetricRegistry::DATA_SINCE[$def['source']] : null,
+            'compare' => isset($stat['previous']) ? [
+                'range' => $range->previous()->toArray(),
+                'value' => $stat['previous'],
+                'change_pct' => $stat['change_pct'],
+                'partial' => $stat['previous_partial'],
+            ] : null,
+            'range' => $range->toArray(),
+            'filters' => (object) $filters,
+            'filter_labels' => (object) $this->drill->filterLabels($filters),
+        ];
     }
 
     /**
@@ -143,7 +205,9 @@ final class MetricService
     {
         $seconds = max(0, (int) config('fhone.cache_seconds', 300));
 
-        return Cache::remember('fhone:v1:'.$kind.':'.sha1(json_encode($parts)), $seconds, function () use ($build) {
+        // The same number asked for twice at once (two pages, a batch and a single call) is worked out once:
+        // the second waits for the first and reads what it kept.
+        return SingleFlight::remember('fhone:v1:'.$kind.':'.sha1(json_encode($parts)), $seconds, function () use ($build): array {
             $now = Carbon::now();
 
             return $build($now) + ['generated_at' => $now->copy()->setTimezone(ReportRange::TZ)->toIso8601String()];
