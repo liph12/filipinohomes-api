@@ -131,6 +131,9 @@ Route::middleware('strip.tags')->group(function () {
                 ->where('type', '[a-z]+');
             // Projects that have listings, searchable (?q=) and paged like /records.
             Route::get('/projects', [\App\Http\Controllers\FhOne\ProjectController::class, 'index']);
+            // One of them and its listings (paged, like /records).
+            Route::get('/projects/{id}', [\App\Http\Controllers\FhOne\ProjectController::class, 'show'])
+                ->whereNumber('id');
         });
     });
 

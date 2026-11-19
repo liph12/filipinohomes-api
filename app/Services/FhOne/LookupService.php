@@ -3,6 +3,7 @@
 namespace App\Services\FhOne;
 
 use App\Services\Reports\Executive\Geography;
+use App\Services\Reports\Executive\ReportQueries;
 use App\Services\Reports\Executive\TeamDirectory;
 use App\Support\OfficeRegionMap;
 use Illuminate\Support\Facades\DB;
@@ -32,6 +33,7 @@ final class LookupService
     public function __construct(
         private readonly TeamDirectory $teams,
         private readonly Geography $geo,
+        private readonly ReportQueries $queries,
     ) {}
 
     /**
@@ -127,6 +129,9 @@ final class LookupService
             ->whereNull('deleted_at')
             ->whereNotNull('name')
             ->whereRaw('LOWER(name) LIKE ?', [$like])
+            // Only projects with at least one listing — the same listing chain
+            // /v1/projects and the metrics count under project_id.
+            ->whereIn('id', $this->queries->listingBase()->whereNotNull('properties.project_id')->select('properties.project_id'))
             // Names that start with the text first, then alphabetical.
             ->orderByRaw('CASE WHEN LOWER(name) LIKE ? THEN 0 ELSE 1 END', [addcslashes($needle, '%_\\').'%'])
             ->orderBy('name')

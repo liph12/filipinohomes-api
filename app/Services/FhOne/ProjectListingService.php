@@ -4,6 +4,7 @@ namespace App\Services\FhOne;
 
 use App\Services\Reports\Executive\Geography;
 use App\Services\Reports\Executive\ReportQueries;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -40,14 +41,7 @@ final class ProjectListingService
         $perPage = max(1, min(self::MAX_PER_PAGE, $perPage));
         $page = max(1, $page);
 
-        $grouped = $this->queries->listingBase()
-            ->whereNotNull('projects.id')
-            ->groupBy('projects.id', 'projects.name', 'projects.city_id')
-            ->select([
-                'projects.id', 'projects.name', 'projects.city_id',
-                DB::raw('COUNT(DISTINCT listings.id) as listings'),
-                DB::raw("COUNT(DISTINCT CASE WHEN listings.visibility = 'public' AND properties.status = 'active' THEN listings.id END) as live"),
-            ]);
+        $grouped = $this->grouped();
 
         $needle = mb_strtolower(trim($search));
         if ($needle !== '') {
@@ -68,13 +62,7 @@ final class ProjectListingService
             ->get();
 
         return [
-            'rows' => $rows->map(fn ($row) => [
-                'id' => (int) $row->id,
-                'name' => trim((string) preg_replace('/\s+/', ' ', (string) $row->name)),
-                'place' => $row->city_id === null ? null : $this->geo->cityName($this->geo->cityGroup((int) $row->city_id)),
-                'listings' => (int) $row->listings,
-                'live' => (int) $row->live,
-            ])->values()->all(),
+            'rows' => $rows->map(fn ($row) => $this->row($row))->values()->all(),
             'sort' => ['by' => $sort, 'dir' => $dir],
             'meta' => [
                 'total' => $total,
@@ -82,6 +70,45 @@ final class ProjectListingService
                 'per_page' => $perPage,
                 'last_page' => max(1, (int) ceil($total / $perPage)),
             ],
+        ];
+    }
+
+    /**
+     * One project with its counts, or null when it doesn't exist or has no
+     * listings (so it isn't in list() either).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function find(int $id): ?array
+    {
+        $row = $this->grouped()->where('projects.id', $id)->first();
+
+        return $row === null ? null : $this->row($row);
+    }
+
+    /** Projects on the report's listing chain, one row each with its counts. */
+    private function grouped(): Builder
+    {
+        return $this->queries->listingBase()
+            ->whereNotNull('projects.id')
+            ->groupBy('projects.id', 'projects.name', 'projects.slug', 'projects.city_id')
+            ->select([
+                'projects.id', 'projects.name', 'projects.slug', 'projects.city_id',
+                DB::raw('COUNT(DISTINCT listings.id) as listings'),
+                DB::raw("COUNT(DISTINCT CASE WHEN listings.visibility = 'public' AND properties.status = 'active' THEN listings.id END) as live"),
+            ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function row(object $row): array
+    {
+        return [
+            'id' => (int) $row->id,
+            'name' => trim((string) preg_replace('/\s+/', ' ', (string) $row->name)),
+            'slug' => $row->slug === null ? null : (string) $row->slug,
+            'place' => $row->city_id === null ? null : $this->geo->cityName($this->geo->cityGroup((int) $row->city_id)),
+            'listings' => (int) $row->listings,
+            'live' => (int) $row->live,
         ];
     }
 }

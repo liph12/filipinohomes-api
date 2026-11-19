@@ -12,6 +12,7 @@ use App\Support\FhOneKeys;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Testing\TestResponse;
@@ -93,7 +94,7 @@ class FhOneApiTest extends TestCase
     {
         foreach ([
             '/filipinohomes/listings', 'v1/health', 'v1/metrics', 'v1/metrics/deals.sold', 'v1/metrics/deals.sold/breakdown?by=team',
-            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects', 'v1/metrics/batch?ids=deals.sold',
+            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects', 'v1/projects/1', 'v1/metrics/batch?ids=deals.sold',
         ] as $path) {
             $this->hit($path, [], null)
                 ->assertStatus(401)
@@ -346,6 +347,29 @@ class FhOneApiTest extends TestCase
     // ── Many at once ────────────────────────────────────────────────────────
 
     /** The queries run while `$work` does. */
+    /** A project with one listing of its own — a copy of a Mantra listing. */
+    private function projectWithListing(string $name, array $project = []): int
+    {
+        $projectId = (int) DB::table('projects')->insertGetId(['name' => $name, 'slug' => Str::slug($name)] + $project);
+
+        $listing = (array) DB::table('listings')
+            ->join('properties', 'properties.id', '=', 'listings.property_id')
+            ->where('properties.project_id', $this->id['mantra'])
+            ->select('listings.*')->first();
+        $property = (array) DB::table('properties')->find($listing['property_id']);
+
+        unset($property['id'], $listing['id']);
+        $listing['property_id'] = DB::table('properties')->insertGetId(['project_id' => $projectId] + $property);
+        foreach (['slug', 'code'] as $unique) {
+            if (array_key_exists($unique, $listing) && $listing[$unique] !== null) {
+                $listing[$unique] .= '-'.$projectId;
+            }
+        }
+        DB::table('listings')->insert($listing);
+
+        return $projectId;
+    }
+
     private function queriesDuring(callable $work): int
     {
         $count = 0;
@@ -824,16 +848,19 @@ class FhOneApiTest extends TestCase
         $this->api('lookup/cities', ['q' => 'c'])->assertOk()->assertJsonPath('data', []);
 
         foreach (range(1, 25) as $n) {
-            DB::table('projects')->insert(['name' => "Tower {$n}", 'slug' => "tower-{$n}"]);
+            $this->projectWithListing("Tower {$n}");
         }
-        DB::table('projects')->insert(['name' => 'Tower Gone', 'slug' => 'tower-gone', 'deleted_at' => now()]);
+        $this->projectWithListing('Tower Gone', ['deleted_at' => now()]);
+        // A project nobody has listed in isn't offered: its id would filter to nothing.
+        DB::table('projects')->insert(['name' => 'Tower Empty', 'slug' => 'tower-empty']);
         $towers = $this->api('lookup/projects', ['q' => 'tower'])->assertOk();
         $this->assertCount(20, $towers->json('data'));
         $this->assertTrue($towers->json('meta.truncated'));
         $this->assertNotContains('Tower Gone', array_column($towers->json('data'), 'label'));
+        $this->assertSame([], $this->api('lookup/projects', ['q' => 'tower empty'])->json('data'));
 
         // Names that start with the text come before names that only contain it.
-        DB::table('projects')->insert(['name' => 'The Tower', 'slug' => 'the-tower']);
+        $this->projectWithListing('The Tower');
         $this->assertSame('Tower 1', $this->api('lookup/projects', ['q' => 'tower 1'])->json('data.0.label'));
 
         $this->assertNotEmpty($this->api('lookup/provinces')->json('data'));
@@ -876,6 +903,33 @@ class FhOneApiTest extends TestCase
         $this->hit('v1/projects', ['sort' => 'name'])->assertOk()->assertJsonPath('sort', ['by' => 'name', 'dir' => 'asc']);
         $this->hit('v1/projects', ['per_page' => 201])->assertStatus(422);
         $this->hit('v1/projects', ['sort' => 'price'])->assertStatus(422);
+    }
+
+    public function test_a_project_opens_with_exactly_the_listings_it_counts(): void
+    {
+        $mantra = collect($this->hit('v1/projects', ['per_page' => 200])->json('rows'))->firstWhere('name', 'Mantra');
+        $this->assertArrayHasKey('slug', $mantra);
+
+        $one = $this->hit("v1/projects/{$mantra['id']}", ['per_page' => 200])->assertOk()
+            ->assertJsonPath('project', $mantra)->assertJsonPath('live_only', false);
+        $this->assertCount($mantra['listings'], $one->json('rows'));
+        $this->assertSame($mantra['listings'], $one->json('meta.total'));
+        $this->assertNotEmpty($one->json('rows.0.listing.id'));
+
+        // live=1 is the project's live listings only.
+        $live = $this->hit("v1/projects/{$mantra['id']}", ['live' => 1, 'per_page' => 200])->assertOk();
+        $this->assertSame($mantra['live'], $live->json('meta.total'));
+
+        // Paging.
+        $this->hit("v1/projects/{$mantra['id']}", ['per_page' => 1])->assertOk()->assertJsonCount(1, 'rows')
+            ->assertJsonPath('meta.last_page', $mantra['listings']);
+        $this->hit("v1/projects/{$mantra['id']}", ['per_page' => 201])->assertStatus(422);
+
+        // A project with no listings, or none at all, is a 404 that says where to look.
+        $empty = (int) DB::table('projects')->insertGetId(['name' => 'Empty Tower', 'slug' => 'empty-tower']);
+        $this->hit("v1/projects/{$empty}")->assertStatus(404)->assertJsonPath('error', 'project_not_found');
+        $this->hit('v1/projects/999999')->assertStatus(404);
+        $this->hit('v1/projects/abc')->assertStatus(404);
     }
 
     public function test_an_unknown_lookup_or_an_overlong_search_is_refused(): void
