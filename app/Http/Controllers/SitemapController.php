@@ -171,10 +171,6 @@ class SitemapController extends Controller
             ->whereNull('properties.deleted_at')
             ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('listings.verification_status')
-                  ->orWhere('listings.verification_status', '!=', 'flagged');
-            })
             ->select(
                 'cities.id as city_id',
                 'provinces.id as province_id',
@@ -390,11 +386,7 @@ class SitemapController extends Controller
             ->whereNull('listings.deleted_at')
             ->whereNull('properties.deleted_at')
             ->whereNull('property_attributes.deleted_at')
-            ->where('listings.visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('listings.verification_status')
-                  ->orWhere('listings.verification_status', '!=', 'flagged');
-            });
+            ->where('listings.visibility', 'public');
     }
 
     /**

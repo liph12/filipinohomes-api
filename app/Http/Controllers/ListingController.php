@@ -219,9 +219,8 @@ class ListingController extends Controller
         // this endpoint to one agent via `agent_id` — every other caller
         // (the general public browse, homepage search, programmatic typed
         // pages) omits it. That page shows an agent's own public listings
-        // regardless of moderation flag, so it skips publiclyListed()'s
-        // verification_status exclusion; the general search-engine-visible
-        // browse below keeps excluding flagged listings as before.
+        // regardless of moderation flag (publiclyListed() now shows flagged too,
+        // so the two scopes match today).
         $isAgentScoped = (int) $request->input('agent_id') > 0;
 
         $listings = ($isAgentScoped ? Listing::visibleOnAgentPage() : Listing::publiclyListed())

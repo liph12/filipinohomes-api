@@ -74,10 +74,6 @@ class FacilityCountService
             ->whereNull('properties.deleted_at')
             ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('listings.verification_status')
-                  ->orWhere('listings.verification_status', '!=', 'flagged');
-            })
             // No property.status filter: the public browse/search index counts
             // all statuses (active_only is opt-in and not passed there), so the
             // badge must too. Filtering status=active here under-represented the

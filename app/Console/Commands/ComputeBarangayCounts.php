@@ -65,10 +65,6 @@ class ComputeBarangayCounts extends Command
             ->whereNull('properties.deleted_at')
             ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('listings.verification_status')
-                    ->orWhere('listings.verification_status', '!=', 'flagged');
-            })
             ->whereIn('categories.name', ['For Sale', 'For Rent'])
             ->select(
                 'eff_b.id as barangay_id',

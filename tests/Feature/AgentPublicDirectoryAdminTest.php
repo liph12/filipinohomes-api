@@ -142,13 +142,14 @@ class AgentPublicDirectoryAdminTest extends TestCase
         $privateOnly = $this->person('admin');
         $this->listing($privateOnly, ['visibility' => 'private']);
 
+        // Flagged still counts as posted: flagged listings are public too.
         $flaggedOnly = $this->person('admin');
         $this->listing($flaggedOnly, ['verification_status' => 'flagged']);
 
         $deletedOnly = $this->person('admin');
         $this->listing($deletedOnly, ['deleted_at' => now()]);
 
-        $this->assertSame([$posted->id], $this->eligibleIds());
+        $this->assertSame([$posted->id, $flaggedOnly->id], $this->eligibleIds());
     }
 
     public function test_agents_are_eligible_regardless_and_secretaries_still_are_not(): void

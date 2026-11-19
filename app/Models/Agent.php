@@ -116,7 +116,7 @@ class Agent extends Model implements Auditable
      * front of clients like anyone else — but an admin with nothing posted has
      * no business in the directory, so the listing is the condition. "Posted"
      * means publicly listed (Listing::publiclyListed), so an admin whose only
-     * listings are private or flagged doesn't surface with a profile reading
+     * listings are private doesn't surface with a profile reading
      * "0 listings".
      *
      * The single definition: keep every public surface on this scope (and the

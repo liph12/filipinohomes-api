@@ -980,10 +980,6 @@ class PriceGuideService
             ->whereNull('properties.deleted_at')
             ->whereNull('property_attributes.deleted_at')
             ->where('listings.visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('listings.verification_status')
-                    ->orWhere('listings.verification_status', '!=', 'flagged');
-            })
             ->whereIn('categories.name', self::CATEGORIES)
             ->whereNotNull('listings.price')
             // The same price floors as the market stats, so placeholder prices stay out.

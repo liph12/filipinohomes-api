@@ -772,17 +772,13 @@ class Listing extends Model implements Auditable
     /**
      * Listings safe to surface on any public, search-engine-visible
      * channel: sitemap, browse grids, "featured" rail, location pages,
-     * etc. Excludes flagged (admin moderation) but keeps every other
-     * verification_status (null/verified/fully_verified/pending_review).
+     * etc. Every verification_status shows — flagged included — so a
+     * listing is found and indexed before its audit is done.
      * Owner/admin dashboard queries deliberately do NOT use this scope.
      */
     public function scopePubliclyListed($q)
     {
         return $q->where('visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('verification_status')
-                    ->orWhere('verification_status', '!=', 'flagged');
-            })
             // Agent-status gate: a listing is public only while its owning
             // agent is active. Marking the agent inactive/resigned/deactivated
             // pulls every one of their listings off public + SEO surfaces;

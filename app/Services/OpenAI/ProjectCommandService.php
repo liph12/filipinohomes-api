@@ -142,7 +142,6 @@ class ProjectCommandService extends CacheService
                 ->where('properties.project_id', $projectId)
                 ->whereNull('listings.deleted_at')->whereNull('properties.deleted_at')
                 ->where('listings.visibility', 'public')
-                ->where(fn ($q) => $q->whereNull('listings.verification_status')->orWhere('listings.verification_status', '!=', 'flagged'))
                 ->whereNotNull('listings.price')
                 // The Price Guide's floors: a ₱1 placeholder is not a price.
                 ->where(fn ($q) => $q->where(fn ($s) => $s->where('categories.name', 'For Sale')->where('listings.price', '>=', 100000))

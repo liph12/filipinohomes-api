@@ -266,10 +266,6 @@ class ModifierThresholdService
             ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
             ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')
             ->where('listings.visibility', 'public')
-            ->where(function ($q) {
-                $q->whereNull('listings.verification_status')
-                  ->orWhere('listings.verification_status', '!=', 'flagged');
-            })
             ->where('properties.status', 'active')
             // Affordable is a sale-side concept; rent prices are a different
             // scale and "affordable rent" skews misleading. Sale-only for v1.
