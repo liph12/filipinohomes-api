@@ -12,6 +12,7 @@ use App\Support\FhOneKeys;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
@@ -94,7 +95,7 @@ class FhOneApiTest extends TestCase
     {
         foreach ([
             '/filipinohomes/listings', 'v1/health', 'v1/metrics', 'v1/metrics/deals.sold', 'v1/metrics/deals.sold/breakdown?by=team',
-            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects', 'v1/projects/1', 'v1/metrics/batch?ids=deals.sold',
+            'v1/metrics/deals.sold/records', 'v1/lookup/teams', 'v1/projects', 'v1/projects/1', 'v1/projects/mantra/listings', 'v1/metrics/batch?ids=deals.sold',
         ] as $path) {
             $this->hit($path, [], null)
                 ->assertStatus(401)
@@ -905,31 +906,77 @@ class FhOneApiTest extends TestCase
         $this->hit('v1/projects', ['sort' => 'price'])->assertStatus(422);
     }
 
-    public function test_a_project_opens_with_exactly_the_listings_it_counts(): void
+    public function test_a_project_opens_by_its_slug_with_its_details(): void
     {
         $mantra = collect($this->hit('v1/projects', ['per_page' => 200])->json('rows'))->firstWhere('name', 'Mantra');
-        $this->assertArrayHasKey('slug', $mantra);
+        $this->assertNotNull($mantra['slug']);
+        // The report fixture's projects table is slim: give it the project page's columns.
+        Schema::table('projects', function ($table) {
+            foreach (['complete_address', 'latitude', 'longitude', 'featured_photo', 'photos_url', 'price', 'about', 'website', 'video', 'mobile', 'email', 'contactperson'] as $column) {
+                if (! Schema::hasColumn('projects', $column)) {
+                    $table->text($column)->nullable();
+                }
+            }
+        });
+        DB::table('projects')->where('id', $mantra['id'])->update([
+            'complete_address' => 'Lahug, Cebu City',
+            'latitude' => '10.3', 'longitude' => '123.9',
+            'featured_photo' => json_encode(['https://cdn.test/cover.webp']),
+            'photos_url' => json_encode(['https://cdn.test/1.webp', 'not a url']),
+            'price' => '2,400,000.00',
+            'mobile' => '0917 000 0000', 'email' => 'sales@dev.test', 'contactperson' => 'Juan',
+        ]);
 
-        $one = $this->hit("v1/projects/{$mantra['id']}", ['per_page' => 200])->assertOk()
+        $one = $this->hit("v1/projects/{$mantra['slug']}")->assertOk();
+        $project = $one->json('project');
+        // The list's row, plus the project page's public details.
+        foreach (['id', 'name', 'slug', 'place', 'listings', 'live'] as $key) {
+            $this->assertSame($mantra[$key], $project[$key]);
+        }
+        $this->assertSame('https://filipinohomes.com/projects/'.$mantra['slug'], $project['url']);
+        $this->assertSame('Lahug, Cebu City', $project['address']);
+        $this->assertSame('https://cdn.test/cover.webp', $project['photo']);
+        $this->assertSame(['https://cdn.test/1.webp'], $project['photos']);
+        $this->assertEquals(2400000, $project['price_from']);
+        // No contact details go out.
+        $this->assertStringNotContainsString('0917', $one->getContent());
+        $this->assertStringNotContainsString('sales@dev.test', $one->getContent());
+        $this->assertArrayNotHasKey('rows', $one->json());
+
+        // The id works too.
+        $this->hit("v1/projects/{$mantra['id']}")->assertOk()->assertJsonPath('project.slug', $mantra['slug']);
+    }
+
+    public function test_a_projects_listings_are_exactly_the_ones_it_counts(): void
+    {
+        $mantra = collect($this->hit('v1/projects', ['per_page' => 200])->json('rows'))->firstWhere('name', 'Mantra');
+
+        $all = $this->hit("v1/projects/{$mantra['slug']}/listings", ['per_page' => 200])->assertOk()
             ->assertJsonPath('project', $mantra)->assertJsonPath('live_only', false);
-        $this->assertCount($mantra['listings'], $one->json('rows'));
-        $this->assertSame($mantra['listings'], $one->json('meta.total'));
-        $this->assertNotEmpty($one->json('rows.0.listing.id'));
+        $this->assertCount($mantra['listings'], $all->json('rows'));
+        $this->assertSame($mantra['listings'], $all->json('meta.total'));
+        $this->assertNotEmpty($all->json('rows.0.listing.id'));
 
         // live=1 is the project's live listings only.
-        $live = $this->hit("v1/projects/{$mantra['id']}", ['live' => 1, 'per_page' => 200])->assertOk();
+        $live = $this->hit("v1/projects/{$mantra['slug']}/listings", ['live' => 1, 'per_page' => 200])->assertOk();
         $this->assertSame($mantra['live'], $live->json('meta.total'));
 
         // Paging.
-        $this->hit("v1/projects/{$mantra['id']}", ['per_page' => 1])->assertOk()->assertJsonCount(1, 'rows')
+        $this->hit("v1/projects/{$mantra['slug']}/listings", ['per_page' => 1])->assertOk()->assertJsonCount(1, 'rows')
             ->assertJsonPath('meta.last_page', $mantra['listings']);
-        $this->hit("v1/projects/{$mantra['id']}", ['per_page' => 201])->assertStatus(422);
+        $this->hit("v1/projects/{$mantra['slug']}/listings", ['per_page' => 201])->assertStatus(422);
+        $this->hit("v1/projects/{$mantra['id']}/listings")->assertOk()->assertJsonPath('meta.total', $mantra['listings']);
+    }
 
-        // A project with no listings, or none at all, is a 404 that says where to look.
-        $empty = (int) DB::table('projects')->insertGetId(['name' => 'Empty Tower', 'slug' => 'empty-tower']);
-        $this->hit("v1/projects/{$empty}")->assertStatus(404)->assertJsonPath('error', 'project_not_found');
-        $this->hit('v1/projects/999999')->assertStatus(404);
-        $this->hit('v1/projects/abc')->assertStatus(404);
+    public function test_a_project_without_listings_or_unknown_is_a_404(): void
+    {
+        DB::table('projects')->insert(['name' => 'Empty Tower', 'slug' => 'empty-tower']);
+
+        foreach (['v1/projects/empty-tower', 'v1/projects/empty-tower/listings', 'v1/projects/no-such-project', 'v1/projects/999999'] as $path) {
+            $this->hit($path)->assertStatus(404)->assertJsonPath('error', 'project_not_found');
+        }
+        // A slug is lower-case letters, digits and dashes; anything else isn't a route.
+        $this->hit('v1/projects/Bad_Slug')->assertStatus(404);
     }
 
     public function test_an_unknown_lookup_or_an_overlong_search_is_refused(): void

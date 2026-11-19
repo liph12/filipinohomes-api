@@ -74,16 +74,57 @@ final class ProjectListingService
     }
 
     /**
-     * One project with its counts, or null when it doesn't exist or has no
-     * listings (so it isn't in list() either).
+     * One project with its counts, found by slug (or by id, digits only), or
+     * null when it doesn't exist or has no listings (so it isn't in list()
+     * either).
      *
      * @return array<string, mixed>|null
      */
-    public function find(int $id): ?array
+    public function find(string $key): ?array
     {
-        $row = $this->grouped()->where('projects.id', $id)->first();
+        $query = $this->grouped();
+        ctype_digit($key) ? $query->where('projects.id', (int) $key) : $query->where('projects.slug', $key);
+        $row = $query->first();
 
         return $row === null ? null : $this->row($row);
+    }
+
+    /**
+     * The project page's public details on top of find(): where it is, its
+     * photos and starting price, and its page on the website. No contact
+     * person, phone or email.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function details(string $key): ?array
+    {
+        $project = $this->find($key);
+        if ($project === null) {
+            return null;
+        }
+
+        $row = DB::table('projects')->where('id', $project['id'])
+            ->first(['complete_address', 'latitude', 'longitude', 'featured_photo', 'photos_url', 'price', 'about', 'website', 'video']);
+
+        $photos = fn ($json) => array_values(array_filter(
+            is_array($decoded = json_decode((string) $json, true)) ? $decoded : [],
+            fn ($url) => is_string($url) && str_starts_with($url, 'http'),
+        ));
+        $price = (float) str_replace(',', '', (string) $row->price);
+        $text = fn ($value) => ($value = trim(strip_tags((string) $value))) === '' ? null : $value;
+
+        return $project + [
+            'url' => $project['slug'] === null ? null : rtrim((string) config('services.frontend.url', 'https://filipinohomes.com'), '/').'/projects/'.$project['slug'],
+            'address' => $text($row->complete_address),
+            'latitude' => is_numeric($row->latitude) ? (float) $row->latitude : null,
+            'longitude' => is_numeric($row->longitude) ? (float) $row->longitude : null,
+            'photo' => $photos($row->featured_photo)[0] ?? null,
+            'photos' => $photos($row->photos_url),
+            'price_from' => $price > 0 ? $price : null,
+            'about' => $text($row->about),
+            'website' => $text($row->website),
+            'video' => $text($row->video),
+        ];
     }
 
     /** Projects on the report's listing chain, one row each with its counts. */

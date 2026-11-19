@@ -19,10 +19,15 @@ use Illuminate\Validation\ValidationException;
  *   Every project that has at least one listing, with how many and how many
  *   are live — searchable by name (`q`), paged (up to 200 a page).
  *
- * GET /api/fh-one/v1/projects/{id}?live=1&page=&per_page=&sort=added|price&dir=desc
- *   One of those projects and its listings — the records of listings.total
- *   (or listings.live with live=1) under project_id, so the rows are the ones
- *   the counts count.
+ * GET /api/fh-one/v1/projects/{slug}
+ *   One of those projects: its counts plus the project page's public details
+ *   (address, map position, photos, starting price, website link).
+ *
+ * GET /api/fh-one/v1/projects/{slug}/listings?live=1&page=&per_page=&sort=added|price&dir=desc
+ *   Its listings — the records of listings.total (or listings.live with
+ *   live=1) under project_id, so the rows are the ones the counts count.
+ *
+ * {slug} is the website's (filipinohomes.com/projects/{slug}); a numeric id works too.
  *
  * Behind VerifyFhOneKey.
  */
@@ -59,7 +64,22 @@ class ProjectController extends Controller
         ]);
     }
 
-    public function show(Request $request, int $id, ProjectListingService $projects, MetricService $metrics): JsonResponse
+    /** GET /v1/projects/{project}: one project's details, by slug (or id). */
+    public function show(string $project, ProjectListingService $projects): JsonResponse
+    {
+        $details = $projects->details($project);
+        if ($details === null) {
+            return $this->notFound($project);
+        }
+
+        return response()->json([
+            'project' => $details,
+            'generated_at' => Carbon::now('Asia/Manila')->toIso8601String(),
+        ]);
+    }
+
+    /** GET /v1/projects/{project}/listings: that project's listings, paged, by slug (or id). */
+    public function listings(Request $request, string $project, ProjectListingService $projects, MetricService $metrics): JsonResponse
     {
         $data = $request->validate([
             'live' => ['nullable', 'boolean'],
@@ -69,12 +89,9 @@ class ProjectController extends Controller
             'dir' => ['nullable', Rule::in(['asc', 'desc'])],
         ]);
 
-        $project = $projects->find($id);
-        if ($project === null) {
-            return response()->json([
-                'error' => 'project_not_found',
-                'message' => "No project {$id} with listings. GET /api/fh-one/v1/projects lists them.",
-            ], 404);
+        $found = $projects->find($project);
+        if ($found === null) {
+            return $this->notFound($project);
         }
 
         $liveOnly = (bool) ($data['live'] ?? false);
@@ -85,7 +102,7 @@ class ProjectController extends Controller
             $records = $metrics->records(
                 $liveOnly ? 'listings.live' : 'listings.total',
                 ReportRange::resolve($today, $today),
-                ['project_id' => $id],
+                ['project_id' => $found['id']],
                 (int) ($data['page'] ?? 1),
                 (int) ($data['per_page'] ?? 25),
                 $data['sort'] ?? null,
@@ -96,7 +113,7 @@ class ProjectController extends Controller
         }
 
         return response()->json([
-            'project' => $project,
+            'project' => $found,
             'live_only' => $liveOnly,
             'columns' => $records['columns'],
             'rows' => $records['rows'],
@@ -105,5 +122,13 @@ class ProjectController extends Controller
             'measured' => $records['measured'],
             'generated_at' => Carbon::now('Asia/Manila')->toIso8601String(),
         ]);
+    }
+
+    private function notFound(string $project): JsonResponse
+    {
+        return response()->json([
+            'error' => 'project_not_found',
+            'message' => "No project '{$project}' with listings. GET /api/fh-one/v1/projects lists them.",
+        ], 404);
     }
 }
