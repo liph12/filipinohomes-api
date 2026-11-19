@@ -51,20 +51,22 @@ class TrafficSourceService extends AudienceInsightsService
         // than one channel, and anonymous devices: no logged-in visit in the range AND not tied to any
         // account (signup stamps users.visitor_id — that also covers visits stored before user_id was).
         // Was six separate scans of the range; a long range ("This year") took ~16s and could time out.
+        // The first visit's channel is read in the same pass (the channel beside the smallest id, ids padded
+        // so they compare as numbers) from the covering index — no second lookup of each device's first row.
         $perDevice = $this->audienceVisits()
             ->whereNotNull('visits.visitor_id')
             ->groupBy('visits.visitor_id')
             ->select(
                 'visits.visitor_id',
-                DB::raw('MIN(visits.id) as first_id'),
+                DB::raw("SUBSTRING(MIN(CONCAT(LPAD(visits.id, 20, '0'), visits.channel)), 21) as channel"),
                 DB::raw('COUNT(DISTINCT visits.channel) as sources'),
                 DB::raw('MAX(visits.user_id) as user_id')
             );
-        $byFirst = DB::table('visits')
-            ->joinSub($perDevice, 'd', fn ($j) => $j->on('visits.id', '=', 'd.first_id'))
-            ->groupBy('visits.channel')
+        $byFirst = DB::query()
+            ->fromSub($perDevice, 'd')
+            ->groupBy('d.channel')
             ->select(
-                'visits.channel as channel',
+                'd.channel as channel',
                 DB::raw('COUNT(*) as devices'),
                 DB::raw('SUM(d.sources > 1) as multi'),
                 DB::raw('SUM(d.user_id IS NULL AND NOT EXISTS (SELECT 1 FROM users acct WHERE acct.visitor_id = d.visitor_id)) as anonymous')
@@ -72,25 +74,18 @@ class TrafficSourceService extends AudienceInsightsService
             ->get();
         $firstInRange = $byFirst->pluck('devices', 'channel');
 
-        // First-touch channel per visitor_id = the channel of that device's
+        // First-touch channel of a client = the channel of their device's
         // earliest visit row (ids are monotonic with insert time, so MIN(id)
-        // is the first visit). Joined to clients via users.visitor_id below.
-        $firstVisitIds = DB::table('visits')
-            ->whereNotNull('visitor_id')
-            ->groupBy('visitor_id')
-            ->select('visitor_id', DB::raw('MIN(id) as first_id'));
-
-        $firstTouch = DB::table('visits')
-            ->joinSub($firstVisitIds, 'fv', fn ($j) => $j->on('visits.id', '=', 'fv.first_id'))
-            ->select('visits.visitor_id', 'visits.channel');
-
+        // is the first visit). Looked up per client through the visitor_id
+        // index — not by grouping every device's whole history (that scanned
+        // the entire visits table, twice, for a few hundred clients).
         // Clients (role=client) grouped by their first-touch channel, split by
         // registration date. Mirrors EngagementOverviewService::size() new/
         // returning definitions, just attributed to a channel.
-        $clientByChannel = function (bool $registeredInRange) use ($firstTouch) {
+        $clientByChannel = function (bool $registeredInRange) {
             $query = DB::table('users')
                 ->join('roles', 'roles.id', '=', 'users.role_id')
-                ->joinSub($firstTouch, 'ft', fn ($j) => $j->on('ft.visitor_id', '=', 'users.visitor_id'))
+                ->join('visits as ft', fn ($j) => $j->whereRaw('ft.id = (SELECT MIN(v1.id) FROM visits v1 WHERE v1.visitor_id = users.visitor_id)'))
                 ->where('roles.name', 'client')
                 ->whereNotNull('users.visitor_id');
 
