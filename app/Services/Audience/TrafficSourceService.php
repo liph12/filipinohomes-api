@@ -58,7 +58,7 @@ class TrafficSourceService extends AudienceInsightsService
             ->groupBy('visits.visitor_id')
             ->select(
                 'visits.visitor_id',
-                DB::raw("SUBSTRING(MIN(CONCAT(LPAD(visits.id, 20, '0'), visits.channel)), 21) as channel"),
+                DB::raw('SUBSTR(MIN('.$this->paddedIdThenChannel().'), 21) as channel'),
                 DB::raw('COUNT(DISTINCT visits.channel) as sources'),
                 DB::raw('MAX(visits.user_id) as user_id')
             );
@@ -164,6 +164,14 @@ class TrafficSourceService extends AudienceInsightsService
             'referrers'             => $this->referrers(),
             'multi_source_overcount' => max(0, $perChannelSum - $uniqueDevices),
         ];
+    }
+
+    /** A visit's id padded to 20 digits followed by its channel, so MIN() picks the first visit's channel. */
+    private function paddedIdThenChannel(): string
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "printf('%020d', visits.id) || visits.channel"
+            : "CONCAT(LPAD(visits.id, 20, '0'), visits.channel)";
     }
 
     /** Android package names → readable app names for the referrer list. */
