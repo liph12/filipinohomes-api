@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\AssumeDetail;
 
+use App\Support\PhilippinePin;
 use Illuminate\Foundation\Http\FormRequest;
 use App\Models\User;
 use App\Models\PropertySubtype;
@@ -61,6 +62,8 @@ class StoreListingRequest extends FormRequest
             'amenities' => 'nullable|array',
             'amenities.*' => 'string',
             'geo_coordinates' => 'nullable|array:lat,lng',
+            // The pin must be inside the Philippines.
+            ...PhilippinePin::rules(),
             // ATS attachments are optional (when none, agent_ats_remarks is
             // required — see withValidator). The expiration date is ALWAYS
             // required, even without an attachment.
@@ -193,6 +196,7 @@ class StoreListingRequest extends FormRequest
             'property_subtype_id.required' => 'Please select a property subtype',
             'name.required' => 'Listing name is required',
             'price.required' => 'Price is required',
+            ...PhilippinePin::messages(),
         ];
     }
 

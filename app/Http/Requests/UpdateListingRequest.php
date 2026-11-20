@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\AssumeDetail;
 
+use App\Support\PhilippinePin;
 use Illuminate\Foundation\Http\FormRequest;
 use App\Models\PropertySubtype;
 
@@ -57,6 +58,8 @@ class UpdateListingRequest extends FormRequest
             'amenities'           => 'nullable|array',
             'amenities.*'         => 'string',
             'geo_coordinates'     => 'nullable|array',
+            // The pin must be inside the Philippines.
+            ...PhilippinePin::rules(),
             'ats_expiration_date' => 'sometimes|date',
             'ats_attachments'              => 'sometimes|array',
             'ats_attachments.photos'       => 'sometimes|array',
@@ -119,6 +122,11 @@ class UpdateListingRequest extends FormRequest
             'ats_status'        => 'sometimes|in:approve,pending,expired,rejected',
     ];
     } 
+
+    public function messages(): array
+    {
+        return PhilippinePin::messages();
+    }
 
     /**
      * If this edit sets ATS attachments but leaves them empty (no photos and
