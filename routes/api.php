@@ -193,6 +193,9 @@ Route::middleware('strip.tags')->group(function () {
         // (server-to-server, build-token gated in the controller).
         Route::post('/maps/fallback', [\App\Http\Controllers\MapSettingsController::class, 'fallback'])
             ->middleware('throttle:30,1');
+        // …and back to Google once billing is on again (only after an automatic fallback).
+        Route::post('/maps/restore', [\App\Http\Controllers\MapSettingsController::class, 'restore'])
+            ->middleware('throttle:30,1');
         Route::post('/track/ai-click', [AiVisibilityController::class, 'storeClick']);
         Route::get('/blogs', [PostController::class, 'index']);
         Route::get('/blog-categories', [BlogCategoryController::class, 'index']);
