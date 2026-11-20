@@ -192,7 +192,7 @@ class InquiryAutoApprovalService
     public function summary(array $settings): string
     {
         if (! $settings['enabled']) {
-            return 'Off — pending inquiries wait for a moderator';
+            return 'Off — inquiries wait for a moderator';
         }
 
         $daysLabel = match ($settings['days']) {

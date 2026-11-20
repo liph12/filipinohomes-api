@@ -148,18 +148,19 @@ class InquiryAiReplyService
 
     public function summary(array $s): string
     {
+        // Short: it is one line on a half-width System Settings card.
         if (! $s['enabled']) {
             return 'Off — clients wait for the agent';
         }
         $parts = [];
         if ($s['ack_enabled']) {
-            $parts[] = $s['ack_delay_minutes'] > 0 ? "Replies {$s['ack_delay_minutes']} min after approval" : 'Replies right after approval';
+            $parts[] = $s['ack_delay_minutes'] > 0 ? 'Reply in '.$this->shortDuration($s['ack_delay_minutes']) : 'Instant reply';
         }
         if ($s['escalation_enabled']) {
-            $parts[] = 'admin number after '.$this->durationLabel($s['escalation_after_minutes']);
+            $parts[] = 'admin no. in '.$this->shortDuration($s['escalation_after_minutes']);
         }
 
-        return $parts ? ucfirst(implode(' · ', $parts)) : 'On — both messages switched off';
+        return $parts ? ucfirst(implode(' · ', $parts)) : 'On — both messages off';
     }
 
     /* ------------------------------------------------------------------ */
@@ -1080,6 +1081,18 @@ class InquiryAiReplyService
     private function firstName(?string $name): string
     {
         return Str::of((string) $name)->trim()->explode(' ')->first() ?? '';
+    }
+
+    /** 45m, 3h, 1h 30m — for the card's one-line summary. */
+    private function shortDuration(int $minutes): string
+    {
+        if ($minutes < 60) {
+            return "{$minutes}m";
+        }
+        $h = intdiv($minutes, 60);
+        $m = $minutes % 60;
+
+        return "{$h}h".($m ? " {$m}m" : '');
     }
 
     public function durationLabel(int $minutes): string
