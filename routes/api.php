@@ -546,6 +546,11 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/client-logins', [UserController::class, 'getClients']);
             Route::get('/authenticate', [UserController::class, 'authenticate']);
 
+            // A deactivated agent asks an admin to switch the account back on.
+            // Both paths are in EnsureAgentActive::ALLOWED — the agent is blocked.
+            Route::get('/agent/reactivation-request', [\App\Http\Controllers\ReactivationRequestController::class, 'mine']);
+            Route::post('/agent/reactivation-request', [\App\Http\Controllers\ReactivationRequestController::class, 'store']);
+
             // Expo push tokens + in-app notification feed (mobile app)
             Route::post('/device-tokens', [DeviceTokenController::class, 'store']);
             Route::get('/notifications', [NotificationController::class, 'index']);
@@ -779,6 +784,12 @@ Route::middleware('strip.tags')->group(function () {
             // GET /admin/inquiries/{id}     → single inquiry with thread
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class.':admin')->group(function () {
+                // Reactivation requests from deactivated agents (accept / decline).
+                Route::get('/admin/reactivation-requests', [\App\Http\Controllers\ReactivationRequestController::class, 'index']);
+                Route::get('/admin/reactivation-requests/pending-count', [\App\Http\Controllers\ReactivationRequestController::class, 'pendingCount']);
+                Route::post('/admin/reactivation-requests/{id}/approve', [\App\Http\Controllers\ReactivationRequestController::class, 'approve'])->whereNumber('id');
+                Route::post('/admin/reactivation-requests/{id}/decline', [\App\Http\Controllers\ReactivationRequestController::class, 'decline'])->whereNumber('id');
+
                 // "What people ask ASA" — questions, intents, places, outcomes, the unanswered ones.
                 Route::get('/admin/asa/insights', [\App\Http\Controllers\AsaInsightsController::class, 'index']);
                 Route::get('/admin/asa/data-quality', [\App\Http\Controllers\AsaDataQualityController::class, 'index']);

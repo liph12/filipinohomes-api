@@ -243,7 +243,7 @@ class ModifierThresholdService
     /**
      * Base join + public/active/valid-price predicate shared by the cohort scan
      * and the per-cohort percentile pick. Mirrors Listing::scopePubliclyListed
-     * (visibility=public, not flagged) + active property + a sane price floor.
+     * (visibility=public) + active property + a sane price floor.
      */
     private function baseQuery()
     {

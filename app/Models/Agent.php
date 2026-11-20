@@ -17,6 +17,13 @@ class Agent extends Model implements Auditable
      */
     public const STATUSES = ['active', 'inactive', 'resigned', 'deactivated', 'terminated'];
 
+    /**
+     * Audit sources that mean "an admin set this agent's status". The LR sync
+     * and the dormancy-lockout repair treat a later admin decision as final, so
+     * accepting a reactivation request has to count the same as the dropdown.
+     */
+    public const ADMIN_STATUS_SOURCES = ['admin_status_dropdown', 'reactivation_approval'];
+
     protected string $auditCategory = 'agents';
     protected array $auditLabelAttributes = ['first_name', 'last_name'];
 

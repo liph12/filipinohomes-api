@@ -27,6 +27,10 @@ class EnsureAgentActive
         ['POST', 'api/logout'],
         ['POST', 'api/logout-all'],
         ['POST', 'api/admin/impersonate/stop'],
+        // A deactivated agent asking to be switched back on (the controller
+        // itself refuses any status but `deactivated`).
+        ['GET',  'api/agent/reactivation-request'],
+        ['POST', 'api/agent/reactivation-request'],
     ];
 
     public function handle(Request $request, Closure $next)

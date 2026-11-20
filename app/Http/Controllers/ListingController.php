@@ -321,32 +321,31 @@ class ListingController extends Controller
                     );
                 }
 
-                // Only public listings whose owning agent is still active are
-                // exposed. A public listing of an inactive/resigned/deactivated
-                // (or soft-deleted) agent is treated as not-viewable → the
-                // "no longer available" page below (reason = agent_inactive).
+                // Any listing whose owning agent is still active resolves by
+                // its direct link — private listings included, so an agent can
+                // share a private listing's URL. Private rows stay out of every
+                // browse/search/sitemap surface (those use publiclyListed()); the
+                // frontend marks a private detail page noindex. A listing of an
+                // inactive/resigned/deactivated (or soft-deleted) agent is
+                // treated as not-viewable → the "no longer available" page below.
                 $agentActive = $found->agent && $found->agent->status === 'active';
-                $listing = ($found->visibility === 'public' && $agentActive) ? $found : null;
+                $listing = $agentActive ? $found : null;
             }
         }
 
-        // When the slug matched no public listing, work out WHY so the frontend
+        // When the slug matched no viewable listing, work out WHY so the frontend
         // can show a clear "no longer available" page (HTTP 200 + noindex) instead
-        // of a bare 404 — a private row ($found, not public) vs a soft-deleted row.
+        // of a bare 404 — an inactive agent's row ($found) vs a soft-deleted row.
         // A truly unknown slug stays reason=null (genuine 404 on the frontend).
-        $reason = null;            // null | 'private' | 'deleted' | 'agent_inactive'
+        $reason = null;            // null | 'deleted' | 'agent_inactive'
         $goneListing = null;       // { name, location } for the page heading
         if ($listing === null && ! empty($slug)) {
             $row = null;
-            if ($found && $found->visibility === 'public'
-                && ! ($found->agent && $found->agent->status === 'active')) {
-                // Public listing whose owning agent is no longer active — show
-                // the "no longer available" page (HTTP 200 + noindex) so the URL
+            if ($found) {
+                // Listing whose owning agent is no longer active — show the
+                // "no longer available" page (HTTP 200 + noindex) so the URL
                 // drops from the index while a human with the link sees why.
                 $reason = 'agent_inactive';
-                $row = $found;
-            } elseif ($found && $found->visibility !== 'public') {
-                $reason = 'private';
                 $row = $found;
             } else {
                 $row = Listing::onlyTrashed()

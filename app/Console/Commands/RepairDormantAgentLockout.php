@@ -144,7 +144,7 @@ class RepairDormantAgentLockout extends Command
 
         return ! Audit::where('auditable_type', Agent::class)
             ->where('auditable_id', $agentId)
-            ->where('source', 'admin_status_dropdown')
+            ->whereIn('source', Agent::ADMIN_STATUS_SOURCES)
             ->where('id', '>', $auto)
             ->exists();
     }

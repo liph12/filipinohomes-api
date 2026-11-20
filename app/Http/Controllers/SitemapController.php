@@ -356,7 +356,7 @@ class SitemapController extends Controller
     /**
      * Join chain + publicly-listed predicate shared by the modifier query counts,
      * mirroring locationCounts() and the live Listing::publiclyListed()->filter()
-     * query: visibility public, not flagged, not soft-deleted (listings /
+     * query: visibility public, not soft-deleted (listings /
      * properties / property_attributes), all statuses (the public browse does NOT
      * filter property.status — active_only is opt-in and not passed there).
      */

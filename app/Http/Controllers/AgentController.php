@@ -6,7 +6,6 @@ use App\Http\Resources\AgentResource;
 use App\Http\Resources\AgentResourceCollection;
 use App\Http\Resources\ExternalAgentResource;
 use App\Http\Resources\UserResource;
-use App\Jobs\PingIndexNow;
 use App\Mail\AgentCertificateMailer;
 use App\Models\Agent;
 use App\Models\Conversation;
@@ -14,8 +13,8 @@ use App\Models\LoginLog;
 use App\Models\TeamAgent;
 use App\Models\User;
 use App\Services\Agent\AgentCachePurger;
+use App\Services\Agent\AgentStatusEffects;
 use App\Services\AuditMailService;
-use App\Services\IndexNowService;
 use Carbon\Carbon;
 use App\Services\Listing\PartnerFeedService;
 use Illuminate\Http\Request;
@@ -1065,30 +1064,10 @@ class AgentController extends Controller
         $statusChanged = $old !== $validated['status'];
 
         // A status flip changes whether this agent's profile/listings are
-        // publicly visible at all (see show()) and whether they appear in
-        // the /agents directory — purge regardless of the IndexNow setting
-        // below, which is a separate, opt-in concern.
+        // publicly visible at all (see show()) and whether they appear in the
+        // /agents directory. Only a real change purges and pings.
         if ($statusChanged) {
-            app(AgentCachePurger::class)->purgeAgent((int) $agent->id, true);
-        }
-
-        // Nudge search engines to recrawl this agent's listing URLs so the
-        // now-hidden (blocked) or newly-restored (active) pages leave/return to
-        // the index faster than the sitemap revalidate window. Fires only on a
-        // real change. Uses raw visibility (NOT publiclyListed(), which would now
-        // exclude a blocked agent's listings entirely).
-        if ($statusChanged && config('services.indexnow.enabled')) {
-            $svc = app(IndexNowService::class);
-            $urls = $agent->listings()
-                ->where('visibility', 'public')
-                ->pluck('slug')
-                ->filter(fn ($s) => is_string($s) && $s !== '' && ! str_starts_with($s, 'tmp-'))
-                ->map(fn ($s) => $svc->listingUrl($s))
-                ->values()
-                ->all();
-            foreach (array_chunk($urls, 10000) as $chunk) {
-                PingIndexNow::dispatch($chunk)->afterCommit();
-            }
+            app(AgentStatusEffects::class)->afterChange($agent);
         }
 
         return response()->json(['data' => new AgentResource($agent)]);

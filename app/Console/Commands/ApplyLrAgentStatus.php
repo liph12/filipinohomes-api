@@ -425,7 +425,7 @@ class ApplyLrAgentStatus extends Command
         $audits = DB::table('audits')
             ->where('auditable_type', Agent::class)
             ->where('auditable_id', $agentId)
-            ->where('source', 'admin_status_dropdown');
+            ->whereIn('source', Agent::ADMIN_STATUS_SOURCES);
 
         if ($lrChangedAt !== null) {
             $audits->where('created_at', '>', $lrChangedAt);
@@ -484,7 +484,7 @@ class ApplyLrAgentStatus extends Command
 
         $lastAdminSet = DB::table('audits')
             ->where('auditable_type', Agent::class)
-            ->where('source', 'admin_status_dropdown')
+            ->whereIn('source', Agent::ADMIN_STATUS_SOURCES)
             ->whereIn('auditable_id', $ids)
             ->selectRaw('auditable_id, MAX(created_at) as last_at')
             ->groupBy('auditable_id')

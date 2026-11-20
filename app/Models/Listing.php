@@ -795,12 +795,10 @@ class Listing extends Model implements Auditable
 
     /**
      * Listings for one agent's OWN property page (the agent website's
-     * /properties grid) — same as publiclyListed() but WITHOUT the
-     * verification_status/flagged exclusion, so an agent's page shows every
-     * listing they've made public, moderation flag or not. Deliberately not
-     * used by publiclyListed()'s other callers (sitemap, the general
-     * /properties browse, "featured" rails, location pages) — those keep
-     * excluding flagged listings from search-engine-visible surfaces.
+     * /properties grid) — currently identical to publiclyListed(): flagged
+     * listings show everywhere, so an agent's page shows every listing they've
+     * made public. Kept as its own scope so the agent page can diverge again
+     * without touching the sitemap / browse / featured / location callers.
      */
     public function scopeVisibleOnAgentPage($q)
     {
