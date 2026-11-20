@@ -68,6 +68,8 @@ class AuditMailService
                     'recipients'     => $recipients,
                     'subject'        => $subject,
                     'mailable_class' => $mailable,
+                    // Which SMTP account sent it (System Settings → Email Health).
+                    'smtp'           => self::smtpAccount($event->data['mailer'] ?? null),
                 ], $body),
             ]);
         } catch (Throwable $e) {
@@ -127,6 +129,7 @@ class AuditMailService
                     'smtp_code'         => $smtpCode,
                     'smtp_response'     => $smtpResponse,
                     'transport_class'   => $this->detectTransportClass(),
+                    'smtp'              => self::smtpAccount(null),
                 ], $context),
             ]);
         } catch (Throwable $e) {
@@ -204,6 +207,22 @@ class AuditMailService
      * MAIL_MAILER from config — useful when the failure mode is
      * "wrong transport" rather than a per-message error.
      */
+    /**
+     * "host - username" of the SMTP account a mailer sends through (the
+     * default mailer when null). Two servers can send with different .env
+     * accounts into this one log, so Email Health tells them apart by it.
+     */
+    public static function smtpAccount(?string $mailer): ?string
+    {
+        $mailer = $mailer ?: (string) config('mail.default');
+        $label  = implode(' - ', array_filter([
+            (string) config("mail.mailers.{$mailer}.host"),
+            (string) config("mail.mailers.{$mailer}.username"),
+        ]));
+
+        return $label === '' ? null : $label;
+    }
+
     private function detectTransportClass(): ?string
     {
         return (string) config('mail.default');
