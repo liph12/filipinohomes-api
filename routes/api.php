@@ -1218,7 +1218,8 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/map-settings', [\App\Http\Controllers\MapSettingsController::class, 'show']);
                 Route::put('/admin/map-settings', [\App\Http\Controllers\MapSettingsController::class, 'update']);
                 // System Settings → Email Health: are emails going out, and if not, why.
-                Route::get('/admin/mail-health', \App\Http\Controllers\MailHealthController::class);
+                Route::get('/admin/mail-health', [\App\Http\Controllers\MailHealthController::class, 'show']);
+                Route::put('/admin/mail-health/first', [\App\Http\Controllers\MailHealthController::class, 'first']);
                 Route::get('/admin/dashboard/pulse', \App\Http\Controllers\Admin\DashboardPulseController::class);
                 Route::get('/admin/dashboard/pulse/core', [\App\Http\Controllers\Admin\DashboardPulseController::class, 'core']);
                 Route::get('/admin/dashboard/pulse/{section}', [\App\Http\Controllers\Admin\DashboardPulseController::class, 'section'])

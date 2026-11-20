@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Support\MailFailover;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -23,22 +25,40 @@ use Illuminate\Support\Facades\DB;
  *   recipient    one bad address ("Recipient address rejected") — not an account problem
  *   other        anything else
  *
- * status() is the account's state now: the reason of the latest account-level
- * failure (anything but `recipient`) when nothing has gone out since it,
- * `partial` when some sends fail and some go through, `ok` otherwise, `idle`
- * when nothing was sent or failed in the window.
+ * With MAIL_MAILER=failover (MailFailover) an email can fail on one account and
+ * still go out through the next: a sent row lists those failed attempts
+ * (`failed_over`), a failed row lists every account it was tried on
+ * (`attempts`). So there are two views:
+ *
+ *  - each account: its own state — the reason of its latest account-level
+ *    failure when nothing went through it since, `partial` when it failed in
+ *    the last hour but works again, `ok`, or `idle`;
+ *  - the website (status()): `down` when the latest email that failed on every
+ *    account is newer than the latest one delivered, `partial` when one did in
+ *    the last hour, `fallback` when the first account is failing but the next
+ *    one delivers, `ok`, or `idle` when nothing was sent in the window.
  */
 class MailHealthService
 {
     public const WINDOW_HOURS = 24;
 
-    /** A failure this recent, with sends since, still marks the account as partly failing. */
+    /** A failure this recent, with sends since, still counts as partly failing. */
     public const PARTIAL_MINUTES = 60;
 
     public const REASONS = ['limit', 'blocked', 'auth', 'sender', 'unreachable', 'recipient', 'other'];
 
     /** Reasons that are about the sending account, not one message. */
-    private const ACCOUNT_LEVEL = ['limit', 'blocked', 'auth', 'sender', 'unreachable'];
+    public const ACCOUNT_LEVEL = ['limit', 'blocked', 'auth', 'sender', 'unreachable'];
+
+    public const LABELS = [
+        'limit' => 'sending limit reached',
+        'blocked' => 'blocked by the email provider',
+        'auth' => 'wrong username or password',
+        'sender' => 'sender address not allowed',
+        'unreachable' => 'mail server unreachable',
+        'recipient' => 'bad recipient address',
+        'other' => 'other error',
+    ];
 
     /** Order matters: a "rejected … rate limit" reply is a limit, not a bad recipient. */
     private const PATTERNS = [
@@ -71,12 +91,14 @@ class MailHealthService
         $since = $now->copy()->subHours(self::WINDOW_HOURS);
         $base = fn () => DB::table('audits')->where('category', 'mailer')->where('created_at', '>=', $since);
 
-        // Every logged send/failure says which SMTP account it went through
-        // ("host - username", AuditMailService::smtpAccount). Two servers with
-        // different .env accounts write into this one log, so the status is
-        // this server's account; any other account is reported beside it.
-        // Rows from before the account was logged have none and are left out.
-        $current = AuditMailService::smtpAccount(null);
+        // Every logged send/failure names its SMTP account ("host - username",
+        // AuditMailService::smtpAccount). Two servers with different .env
+        // accounts write into this one log, so this server's accounts are
+        // reported in full and any other account beside them. Rows from before
+        // the account was logged have none and are left out.
+        $failover = MailFailover::enabled();
+        $mine = MailFailover::accounts();
+        $mySmtp = array_values(array_filter(array_column($mine, 'smtp')));
         $smtp = $this->jsonField('smtp');
 
         $sentBy = $base()->where('event', 'mailer_sent')
@@ -86,66 +108,143 @@ class MailHealthService
             ->filter(fn ($row) => $row->smtp !== null && $row->smtp !== '')
             ->keyBy('smtp');
 
-        // Failures are few (a bad day on prod was ~90), so read them and classify here.
-        $failures = $base()->where('event', 'mailer_failed')
-            ->orderByDesc('created_at')->orderByDesc('id')
-            ->limit(1000)
+        // Failed tries, per account: from emails that failed outright and from
+        // emails another account delivered after this one failed. Both are few
+        // (a bad day on prod was ~90), so read them and classify here.
+        $attempts = collect();
+        $undelivered = collect();
+
+        $failedOver = $this->jsonField('failed_over');
+        $base()->where('event', 'mailer_sent')->whereRaw("{$failedOver} IS NOT NULL")
+            ->orderByDesc('created_at')->orderByDesc('id')->limit(1000)
             ->get(['created_at', 'source', 'new_values'])
-            ->map(function ($row) {
+            ->each(function ($row) use ($attempts) {
                 $values = json_decode((string) $row->new_values, true) ?: [];
-                $reply = (string) ($values['smtp_response'] ?? $values['exception_message'] ?? '');
+                foreach ((array) ($values['failed_over'] ?? []) as $try) {
+                    $attempts->push($this->attempt($row, $values, $try['smtp'] ?? null, (string) ($try['reply'] ?? ''), true));
+                }
+            });
 
-                return [
+        $base()->where('event', 'mailer_failed')
+            ->orderByDesc('created_at')->orderByDesc('id')->limit(1000)
+            ->get(['created_at', 'source', 'new_values'])
+            ->each(function ($row) use ($attempts, $undelivered) {
+                $values = json_decode((string) $row->new_values, true) ?: [];
+                $tries = isset($values['attempts']) && is_array($values['attempts'])
+                    ? $values['attempts']
+                    // One account, or a row from before failover.
+                    : [['smtp' => $values['smtp'] ?? null, 'reply' => (string) ($values['smtp_response'] ?? $values['exception_message'] ?? '')]];
+
+                $mapped = collect($tries)
+                    ->map(fn ($try) => $this->attempt($row, $values, $try['smtp'] ?? null, (string) ($try['reply'] ?? ''), false))
+                    ->filter(fn ($a) => $a['smtp'] !== null && $a['smtp'] !== '')
+                    ->values();
+                if ($mapped->isEmpty()) {
+                    return;
+                }
+                $attempts->push(...$mapped->all());
+                $undelivered->push([
                     'at' => (string) $row->created_at,
-                    'smtp' => $values['smtp'] ?? null,
-                    'reason' => $this->classify($reply),
-                    'reply' => mb_substr($this->serverMessage($reply), 0, 300),
-                    'email' => class_basename((string) ($values['mailable_class'] ?? $row->source ?? '')),
-                ];
-            })
-            ->filter(fn ($f) => $f['smtp'] !== null && $f['smtp'] !== '');
+                    'email' => $mapped[0]['email'],
+                    'tries' => $mapped,
+                    // Every account refused it for an account reason (not one bad address).
+                    'account_level' => $mapped->contains(fn ($a) => in_array($a['reason'], self::ACCOUNT_LEVEL, true)),
+                ]);
+            });
 
-        $mine = $failures->where('smtp', $current)->values();
-        $sent = (int) ($sentBy[$current]->n ?? 0);
-        $lastSentAt = $sentBy[$current]->last_at ?? null;
+        $attempts = $attempts->sortByDesc('at')->values();
 
-        $reasons = [];
-        foreach (self::REASONS as $reason) {
-            $ofReason = $mine->where('reason', $reason);
-            if ($ofReason->isEmpty()) {
-                continue;
-            }
-            $latest = $ofReason->first();
-            $reasons[] = [
-                'reason' => $reason,
-                'count' => $ofReason->count(),
-                'last_at' => $this->iso($latest['at']),
-                'last_reply' => $latest['reply'],
-                'last_email' => $latest['email'],
-            ];
+        // ---- this server's accounts ---------------------------------------------
+        $labelOf = collect($mine)->filter(fn ($a) => $a['smtp'])->mapWithKeys(fn ($a) => [$a['smtp'] => $a['label']]);
+        $accounts = [];
+        foreach ($mine as $i => $account) {
+            $accounts[] = [
+                'name' => $account['name'],
+                'label' => $account['label'],
+                'smtp' => $account['smtp'],
+                'position' => $i + 1,
+            ] + $this->accountState($account['smtp'], $sentBy, $attempts, $now);
         }
-        usort($reasons, fn ($a, $b) => $b['count'] <=> $a['count']);
 
-        $lastFailure = $mine->first();
-        $lastAccountFailure = $mine->first(fn ($f) => in_array($f['reason'], self::ACCOUNT_LEVEL, true));
+        // Emails this server tried: delivered through one of its accounts, or failed on them.
+        $myUndelivered = $undelivered
+            ->filter(fn ($u) => $u['tries']->contains(fn ($a) => in_array($a['smtp'], $mySmtp, true)))
+            ->values();
+        $sent = (int) collect($mySmtp)->sum(fn ($s) => (int) ($sentBy[$s]->n ?? 0));
+        $lastSentAt = collect($mySmtp)->map(fn ($s) => $sentBy[$s]->last_at ?? null)->filter()->max();
+        $lastDown = $myUndelivered->first(fn ($u) => $u['account_level']);
 
-        if ($lastAccountFailure !== null && ($lastSentAt === null || $lastSentAt < $lastAccountFailure['at'])) {
-            $status = $lastAccountFailure['reason'];
-        } elseif ($lastAccountFailure !== null && Carbon::parse($lastAccountFailure['at'])->gte($now->copy()->subMinutes(self::PARTIAL_MINUTES))) {
+        $first = $accounts[0] ?? null;
+        if ($lastDown !== null && ($lastSentAt === null || $lastSentAt < $lastDown['at'])) {
+            $status = 'down';
+        } elseif ($lastDown !== null && Carbon::parse($lastDown['at'])->gte($now->copy()->subMinutes(self::PARTIAL_MINUTES))) {
             $status = 'partial';
-        } elseif ($sent === 0 && $mine->isEmpty()) {
+        } elseif ($failover && count($accounts) > 1 && in_array($first['status'], self::ACCOUNT_LEVEL, true)) {
+            $status = 'fallback';
+        } elseif ($sent === 0 && $myUndelivered->isEmpty()) {
             $status = 'idle';
         } else {
             $status = 'ok';
         }
 
-        // Other accounts seen in the window (another server's .env), with how they fared.
+        // The reason behind the status: the email that failed everywhere (with
+        // each account's reply), or the first account's own latest failure.
+        $cause = null;
+        if (in_array($status, ['down', 'partial'], true)) {
+            $tries = $lastDown['tries']->filter(fn ($a) => in_array($a['smtp'], $mySmtp, true))->values();
+            $lead = $tries->first(fn ($a) => in_array($a['reason'], self::ACCOUNT_LEVEL, true)) ?? $tries[0];
+            $cause = [
+                'reason' => $lead['reason'],
+                'account' => $labelOf[$lead['smtp']] ?? $lead['smtp'],
+                'at' => $this->iso($lastDown['at']),
+                'reply' => $lead['reply'],
+                'email' => $lastDown['email'],
+                'tries' => $tries->map(fn ($a) => [
+                    'account' => $labelOf[$a['smtp']] ?? $a['smtp'],
+                    'reason' => $a['reason'],
+                    'reply' => $a['reply'],
+                ])->all(),
+            ];
+        } elseif ($status === 'fallback') {
+            $cause = [
+                'reason' => $first['last_reason'],
+                'account' => $first['label'],
+                'at' => $first['last_failed_at'],
+                'reply' => $first['last_reply'],
+                'email' => $first['last_email'],
+                'tries' => [],
+            ];
+        }
+
+        // Failed tries on this server's accounts, by account and reason.
+        $reasons = $attempts
+            ->filter(fn ($a) => in_array($a['smtp'], $mySmtp, true))
+            ->groupBy(fn ($a) => $a['smtp'].'|'.$a['reason'])
+            ->map(function (Collection $group) use ($labelOf) {
+                $latest = $group->first();
+
+                return [
+                    'reason' => $latest['reason'],
+                    'account' => $labelOf[$latest['smtp']] ?? $latest['smtp'],
+                    'count' => $group->count(),
+                    // Delivered anyway through the next account.
+                    'rescued' => $group->where('rescued', true)->count(),
+                    'last_at' => $this->iso($latest['at']),
+                    'last_reply' => $latest['reply'],
+                    'last_email' => $latest['email'],
+                ];
+            })
+            ->sortByDesc('count')
+            ->values()
+            ->all();
+
+        // Other accounts in the window (another server's .env), with how they fared.
         $others = [];
-        foreach ($sentBy->keys()->merge($failures->pluck('smtp'))->unique() as $account) {
-            if ($account === $current) {
+        foreach ($sentBy->keys()->merge($attempts->pluck('smtp'))->unique() as $account) {
+            if (in_array($account, $mySmtp, true)) {
                 continue;
             }
-            $theirs = $failures->where('smtp', $account)->values();
+            $theirs = $attempts->where('smtp', $account)->values();
             $latest = $theirs->first();
             $others[] = [
                 'smtp' => $account,
@@ -159,31 +258,74 @@ class MailHealthService
         }
         usort($others, fn ($a, $b) => $b['failed'] <=> $a['failed']);
 
-        $mailer = (string) config('mail.default');
+        return [
+            'status' => $status,
+            'cause' => $cause,
+            'window_hours' => self::WINDOW_HOURS,
+            // Emails delivered / emails that failed on every account tried.
+            'sent' => $sent,
+            'failed' => $myUndelivered->count(),
+            'last_sent_at' => $this->iso($lastSentAt),
+            'last_failed_at' => $this->iso($myUndelivered->first()['at'] ?? null),
+            // Several accounts tried in order (MAIL_MAILER=failover), or one.
+            'failover' => [
+                'enabled' => $failover,
+                // System Settings can only reorder when there's more than one account.
+                'can_choose_first' => $failover && count($accounts) > 1,
+                'chosen' => MailFailover::chosenFirst() !== null,
+            ],
+            'accounts' => $accounts,
+            'reasons' => $reasons,
+            'other_accounts' => $others,
+            'from' => config('mail.from.address'),
+            'checked_at' => $now->toIso8601String(),
+        ];
+    }
+
+    /** One failed try on one account. */
+    private function attempt(object $row, array $values, ?string $smtp, string $reply, bool $rescued): array
+    {
+        return [
+            'at' => (string) $row->created_at,
+            'smtp' => $smtp,
+            'reason' => $this->classify($reply),
+            'reply' => mb_substr($this->serverMessage($reply), 0, 300),
+            'email' => class_basename((string) ($values['mailable_class'] ?? $row->source ?? '')),
+            'rescued' => $rescued,
+        ];
+    }
+
+    /** One account's state in the window. */
+    private function accountState(?string $smtp, Collection $sentBy, Collection $attempts, Carbon $now): array
+    {
+        $fails = $smtp ? $attempts->where('smtp', $smtp)->values() : collect();
+        $sent = (int) ($smtp ? ($sentBy[$smtp]->n ?? 0) : 0);
+        $lastSentAt = $smtp ? ($sentBy[$smtp]->last_at ?? null) : null;
+        $lastFail = $fails->first();
+        $lastAccountFail = $fails->first(fn ($f) => in_array($f['reason'], self::ACCOUNT_LEVEL, true));
+
+        if ($lastAccountFail !== null && ($lastSentAt === null || $lastSentAt < $lastAccountFail['at'])) {
+            $status = $lastAccountFail['reason'];
+        } elseif ($lastAccountFail !== null && Carbon::parse($lastAccountFail['at'])->gte($now->copy()->subMinutes(self::PARTIAL_MINUTES))) {
+            $status = 'partial';
+        } elseif ($sent === 0 && $fails->isEmpty()) {
+            $status = 'idle';
+        } else {
+            $status = 'ok';
+        }
+
+        $shown = $lastAccountFail ?? $lastFail;
 
         return [
             'status' => $status,
-            // The reason behind the status (the latest account-level failure), when there is one.
-            'cause' => in_array($status, ['ok', 'idle'], true) || $lastAccountFailure === null ? null : [
-                'reason' => $lastAccountFailure['reason'],
-                'at' => $this->iso($lastAccountFailure['at']),
-                'reply' => $lastAccountFailure['reply'],
-                'email' => $lastAccountFailure['email'],
-            ],
-            'window_hours' => self::WINDOW_HOURS,
             'sent' => $sent,
-            'failed' => $mine->count(),
+            'failed' => $fails->count(),
+            'rescued' => $fails->where('rescued', true)->count(),
             'last_sent_at' => $this->iso($lastSentAt),
-            'last_failed_at' => $this->iso($lastFailure['at'] ?? null),
-            'reasons' => $reasons,
-            'other_accounts' => $others,
-            // Which SMTP account sends (MAIL_USERNAME), so admins know which one to check.
-            'sending_via' => [
-                'account' => config("mail.mailers.{$mailer}.username"),
-                'host' => config("mail.mailers.{$mailer}.host"),
-                'from' => config('mail.from.address'),
-            ],
-            'checked_at' => $now->toIso8601String(),
+            'last_failed_at' => $this->iso($lastFail['at'] ?? null),
+            'last_reason' => $shown['reason'] ?? null,
+            'last_reply' => $shown['reply'] ?? null,
+            'last_email' => $shown['email'] ?? null,
         ];
     }
 

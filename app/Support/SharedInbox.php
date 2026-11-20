@@ -8,8 +8,8 @@ namespace App\Support;
  * Fan-out emails go To: the shared inbox with the real recipients (admins,
  * team leaders, agents) in BCC. When one of those recipients is the shared
  * mailbox itself — an admin account whose email is info@, or the account the
- * app is currently sending through (MAIL_USERNAME / MAIL_FROM_ADDRESS, which
- * get switched between info@ and the IT Gmail) — the mail server delivers one
+ * app sends through (the SMTP logins — with MAIL_MAILER=failover both info@
+ * and the IT Gmail — and MAIL_FROM_ADDRESS) — the mail server delivers one
  * more identical copy to that mailbox. That's how one Contact Us submission
  * landed in info@ 2–6 times. bccWithout() drops those addresses: the To copy
  * already reaches the mailbox.
@@ -20,7 +20,8 @@ final class SharedInbox
 
     /**
      * Lower-cased addresses that are the shared mailbox: info@, the current
-     * From address, the current SMTP login, any address that forwards into
+     * From address, the SMTP login(s) the app sends through (every failover
+     * account — which one delivers isn't known until it's sent), any address that forwards into
      * info@ (mail.shared_inbox_aliases / MAIL_SHARED_INBOX_ALIASES), plus any
      * $to used for this send.
      *
@@ -28,7 +29,10 @@ final class SharedInbox
      */
     public static function addresses(?string $to = null): array
     {
-        $mailer = (string) config('mail.default');
+        $logins = array_map(
+            fn (array $account) => config("mail.mailers.{$account['name']}.username"),
+            MailFailover::accounts(),
+        );
 
         return array_values(array_unique(array_filter(array_map(
             fn ($e) => strtolower(trim((string) $e)),
@@ -36,7 +40,7 @@ final class SharedInbox
                 self::ADDRESS,
                 $to,
                 config('mail.from.address'),
-                config("mail.mailers.{$mailer}.username"),
+                ...$logins,
                 ...(array) config('mail.shared_inbox_aliases', []),
             ],
         ), fn ($e) => $e !== '' && str_contains($e, '@'))));

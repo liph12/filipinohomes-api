@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Mail\Transport\FailoverTransport;
 use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\TeamLeadershipService;
@@ -9,6 +10,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -142,5 +144,12 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(MessageSent::class, function (MessageSent $event) {
             app(AuditMailService::class)->recordSent($event);
         });
+
+        // MAIL_MAILER=failover: the website's SMTP accounts in order, logging
+        // which one delivered each email (config/mail.php, Email Health).
+        Mail::extend('fh_failover', fn (array $config) => new FailoverTransport(
+            fn (string $mailer) => Mail::createSymfonyTransport(config("mail.mailers.{$mailer}")),
+            (int) ($config['retry_after'] ?? 60),
+        ));
     }
 }

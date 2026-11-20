@@ -34,6 +34,23 @@ class SharedInboxTest extends TestCase
         );
     }
 
+    public function test_with_both_accounts_in_use_drops_both_smtp_logins(): void
+    {
+        // MAIL_MAILER=failover: either account may deliver, so both logins are the sending mailbox.
+        config([
+            'mail.default' => 'failover',
+            'mail.from.address' => 'info@filipinohomes.com',
+            'mail.mailers.failover' => ['transport' => 'fh_failover', 'mailers' => ['gmail', 'hostinger']],
+            'mail.mailers.gmail' => ['transport' => 'smtp', 'host' => 'smtp.googlemail.com', 'username' => 'it.dept.leuteriorealty@gmail.com'],
+            'mail.mailers.hostinger' => ['transport' => 'smtp', 'host' => 'smtp.hostinger.com', 'username' => 'info@filipinohomes.com'],
+        ]);
+
+        $this->assertSame(
+            ['boss@filipinohomes.ph'],
+            SharedInbox::bccWithout(['it.dept.leuteriorealty@gmail.com', 'boss@filipinohomes.ph', 'info@filipinohomes.com'], 'info@filipinohomes.com'),
+        );
+    }
+
     public function test_skips_addresses_that_forward_into_info(): void
     {
         // itadmin@ is a Hostinger forwarder into info@: BCCing it drops a 2nd copy in info@.

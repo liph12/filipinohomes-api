@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Mail\Transport\FailoverTransport;
+use App\Mail\Transport\MailFailoverException;
 use App\Models\Audit;
 use App\Models\User;
 use Illuminate\Mail\Events\MessageSent;
@@ -68,9 +70,7 @@ class AuditMailService
                     'recipients'     => $recipients,
                     'subject'        => $subject,
                     'mailable_class' => $mailable,
-                    // Which SMTP account sent it (System Settings → Email Health).
-                    'smtp'           => self::smtpAccount($event->data['mailer'] ?? null),
-                ], $body),
+                ], $this->deliveredVia($event->data['mailer'] ?? null), $body),
             ]);
         } catch (Throwable $e) {
             Log::warning('Mail audit (sent) write failed', [
@@ -129,9 +129,12 @@ class AuditMailService
                     'smtp_code'         => $smtpCode,
                     'smtp_response'     => $smtpResponse,
                     'transport_class'   => $this->detectTransportClass(),
-                    'smtp'              => self::smtpAccount(null),
-                ], $context),
+                ], $this->failedVia($error), $context),
             ]);
+
+            if ($error instanceof TransportExceptionInterface) {
+                app(MailDownAlertService::class)->failed($error);
+            }
         } catch (Throwable $e) {
             // Don't shadow the original mailer failure. Log this
             // bookkeeping miss to laravel.log and move on.
@@ -221,6 +224,52 @@ class AuditMailService
         ]));
 
         return $label === '' ? null : $label;
+    }
+
+    /**
+     * Which SMTP account delivered the email (System Settings → Email Health),
+     * and — through the failover mailer — the accounts that failed before it.
+     */
+    private function deliveredVia(?string $mailer): array
+    {
+        $mailer = $mailer ?: (string) config('mail.default');
+        if (config("mail.mailers.{$mailer}.transport") !== 'fh_failover') {
+            return ['smtp' => self::smtpAccount($mailer)];
+        }
+
+        $last = FailoverTransport::$last;
+        FailoverTransport::$last = ['via' => null, 'failures' => []];
+
+        return array_filter([
+            'smtp'        => $last['via'] ? self::smtpAccount($last['via']) : null,
+            'failed_over' => self::attempts($last['failures']) ?: null,
+        ], fn ($v) => $v !== null);
+    }
+
+    /** The account(s) a failed email was tried through, each with its server's reply. */
+    private function failedVia(Throwable $error): array
+    {
+        if (! $error instanceof MailFailoverException) {
+            return ['smtp' => self::smtpAccount(null)];
+        }
+        FailoverTransport::$last = ['via' => null, 'failures' => []];
+        $attempts = self::attempts($error->failures());
+
+        return ['smtp' => $attempts[0]['smtp'] ?? null, 'attempts' => $attempts];
+    }
+
+    /**
+     * @param  array<string, Throwable>  $failures  mailer => its error
+     * @return array<int, array{smtp: string|null, reply: string}>
+     */
+    public static function attempts(array $failures): array
+    {
+        $out = [];
+        foreach ($failures as $mailer => $e) {
+            $out[] = ['smtp' => self::smtpAccount((string) $mailer), 'reply' => mb_substr($e->getMessage(), 0, 1000)];
+        }
+
+        return $out;
     }
 
     private function detectTransportClass(): ?string

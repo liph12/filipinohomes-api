@@ -93,12 +93,43 @@ return [
             'transport' => 'array',
         ],
 
+        // The website's two SMTP accounts, used together by `failover` below
+        // (MAIL_MAILER=failover). Each keeps its own login so switching never
+        // means commenting lines out of .env.
+        'gmail' => [
+            'transport' => 'smtp',
+            'label' => 'Googlemail',
+            'host' => env('MAIL_GMAIL_HOST', 'smtp.googlemail.com'),
+            'port' => env('MAIL_GMAIL_PORT', 465),
+            'username' => env('MAIL_GMAIL_USERNAME'),
+            'password' => env('MAIL_GMAIL_PASSWORD'),
+            // Short, so a server that doesn't answer hands over to the next account quickly.
+            'timeout' => (int) env('MAIL_TIMEOUT', 10),
+            'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
+        ],
+
+        'hostinger' => [
+            'transport' => 'smtp',
+            'label' => 'Hostinger',
+            'host' => env('MAIL_HOSTINGER_HOST', 'smtp.hostinger.com'),
+            'port' => env('MAIL_HOSTINGER_PORT', 465),
+            'username' => env('MAIL_HOSTINGER_USERNAME'),
+            'password' => env('MAIL_HOSTINGER_PASSWORD'),
+            'timeout' => (int) env('MAIL_TIMEOUT', 10),
+            'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
+        ],
+
+        // Every email goes through the first account; if it's refused or the
+        // server doesn't answer, the same email is sent through the next one.
+        // MAIL_FAILOVER is the default order; System Settings → Email Health
+        // can pick which account goes first (App\Support\MailFailover). Our own
+        // transport (App\Mail\Transport\FailoverTransport), not Laravel's, so
+        // Email Health learns which account failed even when the next one
+        // delivered the email.
         'failover' => [
-            'transport' => 'failover',
-            'mailers' => [
-                'smtp',
-                'log',
-            ],
+            'transport' => 'fh_failover',
+            'mailers' => array_values(array_filter(array_map('trim', explode(',', (string) env('MAIL_FAILOVER', 'gmail,hostinger'))))),
+            // An account that just failed is tried last for this long.
             'retry_after' => 60,
         ],
 
