@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\Listing\AgentAwardCertificatesService;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class PageBuilderResource extends JsonResource
@@ -32,6 +33,9 @@ class PageBuilderResource extends JsonResource
             'flyers' => $this->flyers,
             'certificates' => $this->certificates,
             'awards' => $this->awards,
+            // Top 10 certificates the agent earned (months + rank, newest first). Shown first in the
+            // Certificates gallery and fixed there — the agent can't reorder or remove them.
+            'award_certificates' => $this->agent_id ? app(AgentAwardCertificatesService::class)->forAgent((int) $this->agent_id) : [],
             'video_url' => $this->video_url,
             'clicks' => $this->clicks,
             'impressions' => $this->impressions,

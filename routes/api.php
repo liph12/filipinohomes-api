@@ -279,6 +279,9 @@ Route::middleware('strip.tags')->group(function () {
         // listing wizard's live preview matches what the server will publish.
         Route::get('/assume-config', [AssumeSettingsController::class, 'config']);
         Route::get('/app-versions', [AppVersionController::class, 'index']);
+        // Top 10 certificate templates (agent / team) — read by every certificate drawn in the browser,
+        // including the Top 10 certificates on agents' public websites. Layout + image URLs only.
+        Route::get('/certificate-templates', [\App\Http\Controllers\CertificateTemplateController::class, 'show']);
         Route::get('/page/agents/check-slug', [PageBuilderController::class, 'checkSlug']);
         Route::get('/page/agents/agent/{agentId}', [PageBuilderController::class, 'showByAgent']);
         Route::get('/page/agents/deleted', [PageBuilderController::class, 'deleted'])
@@ -644,8 +647,6 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/user/users-by-date', [UserController::class, 'dashboardUsersByDate']);
             Route::get('/user/profile', [UserController::class, 'profile']);
             Route::get('/user/settings', [UserController::class, 'userSettings']);
-            // Top 10 certificate templates (agent / team) — read by every certificate drawn in the browser.
-            Route::get('/certificate-templates', [\App\Http\Controllers\CertificateTemplateController::class, 'show']);
             Route::post('agents', [AgentController::class, 'store']);
             Route::get('/agent/profile', [AgentController::class, 'profile']);
             // Agent-facing rankings: public-safe top board + the caller's own
