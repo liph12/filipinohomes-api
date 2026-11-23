@@ -2,7 +2,7 @@
 
 `POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key and can read Filipino Homes' numbers through ten tools. It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
 
-The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php`.
+The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php`. Admins make and revoke keys on the website (System Settings > Claude access); that side is `app/Http/Controllers/Admin/McpKeyController.php` and `tests/Feature/FhMcpKeysAdminTest.php`.
 
 ## Who sees what
 
@@ -37,13 +37,29 @@ What is **not** covered, so you can decide about it:
 - **What Claude is shown, Anthropic receives.** An admin key reads company-wide numbers and record lists (listing titles, agent and team names, counts). Keep to the key rules below and decide what you are comfortable sending.
 - **Text inside records is data, not instructions**, and the server says so, but a model can still be misled by a listing title. That is why the tools only read: the worst it can do is say something wrong.
 - **The database user is not read-only.** The tools never write, and the tests prove it, but the connection could. For a belt as well as braces, give the MCP its own read-only database user (not done).
+- **The limits are counted per server.** The per-key and per-address limits live in the cache. Where the cache is not shared between instances (Laravel Cloud), each instance counts on its own, so the real limit is higher than the number in the config.
 
 ## Making and managing keys
 
-A key belongs to one person, is shown once when it is made, and only its SHA-256 is stored. It lasts 30 days unless asked otherwise, at most 90, and a person may hold three at a time.
+A key belongs to one person, is shown once when it is made, and only its SHA-256 is stored. It lasts 30 days unless asked otherwise, at most 90, or it is made **permanent**: no end date, it works until it is revoked or its person loses access. A person may hold three at a time, and a permanent key counts toward the three until it is revoked.
+
+### On the website (admins)
+
+System Settings > **Claude access (MCP)** (`/admin/system-settings`). Admins only: the card says so to anyone else, and the API refuses too (`/api/admin/mcp-keys*` is in the admin-only route group).
+
+- **New key:** for yourself (an admin's key sees the whole company) or for an active agent (their key sees only their own numbers), a name to tell it apart, and for how long: 7, 30, 60 or 90 days, or Permanent. The key is shown **once**, in the dialog, with a copy button and the ready-made `claude mcp add` line. The dialog cannot be closed by a stray click or Escape while the key is showing, and after it closes the key is nowhere: the list has only its first characters. A lost key is replaced, not recovered.
+- **The list** shows who a key is for, what it can see (`No access now` once its person was switched off), its first characters, when it works until (or `Permanent`), when it was last used, how many calls it made in the last 7 days, and which admin made it.
+- **Revoke** is a press-and-hold and cannot be undone. It takes effect on the key's next request and records which admin did it.
+- **Recent activity** lists the last tool calls (who, which tool, what was asked, answered or refused, how long). It reads `GET /api/admin/mcp-calls`, which has the key's name but never a key's secret, nor anyone's IP address.
+- The address the card shows for Claude to connect to is the one the website's own API calls go to. Give Claude that one.
+
+A permanent key is the riskiest kind: if it leaks, it works until someone notices. It is still read-only, rate-limited, on record and cut off the moment its person loses their role, but prefer days unless it runs on a machine you control, and revoke the ones that are no longer used (the list shows when each was last used).
+
+### In a terminal
 
 ```
 php artisan fhmcp:make-key someone@filipinohomes.com --name="Claude Code on my laptop" --days=30
+php artisan fhmcp:make-key someone@filipinohomes.com --name="The office server" --permanent   # instead of --days
 php artisan fhmcp:keys                       # who holds what (the first characters of each key, never the key)
 php artisan fhmcp:keys --user=someone@filipinohomes.com --all
 php artisan fhmcp:revoke-key 12              # one key, by its number
@@ -72,13 +88,14 @@ The server is `https://<the API's address>/mcp/filipinohomes` and takes the key 
 | `FH_MCP_IP_FAILURES` | 20 | Wrong keys a minute from one address before it is cut off |
 | `FH_MCP_IP_RATE_LIMIT` | 30 | Key-less requests a minute from one address (open handshake only) |
 
-The number of keys, how long they last, the biggest answer (60,000 bytes) and the most records on a page (25) are set in the file.
+The number of keys, how long they last (`max_days` does not apply to a permanent key), the biggest answer (60,000 bytes) and the most records on a page (25) are set in the file.
 
 ## Deploying it
 
-1. The change adds two tables, `mcp_keys` and `mcp_calls`. The deploy workflow stops while a migration is pending: run it as in [releases.md](releases.md#procedure-run-pending-migrations).
+1. Three migrations: `2026_11_24_000001` adds the tables `mcp_keys` and `mcp_calls`; `000002` adds who made and who revoked a key (the website's admin page); `000003` lets a key have no end date (`expires_at` may be empty). The deploy workflow stops while a migration is pending: run them as in [releases.md](releases.md#procedure-run-pending-migrations). Until `000002` has run, making or revoking a key on the website fails (the artisan commands keep working); until `000003` has run, only the permanent choice fails. Rolling `000003` back ends any permanent key (it gets an end date of now) rather than leave one with no end.
 2. The endpoint has to be reachable from the internet over HTTPS at `/mcp/filipinohomes` (Claude's servers connect to it): check the load balancer and Cloudflare let it through, and that no bot rule blocks Anthropic.
 3. `route:cache` includes `routes/ai.php`; nothing else to configure.
+4. The website can be deployed before or after the API. Without the API routes, the card says Claude access is not available on this server yet and shows nothing else.
 
 ## Adding a tool safely
 
@@ -90,3 +107,4 @@ Extend one of the kinds in `app/Mcp/Tools/Kinds` (or `FhTool` for a new shape) a
 - **403:** the key is real but its person may no longer use the server (an agent switched off, a role changed).
 - **429:** too many wrong keys from one address, or too many requests on one key. `Retry-After` says when.
 - **"too big":** the answer passed `max_result_bytes`. Ask for a shorter period, a narrower filter or fewer rows.
+- **The website card says "isn't available on this server yet":** the API it talks to does not have `/api/admin/mcp-keys` (the website is ahead of the API). **"The keys could not be loaded":** the API answered with an error; the usual cause is a pending migration, so check the log.

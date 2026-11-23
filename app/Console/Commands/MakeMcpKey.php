@@ -18,7 +18,8 @@ class MakeMcpKey extends Command
     protected $signature = 'fhmcp:make-key
         {email : The FH account the key acts as. Only an admin or an active agent can have one}
         {--name= : What the key is for, e.g. "Claude Code on my laptop"}
-        {--days= : How many days it works (default and longest are in config/fhmcp.php)}';
+        {--days= : How many days it works (default and longest are in config/fhmcp.php)}
+        {--permanent : No end date: it works until it is revoked (instead of --days)}';
 
     protected $description = 'Make an MCP key for an admin or an active agent and print it once';
 
@@ -46,6 +47,7 @@ class MakeMcpKey extends Command
                 $user,
                 (string) ($this->option('name') ?: 'MCP key made on the server'),
                 $this->option('days') === null ? null : (int) $this->option('days'),
+                permanent: (bool) $this->option('permanent'),
             );
         } catch (InvalidArgumentException $e) {
             $this->components->error($e->getMessage());
@@ -53,7 +55,11 @@ class MakeMcpKey extends Command
             return self::FAILURE;
         }
 
-        $this->components->info("Key #{$record->id} for {$user->email}, acting as {$role->value}. It works until {$record->expires_at->toDateTimeString()} UTC.");
+        $lasts = $record->expires_at === null
+            ? 'It has no end date: it works until it is revoked.'
+            : "It works until {$record->expires_at->toDateTimeString()} UTC.";
+
+        $this->components->info("Key #{$record->id} for {$user->email}, acting as {$role->value}. {$lasts}");
         $this->newLine();
         $this->line('It is shown only now. Put it in the connector or a password manager, never in a chat, a ticket or Git:');
         $this->newLine();

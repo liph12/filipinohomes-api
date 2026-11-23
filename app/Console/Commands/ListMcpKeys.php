@@ -41,13 +41,9 @@ class ListMcpKeys extends Command
                 $key->user ? (McpRole::of($key->user)?->value ?? 'no access') : '-',
                 $key->prefix.'…',
                 $key->name,
-                $key->expires_at->toDateTimeString(),
+                $key->expires_at?->toDateTimeString() ?? 'never (permanent)',
                 $key->last_used_at?->toDateTimeString() ?? 'never',
-                match (true) {
-                    $key->revoked_at !== null => 'revoked',
-                    ! $key->expires_at->isFuture() => 'expired',
-                    default => 'active',
-                },
+                $key->state(),
             ])->all(),
         );
 

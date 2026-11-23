@@ -1169,6 +1169,13 @@ Route::middleware('strip.tags')->group(function () {
                 Route::patch('/admin/app-versions/{id}', [AppVersionController::class, 'update']);
                 Route::delete('/admin/app-versions/{id}', [AppVersionController::class, 'destroy']);
 
+                // Claude access (MCP) keys: made, listed and switched off here; docs/mcp.md.
+                Route::get('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'index']);
+                Route::post('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'store'])->middleware('throttle:10,1');
+                Route::get('/admin/mcp-keys/people', [\App\Http\Controllers\Admin\McpKeyController::class, 'people']);
+                Route::delete('/admin/mcp-keys/{id}', [\App\Http\Controllers\Admin\McpKeyController::class, 'destroy'])->whereNumber('id');
+                Route::get('/admin/mcp-calls', [\App\Http\Controllers\Admin\McpKeyController::class, 'calls']);
+
                 // Broadcast push notifications (announcement / maintenance /
                 // custom) to a fleet segment, with per-announcement read +
                 // device analytics.

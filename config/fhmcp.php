@@ -28,6 +28,8 @@ return [
     'ip_rate_limit' => (int) env('FH_MCP_IP_RATE_LIMIT', 30),
 
     // Keys one person may hold at once, how long a new key lasts unless asked otherwise, and the longest it may.
+    // (An admin can also make a key permanent from the dashboard: that one has no end date, and the
+    // longest does not apply to it. It still counts toward max_keys until it is revoked.)
     'max_keys' => 3,
     'default_days' => 30,
     'max_days' => 90,

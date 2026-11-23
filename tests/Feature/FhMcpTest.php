@@ -63,7 +63,11 @@ class FhMcpTest extends TestCase
 
         Carbon::setTestNow(Carbon::parse('2026-11-10 14:00', 'Asia/Manila'));
         $this->createExecutiveReportTables();
-        (require database_path('migrations/2026_11_24_000001_create_mcp_keys_and_calls_tables.php'))->up();
+
+        foreach (['2026_11_24_000001_create_mcp_keys_and_calls_tables.php', '2026_11_24_000002_add_who_to_mcp_keys_table.php', '2026_11_24_000003_let_mcp_keys_be_permanent.php'] as $file) {
+            (require database_path('migrations/'.$file))->up();
+        }
+
         $this->id = $this->seedExecutiveScenario();
 
         $this->id['admin'] = $this->makeUser(self::ADMIN, ['name' => 'The Boss', 'email' => 'boss@example.com']);
@@ -719,6 +723,21 @@ class FhMcpTest extends TestCase
 
         // Neither a number nor a person: nothing is revoked.
         $this->assertSame(1, Artisan::call('fhmcp:revoke-key'));
+    }
+
+    public function test_a_command_can_make_a_permanent_key_but_not_one_that_is_also_for_days(): void
+    {
+        $this->assertSame(0, Artisan::call('fhmcp:make-key', ['email' => 'boss@example.com', '--name' => 'forever', '--permanent' => true]));
+        $this->assertStringContainsString('no end date', Artisan::output());
+        $this->assertNull(McpKey::query()->where('name', 'forever')->firstOrFail()->expires_at);
+
+        $this->assertSame(0, Artisan::call('fhmcp:keys', ['--user' => 'boss@example.com']));
+        $this->assertStringContainsString('never (permanent)', Artisan::output());
+
+        $before = McpKey::query()->count();
+        $this->assertSame(1, Artisan::call('fhmcp:make-key', ['email' => 'boss@example.com', '--days' => 5, '--permanent' => true]));
+        $this->assertStringContainsString('not both', Artisan::output());
+        $this->assertSame($before, McpKey::query()->count());
     }
 
     // ── Helpers for the records ─────────────────────────────────────────────
