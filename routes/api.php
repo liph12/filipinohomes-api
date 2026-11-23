@@ -683,6 +683,11 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/listings/insights/by-type', [ListingController::class, 'insightsByType']);
             Route::get('/listings/insights/created', [ListingController::class, 'insightsCreated']);
             Route::get('/listings/insights/summary', [ListingController::class, 'insightsSummary']);
+            // Listing Insights dashboard sections: quality (ATS + completeness), deals closed
+            // in the window, and demand (views, inquiries, saves in the window).
+            Route::get('/listings/insights/quality', [ListingController::class, 'insightsQuality']);
+            Route::get('/listings/insights/deals', [ListingController::class, 'insightsDeals']);
+            Route::get('/listings/insights/demand', [ListingController::class, 'insightsDemand']);
             Route::get('/listings/insights/clusters', [ListingController::class, 'insightsClusters']);
             // Listings Heatmap page: shaded counts per area, and the polygons
             // they are painted onto. Split because counts refresh every minute

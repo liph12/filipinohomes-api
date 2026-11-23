@@ -24,11 +24,15 @@ class ListingByStatusService extends ListingInsightsService
         string $groupBy = 'province',
         ?string $island = null,
         ?string $region = null,
-        ?int $barangayId = null
+        ?int $barangayId = null,
+        string $dateBasis = 'created'
     ): array {
         $this->agentIds = $agentIds;
         $this->dateStart = $dateStart;
         $this->dateEnd = $dateEnd;
+        // Every row here is a transaction, so the window may date the DEAL
+        // ('deal') as well as the listing ('created', the default).
+        $this->dateBasis = $dateBasis === 'deal' ? 'deal' : 'created';
         // province/city are applied below via $applyLoc (not the base props), so
         // resolve region/island into a province whitelist only when neither is
         // set; barangay (Phase 2) applies through baseListingQuery().
@@ -244,6 +248,11 @@ class ListingByStatusService extends ListingInsightsService
         $this->cityId = $cityId;
         $this->dateStart = isset($params['date_start']) && $params['date_start'] !== '' ? (string) $params['date_start'] : null;
         $this->dateEnd = isset($params['date_end']) && $params['date_end'] !== '' ? (string) $params['date_end'] : null;
+        // A deal date only means something for the transaction statuses; "any" and
+        // "active" listings have none, so they keep counting by the day they were added.
+        $this->dateBasis = ($params['date_basis'] ?? 'created') === 'deal' && in_array($status, ['all', ...self::TRANSACTION_STATUSES], true)
+            ? 'deal'
+            : 'created';
         $this->island = isset($params['island']) && $params['island'] !== '' ? (string) $params['island'] : null;
         $this->region = isset($params['region']) && $params['region'] !== '' ? (string) $params['region'] : null;
         $this->barangayId = isset($params['barangay_id']) ? (int) $params['barangay_id'] : null;

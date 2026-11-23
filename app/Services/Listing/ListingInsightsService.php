@@ -2,8 +2,10 @@
 
 namespace App\Services\Listing;
 
+use App\Services\Reports\Executive\ReportRange;
 use App\Support\IslandMap;
 use App\Support\RegionMap;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -33,14 +35,23 @@ abstract class ListingInsightsService
     protected ?array $agentIds = null;
 
     /**
-     * Per-request date window (on listings.created_at). When set, every
-     * aggregation only counts listings created within the range. Null means
-     * "all-time". Applied centrally in baseListingQuery() so all sub-queries
+     * Per-request date window, as Asia/Manila calendar days (Y-m-d). When set,
+     * every aggregation only counts what falls inside it. Null means
+     * "all-time". Applied centrally in applyDateScope() so all sub-queries
      * stay consistent.
      */
     protected ?string $dateStart = null;
 
     protected ?string $dateEnd = null;
+
+    /**
+     * What the window dates: 'created' (listings.created_at — listings ADDED in
+     * the window; the default) or 'deal' (properties.status_change_date — deals
+     * CLOSED in the window, as the Executive Report counts them). Every entry
+     * point that fills in the window sets it with the window, so a reused
+     * instance never carries it to the next call.
+     */
+    protected string $dateBasis = 'created';
 
     /**
      * Optional province / city scope. When set, baseListingQuery() narrows to
@@ -100,18 +111,38 @@ abstract class ListingInsightsService
      */
     protected function baseListingQuery()
     {
+        $query = $this->joinLocation($this->coreListingQuery());
+        $this->applyLocationFilters($query);
+
+        return $query;
+    }
+
+    /**
+     * Same rows as baseListingQuery(), minus the location joins when nothing in
+     * the scope needs them. Those joins are LEFT joins on primary keys, so they
+     * never add or drop a listing: a count that doesn't group by place is the
+     * same number with six fewer joins.
+     */
+    protected function slimListingQuery()
+    {
+        $query = $this->coreListingQuery();
+        if ($this->needsLocationJoins()) {
+            $this->joinLocation($query);
+        }
+        $this->applyLocationFilters($query);
+
+        return $query;
+    }
+
+    /**
+     * listings ⋈ categories ⋈ properties: what counts as a listing at all, the
+     * team-leader agent scope and the date window. No location yet.
+     */
+    protected function coreListingQuery()
+    {
         $query = DB::table('listings')
             ->join('categories', 'categories.id', '=', 'listings.category_id')
             ->join('properties', 'properties.id', '=', 'listings.property_id')
-            ->leftJoin('projects', function ($join) {
-                $join->on('projects.id', '=', 'properties.project_id')
-                    ->whereNull('projects.deleted_at');
-            })
-            ->leftJoin('cities as project_cities', 'project_cities.id', '=', 'projects.city_id')
-            ->leftJoin('provinces as project_provinces', 'project_provinces.id', '=', 'projects.prov_id')
-            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
-            ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
-            ->leftJoin('provinces as property_provinces', 'property_provinces.id', '=', 'property_cities.province_id')
             ->whereNull('listings.deleted_at')
             ->whereNull('properties.deleted_at')
             // Exclude listings whose property was marked deleted (status, not soft-delete).
@@ -122,13 +153,124 @@ abstract class ListingInsightsService
             $query->whereIn('listings.agent_id', $this->agentIds);
         }
 
-        if ($this->dateStart !== null && $this->dateStart !== '') {
-            $query->where('listings.created_at', '>=', $this->dateStart.' 00:00:00');
-        }
-        if ($this->dateEnd !== null && $this->dateEnd !== '') {
-            $query->where('listings.created_at', '<=', $this->dateEnd.' 23:59:59');
+        $this->applyDateScope($query);
+
+        return $query;
+    }
+
+    /** The location chain: project path first, else property → barangay → city → province. */
+    protected function joinLocation($query)
+    {
+        return $query
+            ->leftJoin('projects', function ($join) {
+                $join->on('projects.id', '=', 'properties.project_id')
+                    ->whereNull('projects.deleted_at');
+            })
+            ->leftJoin('cities as project_cities', 'project_cities.id', '=', 'projects.city_id')
+            ->leftJoin('provinces as project_provinces', 'project_provinces.id', '=', 'projects.prov_id')
+            ->leftJoin('barangays', 'barangays.id', '=', 'properties.address_id')
+            ->leftJoin('cities as property_cities', 'property_cities.id', '=', 'barangays.city_id')
+            ->leftJoin('provinces as property_provinces', 'property_provinces.id', '=', 'property_cities.province_id');
+    }
+
+    /** Whether any active filter reads the joined location tables (barangay and viewport read `properties` only). */
+    protected function needsLocationJoins(): bool
+    {
+        return $this->provinceId !== null
+            || $this->cityId !== null
+            || $this->scopeProvinceIds !== null
+            || $this->scopeCityIds !== null;
+    }
+
+    /**
+     * The window as Manila days → half-open UTC instants, so "Nov 1" means
+     * Nov 1 00:00 Manila, not the UTC day eight hours off it. No date function
+     * wraps the column, so the comparison stays index-friendly.
+     */
+    protected function scopeRange(): ?ReportRange
+    {
+        return ReportRange::lenient($this->dateStart, $this->dateEnd);
+    }
+
+    /**
+     * The window as the response reports it: its days, and the period before it
+     * that a "change" compares against. Null for all time. An open start has no
+     * first day to show, and no previous period (nothing precedes "the beginning").
+     *
+     * @return array{start: ?string, end: string, days: ?int, previous: ?array{start: string, end: string}}|null
+     */
+    protected function rangeMeta(): ?array
+    {
+        return $this->describeRange($this->scopeRange());
+    }
+
+    /**
+     * rangeMeta() for a window the service holds itself — Demand dates events,
+     * not listings, so its listing scope carries no window of its own.
+     *
+     * @return array{start: ?string, end: string, days: ?int, previous: ?array{start: string, end: string}}|null
+     */
+    protected function describeRange(?ReportRange $range): ?array
+    {
+        if ($range === null) {
+            return null;
         }
 
+        $previous = $range->hasPrevious() ? $range->previous() : null;
+
+        return [
+            'start' => $range->openStart ? null : $range->start,
+            'end' => $range->end,
+            'days' => $range->openStart || $range->isInverted() ? null : $range->days(),
+            'previous' => $previous === null ? null : ['start' => $previous->start, 'end' => $previous->end],
+        ];
+    }
+
+    /**
+     * Run $query with the window swapped for $window (same place, team and
+     * basis), then put the caller's own window back — also when it throws.
+     * For the "period before" counts that sit beside a window's own.
+     *
+     * @template T
+     *
+     * @param  \Closure(): T  $query
+     * @return T
+     */
+    protected function withWindow(ReportRange $window, \Closure $query): mixed
+    {
+        [$start, $end] = [$this->dateStart, $this->dateEnd];
+        $this->dateStart = $window->start;
+        $this->dateEnd = $window->end;
+
+        try {
+            return $query();
+        } finally {
+            [$this->dateStart, $this->dateEnd] = [$start, $end];
+        }
+    }
+
+    protected function applyDateScope($query): void
+    {
+        $range = $this->scopeRange();
+        if ($range === null) {
+            return;
+        }
+
+        if ($this->dateBasis === 'deal') {
+            // A DATE column: the same half-open shape on whole days.
+            $query->where('properties.status_change_date', '>=', $range->start)
+                ->where('properties.status_change_date', '<', $range->endExclusiveDay());
+
+            return;
+        }
+
+        $query->where('listings.created_at', '>=', $range->fromUtc())
+            ->where('listings.created_at', '<', $range->toUtc());
+    }
+
+    /** Province / city / barangay / island / region scope and the viewport box. */
+    protected function applyLocationFilters($query): void
+    {
         if ($this->provinceId !== null) {
             $query->where(DB::raw('COALESCE(projects.prov_id, project_cities.province_id, property_cities.province_id)'), $this->provinceId);
         }
@@ -161,8 +303,6 @@ abstract class ListingInsightsService
             $query->whereRaw("({$lat}) BETWEEN ? AND ?", [$this->minLat, $this->maxLat])
                 ->whereRaw("({$lng}) BETWEEN ? AND ?", [$this->minLng, $this->maxLng]);
         }
-
-        return $query;
     }
 
     /**
@@ -243,15 +383,110 @@ abstract class ListingInsightsService
         }
     }
 
+    /**
+     * SQL that differs between production (MySQL) and the in-memory SQLite the
+     * tests run on. Kept in these few helpers so no query carries its own
+     * driver switch.
+     */
+    protected function isSqlite(): bool
+    {
+        return DB::connection()->getDriverName() === 'sqlite';
+    }
+
+    /**
+     * The Asia/Manila calendar day of a UTC timestamp column — for SELECT and
+     * GROUP BY only, never WHERE (the window is bound as instants, see
+     * applyDateScope()). A fixed +8 shift: the Philippines has no daylight time.
+     */
+    protected function manilaDayExpr(string $column): string
+    {
+        return $this->isSqlite()
+            ? "date({$column}, '+8 hours')"
+            : "DATE(CONVERT_TZ({$column}, '+00:00', '+08:00'))";
+    }
+
+    /** Element count of a JSON array column (NULL for NULL). */
+    protected function jsonLengthExpr(string $column): string
+    {
+        return $this->isSqlite() ? "json_array_length({$column})" : "JSON_LENGTH({$column})";
+    }
+
+    /** Character (not byte) length of a text column. */
+    protected function charLengthExpr(string $column): string
+    {
+        return $this->isSqlite() ? "LENGTH({$column})" : "CHAR_LENGTH({$column})";
+    }
+
+    /**
+     * A Y-m-d day as the first day of its bucket: the day itself, its week
+     * (weeks start on Sunday, as in Agent Insights) or its month. Folding in
+     * PHP keeps the SQL to one grouped pass per day on either driver.
+     */
+    protected function foldDay(string $day, string $granularity): string
+    {
+        return match ($granularity) {
+            'month' => substr($day, 0, 7).'-01',
+            'week' => Carbon::parse($day)->startOfWeek(Carbon::SUNDAY)->format('Y-m-d'),
+            default => $day,
+        };
+    }
+
+    /** A window of up to this many days reads best day by day; longer or open-ended ones read by month. */
+    protected const AUTO_DAILY_DAYS = 62;
+
+    /** Longest zero-filled series (about three years of days); a longer one is returned without filler. */
+    protected const MAX_FILLED_BUCKETS = 1100;
+
+    /** Days for a short, closed window; months for a long or open-ended one. */
+    protected function autoGranularity(?ReportRange $range): string
+    {
+        if ($range === null || $range->openStart || $range->isInverted()) {
+            return 'month';
+        }
+
+        return $range->days() <= self::AUTO_DAILY_DAYS ? 'day' : 'month';
+    }
+
+    /**
+     * The first day of every bucket from $from to $to, in order — or none when
+     * that would run past the filler cap.
+     *
+     * @return list<string>
+     */
+    protected function bucketKeys(string $from, string $to, string $granularity): array
+    {
+        $cursor = Carbon::parse($this->foldDay($from, $granularity));
+        $last = $this->foldDay($to, $granularity);
+        $keys = [];
+
+        while ($cursor->format('Y-m-d') <= $last) {
+            $keys[] = $cursor->format('Y-m-d');
+            if (count($keys) > self::MAX_FILLED_BUCKETS) {
+                return [];
+            }
+            $cursor = match ($granularity) {
+                'month' => $cursor->addMonthNoOverflow(),
+                'week' => $cursor->addWeek(),
+                default => $cursor->addDay(),
+            };
+        }
+
+        return $keys;
+    }
+
     /** Numeric lat/lng extracted from the geo_coordinates JSON column. */
     protected function geoLat(): string
     {
-        return "CAST(JSON_UNQUOTE(JSON_EXTRACT(properties.geo_coordinates, '$.lat')) AS DECIMAL(12,8))";
+        return $this->isSqlite()
+            ? "CAST(json_extract(properties.geo_coordinates, '$.lat') AS REAL)"
+            : "CAST(JSON_UNQUOTE(JSON_EXTRACT(properties.geo_coordinates, '$.lat')) AS DECIMAL(12,8))";
     }
 
     protected function geoLng(): string
     {
-        return "CAST(JSON_UNQUOTE(JSON_EXTRACT(properties.geo_coordinates, '$.lng')) AS DECIMAL(12,8))";
+        return $this->isSqlite()
+            ? "CAST(json_extract(properties.geo_coordinates, '$.lng') AS REAL)"
+            : "CAST(JSON_UNQUOTE(JSON_EXTRACT(properties.geo_coordinates, '$.lng')) AS DECIMAL(12,8))";
     }
 
     /**
@@ -265,6 +500,7 @@ abstract class ListingInsightsService
         $this->agentIds = $agentIds;
         $this->dateStart = isset($filters['date_start']) && $filters['date_start'] !== '' ? (string) $filters['date_start'] : null;
         $this->dateEnd = isset($filters['date_end']) && $filters['date_end'] !== '' ? (string) $filters['date_end'] : null;
+        $this->dateBasis = ($filters['date_basis'] ?? 'created') === 'deal' ? 'deal' : 'created';
         $this->provinceId = isset($filters['province_id']) ? (int) $filters['province_id'] : null;
         $this->cityId = isset($filters['city_id']) ? (int) $filters['city_id'] : null;
         $this->barangayId = isset($filters['barangay_id']) ? (int) $filters['barangay_id'] : null;

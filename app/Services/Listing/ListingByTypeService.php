@@ -21,6 +21,9 @@ class ListingByTypeService extends ListingInsightsService
     public function typeBreakdown(?string $dateStart = null, ?string $dateEnd = null, ?array $agentIds = null, ?int $cityId = null, ?int $provinceId = null, ?string $island = null, ?string $region = null, ?int $barangayId = null): array
     {
         $this->agentIds = $agentIds;
+        $this->dateStart = $dateStart;
+        $this->dateEnd = $dateEnd;
+        $this->dateBasis = 'created';
         // Resolve a region/island scope into a province whitelist (no-op when a
         // province/city is already set). This method builds its own slim query,
         // so the scope is applied inline below rather than via baseListingQuery().
@@ -74,12 +77,8 @@ class ListingByTypeService extends ListingInsightsService
         if ($this->agentIds !== null) {
             $query->whereIn('listings.agent_id', $this->agentIds);
         }
-        if ($dateStart !== null && $dateStart !== '') {
-            $query->where('listings.created_at', '>=', $dateStart.' 00:00:00');
-        }
-        if ($dateEnd !== null && $dateEnd !== '') {
-            $query->where('listings.created_at', '<=', $dateEnd.' 23:59:59');
-        }
+        // Manila days, the same window every other insights service binds.
+        $this->applyDateScope($query);
 
         $rows = $query
             ->select(

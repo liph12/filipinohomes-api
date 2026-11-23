@@ -23,6 +23,7 @@ class ListingByCityService extends ListingInsightsService
         $this->agentIds  = $agentIds;
         $this->dateStart = $params['date_start'] ?? null;
         $this->dateEnd   = $params['date_end'] ?? null;
+        $this->dateBasis = 'created';
 
         $page       = max(1, (int) ($params['page'] ?? 1));
         $perPage    = max(1, min(100, (int) ($params['per_page'] ?? 20)));

@@ -26,11 +26,15 @@ use App\Services\Listing\ListingByStatusService;
 use App\Services\Listing\ListingByTypeService;
 use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
+use App\Services\Listing\ListingDealsService;
+use App\Services\Listing\ListingDemandService;
 use App\Services\Listing\ListingHeatmapService;
 use App\Services\Listing\ListingPriceInsightsService;
+use App\Services\Listing\ListingQualityService;
 use App\Services\Listing\ListingSummaryService;
 use App\Services\Listing\ListingTopCreatorsService;
 use App\Services\Project\ProjectService;
+use App\Services\Reports\Executive\ReportRange;
 use App\Services\TeamLeadershipService;
 use App\Support\IslandMap;
 use App\Support\RegionMap;
@@ -3024,7 +3028,18 @@ class ListingController extends Controller
     /** Prices by Type (admin main dashboard): average price per type, subtype and furnishing. */
     public function insightsPricesByType(Request $request, ListingPriceInsightsService $insights): JsonResponse
     {
-        return response()->json($insights->byType(['category' => $request->query('category')], $this->resolveInsightsAgentScope($request)));
+        $agentIds = $this->resolveInsightsAgentScope($request);
+
+        // `view=summary` is the Listing Insights page's version: median and middle half per type, for
+        // sale and rent, inside a date window and place. Without it the answer is the admin
+        // dashboard's, unchanged (it takes no dates).
+        if ($request->query('view') === 'summary') {
+            $filter = $this->insightsFilter($request);
+
+            return $this->insightsCached('prices-by-type', $agentIds, $filter, fn () => $insights->typeSummary($filter, $agentIds));
+        }
+
+        return response()->json($insights->byType(['category' => $request->query('category')], $agentIds));
     }
 
     /** Price Insights drill-down: the priced listings behind one place row. */
@@ -3071,24 +3086,31 @@ class ListingController extends Controller
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
 
+        // An unknown sort already fell through to the city-count order; naming it that keeps one
+        // cache entry per real order instead of one per string a caller can think of.
         $sortBy = (string) $request->query('sort_by', 'city_count');
-        $dateStart = $request->query('date_start');
-        $dateEnd = $request->query('date_end');
-        $provinceId = $request->query('province_id');
-        $cityId = $request->query('city_id');
-        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
+        if (! in_array($sortBy, ['listing_count', 'for_sale', 'for_rent', 'foreclosure', 'sold', 'rented', 'leased', 'province_name'], true)) {
+            $sortBy = 'city_count';
+        }
+        $filter = $this->insightsFilter($request);
 
-        return response()->json($insights->provinceBreakdown(
-            $sortBy,
+        return $this->insightsCached(
+            'by-province',
             $agentIds,
-            is_string($dateStart) ? $dateStart : null,
-            is_string($dateEnd) ? $dateEnd : null,
-            is_numeric($provinceId) ? (int) $provinceId : null,
-            is_numeric($cityId) ? (int) $cityId : null,
-            $island,
-            $region,
-            $barangayId
-        ));
+            $filter,
+            fn () => $insights->provinceBreakdown(
+                $sortBy,
+                $agentIds,
+                $filter['date_start'],
+                $filter['date_end'],
+                $filter['province_id'],
+                $filter['city_id'],
+                $filter['island'],
+                $filter['region'],
+                $filter['barangay_id']
+            ),
+            [$sortBy],
+        );
     }
 
     /**
@@ -3098,42 +3120,154 @@ class ListingController extends Controller
     public function insightsSummary(Request $request, ListingSummaryService $insights): JsonResponse
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
-        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
-        $provinceId = $request->query('province_id');
-        $cityId = $request->query('city_id');
+        $filter = $this->insightsFilter($request);
 
-        return response()->json($insights->summary([
-            'date_start' => is_string($request->query('date_start')) ? $request->query('date_start') : null,
-            'date_end' => is_string($request->query('date_end')) ? $request->query('date_end') : null,
-            'province_id' => is_numeric($provinceId) ? (int) $provinceId : null,
-            'city_id' => is_numeric($cityId) ? (int) $cityId : null,
-            'island' => $island,
-            'region' => $region,
-            'barangay_id' => $barangayId,
-        ], $agentIds));
+        return $this->insightsCached('summary', $agentIds, $filter, fn () => $insights->summary($filter, $agentIds));
     }
 
     /**
      * Listing Insights — "Created Listings" time series. Counts of listings
-     * created per day/month bucket, scoped by the same date/location filters.
+     * created per day/week/month bucket (Manila days), scoped by the same
+     * date/location filters. `granularity=auto` picks days for a short window
+     * and months for a long one; `fill=1` includes the empty buckets.
      */
     public function insightsCreated(Request $request, ListingCreatedService $insights): JsonResponse
     {
         $agentIds = $this->resolveInsightsAgentScope($request);
-        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
-        $provinceId = $request->query('province_id');
-        $cityId = $request->query('city_id');
+        $filter = $this->insightsFilter($request);
+        // Held to the real values before it can reach the cache key: any other string reads as
+        // "day", and would otherwise mint a cache entry of its own.
+        $granularity = (string) $request->query('granularity', 'day');
+        $params = $filter + [
+            'granularity' => in_array($granularity, ['day', 'week', 'month', 'auto'], true) ? $granularity : 'day',
+            'fill' => $request->boolean('fill'),
+        ];
 
-        return response()->json($insights->createdTimeline([
-            'date_start' => is_string($request->query('date_start')) ? $request->query('date_start') : null,
-            'date_end' => is_string($request->query('date_end')) ? $request->query('date_end') : null,
-            'province_id' => is_numeric($provinceId) ? (int) $provinceId : null,
-            'city_id' => is_numeric($cityId) ? (int) $cityId : null,
+        return $this->insightsCached(
+            'created',
+            $agentIds,
+            $filter,
+            fn () => $insights->createdTimeline($params, $agentIds),
+            [$params['granularity'], $params['fill']],
+        );
+    }
+
+    /**
+     * Listing Insights — Quality: ATS status of every listing in the window and
+     * how complete the active ones are (photos, description, map pin, area).
+     */
+    public function insightsQuality(Request $request, ListingQualityService $insights): JsonResponse
+    {
+        $agentIds = $this->resolveInsightsAgentScope($request);
+        $filter = $this->insightsFilter($request);
+
+        return $this->insightsCached('quality', $agentIds, $filter, fn () => $insights->quality($filter, $agentIds));
+    }
+
+    /**
+     * Listing Insights — Deals: sold / rented / leased counted by the day the
+     * deal closed, the Executive Report's definition. See ListingDealsService.
+     */
+    public function insightsDeals(Request $request, ListingDealsService $insights): JsonResponse
+    {
+        $agentIds = $this->resolveInsightsAgentScope($request);
+        $filter = $this->insightsFilter($request);
+
+        return $this->insightsCached('deals', $agentIds, $filter, fn () => $insights->deals($filter, $agentIds));
+    }
+
+    /**
+     * Listing Insights — Demand: views, inquiries and saves inside the window
+     * (dated by the event, on any listing in scope). See ListingDemandService.
+     */
+    public function insightsDemand(Request $request, ListingDemandService $insights): JsonResponse
+    {
+        $agentIds = $this->resolveInsightsAgentScope($request);
+        $filter = $this->insightsFilter($request);
+
+        return $this->insightsCached('demand', $agentIds, $filter, fn () => $insights->demand($filter, $agentIds));
+    }
+
+    /**
+     * The filter every Listing Insights dashboard endpoint takes: a window of
+     * Manila days (`date_start`, `date_end` — either, both or neither; neither
+     * is all time) and an optional province / city / island / region / barangay.
+     * `date_basis` (`created` | `deal`) says what the window dates, for the
+     * transaction views that offer both.
+     *
+     * Dates must be Y-m-d (a 422 otherwise, rather than the zero rows a
+     * mangled day used to give). Place ids stay tolerant — a non-number is
+     * "no filter" — because the older tabs send `province_id=all`.
+     *
+     * @return array{date_start: ?string, date_end: ?string, province_id: ?int, city_id: ?int, island: ?string, region: ?string, barangay_id: ?int, date_basis: string}
+     */
+    private function insightsFilter(Request $request): array
+    {
+        $validated = $request->validate([
+            'date_start' => 'nullable|date_format:Y-m-d',
+            'date_end' => 'nullable|date_format:Y-m-d',
+            'date_basis' => 'nullable|in:created,deal',
+        ]);
+        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
+        $day = fn (string $key) => ($validated[$key] ?? '') !== '' ? (string) $validated[$key] : null;
+        $id = fn (string $key) => is_numeric($request->query($key)) ? (int) $request->query($key) : null;
+
+        return [
+            'date_start' => $day('date_start'),
+            'date_end' => $day('date_end'),
+            'province_id' => $id('province_id'),
+            'city_id' => $id('city_id'),
             'island' => $island,
             'region' => $region,
             'barangay_id' => $barangayId,
-            'granularity' => (string) $request->query('granularity', 'day'),
-        ], $agentIds));
+            'date_basis' => ($validated['date_basis'] ?? '') === 'deal' ? 'deal' : 'created',
+        ];
+    }
+
+    /**
+     * An insights payload from cache, built on a miss. Modelled on the
+     * heatmap's: `Cache::flexible`, a fresh window then a stale tail that is
+     * served while one request rebuilds.
+     *
+     * The key holds the endpoint, the SCOPE (admin, or the team leader's agent
+     * footprint — derived from the signed-in user, never from the request, so a
+     * leader can't read an admin's entry), the clamped window (a future end
+     * shares the entry of today) and everything else that changes the answer.
+     * A window that ended before today keeps for ten minutes then up to an
+     * hour stale; one still running or all time, one minute then ten — audit,
+     * ATS and deal status of old listings can still change.
+     *
+     * @param  array<string, mixed>  $filter  from insightsFilter()
+     * @param  array<int, mixed>  $extra  anything else the payload depends on
+     */
+    private function insightsCached(string $endpoint, ?array $agentIds, array $filter, \Closure $build, array $extra = []): JsonResponse
+    {
+        $range = ReportRange::lenient($filter['date_start'] ?? null, $filter['date_end'] ?? null);
+
+        // `date_basis` is left out on purpose: no cached endpoint reads it (Deals fixes its own), so
+        // hashing it would only split one answer across entries. Callers must pass `$extra` already
+        // normalised to the values the answer really depends on.
+        $rest = sha1(json_encode([
+            $filter['province_id'] ?? null, $filter['city_id'] ?? null, $filter['island'] ?? null,
+            $filter['region'] ?? null, $filter['barangay_id'] ?? null, $extra,
+        ]));
+        $key = sprintf('insights:v1:%s:%s:%s:%s', $endpoint, $this->heatmapScopeKey($agentIds), $range?->key() ?? 'all', $rest);
+
+        $computed = false;
+        $payload = Cache::flexible(
+            $key,
+            $range !== null && ! $range->isCurrent() ? [600, 3600] : [60, 600],
+            function () use ($build, $agentIds, &$computed) {
+                $computed = true;
+
+                return $build() + [
+                    'scope' => $agentIds === null ? 'admin' : 'team',
+                    'generated_at' => now()->toIso8601String(),
+                ];
+            },
+        );
+
+        return response()->json($payload)->header('X-Insights-Cache', $computed ? 'miss' : 'hit');
     }
 
     /**
@@ -3158,7 +3292,9 @@ class ListingController extends Controller
             (string) $request->query('group_by', 'province'),
             $island,
             $region,
-            $barangayId
+            $barangayId,
+            // `deal` dates the window by when each deal closed, not when its listing was added.
+            $request->query('date_basis') === 'deal' ? 'deal' : 'created'
         ));
     }
 
@@ -3171,25 +3307,26 @@ class ListingController extends Controller
         // Agent dashboard "my listings by type": ?self=1 always scopes to the
         // caller's OWN listings, regardless of admin/team-leader status (a
         // team leader's personal dashboard shows their own, not the team's).
-        $agentIds = $request->boolean('self')
+        $self = $request->boolean('self');
+        $agentIds = $self
             ? $this->ownAgentScope($request)
             : $this->resolveInsightsAgentScope($request);
-        $dateStart = $request->query('date_start');
-        $dateEnd = $request->query('date_end');
-        $cityId = $request->query('city_id');
-        $provinceId = $request->query('province_id');
-        [$island, $region, $barangayId] = $this->insightsScopeParams($request);
-
-        return response()->json($insights->typeBreakdown(
-            is_string($dateStart) ? $dateStart : null,
-            is_string($dateEnd) ? $dateEnd : null,
+        $filter = $this->insightsFilter($request);
+        $build = fn () => $insights->typeBreakdown(
+            $filter['date_start'],
+            $filter['date_end'],
             $agentIds,
-            $cityId !== null ? (int) $cityId : null,
-            $provinceId !== null ? (int) $provinceId : null,
-            $island,
-            $region,
-            $barangayId
-        ));
+            $filter['city_id'],
+            $filter['province_id'],
+            $filter['island'],
+            $filter['region'],
+            $filter['barangay_id']
+        );
+
+        // An agent's own dashboard (?self=1) stays live and uncached.
+        return $self
+            ? response()->json($build())
+            : $this->insightsCached('by-type', $agentIds, $filter, $build);
     }
 
     /**
@@ -3218,6 +3355,8 @@ class ListingController extends Controller
                 : null,
             'date_start' => $request->query('date_start'),
             'date_end' => $request->query('date_end'),
+            // Honoured for the transaction statuses only (see ListingByStatusService::listingsForStatus()).
+            'date_basis' => $request->query('date_basis') === 'deal' ? 'deal' : 'created',
             'island' => is_string($request->query('island')) ? $request->query('island') : null,
             'region' => is_string($request->query('region')) ? $request->query('region') : null,
             'barangay_id' => $request->query('barangay_id') !== null
@@ -3623,6 +3762,7 @@ class ListingController extends Controller
             // Drill-downs: scope the ranking (and total_listings) to one city,
             // one team's active members, or one agent — the tile's "click a
             // city/team/agent" views.
+            'province_id' => 'nullable|integer|min:1',
             'city_id' => 'nullable|integer|min:1',
             'team_id' => 'nullable|integer|min:1',
             'agent_id' => 'nullable|integer|min:1',
@@ -3637,10 +3777,12 @@ class ListingController extends Controller
         $dateEnd = $request->query('date_end');
         $limit = max(1, min(100, (int) ($validated['limit'] ?? 20)));
         $cityId = isset($validated['city_id']) ? (int) $validated['city_id'] : null;
+        $provinceId = isset($validated['province_id']) ? (int) $validated['province_id'] : null;
         $teamId = isset($validated['team_id']) ? (int) $validated['team_id'] : null;
         $agentId = isset($validated['agent_id']) ? (int) $validated['agent_id'] : null;
+        $compact = $request->boolean('compact');
 
-        return response()->json($insights->topCreators(
+        $build = fn () => $insights->topCreators(
             $validated['group_by'],
             is_string($dateStart) ? $dateStart : null,
             is_string($dateEnd) ? $dateEnd : null,
@@ -3649,8 +3791,23 @@ class ListingController extends Controller
             $teamId,
             $agentId,
             $request->boolean('qualified'),
-            $request->boolean('series')
-        ));
+            $request->boolean('series'),
+            $provinceId,
+            $compact
+        );
+
+        // The leaderboard page wants live numbers; the dashboard's compact top list is cached like its siblings.
+        if (! $compact) {
+            return response()->json($build());
+        }
+
+        return $this->insightsCached(
+            'top-creators',
+            null,
+            ['date_start' => $dateStart, 'date_end' => $dateEnd, 'province_id' => $provinceId, 'city_id' => $cityId],
+            $build,
+            [$validated['group_by'], $limit, $teamId, $agentId, $request->boolean('qualified'), $request->boolean('series')],
+        );
     }
 
     /**

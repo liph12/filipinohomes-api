@@ -30,12 +30,23 @@ class ListingTopCreatorsService extends ListingInsightsService
     /** When true, only audit-passed AND ATS-approved listings count. */
     private bool $qualifiedOnly = false;
 
-    public function topCreators(string $groupBy, ?string $dateStart = null, ?string $dateEnd = null, int $limit = 20, ?int $cityId = null, ?int $teamId = null, ?int $agentId = null, bool $qualifiedOnly = false, bool $series = false): array
+    /**
+     * Compact mode (Listing Insights' top-5 list): skip the passes that only
+     * feed the full leaderboard's footer — the verified total and the count of
+     * all groups. Each of those is another full-join pass over the listings.
+     * Both come back null (the rows returned are NOT the group count).
+     */
+    private bool $compact = false;
+
+    public function topCreators(string $groupBy, ?string $dateStart = null, ?string $dateEnd = null, int $limit = 20, ?int $cityId = null, ?int $teamId = null, ?int $agentId = null, bool $qualifiedOnly = false, bool $series = false, ?int $provinceId = null, bool $compact = false): array
     {
         $this->qualifiedOnly = $qualifiedOnly;
+        $this->compact = $compact;
         $this->agentIds = null;
         $this->dateStart = $dateStart;
         $this->dateEnd = $dateEnd;
+        $this->dateBasis = 'created';
+        $this->provinceId = $provinceId;
         $this->cityId = $cityId;
 
         if ($teamId !== null) {
@@ -56,7 +67,8 @@ class ListingTopCreatorsService extends ListingInsightsService
 
         // One COUNT over the base-filtered range — independent of grouping, so
         // the tile can show "top N of X listings" even when groups are capped.
-        $totalListings = (int) $this->scopedQuery()->count();
+        // No grouping by place, so the place joins are only paid for under a place filter.
+        $totalListings = (int) $this->slimListingQuery()->count();
 
         [$data, $totalGroups] = match ($groupBy) {
             'team' => $this->byTeam($limit),
@@ -78,14 +90,17 @@ class ListingTopCreatorsService extends ListingInsightsService
                 'date_start' => $this->dateStart,
                 'date_end' => $this->dateEnd,
                 'limit' => $limit,
+                'province_id' => $this->provinceId,
                 'city_id' => $this->cityId,
                 'team_id' => $teamId,
                 'agent_id' => $agentId,
                 'qualified' => $qualifiedOnly,
+                'compact' => $compact,
                 'total_listings' => $totalListings,
                 // Verified+ATS-approved total across the range — the Verified
                 // column/KPI is ALWAYS shown; the toggle only changes ranking.
-                'verified_listings' => (int) $this->baseListingQuery()
+                // Null in compact mode (not computed).
+                'verified_listings' => $compact ? null : (int) $this->baseListingQuery()
                     ->whereIn('listings.verification_status', ['verified', 'fully_verified'])
                     ->where('properties.ats_status', 'approve')
                     ->count(),
@@ -124,8 +139,11 @@ class ListingTopCreatorsService extends ListingInsightsService
             default => 'NULL',
         };
 
+        // Manila days, like every other insights bucket.
+        $dayExpr = $this->manilaDayExpr('listings.created_at');
+
         $rows = $this->scopedQuery()
-            ->selectRaw('DATE(listings.created_at) as date, COUNT(*) as total'
+            ->selectRaw("{$dayExpr} as date, COUNT(*) as total"
                 .", SUM(CASE WHEN listings.verification_status IN ('verified', 'fully_verified') AND properties.ats_status = 'approve' THEN 1 ELSE 0 END) as verified"
                 .", {$groupsSql} as `groups`, {$topSql} as top", $topBindings)
             ->groupBy('date')
@@ -139,7 +157,7 @@ class ListingTopCreatorsService extends ListingInsightsService
                 ->join('team_agents as ta', function ($join) {
                     $join->on('ta.agent_id', '=', 'listings.agent_id')->where('ta.status', 'active');
                 })
-                ->selectRaw('DATE(listings.created_at) as date, COUNT(DISTINCT ta.team_id) as n')
+                ->selectRaw("{$dayExpr} as date, COUNT(DISTINCT ta.team_id) as n")
                 ->groupBy('date')
                 ->pluck('n', 'date')
                 ->all();
@@ -254,7 +272,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      * resolved in a second small query (mirrors AgentResource, which exposes
      * teamMembers->first() as {id,name}).
      *
-     * @return array{0: array, 1: int}
+     * @return array{0: array, 1: ?int}
      */
     private function byAgent(int $limit): array
     {
@@ -301,7 +319,8 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->scopedQuery()
+        // Compact: the caller only wants the rows, so skip counting every group (null, not the page size).
+        $totalGroups = $this->compact ? null : (int) $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -360,7 +379,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      * listing must never double count within one team. Leaders are resolved in
      * a second small query over the returned team ids.
      *
-     * @return array{0: array, 1: int}
+     * @return array{0: array, 1: ?int}
      */
     private function byTeam(int $limit): array
     {
@@ -407,7 +426,7 @@ class ListingTopCreatorsService extends ListingInsightsService
             ->limit($limit)
             ->get();
 
-        $totalGroups = (int) $this->scopedQuery()
+        $totalGroups = $this->compact ? null : (int) $this->scopedQuery()
             ->join('agents', function ($join) {
                 $join->on('agents.id', '=', 'listings.agent_id')
                     ->whereNull('agents.deleted_at');
@@ -475,7 +494,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      * view needs to see WHO drives each city), resolved in two follow-up
      * queries scoped to the returned city ids.
      *
-     * @return array{0: array, 1: int}
+     * @return array{0: array, 1: ?int}
      */
     private function byCity(int $limit): array
     {
@@ -616,7 +635,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      * Secretary is scoped to). Agents with no region fall into a synthetic
      * 'unassigned' bucket.
      *
-     * @return array{0: array, 1: int}
+     * @return array{0: array, 1: ?int}
      */
     private function byOfficeRegion(int $limit): array
     {
@@ -662,7 +681,7 @@ class ListingTopCreatorsService extends ListingInsightsService
      * 'central-visayas') is derived from the province name. No ranking here —
      * rows are a creation log, so total_groups is simply the pre-limit count.
      *
-     * @return array{0: array, 1: int}
+     * @return array{0: array, 1: ?int}
      */
     private function byListing(int $limit): array
     {

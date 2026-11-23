@@ -20,6 +20,7 @@ class ListingByProvinceService extends ListingInsightsService
         $this->agentIds = $agentIds;
         $this->dateStart = $dateStart;
         $this->dateEnd = $dateEnd;
+        $this->dateBasis = 'created';
         $this->provinceId = $provinceId;
         $this->cityId = $cityId;
         $this->island = $island;

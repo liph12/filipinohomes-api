@@ -103,4 +103,56 @@ class ExecutiveReportRangeTest extends TestCase
 
         ReportRange::resolve($start, $end);
     }
+
+    // ── lenient(): the Listing Insights window ──────────────────────────────
+
+    public function test_lenient_with_no_usable_day_is_all_time(): void
+    {
+        $this->assertNull(ReportRange::lenient(null, null));
+        $this->assertNull(ReportRange::lenient('', ''));
+        $this->assertNull(ReportRange::lenient('garbage', '2026-02-30'), 'a mangled day is ignored, not refused');
+    }
+
+    public function test_lenient_fills_in_the_side_that_is_missing(): void
+    {
+        $upToToday = ReportRange::lenient('2026-11-01', null);
+        $this->assertSame(['2026-11-01', '2026-11-10'], [$upToToday->start, $upToToday->end]);
+        $this->assertFalse($upToToday->openStart);
+        $this->assertTrue($upToToday->hasPrevious());
+
+        $fromTheBeginning = ReportRange::lenient(null, '2026-10-31');
+        $this->assertSame('2026-10-31', $fromTheBeginning->end);
+        $this->assertSame(ReportRange::OPEN_START_DAY, $fromTheBeginning->start);
+        $this->assertTrue($fromTheBeginning->openStart);
+        $this->assertFalse($fromTheBeginning->hasPrevious(), 'nothing precedes the beginning');
+    }
+
+    public function test_lenient_clamps_a_future_end_and_has_no_span_limit(): void
+    {
+        // resolve() would refuse this twice over: before the report's first day, and longer than a year.
+        $range = ReportRange::lenient('2020-01-01', '2026-12-31');
+
+        $this->assertSame(['2020-01-01', '2026-11-10'], [$range->start, $range->end]);
+        $this->assertTrue($range->clamped);
+    }
+
+    public function test_lenient_keeps_a_start_after_the_end_so_that_it_holds_nothing(): void
+    {
+        foreach ([['2026-11-09', '2026-11-01'], ['2026-12-01', '2026-12-05']] as [$start, $end]) {
+            $range = ReportRange::lenient($start, $end);
+
+            $this->assertTrue($range->isInverted(), "{$start} → {$end}");
+            $this->assertFalse($range->hasPrevious());
+            $this->assertGreaterThan($range->toUtc(), $range->fromUtc(), 'no instant falls between from and to');
+        }
+    }
+
+    public function test_lenient_binds_manila_midnights(): void
+    {
+        $day = ReportRange::lenient('2026-11-01', '2026-11-01');
+
+        $this->assertSame('2026-10-31 16:00:00', $day->fromUtc());
+        $this->assertSame('2026-11-01 16:00:00', $day->toUtc());
+        $this->assertSame('2026-11-02', $day->endExclusiveDay());
+    }
 }

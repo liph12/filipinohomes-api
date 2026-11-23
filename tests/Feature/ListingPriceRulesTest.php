@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Services\Listing\ListingPriceInsightsService;
+use App\Services\Listing\ListingPriceRules;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -182,5 +183,25 @@ class ListingPriceRulesTest extends TestCase
         $this->assertSame(1, $insights->listings(['city_id' => 1, 'category' => 'Foreclosed'])['meta']['total']);
         $this->assertSame(4, $insights->listings(['city_id' => 1, 'category' => 'For Sale'])['meta']['total']);
         $this->assertSame(3, $insights->listings(['city_id' => 1, 'category' => 'For Rent'])['meta']['total']);
+    }
+
+    public function test_a_percentile_interpolates_and_the_fiftieth_is_the_median(): void
+    {
+        $this->assertNull(ListingPriceRules::percentile([], 0.5));
+        $this->assertEquals(7.0, ListingPriceRules::percentile([7], 0.25));
+
+        // The middle half of 1…5 is 2 to 4.
+        $this->assertEquals(2.0, ListingPriceRules::percentile([1, 2, 3, 4, 5], 0.25));
+        $this->assertEquals(4.0, ListingPriceRules::percentile([1, 2, 3, 4, 5], 0.75));
+        // Between two values it interpolates, and unsorted input is sorted first.
+        $this->assertEquals(12.5, ListingPriceRules::percentile([20, 10], 0.25));
+
+        foreach ([[1, 2, 3], [1, 2, 3, 4], [5, 1, 9, 3, 7, 2], [100_000, 250_000]] as $values) {
+            $this->assertEquals(ListingPriceRules::median($values), ListingPriceRules::percentile($values, 0.5));
+        }
+
+        // A fraction outside 0–1 is held to the ends rather than reading past them.
+        $this->assertEquals(1.0, ListingPriceRules::percentile([1, 2, 3], -1.0));
+        $this->assertEquals(3.0, ListingPriceRules::percentile([1, 2, 3], 2.0));
     }
 }

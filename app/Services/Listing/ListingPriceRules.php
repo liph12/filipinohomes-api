@@ -68,4 +68,27 @@ final class ListingPriceRules
 
         return $n % 2 ? (float) $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
     }
+
+    /**
+     * The value a fraction $p (0–1) of the way up the sorted values, by linear
+     * interpolation between the two nearest — so percentile($v, 0.5) equals
+     * median($v), and 0.25 / 0.75 bound the middle half. Null for no values.
+     *
+     * @param  array<int, int|float>  $values
+     */
+    public static function percentile(array $values, float $p): ?float
+    {
+        $n = count($values);
+        if ($n === 0) {
+            return null;
+        }
+
+        sort($values);
+        $values = array_values($values);
+        $rank = max(0.0, min(1.0, $p)) * ($n - 1);
+        $lo = (int) floor($rank);
+        $hi = (int) ceil($rank);
+
+        return (float) ($values[$lo] + ($values[$hi] - $values[$lo]) * ($rank - $lo));
+    }
 }

@@ -309,11 +309,74 @@ class ListingPriceInsightsService extends ListingInsightsService
         return $out;
     }
 
+    /**
+     * The Listing Insights page's price section: for sale and for rent, each by property type — how
+     * many priced listings, the median, the middle half (25th to 75th percentile) and the median ₱/sqm.
+     * Medians, because a few very dear listings move an average a long way and a median not at all.
+     * Scoped by the page's dates (listings ADDED in them) and place. A type with no priced listing
+     * still has a row (n = 0, no figures), so the page's rows never come and go with the filter.
+     *
+     * @return array{range: ?array<string, mixed>, sale: array<string, mixed>, rent: array<string, mixed>}
+     */
+    public function typeSummary(array $params, ?array $agentIds = null): array
+    {
+        $this->bindScope($params, $agentIds);
+        $out = ['range' => $this->rangeMeta()];
+
+        foreach (['sale' => 'For Sale', 'rent' => 'For Rent'] as $key => $category) {
+            $rows = $this->pricedQuery($category, '', slim: true)
+                ->select('listings.price', 'property_types.name as type', 'property_attributes.floor_area', 'property_attributes.lot_area')
+                ->get();
+
+            $all = ['prices' => [], 'ppsqm' => []];
+            $byType = ['House' => $all, 'Condominium' => $all, 'Land' => $all, 'Commercial' => $all];
+            foreach ($rows as $r) {
+                $type = (string) $r->type;
+                $price = (float) $r->price;
+                $ppsqm = self::perSqm($price, $type, $r->floor_area, $r->lot_area);
+                $all['prices'][] = $price;
+                if ($ppsqm !== null) {
+                    $all['ppsqm'][] = $ppsqm;
+                }
+                if (isset($byType[$type])) {
+                    $byType[$type]['prices'][] = $price;
+                    if ($ppsqm !== null) {
+                        $byType[$type]['ppsqm'][] = $ppsqm;
+                    }
+                }
+            }
+
+            $out[$key] = self::quartiles($all['prices'], $all['ppsqm']) + ['types' => array_map(
+                fn (string $type, array $b) => ['type' => $type] + self::quartiles($b['prices'], $b['ppsqm']),
+                array_keys($byType),
+                array_values($byType),
+            )];
+        }
+
+        return $out;
+    }
+
+    /** @return array{n: int, median: ?int, p25: ?int, p75: ?int, median_ppsqm: ?int, ppsqm_n: int} */
+    private static function quartiles(array $prices, array $ppsqm): array
+    {
+        $round = fn (?float $v) => $v === null ? null : (int) round($v);
+
+        return [
+            'n' => count($prices),
+            'median' => $round(ListingPriceRules::median($prices)),
+            'p25' => $round(ListingPriceRules::percentile($prices, 0.25)),
+            'p75' => $round(ListingPriceRules::percentile($prices, 0.75)),
+            'median_ppsqm' => $round(ListingPriceRules::median($ppsqm)),
+            'ppsqm_n' => count($ppsqm),
+        ];
+    }
+
     private function bindScope(array $params, ?array $agentIds): void
     {
         $this->agentIds = $agentIds;
         $this->dateStart = $params['date_start'] ?? null;
         $this->dateEnd = $params['date_end'] ?? null;
+        $this->dateBasis = 'created';
         $this->provinceId = isset($params['province_id']) && $params['province_id'] !== null ? (int) $params['province_id'] : null;
         $this->cityId = isset($params['city_id']) && $params['city_id'] !== null ? (int) $params['city_id'] : null;
         $this->barangayId = isset($params['barangay_id']) && $params['barangay_id'] !== null ? (int) $params['barangay_id'] : null;
@@ -323,11 +386,12 @@ class ListingPriceInsightsService extends ListingInsightsService
     }
 
     /** Public, unflagged, really-priced listings of one category ('' = all), with their property type and areas. */
-    private function pricedQuery(string $category, string $type)
+    private function pricedQuery(string $category, string $type, bool $slim = false)
     {
         // Each listing against its own category's floor and ceiling — see ListingPriceRules.
+        // `slim`: for callers that never group by place, so the place joins can be left out.
         return ListingPriceRules::apply(
-            $this->baseListingQuery()
+            ($slim ? $this->slimListingQuery() : $this->baseListingQuery())
                 ->join('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
                 ->join('property_subtypes', 'property_subtypes.id', '=', 'property_attributes.property_subtype_id')
                 ->join('property_types', 'property_types.id', '=', 'property_subtypes.property_type_id')

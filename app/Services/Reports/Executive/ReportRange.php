@@ -32,11 +32,57 @@ final class ReportRange
     /** A year and a day: "This year" plus the leap day, and no unbounded scans. */
     public const MAX_DAYS = 366;
 
+    /** The first day of an open-ended range ("everything up to …"): earlier than any listing. */
+    public const OPEN_START_DAY = '2000-01-01';
+
     private function __construct(
         public readonly string $start,
         public readonly string $end,
         public readonly bool $clamped = false,
+        /** True when the caller gave no start day, so `start` is only the open-ended sentinel. */
+        public readonly bool $openStart = false,
     ) {}
+
+    /**
+     * The window a Listing Insights call asks for — or null for "all time".
+     *
+     * Insights pages are looser than the report: one side may be missing (no
+     * end = up to today, no start = from the beginning), nothing caps the span
+     * (All time is a legitimate request) and a malformed day is ignored rather
+     * than refused, so an old caller can't turn into a 500. A day after today
+     * is clamped to today, as in resolve(). The two days are NOT reordered: a
+     * start after the end is a window nothing falls in, so it counts zero.
+     */
+    public static function lenient(?string $start, ?string $end, ?Carbon $now = null): ?self
+    {
+        $start = self::validDay($start);
+        $end = self::validDay($end);
+
+        if ($start === null && $end === null) {
+            return null;
+        }
+
+        $today = self::today($now);
+
+        return new self(
+            $start ?? self::OPEN_START_DAY,
+            min($end ?? $today, $today),
+            $end !== null && $end > $today,
+            $start === null,
+        );
+    }
+
+    /** A start after the end — a window nothing falls in. */
+    public function isInverted(): bool
+    {
+        return $this->end < $this->start;
+    }
+
+    /** Whether a comparison period exists: not for an open start (nothing before "the beginning"), nor an inverted window. */
+    public function hasPrevious(): bool
+    {
+        return ! $this->openStart && ! $this->isInverted();
+    }
 
     /**
      * Turn a requested range into the one the report answers for.
@@ -224,6 +270,22 @@ final class ReportRange
     private static function midnight(string $day): Carbon
     {
         return Carbon::createFromFormat('!Y-m-d', $day, self::TZ);
+    }
+
+    /** The day when it is a strict Y-m-d calendar day, otherwise null (also for null and ''). */
+    private static function validDay(?string $day): ?string
+    {
+        if ($day === null || $day === '') {
+            return null;
+        }
+
+        try {
+            self::assertDay($day);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+
+        return $day;
     }
 
     private static function assertDay(string $day): void
