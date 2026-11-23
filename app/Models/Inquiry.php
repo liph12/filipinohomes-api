@@ -23,12 +23,23 @@ class Inquiry extends Model implements Auditable
         'state',
         'city',
         'read_at',
+        'done_at',
+        'done_by',
     ];
 
+    // read_at here is the old shared flag, frozen since per-admin read state moved to inquiry_reads
+    // (see InquiryReadState). It still marks pre-existing submissions as read for admins with no row.
     protected $casts = [
         'device' => 'json',
         'read_at' => 'datetime',
+        'done_at' => 'datetime',
     ];
+
+    /** The admin who marked it done (Contact Inbox). */
+    public function doneBy()
+    {
+        return $this->belongsTo(User::class, 'done_by');
+    }
 
     public function replies()
     {

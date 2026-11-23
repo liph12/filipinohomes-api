@@ -6,6 +6,7 @@ use App\Mail\InquiryReplyMailer;
 use App\Models\Inquiry;
 use App\Models\InquiryReply;
 use App\Services\AuditMailService;
+use App\Services\Inquiry\InquiryReadState;
 use App\Services\Mailbox\MailboxService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -18,6 +19,8 @@ use Illuminate\Support\Facades\Mail;
  */
 class InquiryController extends Controller
 {
+    public function __construct(private InquiryReadState $reads) {}
+
     /**
      * Paginated list of inquiries with their replies eager-loaded for the
      * dashboard. Newest first.
@@ -37,7 +40,7 @@ class InquiryController extends Controller
             'source' => 'nullable|string|max:64',
         ]);
 
-        $query = Inquiry::with(['replies.admin:id,name,email,avatar'])
+        $query = Inquiry::with(['replies.admin:id,name,email,avatar', 'doneBy:id,name,avatar'])
             ->orderByDesc('created_at');
 
         if (! empty($validated['search'])) {
@@ -54,55 +57,97 @@ class InquiryController extends Controller
         }
 
         $paginator = $query->paginate($validated['per_page'] ?? 20);
+        $userId = $request->user()->id;
+        // read_at = this admin's own read time; read_by = which admins have read it.
+        $this->reads->present($paginator->getCollection(), $userId);
 
-        // Total unread across ALL inquiries (not just this page/filter) so the
-        // header + sidebar badge reflect the real backlog.
+        // Total unread for this admin across ALL inquiries (not just this page/filter) so the
+        // header + sidebar badge reflect their real backlog.
         return response()->json(
-            $paginator->toArray() + ['unread_count' => Inquiry::whereNull('read_at')->count()],
+            $paginator->toArray() + ['unread_count' => $this->reads->unreadCount($userId)],
         );
     }
 
     /**
-     * Lightweight unread tally for the sidebar Contact Inbox badge.
+     * Lightweight unread tally (this admin's) for the sidebar + topbar Contact Inbox badges.
      */
-    public function unreadCount()
+    public function unreadCount(Request $request)
     {
-        return response()->json(['unread_count' => Inquiry::whereNull('read_at')->count()]);
+        $userId = $request->user()->id;
+
+        return response()->json([
+            'unread_count' => $this->reads->unreadCount($userId),
+            // Unread submissions from the last few days — the topbar pops a notice for these.
+            'recent' => $this->reads->recentUnread($userId),
+        ]);
     }
 
-    public function show(Inquiry $inquiry)
+    public function show(Request $request, Inquiry $inquiry)
     {
-        // Opening a submission marks it read (first open only).
-        if ($inquiry->read_at === null) {
-            $inquiry->forceFill(['read_at' => now()])->saveQuietly();
-        }
-        $inquiry->load(['replies.admin:id,name,email,avatar']);
+        // Opening a submission marks it read for this admin only (first open time is kept).
+        $userId = $request->user()->id;
+        $this->reads->markRead($inquiry, $userId);
+        $inquiry->load(['replies.admin:id,name,email,avatar', 'doneBy:id,name,avatar']);
+        $this->reads->present(collect([$inquiry]), $userId);
 
         return response()->json(['data' => $inquiry]);
     }
 
     /**
-     * Mark one inquiry read/unread without opening the thread (row toggle).
+     * Mark one inquiry read/unread for this admin without opening the thread (row toggle).
      */
     public function setRead(Request $request, Inquiry $inquiry)
     {
         $validated = $request->validate(['read' => 'required|boolean']);
-        $inquiry->forceFill([
-            'read_at' => $validated['read'] ? ($inquiry->read_at ?? now()) : null,
-        ])->saveQuietly();
+        $userId = $request->user()->id;
+        $validated['read'] ? $this->reads->markRead($inquiry, $userId) : $this->reads->markUnread($inquiry, $userId);
+        $this->reads->present(collect([$inquiry]), $userId);
 
         return response()->json([
-            'data' => ['id' => $inquiry->id, 'read_at' => $inquiry->read_at],
-            'unread_count' => Inquiry::whereNull('read_at')->count(),
+            'data' => ['id' => $inquiry->id, 'read_at' => $inquiry->read_at, 'read_by' => $inquiry->read_by],
+            'unread_count' => $this->reads->unreadCount($userId),
         ]);
     }
 
     /**
-     * Mark every inquiry read (inbox "mark all read").
+     * Mark a submission done / not done. Shared by all admins; records who marked it.
      */
-    public function markAllRead()
+    public function setDone(Request $request, Inquiry $inquiry)
     {
-        Inquiry::whereNull('read_at')->update(['read_at' => now()]);
+        $validated = $request->validate(['done' => 'required|boolean']);
+
+        $inquiry->forceFill($validated['done']
+            ? ['done_at' => $inquiry->done_at ?? now(), 'done_by' => $inquiry->done_by ?? $request->user()->id]
+            : ['done_at' => null, 'done_by' => null])->save();
+        $inquiry->load('doneBy:id,name,avatar');
+
+        return response()->json([
+            'data' => ['id' => $inquiry->id, 'done_at' => $inquiry->done_at, 'done_by' => $inquiry->doneBy],
+        ]);
+    }
+
+    /**
+     * Mark the selected inquiries read/unread for this admin (list checkboxes).
+     */
+    public function setReadMany(Request $request)
+    {
+        $validated = $request->validate([
+            'ids' => 'required|array|min:1|max:100',
+            'ids.*' => 'integer|distinct|exists:inquiries,id',
+            'read' => 'required|boolean',
+        ]);
+        $userId = $request->user()->id;
+        $this->reads->markMany(array_map('intval', $validated['ids']), $userId, (bool) $validated['read']);
+
+        return response()->json(['unread_count' => $this->reads->unreadCount($userId)]);
+    }
+
+    /**
+     * Mark every inquiry read for this admin (inbox "mark all read"). Other admins keep their own state.
+     */
+    public function markAllRead(Request $request)
+    {
+        $this->reads->markAllRead($request->user()->id);
 
         return response()->json(['unread_count' => 0]);
     }

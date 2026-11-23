@@ -1058,6 +1058,7 @@ Route::middleware('strip.tags')->group(function () {
                 Route::get('/admin/inquiries', [InquiryController::class, 'index']);
                 Route::get('/admin/inquiries-unread-count', [InquiryController::class, 'unreadCount']);
                 Route::post('/admin/inquiries/mark-all-read', [InquiryController::class, 'markAllRead']);
+                Route::post('/admin/inquiries/read', [InquiryController::class, 'setReadMany']);
 
                 // Automatic Inquiry Approver — settings KV behind
                 // InquiryAutoApprovalService; consumed by the scheduled
@@ -1088,6 +1089,7 @@ Route::middleware('strip.tags')->group(function () {
 
                 Route::get('/admin/inquiries/{inquiry}', [InquiryController::class, 'show']);
                 Route::patch('/admin/inquiries/{inquiry}/read', [InquiryController::class, 'setRead']);
+                Route::patch('/admin/inquiries/{inquiry}/done', [InquiryController::class, 'setDone']);
                 Route::post('/admin/inquiries/{inquiry}/reply', [InquiryController::class, 'reply']);
 
                 // ── Mailbox — the info@filipinohomes.com inbox (IMAP/SMTP on
