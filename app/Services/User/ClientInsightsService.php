@@ -266,8 +266,9 @@ class ClientInsightsService
         $names = DB::table('agents')->whereIn('user_id', array_keys($per))
             ->get(['user_id', 'first_name', 'last_name'])
             ->mapWithKeys(fn ($a) => [$a->user_id => trim(preg_replace('/\s+/', ' ', ($a->first_name ?? '').' '.($a->last_name ?? '')))]);
+        $emails = DB::table('users')->whereIn('id', array_keys($per))->pluck('email', 'id');
 
-        return collect($per)->map(fn ($a, $id) => ['name' => ($names[$id] ?? '') ?: 'Agent #'.$id] + $a)->values()->all();
+        return collect($per)->map(fn ($a, $id) => ['name' => ($names[$id] ?? '') ?: 'Agent #'.$id, 'email' => $emails[$id] ?? null] + $a)->values()->all();
     }
 
     /**
