@@ -157,6 +157,8 @@ class ClientInsightsService
         return DB::table('chats')
             ->leftJoin('conversations', fn ($j) => $j->on('conversations.chat_id', '=', 'chats.id')->whereNull('conversations.deleted_at'))
             ->leftJoin('listings', fn ($j) => $j->on('listings.id', '=', 'chats.type_id')->where('chats.type', 'listing'))
+            // The listing's owner (listings.agent_id → agents.user_id) — the unanswered panel counts by owner.
+            ->leftJoin('agents as owner', 'owner.id', '=', 'listings.agent_id')
             ->leftJoin('categories', 'categories.id', '=', 'listings.category_id')
             ->leftJoin('properties', 'properties.id', '=', 'listings.property_id')
             ->leftJoin('property_attributes', 'property_attributes.id', '=', 'properties.property_attribute_id')
@@ -170,6 +172,8 @@ class ClientInsightsService
                 'chats.user_id', 'chats.type', 'chats.type_id', 'chats.source', 'chats.created_at',
                 'conversations.status', 'conversations.reviewed_at',
                 DB::raw("{$agent} as agent_user_id"),
+                'owner.user_id as owner_user_id',
+                DB::raw('EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id = owner.user_id) as owner_replied'),
                 DB::raw("EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id = {$agent}) as agent_replied"),
                 // automated = the Inquiry Filipinohomes Assistant, not a human reply.
                 DB::raw('EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.user_id <> chats.user_id AND m.automated = 0) as anyone_replied'),
@@ -240,16 +244,18 @@ class ClientInsightsService
     }
 
     /**
-     * Agents with the most inquiries left without a reply (reached them, nobody but the client wrote),
-     * with how many they received and answered themselves. Top 30.
+     * Listing owners with the most listing inquiries left without a reply (reached the agent, nobody
+     * but the client wrote), with how many their listings received and how many they answered
+     * themselves. Counted by the listing's owner; direct-to-agent inquiries (no listing) aren't in it.
+     * Top 30.
      */
     private function unansweredAgents($inquiries): array
     {
         $per = [];
-        foreach ($inquiries->filter(fn ($r) => self::reached($r)) as $r) {
-            $a = &$per[$r->agent_user_id];
+        foreach ($inquiries->filter(fn ($r) => $r->type === 'listing' && $r->owner_user_id && self::reached($r)) as $r) {
+            $a = &$per[$r->owner_user_id];
             $a['received'] = ($a['received'] ?? 0) + 1;
-            $a['replied'] = ($a['replied'] ?? 0) + ($r->agent_replied ? 1 : 0);
+            $a['replied'] = ($a['replied'] ?? 0) + ($r->owner_replied ? 1 : 0);
             $a['no_reply'] = ($a['no_reply'] ?? 0) + ($r->anyone_replied ? 0 : 1);
             unset($a);
         }

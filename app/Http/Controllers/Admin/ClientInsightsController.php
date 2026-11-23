@@ -36,7 +36,7 @@ class ClientInsightsController extends Controller
         $end = $data['date_end'] ?? null;
 
         return response()->json(Cache::remember(
-            'admin:client-insights:replies:v3:'.($start ? "{$start}:{$end}" : 'all'),
+            'admin:client-insights:replies:v4:'.($start ? "{$start}:{$end}" : 'all'),
             600,
             fn () => $clients->repliesBetween($start, $end),
         ));
