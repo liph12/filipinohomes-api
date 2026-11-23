@@ -89,6 +89,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'verify.service.token' => \App\Http\Middleware\VerifyServiceToken::class,
             'verify.lr.token'      => \App\Http\Middleware\VerifyLrToken::class,
             'verify.fhone'         => \App\Http\Middleware\VerifyFhOneKey::class,
+            'mcp.key'              => \App\Http\Middleware\AuthenticateMcpKey::class,
             'agent.active'         => \App\Http\Middleware\EnsureAgentActive::class,
         ]);
     })

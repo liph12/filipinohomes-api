@@ -32,6 +32,7 @@ Read the documents in this sequence.
 | [ci-cd.md](ci-cd.md) | The GitHub Actions workflows, the ECR repository and the Git remotes |
 | [releases.md](releases.md) | How to release, how to run migrations and how to roll back |
 | [operations.md](operations.md) | Procedures for daily operation |
+| [mcp.md](mcp.md) | The MCP server (Claude reading the numbers): who sees what, the safety rules, the keys and how to connect |
 | [troubleshooting.md](troubleshooting.md) | Known problems and their solutions |
 | [cutover.md](cutover.md) | The steps that move live traffic to ECS |
 
