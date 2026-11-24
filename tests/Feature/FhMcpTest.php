@@ -48,11 +48,11 @@ class FhMcpTest extends TestCase
 
     private const ENDPOINT = '/mcp/filipinohomes';
 
-    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_clients', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
+    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_clients', 'fh_guide', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
 
-    private const AGENT_TOOLS = ['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
+    private const AGENT_TOOLS = ['my_guide', 'my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
 
-    private const TEAM_TOOLS = ['team_metric', 'team_metric_breakdown', 'team_metric_records', 'team_metrics_catalog', 'team_roster'];
+    private const TEAM_TOOLS = ['team_guide', 'team_metric', 'team_metric_breakdown', 'team_metric_records', 'team_metrics_catalog', 'team_roster'];
 
     /** @var array<string, int> */
     private array $id = [];
@@ -389,7 +389,7 @@ class FhMcpTest extends TestCase
             ->assertOk()
             ->assertJsonPath('result.serverInfo.name', 'Filipino Homes');
 
-        // It can see what exists (all eighteen), to add the connector...
+        // It can see what exists (all twenty-one), to add the connector...
         $everything = [...self::ADMIN_TOOLS, ...self::AGENT_TOOLS, ...self::TEAM_TOOLS];
         sort($everything);
         $this->assertSame($everything, collect($this->rpc('tools/list')->assertOk()->json('result.tools'))->pluck('name')->sort()->values()->all());
@@ -720,6 +720,37 @@ class FhMcpTest extends TestCase
         $this->assertNotNull($this->rpc('tools/call', ['name' => 'fh_clients', 'arguments' => (object) []], $this->a1Key)->json('error'));
     }
 
+    public function test_each_role_has_a_guide_to_everything_it_can_ask_and_nothing_more(): void
+    {
+        $admin = $this->tool('fh_guide', [], $this->adminKey);
+        $this->assertFalse($admin['is_error'], $admin['text']);
+        $titles = array_column($admin['data']['sections'], 'title');
+        foreach (['Website traffic', 'AI visibility', 'Client journey', 'Inquiries', 'Audit & Authority to Sell', 'Agents', 'Teams'] as $title) {
+            $this->assertContains($title, $titles);
+        }
+        $this->assertStringContainsString('missed reply', $admin['text']);
+        $this->assertStringContainsString('present_it', $admin['text'], 'it tells Claude to show it all');
+
+        // Every number a guide offers is one the person's tools answer.
+        $offered = collect($admin['data']['sections'])->pluck('covers')->flatten()->count();
+        $this->assertGreaterThan(60, $offered, 'the whole catalog and the three company tools');
+
+        $agent = $this->tool('my_guide', [], $this->a1Key);
+        $this->assertFalse($agent['is_error'], $agent['text']);
+        $agentTitles = array_column($agent['data']['sections'], 'title');
+        $this->assertNotContains('Website traffic', $agentTitles);
+        $this->assertNotContains('Agents', $agentTitles);
+        $this->assertNotContains('Teams', $agentTitles);
+        $this->assertStringNotContainsString('fh_', $agent['text']);
+        foreach ($agent['data']['sections'] as $section) {
+            $this->assertSame(['my_metric', 'my_metric_breakdown', 'my_metric_records'], $section['tools']);
+        }
+
+        // Neither can open the other's.
+        $this->assertNotNull($this->rpc('tools/call', ['name' => 'fh_guide', 'arguments' => (object) []], $this->a1Key)->json('error'));
+        $this->assertNotNull($this->rpc('tools/call', ['name' => 'my_guide', 'arguments' => (object) []], $this->adminKey)->json('error'));
+    }
+
     // ── Nothing it hands out carries a person's contact details ─────────────
 
     public function test_no_tool_returns_an_email_address_to_anyone(): void
@@ -811,6 +842,8 @@ class FhMcpTest extends TestCase
             [$this->adminKey, 'fh_traffic', ['geography' => true]],
             [$this->adminKey, 'fh_ai_visibility', []],
             [$this->adminKey, 'fh_clients', []],
+            [$this->adminKey, 'fh_guide', []],
+            [$this->a1Key, 'my_guide', []],
             [$this->a1Key, 'my_metrics_catalog', ['search' => 'sold']],
             [$this->a1Key, 'my_metric', ['metric' => 'listings.live']],
             [$this->a1Key, 'my_metric_breakdown', ['metric' => 'listings.total', 'by' => 'category']],
@@ -868,7 +901,7 @@ class FhMcpTest extends TestCase
     {
         $tools = (new ReflectionClass(FilipinoHomesServer::class))->getDefaultProperties()['tools'];
 
-        $this->assertCount(18, $tools);
+        $this->assertCount(21, $tools);
 
         foreach ($tools as $class) {
             $this->assertTrue(is_subclass_of($class, FhTool::class), "{$class} does not extend FhTool, so it would not be read-only by construction");

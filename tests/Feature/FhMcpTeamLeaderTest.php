@@ -34,11 +34,11 @@ class FhMcpTeamLeaderTest extends TestCase
 
     private const ENDPOINT = '/mcp/filipinohomes';
 
-    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_clients', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
+    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_clients', 'fh_guide', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
 
-    private const AGENT_TOOLS = ['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
+    private const AGENT_TOOLS = ['my_guide', 'my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
 
-    private const TEAM_TOOLS = ['team_metric', 'team_metric_breakdown', 'team_metric_records', 'team_metrics_catalog', 'team_roster'];
+    private const TEAM_TOOLS = ['team_guide', 'team_metric', 'team_metric_breakdown', 'team_metric_records', 'team_metrics_catalog', 'team_roster'];
 
     /** @var array<string, int> */
     private array $id = [];
@@ -159,10 +159,10 @@ class FhMcpTeamLeaderTest extends TestCase
         $this->assertSame(McpRole::Agent, $this->role($this->id['u2']), 'a member who does not lead is an agent');
         $this->assertSame(McpRole::Admin, $this->role($this->id['admin']));
 
-        $both = [...self::AGENT_TOOLS, ...self::TEAM_TOOLS];
+        $both = [...array_diff(self::AGENT_TOOLS, ['my_guide']), ...self::TEAM_TOOLS]; // team_guide covers their own numbers too
         sort($both);
 
-        $this->assertSame($both, $this->toolsFor($this->leaderKey));
+        $this->assertSame(array_values($both), $this->toolsFor($this->leaderKey));
         $this->assertSame(self::AGENT_TOOLS, $this->toolsFor($this->a3Key));
         $this->assertSame(self::ADMIN_TOOLS, $this->toolsFor($this->adminKey));
 
@@ -430,9 +430,15 @@ class FhMcpTeamLeaderTest extends TestCase
         $this->assertStringContainsString('own team and its members', $out);
         $this->assertSame(1, preg_match('/fhmcp_[A-Za-z0-9]{48}/', $out, $found));
 
-        $both = [...self::AGENT_TOOLS, ...self::TEAM_TOOLS];
+        $both = [...array_diff(self::AGENT_TOOLS, ['my_guide']), ...self::TEAM_TOOLS]; // team_guide covers their own numbers too
         sort($both);
-        $this->assertSame($both, $this->toolsFor($found[0]));
+        $this->assertSame(array_values($both), $this->toolsFor($found[0]));
+
+        // The leader's guide is about their team (and their own numbers), never the company's tools.
+        $guide = $this->tool('team_guide', [], $found[0]);
+        $this->assertFalse($guide['is_error'], $guide['text']);
+        $this->assertStringContainsString('team_roster', $guide['text']);
+        $this->assertStringNotContainsString('fh_', $guide['text']);
     }
 
     public function test_the_team_check_prints_counts_only_and_changes_nothing(): void

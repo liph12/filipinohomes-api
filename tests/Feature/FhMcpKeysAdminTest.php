@@ -147,7 +147,7 @@ class FhMcpKeysAdminTest extends TestCase
 
         $this->app['auth']->forgetGuards();
         $tools = collect($this->postJson('/mcp/filipinohomes', ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'], ['Authorization' => 'Bearer '.$made->json('key'), 'Accept' => 'application/json', 'MCP-Protocol-Version' => '2025-06-18'])->json('result.tools'))->pluck('name')->sort()->values()->all();
-        $this->assertSame(['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $tools);
+        $this->assertSame(['my_guide', 'my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $tools);
     }
 
     public function test_a_key_is_made_for_an_admin_a_team_leader_or_an_active_agent_and_nobody_else(): void

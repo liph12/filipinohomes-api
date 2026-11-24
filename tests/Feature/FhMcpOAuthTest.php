@@ -596,7 +596,7 @@ class FhMcpOAuthTest extends TestCase
         $this->assertSame(8 * 3600, $tokens['expires_in']);
 
         // The person's own agent tools, and the numbers are theirs.
-        $this->assertSame(['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $this->toolsFor($tokens['access_token']));
+        $this->assertSame(['my_guide', 'my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $this->toolsFor($tokens['access_token']));
         $answer = $this->mcp('tools/call', $tokens['access_token'], ['name' => 'my_metric', 'arguments' => (object) ['metric' => 'listings.total']])->assertOk();
         $this->assertSame(3, json_decode((string) $answer->json('result.content.0.text'), true)['value']);
 
@@ -623,7 +623,7 @@ class FhMcpOAuthTest extends TestCase
         $key = McpKeys::issue(User::query()->findOrFail($this->id['u3']), 'laptop')['key'];
 
         // Nothing about a key changed.
-        $this->assertSame(['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $this->toolsFor($key));
+        $this->assertSame(['my_guide', 'my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $this->toolsFor($key));
 
         // A connection's token is not a Sanctum token, and a login token is no use on the MCP server.
         $access = $this->connect($this->id['u1'])['tokens']['access_token'];
