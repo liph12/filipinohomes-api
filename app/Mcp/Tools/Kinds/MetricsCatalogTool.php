@@ -3,6 +3,7 @@
 namespace App\Mcp\Tools\Kinds;
 
 use App\Mcp\Support\McpActor;
+use App\Mcp\Support\McpRole;
 use App\Mcp\Tools\FhTool;
 use App\Services\FhOne\MetricCatalog;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -61,6 +62,10 @@ abstract class MetricsCatalogTool extends FhTool
             'metrics' => $metrics,
             'trust' => $catalog['trust'] ?? null,
             'measured' => '"range" numbers count the days asked for; "now" numbers are as of this moment, whatever the days.',
+            // Website traffic is not a catalog number (it has no team, agent or listing to filter by): it has its own tool.
+            ...($policy->role() === McpRole::Admin
+                ? ['website_traffic' => 'Website visitors, traffic sources (google, facebook, direct, chatgpt...), referral sites and visitor locations are not in this catalog: use fh_traffic. For AI assistants viewing, crawling and sending people to the site (AI visibility), use fh_ai_visibility.']
+                : []),
         ];
     }
 }

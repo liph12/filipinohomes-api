@@ -1,21 +1,25 @@
 # The MCP server: Claude reading Filipino Homes
 
-`POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key and can read Filipino Homes' numbers through fifteen tools (an admin and an agent are each shown five, a team leader ten). It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
+`POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key and can read Filipino Homes' numbers through seventeen tools (an admin is shown seven, an agent five, a team leader ten). It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
 
 The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php` and `FhMcpTeamLeaderTest.php`. Admins make and revoke keys on the website (System Settings > Claude access); that side is `app/Http/Controllers/Admin/McpKeyController.php` and `tests/Feature/FhMcpKeysAdminTest.php`.
 
 ## Who sees what
 
-An admin, a team leader and an agent are shown different tools. An admin or an agent sees their own five; a team leader sees the agent's five (their own numbers) and five of their team's. What differs is all in three small classes, `app/Mcp/Policies/AdminPolicy.php`, `TeamLeaderPolicy.php` and `AgentPolicy.php`.
+An admin, a team leader and an agent are shown different tools. An admin sees their own seven, an agent their own five; a team leader sees the agent's five (their own numbers) and five of their team's. What differs is all in three small classes, `app/Mcp/Policies/AdminPolicy.php`, `TeamLeaderPolicy.php` and `AgentPolicy.php`.
 
 | | Admin (`fh_*` tools) | Team leader (`team_*` tools, and `my_*` for themselves) | Agent (`my_*` tools) |
 |---|---|---|---|
-| Tools | `fh_metrics_catalog`, `fh_metric`, `fh_metric_breakdown`, `fh_metric_records`, `fh_lookup` | `team_roster`, `team_metrics_catalog`, `team_metric`, `team_metric_breakdown`, `team_metric_records` | `my_metrics_catalog`, `my_metric`, `my_metric_breakdown`, `my_metric_records`, `my_lookup` |
+| Tools | `fh_metrics_catalog`, `fh_metric`, `fh_metric_breakdown`, `fh_metric_records`, `fh_lookup`, `fh_traffic`, `fh_ai_visibility` | `team_roster`, `team_metrics_catalog`, `team_metric`, `team_metric_breakdown`, `team_metric_records` | `my_metrics_catalog`, `my_metric`, `my_metric_breakdown`, `my_metric_records`, `my_lookup` |
 | Whose numbers | The whole company | **Their team and its members.** Every ask is held to a team they lead: left out it is their team (or they are asked which, if they lead several), and another team, 0 ("no team") or a member who is not theirs is refused | **Only their own.** Every ask is forced to their agent id, after whatever they sent |
 | Numbers | Every metric in the catalog | Those that take a team filter, not `teams.*` and not `usage.*` | Those that can be cut to one agent. Not `agents.*` (headcount, dormant...), `usage.*`, `teams.*`, `leads.to_idle_agents` |
 | Filters | Team, agent, office region, PSA region, island, province, city, project, type, category, status | Team (their own), agent (a member), PSA region, island, province, city, project, type, category, status | Province, city, project, type, category, status, PSA region, island. Never agent, team or office |
 | Splits | Team, office region, project, city, province, category, type, agent | Member (agent), project, city, province, category, type | Project, city, province, category, type |
 | Lookups | Teams, projects, regions, provinces, cities, types | `my_lookup`: projects, provinces, cities, types | Projects, provinces, cities, types |
+
+**Website traffic (`fh_traffic`, admins only).** Where the website's visitors came from (google, facebook, direct, referral, chatgpt...): people and visits per source, new and returning clients each source brought, the sites behind "referral", and with `geography` the top countries, regions and cities. It is the admin Audience Insights page's own services (`TrafficSourceService`, `AudienceGeographyService`) over the `visits` table, so Claude and the page agree; it reads `visits` and never writes to it. It is not a catalog metric (visits have no team, agent or listing to filter by), so the admin catalog answer points to it, and it is admin-only like the page. Answers are cached 10 minutes (6 hours for a range that has ended).
+
+**AI visibility (`fh_ai_visibility`, admins only).** How AI assistants see and send people to the site: views (an assistant opened a page to answer someone; a proxy), crawls (an AI search index read a page) and clicks (a person arrived from an assistant; exact), per assistant and for the top pages. It is the admin AI Visibility page's own report (`AiVisibilityService` over `ai_events`), real pages only; requests from scanners posing as AI bots are only counted, as `scanner_requests_left_out`.
 
 **A team leader is not a role in FH.** There is no such role; a leader is an agent whose place in a team (`team_agents`) is flagged `is_leader` and active. So it is worked out from the data on every request (`McpTeams`), and a leader who stops leading is an ordinary agent on the next request. A team counts only if it is active and the reports can show it: the reports credit each agent to **one** team, the lowest active team id (`TeamDirectory`), so a team none of whose members is credited to it has no numbers, and its leader stays a plain agent rather than being shown an empty view.
 

@@ -34,7 +34,7 @@ class FhMcpTeamLeaderTest extends TestCase
 
     private const ENDPOINT = '/mcp/filipinohomes';
 
-    private const ADMIN_TOOLS = ['fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog'];
+    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
 
     private const AGENT_TOOLS = ['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
 

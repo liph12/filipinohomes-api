@@ -15,11 +15,14 @@ use App\Mcp\Support\McpRole;
 use App\Mcp\Tools\FhTool;
 use App\Models\McpKey;
 use App\Models\User;
+use App\Services\Audience\TrafficSourceService;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Testing\TestResponse;
 use InvalidArgumentException;
 use ReflectionClass;
@@ -43,7 +46,7 @@ class FhMcpTest extends TestCase
 
     private const ENDPOINT = '/mcp/filipinohomes';
 
-    private const ADMIN_TOOLS = ['fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog'];
+    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
 
     private const AGENT_TOOLS = ['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
 
@@ -71,6 +74,7 @@ class FhMcpTest extends TestCase
             (require database_path('migrations/'.$file))->up();
         }
 
+        $this->createVisitTables();
         $this->id = $this->seedExecutiveScenario();
         // The shared fixture makes a1 the leader of team Alpha. These tests are about admins and plain
         // agents, so a1 is one here; team leaders are FhMcpTeamLeaderTest's.
@@ -90,6 +94,48 @@ class FhMcpTest extends TestCase
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /** What fh_traffic reads (the Audience Insights tables), as the migrations make them. */
+    private function createVisitTables(): void
+    {
+        Schema::create('visits', function (Blueprint $table) {
+            $table->id();
+            $table->string('visitor_id', 64)->nullable();
+            $table->string('channel', 32)->default('direct');
+            $table->string('utm_source', 128)->nullable();
+            $table->string('utm_medium', 128)->nullable();
+            $table->string('utm_campaign', 191)->nullable();
+            $table->string('referrer', 512)->nullable();
+            $table->string('landing_path', 512)->nullable();
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->string('ip', 45)->nullable();
+            $table->string('country', 64)->nullable();
+            $table->string('region', 96)->nullable();
+            $table->string('city', 96)->nullable();
+            $table->timestamp('created_at')->nullable();
+        });
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('visitor_id', 64)->nullable();
+        });
+        Schema::create('ai_events', function (Blueprint $table) {
+            $table->id();
+            $table->string('kind', 8);
+            $table->string('source', 32);
+            $table->string('agent', 64)->nullable();
+            $table->string('path', 512);
+            $table->timestamp('created_at')->nullable();
+        });
+        Schema::table('listings', function (Blueprint $table) {
+            $table->timestamp('photos_variants_generated_at')->nullable();
+        });
+        Schema::create('user_info', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('country', 64)->nullable();
+            $table->string('state', 96)->nullable();
+            $table->string('city', 96)->nullable();
+        });
+    }
 
     private function keyFor(int $userId, string $name = 'test'): string
     {
@@ -305,7 +351,7 @@ class FhMcpTest extends TestCase
             ->assertOk()
             ->assertJsonPath('result.serverInfo.name', 'Filipino Homes');
 
-        // It can see what exists (all fifteen), to add the connector...
+        // It can see what exists (all seventeen), to add the connector...
         $everything = [...self::ADMIN_TOOLS, ...self::AGENT_TOOLS, ...self::TEAM_TOOLS];
         sort($everything);
         $this->assertSame($everything, collect($this->rpc('tools/list')->assertOk()->json('result.tools'))->pluck('name')->sort()->values()->all());
@@ -322,7 +368,7 @@ class FhMcpTest extends TestCase
 
     // ── Admin and agent are different people ────────────────────────────────
 
-    public function test_each_role_is_shown_only_its_own_five_tools(): void
+    public function test_each_role_is_shown_only_its_own_tools(): void
     {
         $this->assertSame(self::ADMIN_TOOLS, $this->toolsFor($this->adminKey));
         $this->assertSame(self::AGENT_TOOLS, $this->toolsFor($this->a1Key));
@@ -462,6 +508,90 @@ class FhMcpTest extends TestCase
         $this->assertTrue($catalog->contains('teams.total'));
     }
 
+    public function test_an_admin_sees_website_traffic_by_source_as_audience_insights_counts_it(): void
+    {
+        $client = $this->makeUser(self::CLIENT, ['visitor_id' => 'dev-c1', 'created_at' => '2026-11-04 02:00:00', 'updated_at' => '2026-11-04 02:00:00']);
+
+        foreach ([
+            ['dev-g1', 'google', null, null, '2026-11-02 03:00:00', 'PH', 'Cebu City'],
+            ['dev-g1', 'google', null, null, '2026-11-05 03:00:00', 'PH', 'Cebu City'],
+            ['dev-g2', 'google', null, null, '2026-11-05 04:00:00', 'PH', 'Davao City'],
+            ['dev-f1', 'facebook', null, null, '2026-11-03 05:00:00', 'PH', 'Cebu City'],
+            ['dev-f1', 'google', null, null, '2026-11-06 05:00:00', 'PH', 'Cebu City'],
+            ['dev-r1', 'referral', null, 'https://www.lamudi.com.ph/listing/1', '2026-11-07 06:00:00', 'SG', 'Singapore'],
+            ['dev-c1', 'facebook', $client, null, '2026-11-04 02:00:00', 'PH', 'Manila'],
+            // Staff browsing is not audience, and a day outside the range is not counted.
+            ['dev-admin', 'google', $this->id['admin'], null, '2026-11-05 07:00:00', 'PH', 'Manila'],
+            ['dev-old', 'direct', null, null, '2026-09-01 07:00:00', 'PH', 'Manila'],
+        ] as [$device, $channel, $user, $referrer, $at, $country, $city]) {
+            DB::table('visits')->insert(['visitor_id' => $device, 'channel' => $channel, 'user_id' => $user, 'referrer' => $referrer, 'created_at' => $at, 'country' => $country, 'city' => $city]);
+        }
+
+        $traffic = $this->tool('fh_traffic', ['geography' => true], $this->adminKey);
+        $this->assertFalse($traffic['is_error'], $traffic['text']);
+        $data = $traffic['data'];
+
+        $this->assertSame(['from' => '2026-10-12', 'to' => '2026-11-10'], $data['days']);
+        $this->assertSame(5, $data['unique_visitors']);
+        $this->assertSame(4, $data['anonymous_visitors']);
+        $this->assertSame(1, $data['visitors_from_more_than_one_source']);
+
+        $sources = collect($data['sources'])->keyBy('source');
+        // Biggest first, nothing from staff or old days; "unknown" holds the fixture's other clients, who have no visit.
+        $this->assertSame(['google', 'facebook', 'referral', 'unknown'], $sources->keys()->all());
+        $this->assertSame(0, $sources['unknown']['people']);
+        $this->assertSame(['source' => 'google', 'people' => 3, 'visits' => 4, 'first_source_of' => 2, 'new_clients' => 0, 'returning_clients' => 0], $sources['google']);
+        $this->assertSame(['source' => 'facebook', 'people' => 2, 'visits' => 2, 'first_source_of' => 2, 'new_clients' => 1, 'returning_clients' => 0], $sources['facebook']);
+        $this->assertSame(5, $sources->sum('first_source_of'), 'first sources add up to the unique visitors');
+
+        $this->assertSame([['name' => 'lamudi.com.ph', 'kind' => 'site', 'people' => 1, 'visits' => 1]], $data['referral_sites']);
+        $this->assertSame('PH', $data['geography']['countries'][0]['name']);
+
+        // The page's numbers and Claude's are the same.
+        $page = app(TrafficSourceService::class)->range('2026-10-12', '2026-11-10')->channels();
+        $this->assertSame($page['unique_visitors'], $data['unique_visitors']);
+
+        // The catalog points to it, for an admin only.
+        $this->assertStringContainsString('fh_traffic', (string) $this->tool('fh_metrics_catalog', ['search' => 'traffic'], $this->adminKey)['data']['website_traffic']);
+        $this->assertArrayNotHasKey('website_traffic', $this->tool('my_metrics_catalog', [], $this->a1Key)['data']);
+
+        // An agent has no traffic tool to call.
+        $this->assertNotNull($this->rpc('tools/call', ['name' => 'fh_traffic', 'arguments' => (object) []], $this->a1Key)->json('error'));
+    }
+
+    public function test_an_admin_sees_ai_visibility_as_the_ai_visibility_page_counts_it(): void
+    {
+        $listing = DB::table('listings')->orderBy('id')->first(['slug', 'name']);
+        $page = '/'.$listing->slug;
+
+        foreach ([
+            ['view', 'chatgpt', 'ChatGPT-User', $page, '2026-11-05 03:00:00'],
+            ['view', 'chatgpt', 'ChatGPT-User', $page, '2026-11-06 03:00:00'],
+            ['crawl', 'perplexity', 'PerplexityBot', $page, '2026-11-06 04:00:00'],
+            ['click', 'gemini', null, '/projects', '2026-11-07 05:00:00'],
+            // A scanner posing as an AI bot, and a day outside the range: neither is counted.
+            ['view', 'chatgpt', 'ChatGPT-User', '/.env', '2026-11-07 06:00:00'],
+            ['view', 'chatgpt', 'ChatGPT-User', $page, '2026-09-01 06:00:00'],
+        ] as [$kind, $source, $agent, $path, $at]) {
+            DB::table('ai_events')->insert(['kind' => $kind, 'source' => $source, 'agent' => $agent, 'path' => $path, 'created_at' => $at]);
+        }
+
+        $ai = $this->tool('fh_ai_visibility', [], $this->adminKey);
+        $this->assertFalse($ai['is_error'], $ai['text']);
+        $data = $ai['data'];
+
+        $this->assertSame(['from' => '2026-10-12', 'to' => '2026-11-10'], $data['days']);
+        $this->assertSame(['view' => 2, 'crawl' => 1, 'click' => 1], $data['totals']);
+        $this->assertSame(1, $data['scanner_requests_left_out']);
+        $this->assertSame(['source' => 'chatgpt', 'view' => 2, 'crawl' => 0, 'click' => 0], collect($data['assistants'])->firstWhere('source', 'chatgpt'));
+        $this->assertSame(['page' => $page, 'listing' => $listing->name, 'views' => 2, 'clicks' => 0, 'crawls' => 1], $data['top_pages'][0]);
+
+        $byClicks = $this->tool('fh_ai_visibility', ['sort' => 'clicks', 'top' => 1], $this->adminKey)['data'];
+        $this->assertSame(['/projects'], array_column($byClicks['top_pages'], 'page'));
+
+        $this->assertNotNull($this->rpc('tools/call', ['name' => 'fh_ai_visibility', 'arguments' => (object) []], $this->a1Key)->json('error'), 'an agent has no AI visibility tool to call');
+    }
+
     // ── Nothing it hands out carries a person's contact details ─────────────
 
     public function test_no_tool_returns_an_email_address_to_anyone(): void
@@ -474,6 +604,8 @@ class FhMcpTest extends TestCase
             [$this->adminKey, 'fh_metric_records', ['metric' => 'inquiries.received']],
             [$this->adminKey, 'fh_metric_records', ['metric' => 'agents.headcount']],
             [$this->adminKey, 'fh_lookup', ['type' => 'teams', 'text' => 'al']],
+            [$this->adminKey, 'fh_traffic', ['geography' => true]],
+            [$this->adminKey, 'fh_ai_visibility', []],
             [$this->a1Key, 'my_metrics_catalog', []],
             [$this->a1Key, 'my_metric', ['metric' => 'inquiries.received']],
             [$this->a1Key, 'my_metric_breakdown', ['metric' => 'listings.total', 'by' => 'project']],
@@ -547,6 +679,8 @@ class FhMcpTest extends TestCase
             [$this->adminKey, 'fh_metric_breakdown', ['metric' => 'listings.live', 'by' => 'team']],
             [$this->adminKey, 'fh_metric_records', ['metric' => 'inquiries.received']],
             [$this->adminKey, 'fh_lookup', ['type' => 'provinces', 'text' => 'ce']],
+            [$this->adminKey, 'fh_traffic', ['geography' => true]],
+            [$this->adminKey, 'fh_ai_visibility', []],
             [$this->a1Key, 'my_metrics_catalog', ['search' => 'sold']],
             [$this->a1Key, 'my_metric', ['metric' => 'listings.live']],
             [$this->a1Key, 'my_metric_breakdown', ['metric' => 'listings.total', 'by' => 'category']],
@@ -604,7 +738,7 @@ class FhMcpTest extends TestCase
     {
         $tools = (new ReflectionClass(FilipinoHomesServer::class))->getDefaultProperties()['tools'];
 
-        $this->assertCount(15, $tools);
+        $this->assertCount(17, $tools);
 
         foreach ($tools as $class) {
             $this->assertTrue(is_subclass_of($class, FhTool::class), "{$class} does not extend FhTool, so it would not be read-only by construction");
