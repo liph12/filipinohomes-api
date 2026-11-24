@@ -15,6 +15,7 @@ use App\Mcp\Support\McpRole;
 use App\Mcp\Tools\FhTool;
 use App\Models\McpKey;
 use App\Models\User;
+use App\Services\Audience\AiVisibilityService;
 use App\Services\Audience\TrafficSourceService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
@@ -323,7 +324,12 @@ class FhMcpTest extends TestCase
             ->assertOk()
             ->json('result.serverInfo.icons');
 
-        $this->assertSame(['https://api.example.test/fh-mark-192.png', 'https://api.example.test/fh-mark-512.png'], array_column($icons, 'src'));
+        $this->assertSame(['https://api.example.test/fh-mark-192.png?v=3d', 'https://api.example.test/fh-mark-512.png?v=3d'], array_column($icons, 'src'));
+
+        // Every tool carries it too, so a tool call is drawn with FH's mark.
+        foreach ($this->rpc('tools/list', [], $this->adminKey)->json('result.tools') as $tool) {
+            $this->assertSame(['https://api.example.test/fh-mark-192.png?v=3d', 'https://api.example.test/fh-mark-512.png?v=3d'], array_column($tool['icons'] ?? [], 'src'), $tool['name']);
+        }
 
         // And the files are really there to be fetched.
         foreach (['fh-mark-192.png', 'fh-mark-512.png', 'favicon.ico'] as $file) {
@@ -585,6 +591,17 @@ class FhMcpTest extends TestCase
         $this->assertSame(1, $data['scanner_requests_left_out']);
         $this->assertSame(['source' => 'chatgpt', 'view' => 2, 'crawl' => 0, 'click' => 0], collect($data['assistants'])->firstWhere('source', 'chatgpt'));
         $this->assertSame(['page' => $page, 'listing' => $listing->name, 'views' => 2, 'clicks' => 0, 'crawls' => 1], $data['top_pages'][0]);
+
+        // The quick two-scan count Claude gets is the AI Visibility page's report, number for number.
+        $service = app(AiVisibilityService::class);
+        [$from, $to] = [Carbon::parse('2026-10-12')->startOfDay(), Carbon::parse('2026-11-10')->endOfDay()];
+        $quick = $service->overview($from, $to, 50);
+        $full = $service->report($from, $to, 1, 50);
+        $this->assertSame($full['totals'], $quick['totals']);
+        $this->assertSame($full['sources'], $quick['sources']);
+        $this->assertSame($full['suspicious_total'], $quick['suspicious_total']);
+        $this->assertSame($full['top_pages_meta']['total'], $quick['pages_seen']);
+        $this->assertSame(array_column($full['top_pages'], 'views', 'path'), array_column($quick['top_pages'], 'views', 'path'));
 
         $byClicks = $this->tool('fh_ai_visibility', ['sort' => 'clicks', 'top' => 1], $this->adminKey)['data'];
         $this->assertSame(['/projects'], array_column($byClicks['top_pages'], 'page'));

@@ -72,18 +72,13 @@ class FilipinoHomesServer extends Server
     ];
 
     /**
-     * The FH mark, offered to the client as this server's icon. Claude decides whether to show
+     * The FH mark, offered to the client as this server's icon (and on every tool, FhTool::icons()). Claude decides whether to show
      * it (a custom connector may still get its own default); it is not relied on for anything.
      *
      * @return list<Icon>
      */
     protected function icons(): array
     {
-        $root = McpUrl::root();
-
-        return [
-            Icon::from($root.'/fh-mark-192.png', 'image/png', ['192x192']),
-            Icon::from($root.'/fh-mark-512.png', 'image/png', ['512x512']),
-        ];
+        return McpUrl::icons();
     }
 }

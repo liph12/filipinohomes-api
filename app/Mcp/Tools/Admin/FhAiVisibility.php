@@ -10,6 +10,7 @@ use App\Mcp\Tools\FhTool;
 use App\Services\Audience\AiVisibilityService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -53,15 +54,18 @@ final class FhAiVisibility extends FhTool
     protected function answer(array $input, McpActor $actor): array
     {
         $range = Asks::range($input);
+        $top = (int) ($input['top'] ?? 15);
+        $sort = (string) ($input['sort'] ?? 'views');
 
-        // Days as the AI Visibility page counts them.
-        $report = app(AiVisibilityService::class)->report(
+        // Days as the AI Visibility page counts them. Two scans of ai_events (overview(), not the page's
+        // six-scan report()); a range that has ended cannot change, so it keeps longer.
+        $ttl = $range->end < now()->toDateString() ? now()->addHours(6) : now()->addMinutes(10);
+        $report = Cache::remember("mcp:ai-visibility:v1:{$range->start}:{$range->end}:{$sort}:{$top}", $ttl, fn (): array => app(AiVisibilityService::class)->overview(
             Carbon::parse($range->start)->startOfDay(),
             Carbon::parse($range->end)->endOfDay(),
-            1,
-            (int) ($input['top'] ?? 15),
-            (string) ($input['sort'] ?? 'views'),
-        );
+            $top,
+            $sort,
+        ));
 
         return [
             'days' => ['from' => $range->start, 'to' => $range->end],
@@ -74,7 +78,7 @@ final class FhAiVisibility extends FhTool
                 'clicks' => $page['clicks'],
                 'crawls' => $page['crawls'],
             ], $report['top_pages']),
-            'pages_seen' => $report['top_pages_meta']['total'],
+            'pages_seen' => $report['pages_seen'],
             'scanner_requests_left_out' => $report['suspicious_total'],
             'how_counted' => 'view = an assistant opened the page to answer a person (ChatGPT-User, Perplexity-User, Claude-User, MistralAI-User); it is a proxy, since no assistant reports how often it shows a page. crawl = an AI search index read the page (OAI-SearchBot, PerplexityBot, Claude-SearchBot). click = a person arrived on the page from an assistant, once per visitor per page per day; exact. Gemini and Copilot only show as clicks: they do not announce themselves when they read a page. scanner_requests_left_out = requests for paths no real page has (secrets files, admin panels) from scanners sending an AI user agent; not counted anywhere above. The same clicks also appear as their own sources (chatgpt, gemini...) in fh_traffic.',
         ];

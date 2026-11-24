@@ -303,6 +303,90 @@ class AiVisibilityService
         ];
     }
 
+    /**
+     * report()'s numbers without its trend, thumbnails or paging, in two scans of ai_events instead
+     * of six: one for the totals, the per-assistant counts and the scanner count (each row is sorted
+     * into real page or scanner as it is counted), one for the top pages, which also counts the
+     * distinct pages. For Claude's fh_ai_visibility, which needs no chart; same rules and the same
+     * figures as report() on the 'pages' category.
+     *
+     * @return array{totals: array<string,int>, sources: list<array<string,mixed>>, top_pages: list<array<string,mixed>>, pages_seen: int, suspicious_total: int}
+     */
+    public function overview(Carbon $from, Carbon $to, int $top = 15, string $sort = 'views'): array
+    {
+        $sort = in_array($sort, self::SORTS, true) ? $sort : 'views';
+        [$suspicious, $bindings] = $this->suspiciousSql();
+
+        $totals = array_fill_keys(AiEvent::KINDS, 0);
+        $sources = [];
+        $suspiciousTotal = 0;
+        foreach (DB::table('ai_events')
+            ->whereBetween('created_at', [$from, $to])
+            ->selectRaw("source, kind, CASE WHEN {$suspicious} THEN 1 ELSE 0 END as sus, COUNT(*) as c", $bindings)
+            ->groupBy('source', 'kind', 'sus')
+            ->get() as $row) {
+            if ((int) $row->sus === 1) {
+                $suspiciousTotal += (int) $row->c;
+
+                continue;
+            }
+            $totals[$row->kind] = ($totals[$row->kind] ?? 0) + (int) $row->c;
+            $sources[$row->source] ??= ['source' => $row->source, 'view' => 0, 'crawl' => 0, 'click' => 0];
+            $sources[$row->source][$row->kind] = ($sources[$row->source][$row->kind] ?? 0) + (int) $row->c;
+        }
+        $sources = collect($sources)
+            ->sortByDesc(fn ($s) => $s['view'] + $s['click'] * 2 + $s['crawl'] / 10)
+            ->values()
+            ->all();
+
+        $tieBreak = array_values(array_diff(self::SORTS, [$sort]));
+        $pages = $this->inCategory(DB::table('ai_events')->whereBetween('created_at', [$from, $to]), 'pages')
+            ->select(
+                'path',
+                DB::raw("SUM(CASE WHEN kind = 'view' THEN 1 ELSE 0 END) as views"),
+                DB::raw("SUM(CASE WHEN kind = 'click' THEN 1 ELSE 0 END) as clicks"),
+                DB::raw("SUM(CASE WHEN kind = 'crawl' THEN 1 ELSE 0 END) as crawls"),
+                DB::raw('COUNT(*) OVER () as pages_seen'),
+            )
+            ->groupBy('path')
+            ->orderByDesc($sort)
+            ->orderByDesc($tieBreak[0])
+            ->orderByDesc($tieBreak[1])
+            ->orderBy('path')
+            ->limit(max(1, $top))
+            ->get();
+
+        $slugs = $pages->pluck('path')
+            ->map(fn ($p) => ltrim($p, '/'))
+            ->filter(fn ($s) => $s !== '' && ! str_contains($s, '/'))
+            ->values();
+        $names = $slugs->isEmpty()
+            ? collect()
+            : DB::table('listings')->whereIn('slug', $slugs)->whereNull('deleted_at')->pluck('name', 'slug');
+
+        return [
+            'totals' => $totals,
+            'sources' => $sources,
+            'top_pages' => $pages->map(fn ($row) => [
+                'path' => $row->path,
+                'title' => $names->get(ltrim($row->path, '/')),
+                'views' => (int) $row->views,
+                'clicks' => (int) $row->clicks,
+                'crawls' => (int) $row->crawls,
+            ])->all(),
+            'pages_seen' => (int) ($pages->first()->pages_seen ?? 0),
+            'suspicious_total' => $suspiciousTotal,
+        ];
+    }
+
+    /** @return array{0: string, 1: list<string>} SUSPICIOUS_PATHS as one SQL condition and its bindings */
+    private function suspiciousSql(): array
+    {
+        $sql = '('.implode(' OR ', array_fill(0, count(self::SUSPICIOUS_PATHS), "ai_events.path LIKE ? ESCAPE '!'")).')';
+
+        return [$sql, self::SUSPICIOUS_PATHS];
+    }
+
     /** First listing photo, as the 320px variant when variants exist. */
     private function thumbnail(object $listing): ?string
     {

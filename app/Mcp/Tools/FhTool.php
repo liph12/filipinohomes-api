@@ -7,11 +7,13 @@ use App\Mcp\Support\McpActor;
 use App\Mcp\Support\McpAudit;
 use App\Mcp\Support\McpOutput;
 use App\Mcp\Support\McpRole;
+use App\Mcp\Support\McpUrl;
 use App\Models\User;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
+use Laravel\Mcp\Schema\Icon;
 use Laravel\Mcp\Server\Tool;
 use RuntimeException;
 use Throwable;
@@ -51,6 +53,17 @@ abstract class FhTool extends Tool
     public function annotations(): array
     {
         return ['readOnlyHint' => true, 'destructiveHint' => false, 'idempotentHint' => true, 'openWorldHint' => false];
+    }
+
+    /**
+     * The FH mark on every tool too, not only the server: a client that draws a tool call with the
+     * tool's own icon then shows FH's rather than its default.
+     *
+     * @return list<Icon>
+     */
+    public function icons(): array
+    {
+        return McpUrl::icons();
     }
 
     public function shouldRegister(Request $request): bool

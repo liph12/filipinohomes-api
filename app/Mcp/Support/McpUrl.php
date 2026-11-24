@@ -2,6 +2,8 @@
 
 namespace App\Mcp\Support;
 
+use Laravel\Mcp\Schema\Icon;
+
 /**
  * The MCP server's own address, in one place.
  *
@@ -104,5 +106,23 @@ final class McpUrl
         $a = self::canonical($one);
 
         return $a !== null && $a === self::canonical($other);
+    }
+
+    /**
+     * The FH mark at this address, as the server's icon and every tool's (a client may show either,
+     * e.g. beside a tool call). The files are public/fh-mark-192.png and fh-mark-512.png.
+     *
+     * @return list<Icon>
+     */
+    public static function icons(): array
+    {
+        $root = self::root();
+        // Bump when the files change, so Cloudflare and clients that kept the old image fetch the new one.
+        $version = '?v=3d';
+
+        return [
+            Icon::from($root.'/fh-mark-192.png'.$version, 'image/png', ['192x192']),
+            Icon::from($root.'/fh-mark-512.png'.$version, 'image/png', ['512x512']),
+        ];
     }
 }
