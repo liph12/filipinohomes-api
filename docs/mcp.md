@@ -75,7 +75,7 @@ Revoke at once when someone leaves or a key may have been seen. The person's acc
 The server is `https://<the API's address>/mcp/filipinohomes` and takes the key as `Authorization: Bearer <key>`.
 
 - **Claude Code:** `claude mcp add --transport http filipinohomes https://<address>/mcp/filipinohomes --header "Authorization: Bearer <key>"`, then `/mcp` shows it connected.
-- **claude.ai or Claude Desktop (a custom connector):** the URL above, with a request header `Authorization` = `Bearer <key>`. claude.ai probes a connector without a key when it is added and may refuse it on a 401. If it does, set `FH_MCP_OPEN_HANDSHAKE=true`: a client without a key can then start the conversation and list the tools, and still cannot run one.
+- **claude.ai or Claude Desktop (a custom connector):** a key only fits where the connector dialog has a **Request headers** section (a Claude beta that not every account has): the URL above, with `Authorization` = `Bearer <key>`. Without that section claude.ai wants an OAuth sign-in instead (the person signs in to FH and authorizes), which this server does not offer yet. claude.ai probes a connector without a key when it is added and may refuse it on a 401. If it does, set `FH_MCP_OPEN_HANDSHAKE=true`: a client without a key can then start the conversation and list the tools, and still cannot run one.
 - **The Claude API (FH One):** `mcp_servers: [{ type: "url", url: "...", name: "fh", authorization_token: "<key>" }]` with `tools: [{ type: "mcp_toolset", mcp_server_name: "fh" }]` and the beta header `mcp-client-2025-11-20`.
 - **Trying it locally:** `php artisan mcp:inspector mcp/filipinohomes`.
 
