@@ -21,7 +21,9 @@ use InvalidArgumentException;
  *
  * The filters are the person's (what the policy lets them name) with the
  * policy's forced filters laid over them. The forced ones are applied last and
- * win, so an agent's own agent id cannot be replaced by anything they send.
+ * win, so an agent's own agent id cannot be replaced by anything they send; and
+ * the policy then gets the last word (constrain), which is where a team leader
+ * is held to their own teams.
  */
 final class Asks
 {
@@ -110,7 +112,8 @@ final class Asks
             }
         }
 
-        $filters = [...$filters, ...$policy->forced($actor)];
+        // The policy has the last word: a team leader is held to the teams they lead here.
+        $filters = $policy->constrain([...$filters, ...$policy->forced($actor)], $actor);
         ksort($filters);
 
         return $filters;

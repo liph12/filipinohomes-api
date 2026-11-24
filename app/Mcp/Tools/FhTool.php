@@ -24,7 +24,8 @@ use Throwable;
  *    all of them, and a tool only returns data (answer()). Nothing here, or
  *    in any tool, writes (a test reads the tools' code for it).
  *  - A tool belongs to one role (policy()->role()). It is listed only for that
- *    role, and handle() checks the role again, because a tool the model was
+ *    role (and for a role that covers it: a team leader is an agent too), and
+ *    handle() checks the role again, because a tool the model was
  *    never shown can still be named in a call.
  *  - The arguments are validated, and only what passed validation reaches the
  *    tool: an argument the tool did not declare is dropped, not trusted.
@@ -62,7 +63,7 @@ abstract class FhTool extends Tool
             return (bool) config('fhmcp.open_handshake');
         }
 
-        return McpRole::of($user) === $this->policy()->role();
+        return McpRole::of($user)?->covers($this->policy()->role()) ?? false;
     }
 
     public function handle(Request $request): Response
@@ -74,7 +75,7 @@ abstract class FhTool extends Tool
             return Response::error('Not allowed.');
         }
 
-        if ($actor->role !== $this->policy()->role()) {
+        if (! $actor->role->covers($this->policy()->role())) {
             $this->record($actor, $request->all(), 'denied', 'wrong role for this tool', $started, 0);
 
             return Response::error('This tool is not available to your account.');

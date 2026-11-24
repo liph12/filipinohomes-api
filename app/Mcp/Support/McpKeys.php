@@ -38,7 +38,7 @@ final class McpKeys
         $role = McpRole::of($user);
 
         if ($role === null) {
-            throw new InvalidArgumentException('Only an admin or an active agent can have an MCP key.');
+            throw new InvalidArgumentException('Only an admin, a team leader or an active agent can have an MCP key.');
         }
 
         $max = (int) config('fhmcp.max_keys', 3);

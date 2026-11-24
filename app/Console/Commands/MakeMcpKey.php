@@ -17,12 +17,12 @@ use InvalidArgumentException;
 class MakeMcpKey extends Command
 {
     protected $signature = 'fhmcp:make-key
-        {email : The FH account the key acts as. Only an admin or an active agent can have one}
+        {email : The FH account the key acts as. Only an admin, a team leader or an active agent can have one}
         {--name= : What the key is for, e.g. "Claude Code on my laptop"}
         {--days= : How many days it works (default and longest are in config/fhmcp.php)}
         {--permanent : No end date: it works until it is revoked (instead of --days)}';
 
-    protected $description = 'Make an MCP key for an admin or an active agent and print it once';
+    protected $description = 'Make an MCP key for an admin, a team leader or an active agent and print it once';
 
     public function handle(): int
     {
@@ -38,7 +38,7 @@ class MakeMcpKey extends Command
         $role = McpRole::of($user);
 
         if ($role === null) {
-            $this->components->error('That account cannot have an MCP key: only an admin or an active agent can.');
+            $this->components->error('That account cannot have an MCP key: only an admin, a team leader or an active agent can.');
 
             return self::FAILURE;
         }
@@ -69,9 +69,11 @@ class MakeMcpKey extends Command
         $this->line('Server: '.McpUrl::server());
         $this->line('Send it as the header   Authorization: Bearer <the key>');
         $this->newLine();
-        $this->line($role === McpRole::Admin
-            ? 'This key sees the whole company\'s reports and nothing else. It can change nothing.'
-            : 'This key sees only this agent\'s own numbers and listings. It can change nothing.');
+        $this->line(match ($role) {
+            McpRole::Admin => 'This key sees the whole company\'s reports and nothing else. It can change nothing.',
+            McpRole::TeamLeader => 'This key sees this team leader\'s own team and its members, and their own numbers. It can change nothing.',
+            McpRole::Agent => 'This key sees only this agent\'s own numbers and listings. It can change nothing.',
+        });
 
         return self::SUCCESS;
     }

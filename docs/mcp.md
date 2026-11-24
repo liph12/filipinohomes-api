@@ -1,21 +1,30 @@
 # The MCP server: Claude reading Filipino Homes
 
-`POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key and can read Filipino Homes' numbers through ten tools. It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
+`POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key and can read Filipino Homes' numbers through fifteen tools (an admin and an agent are each shown five, a team leader ten). It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
 
-The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php`. Admins make and revoke keys on the website (System Settings > Claude access); that side is `app/Http/Controllers/Admin/McpKeyController.php` and `tests/Feature/FhMcpKeysAdminTest.php`.
+The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php` and `FhMcpTeamLeaderTest.php`. Admins make and revoke keys on the website (System Settings > Claude access); that side is `app/Http/Controllers/Admin/McpKeyController.php` and `tests/Feature/FhMcpKeysAdminTest.php`.
 
 ## Who sees what
 
-An admin and an agent are shown different tools. Each person sees only their own five. What differs is all in two small classes, `app/Mcp/Policies/AdminPolicy.php` and `AgentPolicy.php`.
+An admin, a team leader and an agent are shown different tools. An admin or an agent sees their own five; a team leader sees the agent's five (their own numbers) and five of their team's. What differs is all in three small classes, `app/Mcp/Policies/AdminPolicy.php`, `TeamLeaderPolicy.php` and `AgentPolicy.php`.
 
-| | Admin (`fh_*` tools) | Agent (`my_*` tools) |
-|---|---|---|
-| Tools | `fh_metrics_catalog`, `fh_metric`, `fh_metric_breakdown`, `fh_metric_records`, `fh_lookup` | `my_metrics_catalog`, `my_metric`, `my_metric_breakdown`, `my_metric_records`, `my_lookup` |
-| Whose numbers | The whole company | **Only their own.** Every ask is forced to their agent id, after whatever they sent |
-| Numbers | Every metric in the catalog | Those that can be cut to one agent. Not `agents.*` (headcount, dormant...), `usage.*`, `teams.*`, `leads.to_idle_agents` |
-| Filters | Team, agent, office region, PSA region, island, province, city, project, type, category, status | Province, city, project, type, category, status, PSA region, island. Never agent, team or office |
-| Splits | Team, office region, project, city, province, category, type, agent | Project, city, province, category, type |
-| Lookups | Teams, projects, regions, provinces, cities, types | Projects, provinces, cities, types |
+| | Admin (`fh_*` tools) | Team leader (`team_*` tools, and `my_*` for themselves) | Agent (`my_*` tools) |
+|---|---|---|---|
+| Tools | `fh_metrics_catalog`, `fh_metric`, `fh_metric_breakdown`, `fh_metric_records`, `fh_lookup` | `team_roster`, `team_metrics_catalog`, `team_metric`, `team_metric_breakdown`, `team_metric_records` | `my_metrics_catalog`, `my_metric`, `my_metric_breakdown`, `my_metric_records`, `my_lookup` |
+| Whose numbers | The whole company | **Their team and its members.** Every ask is held to a team they lead: left out it is their team (or they are asked which, if they lead several), and another team, 0 ("no team") or a member who is not theirs is refused | **Only their own.** Every ask is forced to their agent id, after whatever they sent |
+| Numbers | Every metric in the catalog | Those that take a team filter, not `teams.*` and not `usage.*` | Those that can be cut to one agent. Not `agents.*` (headcount, dormant...), `usage.*`, `teams.*`, `leads.to_idle_agents` |
+| Filters | Team, agent, office region, PSA region, island, province, city, project, type, category, status | Team (their own), agent (a member), PSA region, island, province, city, project, type, category, status | Province, city, project, type, category, status, PSA region, island. Never agent, team or office |
+| Splits | Team, office region, project, city, province, category, type, agent | Member (agent), project, city, province, category, type | Project, city, province, category, type |
+| Lookups | Teams, projects, regions, provinces, cities, types | `my_lookup`: projects, provinces, cities, types | Projects, provinces, cities, types |
+
+**A team leader is not a role in FH.** There is no such role; a leader is an agent whose place in a team (`team_agents`) is flagged `is_leader` and active. So it is worked out from the data on every request (`McpTeams`), and a leader who stops leading is an ordinary agent on the next request. A team counts only if it is active and the reports can show it: the reports credit each agent to **one** team, the lowest active team id (`TeamDirectory`), so a team none of whose members is credited to it has no numbers, and its leader stays a plain agent rather than being shown an empty view.
+
+What a team leader should know about their numbers:
+
+- An agent who sits in two teams is counted in the lower-numbered one only. `team_roster` says, for every member, whether the team's numbers count them. The portal counts every place, so the two can differ.
+- A member who has left can still hold an active place in the team: their listings count, but they are not in the headcounts.
+- The `teams.*` numbers accept a team filter and still answer for the whole company (a test proves it), so they are closed to team leaders, and a second test asks every number open to a leader for two teams and for everyone to prove each one narrows.
+- A leader of several teams (the data allows it) names which with `team_id`; `team_roster` lists them.
 
 Anyone else (clients, editors, secretaries, an agent whose account is not active, an agent with no agent row) cannot hold a key, and a key whose person stops qualifying stops working on its next request.
 
@@ -47,7 +56,7 @@ A key belongs to one person, is shown once when it is made, and only its SHA-256
 
 System Settings > **Claude access (MCP)** (`/admin/system-settings`). Admins only: the card says so to anyone else, and the API refuses too (`/api/admin/mcp-keys*` is in the admin-only route group).
 
-- **New key:** for yourself (an admin's key sees the whole company) or for an active agent (their key sees only their own numbers), a name to tell it apart, and for how long: 7, 30, 60 or 90 days, or Permanent. The key is shown **once**, in the dialog, with a copy button and the ready-made `claude mcp add` line. The dialog cannot be closed by a stray click or Escape while the key is showing, and after it closes the key is nowhere: the list has only its first characters. A lost key is replaced, not recovered.
+- **New key:** for an **admin** (any admin, the signed-in one listed first with "(you)"; their key sees the whole company), a **team leader** (their team and its members) or an **agent** (only their own numbers), each picked from a search, a name to tell it apart, and for how long: 7, 30, 60 or 90 days, or Permanent. The key is shown **once**, in the dialog, with a copy button and the ready-made `claude mcp add` line. The dialog cannot be closed by a stray click or Escape while the key is showing, and after it closes the key is nowhere: the list has only its first characters. A lost key is replaced, not recovered.
 - **The list** shows who a key is for, what it can see (`No access now` once its person was switched off), its first characters, when it works until (or `Permanent`), when it was last used, how many calls it made in the last 7 days, and which admin made it.
 - **Revoke** is a press-and-hold and cannot be undone. It takes effect on the key's next request and records which admin did it.
 - **Recent activity** lists the last tool calls (who, which tool, what was asked, answered or refused, how long). It reads `GET /api/admin/mcp-calls`, which has the key's name but never a key's secret, nor anyone's IP address.
@@ -64,6 +73,7 @@ php artisan fhmcp:keys                       # who holds what (the first charact
 php artisan fhmcp:keys --user=someone@filipinohomes.com --all
 php artisan fhmcp:revoke-key 12              # one key, by its number
 php artisan fhmcp:revoke-key --user=someone@filipinohomes.com   # all of a person's keys
+php artisan fhmcp:team-check                 # counts of teams, leaders and members as the MCP server reads them (counts only)
 ```
 
 On the ECS servers, run them as a one-off artisan task ([operations.md](operations.md#procedure-run-a-one-off-artisan-command)). **A key printed there lands in the task's CloudWatch log stream** (`/ecs/filipinohomes/artisan`): read it, then delete that log stream. Keys never go in a chat, a ticket or Git. To replace a key, make the new one, switch the connector over, then revoke the old one.
@@ -96,8 +106,9 @@ The number of keys, how long they last (`max_days` does not apply to a permanent
 
 1. Three migrations: `2026_11_24_000001` adds the tables `mcp_keys` and `mcp_calls`; `000002` adds who made and who revoked a key (the website's admin page); `000003` lets a key have no end date (`expires_at` may be empty). The deploy workflow stops while a migration is pending: run them as in [releases.md](releases.md#procedure-run-pending-migrations). Until `000002` has run, making or revoking a key on the website fails (the artisan commands keep working); until `000003` has run, only the permanent choice fails. Rolling `000003` back ends any permanent key (it gets an end date of now) rather than leave one with no end.
 2. The endpoint has to be reachable from the internet over HTTPS at `/mcp/filipinohomes` (Claude's servers connect to it): check the load balancer and Cloudflare let it through, and that no bot rule blocks Anthropic.
-3. `route:cache` includes `routes/ai.php`; nothing else to configure.
-4. The website can be deployed before or after the API. Without the API routes, the card says Claude access is not available on this server yet and shows nothing else.
+3. `route:cache` includes `routes/ai.php`. Set `FH_MCP_PUBLIC_URL` (the dials below).
+4. Before giving keys to team leaders, run `php artisan fhmcp:team-check` once on production: it prints counts only (teams, leaders, who would be shown the team tools, members in two teams) and changes nothing.
+5. The website can be deployed before or after the API. Without the API routes, the card says Claude access is not available on this server yet and shows nothing else.
 
 ## Adding a tool safely
 

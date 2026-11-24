@@ -38,6 +38,9 @@ class FhMcpKeysAdminTest extends TestCase
         }
 
         $this->id = $this->seedExecutiveScenario();
+        // The shared fixture makes a1 the leader of team Alpha. These tests are about admins and plain
+        // agents, so a1 is one here; team leaders are FhMcpTeamLeaderTest's.
+        DB::table('team_agents')->where('agent_id', $this->id['a1'])->update(['is_leader' => false]);
         $this->id['admin'] = $this->makeUser(self::ADMIN, ['name' => 'The Boss', 'email' => 'boss@example.com']);
         $this->id['admin2'] = $this->makeUser(self::ADMIN, ['name' => 'Other Boss', 'email' => 'boss2@example.com']);
         $this->id['secretary'] = $this->makeUser(self::SECRETARY, ['name' => 'Sec']);
@@ -118,7 +121,8 @@ class FhMcpKeysAdminTest extends TestCase
         $this->assertStringNotContainsString($key, json_encode(DB::table('mcp_keys')->get()));
         $list->assertJsonPath('data.0.name', 'Claude Code on my laptop')
             ->assertJsonPath('server.url', url('/mcp/filipinohomes'))
-            ->assertJsonPath('server.max_keys', 3);
+            ->assertJsonPath('server.max_keys', 3)
+            ->assertJsonPath('server.pickers', ['admin', 'team_leader', 'agent']);
     }
 
     public function test_the_address_claude_is_given_is_the_configured_public_one(): void
@@ -146,16 +150,28 @@ class FhMcpKeysAdminTest extends TestCase
         $this->assertSame(['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'], $tools);
     }
 
-    public function test_a_key_is_made_only_for_yourself_or_an_active_agent(): void
+    public function test_a_key_is_made_for_an_admin_a_team_leader_or_an_active_agent_and_nobody_else(): void
     {
         $inactive = (int) DB::table('agents')->where('id', $this->id['a5'])->value('user_id');
 
-        foreach (['another admin' => $this->id['admin2'], 'a secretary' => $this->id['secretary'], 'a client' => $this->id['c1'], 'an inactive agent' => $inactive, 'nobody' => 999999] as $who => $userId) {
+        foreach (['a secretary' => $this->id['secretary'], 'an editor' => $this->id['editor'], 'a client' => $this->id['c1'], 'an inactive agent' => $inactive, 'nobody' => 999999] as $who => $userId) {
             $this->as($this->id['admin']);
             $this->postJson('/api/admin/mcp-keys', ['user_id' => $userId, 'name' => 'x'])->assertStatus(422);
         }
 
         $this->assertSame(0, McpKey::query()->count());
+
+        // Another admin, a team leader (a1 leads Alpha) and an agent are all fine, and the key acts as that person.
+        DB::table('team_agents')->where('agent_id', $this->id['a1'])->update(['is_leader' => true]);
+
+        foreach (['another admin' => [$this->id['admin2'], 'admin'], 'a team leader' => [$this->id['u1'], 'team_leader'], 'an agent' => [$this->id['u3'], 'agent']] as [$userId, $acts]) {
+            $this->as($this->id['admin']);
+            $this->postJson('/api/admin/mcp-keys', ['user_id' => $userId, 'name' => 'x'])
+                ->assertCreated()
+                ->assertJsonPath('data.acts_as', $acts)
+                ->assertJsonPath('data.person.id', $userId)
+                ->assertJsonPath('data.created_by.id', $this->id['admin']);
+        }
     }
 
     public function test_the_name_the_days_and_the_number_of_keys_are_checked(): void
@@ -341,6 +357,42 @@ class FhMcpKeysAdminTest extends TestCase
 
         // A "%" is a character, not a wildcard.
         $this->getJson('/api/admin/mcp-keys/people?q=%25%25')->assertOk()->assertExactJson(['data' => []]);
+    }
+
+    public function test_people_lists_admins_with_you_first_team_leaders_with_their_team_and_agents_who_do_not_lead(): void
+    {
+        DB::table('team_agents')->where('agent_id', $this->id['a1'])->update(['is_leader' => true]); // a1 leads Alpha
+        DB::table('users')->where('id', $this->id['u1'])->update(['name' => 'Lead Lara']);
+        DB::table('users')->where('id', $this->id['u3'])->update(['name' => 'Plain Pete']);
+
+        $this->as($this->id['admin2']);
+
+        // Admins list without a search, and the signed-in one comes first.
+        $admins = collect($this->getJson('/api/admin/mcp-keys/people?kind=admin')->assertOk()->json('data'));
+        $this->assertSame($this->id['admin2'], $admins->first()['user_id']);
+        $this->assertTrue($admins->first()['you']);
+        $this->assertSame(1, $admins->where('you', true)->count());
+        $this->assertTrue($admins->pluck('user_id')->contains($this->id['admin']));
+        $this->assertSame(['admin'], $admins->pluck('role')->unique()->values()->all());
+        $this->assertFalse($admins->pluck('user_id')->contains($this->id['secretary']));
+        $this->assertSame([$this->id['admin']], collect($this->getJson('/api/admin/mcp-keys/people?kind=admin&q=boss')->json('data'))->where('name', 'The Boss')->pluck('user_id')->all());
+
+        // Team leaders list without a search too, with the team they lead.
+        $leaders = collect($this->getJson('/api/admin/mcp-keys/people?kind=team_leader')->assertOk()->json('data'));
+        $this->assertSame([$this->id['u1']], $leaders->pluck('user_id')->all());
+        $this->assertSame(['Alpha'], $leaders->pluck('team')->all());
+        $this->assertSame(['team_leader'], $leaders->pluck('role')->all());
+        $this->assertCount(1, $this->getJson('/api/admin/mcp-keys/people?kind=team_leader&q=lara')->json('data'));
+        $this->assertCount(0, $this->getJson('/api/admin/mcp-keys/people?kind=team_leader&q=pete')->json('data'));
+
+        // Agents still need two letters, and a leader is found as a leader, not as an agent.
+        $this->assertCount(0, $this->getJson('/api/admin/mcp-keys/people?kind=agent&q=p')->json('data'));
+        $this->assertSame([$this->id['u3']], collect($this->getJson('/api/admin/mcp-keys/people?kind=agent&q=pete')->json('data'))->pluck('user_id')->all());
+        $this->assertCount(0, $this->getJson('/api/admin/mcp-keys/people?kind=agent&q=lara')->json('data'));
+        $this->assertSame([$this->id['u3']], collect($this->getJson('/api/admin/mcp-keys/people?q=pete')->json('data'))->pluck('user_id')->all(), 'agents when no kind is given');
+
+        // A kind nobody knows is an agent search, not an error and not everyone.
+        $this->assertCount(0, $this->getJson('/api/admin/mcp-keys/people?kind=everyone')->json('data'));
     }
 
     // ── What the keys were asked ────────────────────────────────────────────

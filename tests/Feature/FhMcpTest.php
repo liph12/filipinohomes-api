@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Mcp\Policies\AdminPolicy;
 use App\Mcp\Policies\AgentPolicy;
 use App\Mcp\Policies\McpPolicy;
+use App\Mcp\Policies\TeamLeaderPolicy;
 use App\Mcp\Servers\FilipinoHomesServer;
 use App\Mcp\Support\Asks;
 use App\Mcp\Support\McpActor;
@@ -46,6 +47,8 @@ class FhMcpTest extends TestCase
 
     private const AGENT_TOOLS = ['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
 
+    private const TEAM_TOOLS = ['team_metric', 'team_metric_breakdown', 'team_metric_records', 'team_metrics_catalog', 'team_roster'];
+
     /** @var array<string, int> */
     private array $id = [];
 
@@ -69,6 +72,9 @@ class FhMcpTest extends TestCase
         }
 
         $this->id = $this->seedExecutiveScenario();
+        // The shared fixture makes a1 the leader of team Alpha. These tests are about admins and plain
+        // agents, so a1 is one here; team leaders are FhMcpTeamLeaderTest's.
+        DB::table('team_agents')->where('agent_id', $this->id['a1'])->update(['is_leader' => false]);
 
         $this->id['admin'] = $this->makeUser(self::ADMIN, ['name' => 'The Boss', 'email' => 'boss@example.com']);
 
@@ -183,7 +189,7 @@ class FhMcpTest extends TestCase
         $this->getJson('/api/fh-one/v1/metrics', ['Authorization' => 'Bearer '.$this->adminKey])->assertStatus(401);
     }
 
-    public function test_only_an_admin_or_an_active_agent_can_have_a_key(): void
+    public function test_only_an_admin_a_team_leader_or_an_active_agent_can_have_a_key(): void
     {
         $inactive = (int) DB::table('agents')->where('id', $this->id['a5'])->value('user_id');
 
@@ -197,7 +203,7 @@ class FhMcpTest extends TestCase
                 McpKeys::issue(User::query()->findOrFail($userId), 'nope');
                 $this->fail("{$who} was given a key.");
             } catch (InvalidArgumentException $e) {
-                $this->assertStringContainsString('admin or an active agent', $e->getMessage(), $who);
+                $this->assertStringContainsString('a team leader or an active agent', $e->getMessage(), $who);
             }
         }
     }
@@ -299,8 +305,10 @@ class FhMcpTest extends TestCase
             ->assertOk()
             ->assertJsonPath('result.serverInfo.name', 'Filipino Homes');
 
-        // It can see what exists (all ten), to add the connector...
-        $this->assertSame(array_merge(self::ADMIN_TOOLS, self::AGENT_TOOLS), collect($this->rpc('tools/list')->assertOk()->json('result.tools'))->pluck('name')->sort()->values()->all());
+        // It can see what exists (all fifteen), to add the connector...
+        $everything = [...self::ADMIN_TOOLS, ...self::AGENT_TOOLS, ...self::TEAM_TOOLS];
+        sort($everything);
+        $this->assertSame($everything, collect($this->rpc('tools/list')->assertOk()->json('result.tools'))->pluck('name')->sort()->values()->all());
 
         // ...and run none of it.
         $this->rpc('tools/call', ['name' => 'fh_metric', 'arguments' => ['metric' => 'listings.total']])->assertStatus(401);
@@ -579,11 +587,11 @@ class FhMcpTest extends TestCase
         $this->assertGreaterThan(15, $scanned, 'the scan found the MCP code');
     }
 
-    public function test_the_server_lists_only_tools_built_on_the_read_only_base_and_the_two_policies(): void
+    public function test_the_server_lists_only_tools_built_on_the_read_only_base_and_the_three_policies(): void
     {
         $tools = (new ReflectionClass(FilipinoHomesServer::class))->getDefaultProperties()['tools'];
 
-        $this->assertCount(10, $tools);
+        $this->assertCount(15, $tools);
 
         foreach ($tools as $class) {
             $this->assertTrue(is_subclass_of($class, FhTool::class), "{$class} does not extend FhTool, so it would not be read-only by construction");
@@ -591,6 +599,7 @@ class FhMcpTest extends TestCase
 
         $this->assertSame(McpRole::Admin, (new AdminPolicy)->role());
         $this->assertSame(McpRole::Agent, (new AgentPolicy)->role());
+        $this->assertSame(McpRole::TeamLeader, (new TeamLeaderPolicy)->role());
     }
 
     public function test_a_forced_filter_beats_the_callers_own_even_if_a_policy_let_them_name_it(): void
@@ -616,6 +625,11 @@ class FhMcpTest extends TestCase
             public function forced(McpActor $actor): array
             {
                 return ['agent_id' => 5];
+            }
+
+            public function constrain(array $filters, McpActor $actor): array
+            {
+                return $filters;
             }
 
             public function dimensions(): array

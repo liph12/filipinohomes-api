@@ -11,7 +11,7 @@ use Laravel\Mcp\Server\Attributes\Title;
 
 #[Name('my_metrics_catalog')]
 #[Title('My Filipino Homes numbers: what I can ask')]
-#[Description('List the numbers about your own listings, leads and deals that you can ask for, with what each counts and which filters and splits it takes. Start here to find the id for a question. Read-only: nothing in these tools can change or delete anything.')]
+#[Description('List the numbers about your own listings, leads and deals that you can ask for, with what each counts and which filters and splits it takes. Start here to find the id for a question. Read-only.')]
 final class MyMetricsCatalog extends MetricsCatalogTool
 {
     protected function policy(): McpPolicy

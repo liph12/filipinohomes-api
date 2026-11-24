@@ -9,9 +9,11 @@ use App\Mcp\Support\McpUrl;
 use App\Models\Agent;
 use App\Models\McpCall;
 use App\Models\McpKey;
+use App\Models\TeamAgent;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use InvalidArgumentException;
 
@@ -22,9 +24,9 @@ use InvalidArgumentException;
  *
  * A key is shown ONCE, in the answer that makes it (never cached), and nowhere
  * else: only its hash is stored, so the list has the key's first characters and
- * nothing that could be used. An admin makes keys for themselves or for an
- * active agent (a key acts as its person: an agent's sees only their own
- * numbers); another admin makes their own. Who made and who revoked a key is on
+ * nothing that could be used. An admin makes a key for any admin, team leader
+ * or active agent (a key acts as its person: an agent's sees only their own
+ * numbers, a team leader's their team). Who made and who revoked a key is on
  * the key, and every tool call is in mcp_calls (GET /admin/mcp-calls).
  */
 class McpKeyController extends Controller
@@ -48,6 +50,9 @@ class McpKeyController extends Controller
                 'max_keys' => (int) config('fhmcp.max_keys', 3),
                 'default_days' => (int) config('fhmcp.default_days', 30),
                 'max_days' => (int) config('fhmcp.max_days', 90),
+                // The kinds of person the new-key dialog can search for; a dialog that does not find
+                // this (an older API) falls back to its own two choices.
+                'pickers' => ['admin', 'team_leader', 'agent'],
             ],
         ]);
     }
@@ -70,9 +75,9 @@ class McpKeyController extends Controller
             return response()->json(['message' => 'There is no such person.', 'errors' => ['user_id' => ['There is no such person.']]], 422);
         }
 
-        // A key for yourself, or for an active agent. Another admin makes their own.
-        if ($person->id !== $admin->id && McpRole::of($person) !== McpRole::Agent) {
-            return response()->json(['message' => 'A key can be made for yourself or for an active agent.', 'errors' => ['user_id' => ['A key can be made for yourself or for an active agent.']]], 422);
+        // A key for anyone who has a role here: an admin, a team leader or an active agent.
+        if (McpRole::of($person) === null) {
+            return response()->json(['message' => 'A key can be made for an admin, a team leader or an active agent.', 'errors' => ['user_id' => ['A key can be made for an admin, a team leader or an active agent.']]], 422);
         }
 
         try {
@@ -102,19 +107,80 @@ class McpKeyController extends Controller
         return response()->json(['data' => $this->present($key->refresh()->load('user.role', 'user.agent', 'creator'))]);
     }
 
-    /** GET /admin/mcp-keys/people?q=: active agents to make a key for, by name or email. */
+    /**
+     * GET /admin/mcp-keys/people?kind=&q=: who a key can be made for, by name or email.
+     * kind is admin, team_leader or agent (agent when left out). Admins and team leaders are
+     * few, so they list without a search; agents are thousands, so they need two letters.
+     */
     public function people(Request $request): JsonResponse
     {
+        $kind = in_array($request->query('kind'), ['admin', 'team_leader'], true) ? (string) $request->query('kind') : 'agent';
         $text = trim((string) $request->query('q', ''));
-
-        if (mb_strlen($text) < 2) {
-            return response()->json(['data' => []]);
-        }
-
         $like = '%'.addcslashes($text, '%_\\').'%';
 
-        $agents = Agent::query()
-            ->with('user.role')
+        $people = match ($kind) {
+            'admin' => $this->admins($request, $text, $like),
+            'team_leader' => $this->teamLeaders($text, $like),
+            default => mb_strlen($text) < 2 ? collect() : $this->agents($like),
+        };
+
+        return response()->json(['data' => $people->values()]);
+    }
+
+    /** @return Collection<int, array<string, mixed>> admins, the signed-in one first */
+    private function admins(Request $request, string $text, string $like): Collection
+    {
+        return User::query()
+            ->with('role', 'agent')
+            ->whereHas('role', fn ($role) => $role->where('name', 'admin'))
+            ->when($text !== '', fn ($query) => $query->where(fn ($q) => $q->where('name', 'like', $like)->orWhere('email', 'like', $like)))
+            ->orderBy('name')
+            ->limit(25)
+            ->get()
+            ->filter(fn (User $user): bool => McpRole::of($user) === McpRole::Admin)
+            ->map(fn (User $user): array => [
+                'user_id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => McpRole::Admin->value,
+                'you' => $user->id === $request->user()->id,
+            ])
+            ->sortByDesc('you');
+    }
+
+    /** @return Collection<int, array<string, mixed>> people who lead an active team that the reports can see */
+    private function teamLeaders(string $text, string $like): Collection
+    {
+        return TeamAgent::query()
+            ->with(['agent.user.role', 'agent.user.agent', 'team:id,name'])
+            ->where('is_leader', true)
+            ->where('status', 'active')
+            ->whereHas('team', fn ($team) => $team->where('status', 'active'))
+            ->whereHas('agent', fn ($agent) => $agent->where('status', 'active'))
+            ->when($text !== '', fn ($query) => $query->whereHas('agent', fn ($agent) => $agent->where(fn ($q) => $q
+                ->where('first_name', 'like', $like)
+                ->orWhere('last_name', 'like', $like)
+                ->orWhereHas('user', fn ($user) => $user->where('name', 'like', $like)->orWhere('email', 'like', $like)))))
+            ->limit(200)
+            ->get()
+            ->filter(fn (TeamAgent $row): bool => $row->agent?->user !== null && McpRole::of($row->agent->user) === McpRole::TeamLeader)
+            ->groupBy(fn (TeamAgent $row): int => (int) $row->agent->user->id)
+            ->map(fn (Collection $rows): array => [
+                'user_id' => $rows->first()->agent->user->id,
+                'name' => $rows->first()->agent->user->name,
+                'email' => $rows->first()->agent->user->email,
+                'role' => McpRole::TeamLeader->value,
+                'team' => $rows->map(fn (TeamAgent $row): string => (string) $row->team?->name)->filter()->unique()->join(', '),
+            ])
+            ->sortBy('name')
+            ->take(25);
+    }
+
+    /** @return Collection<int, array<string, mixed>> active agents who do not lead a team (those are found as team leaders) */
+    private function agents(string $like): Collection
+    {
+        return Agent::query()
+            ->with('user.role', 'user.agent')
             ->where('status', 'active')
             ->where(fn ($query) => $query
                 ->whereHas('user', fn ($user) => $user->where('name', 'like', $like)->orWhere('email', 'like', $like))
@@ -122,18 +188,14 @@ class McpKeyController extends Controller
                 ->orWhere('last_name', 'like', $like))
             ->orderBy('last_name')
             ->limit(10)
-            ->get();
-
-        return response()->json([
-            'data' => $agents
-                ->filter(fn (Agent $agent): bool => $agent->user !== null && McpRole::of($agent->user) === McpRole::Agent)
-                ->map(fn (Agent $agent): array => [
-                    'user_id' => $agent->user->id,
-                    'name' => $agent->user->name,
-                    'email' => $agent->user->email,
-                ])
-                ->values(),
-        ]);
+            ->get()
+            ->filter(fn (Agent $agent): bool => $agent->user !== null && McpRole::of($agent->user) === McpRole::Agent)
+            ->map(fn (Agent $agent): array => [
+                'user_id' => $agent->user->id,
+                'name' => $agent->user->name,
+                'email' => $agent->user->email,
+                'role' => McpRole::Agent->value,
+            ]);
     }
 
     /** GET /admin/mcp-calls?limit=&outcome=: what the keys were asked, newest first. */

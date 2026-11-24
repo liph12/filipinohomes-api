@@ -52,6 +52,11 @@ final class AgentPolicy implements McpPolicy
         return ['agent_id' => $actor->agentId];
     }
 
+    public function constrain(array $filters, McpActor $actor): array
+    {
+        return $filters;
+    }
+
     public function dimensions(): array
     {
         return ['project', 'city', 'province', 'category', 'type'];

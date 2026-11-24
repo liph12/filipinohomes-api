@@ -35,6 +35,11 @@ final class AdminPolicy implements McpPolicy
         return [];
     }
 
+    public function constrain(array $filters, McpActor $actor): array
+    {
+        return $filters;
+    }
+
     public function dimensions(): array
     {
         return array_keys(BreakdownService::DIMENSIONS);
