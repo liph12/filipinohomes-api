@@ -20,7 +20,7 @@ Route::get('/email/avatar', \App\Http\Controllers\EmailAvatarController::class)
     ->middleware('throttle:120,1');
 
 Route::get('/', function () {
-    return view('welcome');
+    return view('home');
 });
 
 /*
