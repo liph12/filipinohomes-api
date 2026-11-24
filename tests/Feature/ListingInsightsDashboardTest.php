@@ -66,8 +66,7 @@ class ListingInsightsDashboardTest extends TestCase
         Schema::table('properties', function (Blueprint $table) {
             $table->text('photos')->nullable();
             $table->text('description')->nullable();
-            $table->boolean('has_ats_files')->default(false);
-            $table->string('ats_status')->default('approve'); // the live default: every property starts "approved"
+            // has_ats_files and ats_status (default "approve") are in the shared schema now.
         });
         Schema::table('listings', function (Blueprint $table) {
             $table->unsignedBigInteger('clicks')->default(0);

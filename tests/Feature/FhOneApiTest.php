@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Requests\FhOne\MetricBatchRequest;
 use App\Http\Requests\FhOne\MetricRequest;
 use App\Services\FhOne\BreakdownService;
 use App\Services\Reports\Executive\DrillService;
@@ -12,10 +13,10 @@ use App\Support\FhOneKeys;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\Concerns\CreatesExecutiveReportTables;
 use Tests\TestCase;
@@ -460,7 +461,7 @@ class FhOneApiTest extends TestCase
 
     public function test_a_batch_refuses_what_it_cannot_make_sense_of(): void
     {
-        $many = implode(',', array_map(fn (int $n): string => "m.n{$n}", range(1, 61)));
+        $many = implode(',', array_map(fn (int $n): string => "m.n{$n}", range(1, MetricBatchRequest::MAX_IDS + 1)));
 
         foreach ([
             'no ids' => [[], 'ids'],
@@ -478,7 +479,7 @@ class FhOneApiTest extends TestCase
 
     public function test_the_catalog_says_the_batch_is_there_and_how_many_it_takes(): void
     {
-        $this->assertSame(['batch' => ['max_ids' => 60]], $this->api('metrics')->assertOk()->json('capabilities'));
+        $this->assertSame(['batch' => ['max_ids' => MetricBatchRequest::MAX_IDS]], $this->api('metrics')->assertOk()->json('capabilities'));
     }
 
     public function test_a_number_is_worked_out_once_at_a_time_and_the_hold_is_let_go(): void

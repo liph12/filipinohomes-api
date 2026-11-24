@@ -24,7 +24,7 @@ use Laravel\Mcp\Server\Attributes\Title;
  */
 #[Name('fh_ai_visibility')]
 #[Title('Filipino Homes: AI assistant visibility')]
-#[Description('How AI assistants (ChatGPT, Perplexity, Claude, Gemini, Copilot...) see and send people to the website, for some days (the last 30 by default): views (an assistant opened a page to answer someone), crawls (an AI search index read a page) and clicks (a person arrived from an assistant), per assistant and for the top pages. The same numbers as the admin AI Visibility page. Read-only.')]
+#[Description('How AI assistants (ChatGPT, Perplexity, Claude, Gemini, Copilot...) see and send people to the website, for some days (the last 30 by default): views (an assistant opened a page to answer someone), crawls (an AI search index read a page) and clicks (a person arrived from an assistant), per assistant and for the top pages, and optionally per day. The same numbers as the admin AI Visibility page. Read-only.')]
 final class FhAiVisibility extends FhTool
 {
     protected function policy(): McpPolicy
@@ -39,6 +39,7 @@ final class FhAiVisibility extends FhTool
             ...Asks::schema($schema, []),
             'sort' => $schema->string()->enum(AiVisibilityService::SORTS)->default('views')->description('Order the top pages by views, clicks or crawls (default views).'),
             'top' => $schema->integer()->min(1)->max(50)->default(15)->description('How many top pages (default 15).'),
+            'daily' => $schema->boolean()->description('Also give views, crawls and clicks per day (the AI Visibility trend chart).'),
         ];
     }
 
@@ -48,6 +49,7 @@ final class FhAiVisibility extends FhTool
             ...Asks::rules([]),
             'sort' => ['nullable', Rule::in(AiVisibilityService::SORTS)],
             'top' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'daily' => ['nullable', 'boolean'],
         ];
     }
 
@@ -67,7 +69,7 @@ final class FhAiVisibility extends FhTool
             $sort,
         ));
 
-        return [
+        $answer = [
             'days' => ['from' => $range->start, 'to' => $range->end],
             'totals' => $report['totals'],
             'assistants' => $report['sources'],
@@ -82,5 +84,25 @@ final class FhAiVisibility extends FhTool
             'scanner_requests_left_out' => $report['suspicious_total'],
             'how_counted' => 'view = an assistant opened the page to answer a person (ChatGPT-User, Perplexity-User, Claude-User, MistralAI-User); it is a proxy, since no assistant reports how often it shows a page. crawl = an AI search index read the page (OAI-SearchBot, PerplexityBot, Claude-SearchBot). click = a person arrived on the page from an assistant, once per visitor per page per day; exact. Gemini and Copilot only show as clicks: they do not announce themselves when they read a page. scanner_requests_left_out = requests for paths no real page has (secrets files, admin panels) from scanners sending an AI user agent; not counted anywhere above. The same clicks also appear as their own sources (chatgpt, gemini...) in fh_traffic.',
         ];
+
+        if ((bool) ($input['daily'] ?? false)) {
+            // One scan (the dashboard card's summary()), real pages only, like the totals above.
+            $answer['daily'] = Cache::remember("mcp:ai-visibility-daily:v1:{$range->start}:{$range->end}", $ttl, function () use ($range): array {
+                $trend = app(AiVisibilityService::class)->summary(
+                    Carbon::parse($range->start)->startOfDay(),
+                    Carbon::parse($range->end)->endOfDay(),
+                )['trend'];
+
+                return [
+                    'dates' => array_column($trend, 'date'),
+                    'views' => array_column($trend, 'view'),
+                    'crawls' => array_column($trend, 'crawl'),
+                    'clicks' => array_column($trend, 'click'),
+                    'how_counted' => 'Per day, days with no AI activity left out; scanner requests not counted.',
+                ];
+            });
+        }
+
+        return $answer;
     }
 }

@@ -150,6 +150,9 @@ trait CreatesExecutiveReportTables
             $table->unsignedBigInteger('property_attribute_id')->nullable();
             $table->string('status')->default('active');
             $table->date('status_change_date')->nullable();
+            $table->string('ats_status')->nullable()->default('approve'); // the live default: every property starts "approved"
+            $table->boolean('has_ats_files')->default(false);              // what makes an ATS count (one was uploaded)
+            $table->date('ats_expiration_date')->nullable();
             $table->text('geo_coordinates')->nullable();
             $table->timestamps();
             $table->softDeletes();
@@ -163,6 +166,7 @@ trait CreatesExecutiveReportTables
             $table->text('featured_photo')->nullable();
             $table->string('visibility')->default('public');
             $table->string('verification_status')->nullable();
+            $table->timestamp('audited_at')->nullable();
             $table->unsignedBigInteger('category_id');
             $table->unsignedBigInteger('property_id');
             $table->unsignedBigInteger('agent_id')->nullable();
@@ -499,6 +503,25 @@ trait CreatesExecutiveReportTables
         $id['L8'] = $L($a2, ['city' => 10, 'flagged' => true, 'added' => '2026-11-06 11:00']);                         // out of ₱/sqm
         $id['L9'] = $L($a1, ['city' => 10, 'added' => '2026-11-09 08:00']);                                              // "sold" but still active
         $id['L10'] = $L($a2, ['city' => 10, 'visibility' => 'private', 'added' => '2026-11-02 12:00']);                 // out of ₱/sqm
+
+        // The audit lens (Audit Insights): L1 audited in range, fully verified, its ATS ending within 30
+        // days; L3 audited earlier, verified, ATS still "approved" past its date; L4 ATS pending, L6
+        // rejected, L8 (flagged) expired, L9 waiting for re-review. The rest have no ATS uploaded (their
+        // ats_status is the default "approve", which must not count).
+        $audit = function (int $listing, array $l, array $p): void {
+            if ($l !== []) {
+                DB::table('listings')->where('id', $listing)->update($l);
+            }
+            if ($p !== []) {
+                DB::table('properties')->where('id', DB::table('listings')->where('id', $listing)->value('property_id'))->update($p);
+            }
+        };
+        $audit($id['L1'], ['audited_at' => $this->utc('2026-11-06 10:00'), 'verification_status' => 'fully_verified'], ['ats_status' => 'approve', 'ats_expiration_date' => '2026-11-20', 'has_ats_files' => true]);
+        $audit($id['L3'], ['audited_at' => $this->utc('2026-10-01 10:00'), 'verification_status' => 'verified'], ['ats_status' => 'approve', 'ats_expiration_date' => '2026-11-01', 'has_ats_files' => true]);
+        $audit($id['L4'], [], ['ats_status' => 'pending', 'has_ats_files' => true]);
+        $audit($id['L6'], [], ['ats_status' => 'rejected', 'has_ats_files' => true]);
+        $audit($id['L8'], [], ['ats_status' => 'expired', 'has_ats_files' => true]);
+        $audit($id['L9'], ['verification_status' => 'pending_review'], []);
 
         [$c1, $c2, $c3, $c4] = [
             $this->makeUser(self::CLIENT, ['created_at' => $this->utc('2026-11-02 08:00')]),

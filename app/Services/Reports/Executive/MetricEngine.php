@@ -71,6 +71,28 @@ final class MetricEngine
             'inquiries.received' => [$this->q->inquiries($range), 'chats.id'],
             'inquiries.unique_clients' => [$this->q->inquiries($range), 'chats.user_id'],
             'inquiries.pending_now' => [$this->q->pendingInquiries(), 'chats.id'],
+            'audit.audited' => [$this->q->listingBase()->whereNotNull('listings.audited_at'), 'listings.id'],
+            'audit.audited_in_range' => [$this->q->listingBase()
+                ->where('listings.audited_at', '>=', $range->fromUtc())
+                ->where('listings.audited_at', '<', $range->toUtc()), 'listings.id'],
+            'audit.not_audited' => [$this->q->listingBase()->whereNull('listings.audited_at'), 'listings.id'],
+            'audit.verified' => [$this->q->listingBase()->whereIn('listings.verification_status', ['verified', 'fully_verified']), 'listings.id'],
+            'audit.fully_verified' => [$this->q->listingBase()->where('listings.verification_status', 'fully_verified'), 'listings.id'],
+            'audit.flagged' => [$this->q->listingBase()->where('listings.verification_status', 'flagged'), 'listings.id'],
+            'audit.pending_review' => [$this->q->listingBase()->where('listings.verification_status', 'pending_review'), 'listings.id'],
+            'audit.unverified' => [$this->q->listingBase()->whereNull('listings.verification_status'), 'listings.id'],
+            // An ATS counts only when one was uploaded (has_ats_files): every property starts with ats_status
+            // 'approve' by default, so the status alone would call nearly every listing approved. Same rule
+            // as the ATS counts on Listings by Province / by City.
+            'ats.approved' => [$this->withAts()->where('properties.ats_status', 'approve'), 'listings.id'],
+            'ats.pending' => [$this->withAts()->where('properties.ats_status', 'pending'), 'listings.id'],
+            'ats.rejected' => [$this->withAts()->where('properties.ats_status', 'rejected'), 'listings.id'],
+            'ats.expired' => [$this->withAts()->where('properties.ats_status', 'expired'), 'listings.id'],
+            'ats.none' => [$this->q->listingBase()->where('properties.has_ats_files', 0), 'listings.id'],
+            'ats.expiring_30d' => [$this->withAts()->where('properties.ats_status', 'approve')
+                ->whereBetween('properties.ats_expiration_date', [$this->manilaDay($now), $this->manilaDay($now, 30)]), 'listings.id'],
+            'ats.past_expiry' => [$this->withAts()->where('properties.ats_status', 'approve')
+                ->where('properties.ats_expiration_date', '<', $this->manilaDay($now)), 'listings.id'],
             'claims.sold_unmarked' => [$this->q->claims($range, 'strong'), 'listings.id'],
             'claims.reserved_unmarked' => [$this->q->claims($range, 'medium'), 'listings.id'],
             'claims.inquiries_after' => [$this->q->inquiriesAfterClaims($range), 'chats.id'],
@@ -271,5 +293,17 @@ final class MetricEngine
         $first = Carbon::parse($firstAgentAt, 'UTC');
 
         return max(0.0, round(($first->getTimestamp() - $start->getTimestamp()) / 60, 1));
+    }
+
+    /** A Manila calendar day, $plus days after $now's, for DATE columns such as properties.ats_expiration_date. */
+    private function manilaDay(Carbon $now, int $plus = 0): string
+    {
+        return $now->copy()->setTimezone(ReportRange::TZ)->addDays($plus)->format('Y-m-d');
+    }
+
+    /** Listings with an Authority to Sell uploaded (properties.has_ats_files). */
+    private function withAts(): Builder
+    {
+        return $this->q->listingBase()->where('properties.has_ats_files', 1);
     }
 }

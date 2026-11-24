@@ -8,6 +8,8 @@ use App\Mcp\Support\Asks;
 use App\Mcp\Support\McpActor;
 use App\Mcp\Tools\FhTool;
 use App\Services\Audience\AudienceGeographyService;
+use App\Services\Audience\EngagementOverviewService;
+use App\Services\Audience\SourceBreakdownService;
 use App\Services\Audience\TrafficSourceService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Facades\Cache;
@@ -26,7 +28,7 @@ use Laravel\Mcp\Server\Attributes\Title;
  */
 #[Name('fh_traffic')]
 #[Title('Filipino Homes: website traffic by source')]
-#[Description('Website visitors and where they came from (traffic source / acquisition channel: google, facebook, instagram, tiktok, youtube, direct, referral, chatgpt, gemini...) for some days (the last 30 by default): people and visits per source, new and returning clients each source brought, the sites behind "referral", and optionally visitors by country, region and city. The same numbers as the admin Audience Insights page. Agents\' and admins\' own browsing is not counted. Read-only.')]
+#[Description('Website visitors and where they came from (traffic source / acquisition channel: google, facebook, instagram, tiktok, youtube, direct, referral, chatgpt, gemini...) for some days (the last 30 by default): people and visits per source, new and returning clients each source brought, the sites behind "referral", optionally visitors by country, region and city, and optionally the day-by-day trend. The same numbers as the admin Audience Insights page. Agents\' and admins\' own browsing is not counted. Read-only.')]
 final class FhTraffic extends FhTool
 {
     /** How many referral sites to give; the page shows up to 50, Claude rarely needs more than this. */
@@ -44,6 +46,7 @@ final class FhTraffic extends FhTool
             ...Asks::schema($schema, []),
             'geography' => $schema->boolean()->description('Also give the top 10 countries, regions and cities visitors and new clients are from.'),
             'country' => $schema->string()->max(32)->description('With geography: narrow the regions and cities to one country, as its two-letter code (e.g. "PH").'),
+            'daily' => $schema->boolean()->description('Also give the day-by-day trend: visitors, new clients and returning clients per day, and anonymous visitors per source per day (the Audience Insights charts). For a long range, prefer a few months at most.'),
         ];
     }
 
@@ -53,6 +56,7 @@ final class FhTraffic extends FhTool
             ...Asks::rules([]),
             'geography' => ['nullable', 'boolean'],
             'country' => ['nullable', 'string', 'max:32'],
+            'daily' => ['nullable', 'boolean'],
         ];
     }
 
@@ -90,6 +94,36 @@ final class FhTraffic extends FhTool
             ];
         }
 
+        if ((bool) ($input['daily'] ?? false)) {
+            $answer['daily'] = Cache::remember("mcp:traffic-daily:v1:{$start}:{$end}", $ttl, fn (): array => $this->daily($start, $end));
+        }
+
         return $answer;
+    }
+
+    /**
+     * The Audience Insights trend charts, as columns (one list per measure, aligned with `dates`) so a
+     * few months still fit in one answer.
+     *
+     * @return array<string, mixed>
+     */
+    private function daily(string $start, string $end): array
+    {
+        $totals = app(EngagementOverviewService::class)->range($start, $end)->trend();
+        $bySource = app(SourceBreakdownService::class)->range($start, $end)->build();
+
+        return [
+            'totals' => [
+                'dates' => array_column($totals, 'date'),
+                'visitors' => array_column($totals, 'visitors'),
+                'new_clients' => array_column($totals, 'clients'),
+                'returning_clients' => array_column($totals, 'returning'),
+            ],
+            'anonymous_visitors_by_source' => [
+                'dates' => $bySource['dates'],
+                'sources' => array_column($bySource['channels'], 'data', 'channel'),
+            ],
+            'how_counted' => 'Per day, from the first day with data. totals: visitors = distinct audience devices that day (anonymous and clients; staff left out), new_clients = client sign-ups that day, returning_clients = clients who signed in that day on a later day than they signed up. anonymous_visitors_by_source: distinct anonymous devices per source that day, biggest source first. A device that came on several days counts on each, so the days do not add up to unique_visitors.',
+        ];
     }
 }

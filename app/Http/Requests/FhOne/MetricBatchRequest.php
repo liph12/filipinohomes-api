@@ -13,8 +13,8 @@ use Illuminate\Validation\Validator;
  */
 class MetricBatchRequest extends MetricRequest
 {
-    /** The most metrics one call may ask for: the whole catalog is about sixty. */
-    public const MAX_IDS = 60;
+    /** The most metrics one call may ask for: room for the whole catalog (about seventy) in one call. */
+    public const MAX_IDS = 100;
 
     private const LIST = '/^[a-z0-9_.]+(,[a-z0-9_.]+){0,'.(self::MAX_IDS - 1).'}$/';
 

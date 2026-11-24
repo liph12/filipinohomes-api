@@ -553,6 +553,16 @@ class FhMcpTest extends TestCase
         $this->assertSame([['name' => 'lamudi.com.ph', 'kind' => 'site', 'people' => 1, 'visits' => 1]], $data['referral_sites']);
         $this->assertSame('PH', $data['geography']['countries'][0]['name']);
 
+        // The day-by-day trend (the Audience Insights charts), only when asked.
+        $this->assertArrayNotHasKey('daily', $data);
+        $daily = $this->tool('fh_traffic', ['daily' => true], $this->adminKey)['data']['daily'];
+        $visitorsOn = array_combine($daily['totals']['dates'], $daily['totals']['visitors']);
+        $this->assertSame(2, $visitorsOn['2026-11-05'], 'g1 and g2; the admin\'s own browsing is not counted');
+        $this->assertSame(7, array_sum($daily['totals']['visitors']));
+        $this->assertSame(['google', 'facebook', 'referral'], array_keys($daily['anonymous_visitors_by_source']['sources']));
+        $this->assertSame(4, array_sum($daily['anonymous_visitors_by_source']['sources']['google']));
+        $this->assertSame(1, array_sum($daily['anonymous_visitors_by_source']['sources']['facebook']), 'the client\'s visit is not anonymous');
+
         // The page's numbers and Claude's are the same.
         $page = app(TrafficSourceService::class)->range('2026-10-12', '2026-11-10')->channels();
         $this->assertSame($page['unique_visitors'], $data['unique_visitors']);
@@ -603,10 +613,53 @@ class FhMcpTest extends TestCase
         $this->assertSame($full['top_pages_meta']['total'], $quick['pages_seen']);
         $this->assertSame(array_column($full['top_pages'], 'views', 'path'), array_column($quick['top_pages'], 'views', 'path'));
 
+        $this->assertArrayNotHasKey('daily', $data);
+        $this->assertSame([
+            'dates' => ['2026-11-05', '2026-11-06', '2026-11-07'],
+            'views' => [1, 1, 0],
+            'crawls' => [0, 1, 0],
+            'clicks' => [0, 0, 1],
+        ], array_diff_key($this->tool('fh_ai_visibility', ['daily' => true], $this->adminKey)['data']['daily'], ['how_counted' => 1]), 'the scanner and the old day are left out');
+
         $byClicks = $this->tool('fh_ai_visibility', ['sort' => 'clicks', 'top' => 1], $this->adminKey)['data'];
         $this->assertSame(['/projects'], array_column($byClicks['top_pages'], 'page'));
 
         $this->assertNotNull($this->rpc('tools/call', ['name' => 'fh_ai_visibility', 'arguments' => (object) []], $this->a1Key)->json('error'), 'an agent has no AI visibility tool to call');
+    }
+
+    public function test_an_admin_reads_the_audit_lens_and_an_agent_only_their_own(): void
+    {
+        $value = fn (string $metric, string $key, array $more = []): int => (int) $this->tool($key === $this->adminKey ? 'fh_metric' : 'my_metric', ['metric' => $metric, ...$more], $key)['data']['value'];
+
+        // Verification: L1 fully verified, L3 verified, L8 flagged, L9 waiting for re-review; the other six none.
+        $this->assertSame(2, $value('audit.verified', $this->adminKey));
+        $this->assertSame(1, $value('audit.fully_verified', $this->adminKey));
+        $this->assertSame(1, $value('audit.flagged', $this->adminKey));
+        $this->assertSame(1, $value('audit.pending_review', $this->adminKey));
+        $this->assertSame(6, $value('audit.unverified', $this->adminKey));
+        $this->assertSame(2, $value('audit.audited', $this->adminKey));
+        $this->assertSame(8, $value('audit.not_audited', $this->adminKey));
+        $this->assertSame(1, $value('audit.audited_in_range', $this->adminKey), 'L1 in the last 30 days; L3 was audited before them');
+
+        // ATS counts only where one was uploaded: the default "approve" on the other five is not an ATS.
+        $this->assertSame(2, $value('ats.approved', $this->adminKey));
+        $this->assertSame(1, $value('ats.pending', $this->adminKey));
+        $this->assertSame(1, $value('ats.rejected', $this->adminKey));
+        $this->assertSame(1, $value('ats.expired', $this->adminKey));
+        $this->assertSame(5, $value('ats.none', $this->adminKey));
+        $this->assertSame(1, $value('ats.expiring_30d', $this->adminKey), 'L1 ends on Nov 20, inside 30 days of Nov 10');
+        $this->assertSame(1, $value('ats.past_expiry', $this->adminKey), 'L3 ended Nov 1 and is still "approved"');
+
+        // Split by agent, and the listings behind a number.
+        $split = $this->tool('fh_metric_breakdown', ['metric' => 'ats.approved', 'by' => 'agent'], $this->adminKey)['data']['rows'];
+        $this->assertSame(2, collect($split)->sum('value'));
+        $records = $this->tool('fh_metric_records', ['metric' => 'ats.expiring_30d'], $this->adminKey)['data'];
+        $this->assertSame(1, $records['meta']['total']);
+
+        // An agent sees the same lens on their own listings only: a1 has L1 (fully verified) and L9 (re-review).
+        $this->assertSame(1, $value('audit.verified', $this->a1Key));
+        $this->assertSame(1, $value('audit.pending_review', $this->a1Key));
+        $this->assertSame(0, $value('ats.past_expiry', $this->a1Key), 'L3 is a2\'s');
     }
 
     // ── Nothing it hands out carries a person's contact details ─────────────
