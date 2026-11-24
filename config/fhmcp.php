@@ -19,6 +19,25 @@ return [
     // that ends TLS for us: set it on production.
     'public_url' => env('FH_MCP_PUBLIC_URL'),
 
+    // Sign-in for Claude (people connect their own Claude with their FH login instead of copying a key).
+    // The switch itself is in the database, set from System Settings > Claude access (off, admins or on);
+    // this is what it is until someone sets it. Off means no sign-in route answers at all.
+    'oauth_mode' => env('FH_MCP_OAUTH', 'off'),
+
+    // The page on the website where a person confirms the account (the API sends the browser there).
+    'consent_url' => env('FH_MCP_CONSENT_URL', 'https://filipinohomes.com/connect/claude'),
+
+    // Addresses this API used to be reached at, comma separated, like https://old.example.com. A connection
+    // made at one keeps working while it is listed, and its person is asked to reconnect.
+    'former_urls' => array_values(array_filter(array_map('trim', explode(',', (string) env('FH_MCP_FORMER_URLS', ''))))),
+
+    // How long a connection's access token lasts (every request re-checks the connection, the person's role
+    // and the switch, so this is not how long access lasts), how long an unused connection survives (the
+    // refresh token slides forward each time it is used), and how many connections a person may hold.
+    'access_token_hours' => (int) env('FH_MCP_ACCESS_HOURS', 8),
+    'refresh_days' => (int) env('FH_MCP_REFRESH_DAYS', 60),
+    'max_connections' => 5,
+
     // Let a client that has no key yet (claude.ai probes a connector this way when it is
     // added) do the handshake and list the tools. Calling a tool still needs a key. Off by
     // default: a key-less request is a plain 401.

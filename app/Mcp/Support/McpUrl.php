@@ -31,6 +31,34 @@ final class McpUrl
         return self::root().self::PATH;
     }
 
+    /** The page on the website where a person confirms the account. */
+    public static function consent(): string
+    {
+        return rtrim((string) config('fhmcp.consent_url', 'https://filipinohomes.com/connect/claude'), '/');
+    }
+
+    /**
+     * The addresses of the server that a connection may have been made for: the current one, and any former
+     * address still listed (config fhmcp.former_urls). A listed one keeps working while people move over.
+     *
+     * @return list<string>
+     */
+    public static function acceptedServers(): array
+    {
+        $former = array_map(
+            fn (string $root): string => rtrim($root, '/').self::PATH,
+            array_values(array_filter((array) config('fhmcp.former_urls', []), 'is_string')),
+        );
+
+        return array_values(array_unique([self::server(), ...$former]));
+    }
+
+    /** The document that says where to sign in, for the pointer in a 401 and for the .well-known address. */
+    public static function resourceMetadata(): string
+    {
+        return self::root().'/.well-known/oauth-protected-resource'.self::PATH;
+    }
+
     /**
      * An address as it is compared: lowercase scheme and host, no default
      * port, no trailing slash, no query and no fragment. Null when it is not

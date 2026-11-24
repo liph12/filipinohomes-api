@@ -587,6 +587,19 @@ class FhMcpTest extends TestCase
         $this->assertGreaterThan(15, $scanned, 'the scan found the MCP code');
     }
 
+    public function test_no_tool_refers_to_the_sign_in_code(): void
+    {
+        // Signing Claude in writes (tokens, requests); it lives outside the read-only code, and no tool may reach for it.
+        $scanned = 0;
+
+        foreach ((new Finder)->files()->in(app_path('Mcp/Tools'))->name('*.php') as $file) {
+            $scanned++;
+            $this->assertDoesNotMatchRegularExpression('/McpOAuth|McpConnection|OAuthTokens|OAuthSwitch|OAuthAuthorizations|McpOauth/', $file->getContents(), $file->getRelativePathname());
+        }
+
+        $this->assertGreaterThan(15, $scanned);
+    }
+
     public function test_the_server_lists_only_tools_built_on_the_read_only_base_and_the_three_policies(): void
     {
         $tools = (new ReflectionClass(FilipinoHomesServer::class))->getDefaultProperties()['tools'];

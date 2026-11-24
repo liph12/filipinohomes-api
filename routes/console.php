@@ -228,6 +228,13 @@ Schedule::command('agents:apply-lr-status')
     ->withoutOverlapping(30)
     ->when(fn () => (bool) config('lr_status.enabled'));
 
+// Sign-in for Claude leaves requests, spent tokens and old connections behind (docs/mcp.md). Only dead
+// rows are deleted, so it is safe on both hosts that run the scheduler.
+Schedule::command('fhmcp:prune')
+    ->dailyAt('03:15')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping(10);
+
 // Keep this last, so it covers every entry above. On ECS (LOG_SCHEDULE_OUTPUT, see
 // config/logging.php) each command's output and stderr log lines go to the scheduler
 // container's log instead of /dev/null. Unset, nothing changes.

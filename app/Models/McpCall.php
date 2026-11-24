@@ -15,6 +15,7 @@ class McpCall extends Model
 
     protected $fillable = [
         'mcp_key_id',
+        'mcp_connection_id',
         'user_id',
         'role',
         'tool',

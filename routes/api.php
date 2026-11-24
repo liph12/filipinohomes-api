@@ -557,6 +557,17 @@ Route::middleware('strip.tags')->group(function () {
             Route::get('/agent/reactivation-request', [\App\Http\Controllers\ReactivationRequestController::class, 'mine']);
             Route::post('/agent/reactivation-request', [\App\Http\Controllers\ReactivationRequestController::class, 'store']);
 
+            // Connecting a person's Claude to their account: whether they can, the page that asks them to
+            // confirm (the answer to Claude's sign-in request), and the connections they hold. docs/mcp.md.
+            // Never a 401 for a sign-in that is wrong: the website signs a person out on one.
+            Route::prefix('mcp/connect')->group(function () {
+                Route::get('/status', [\App\Http\Controllers\Mcp\ConnectController::class, 'status']);
+                Route::get('/requests/{handle}', [\App\Http\Controllers\Mcp\ConnectController::class, 'describe'])->where('handle', '[A-Za-z0-9]{43}');
+                Route::post('/requests/{handle}/approve', [\App\Http\Controllers\Mcp\ConnectController::class, 'approve'])->where('handle', '[A-Za-z0-9]{43}')->middleware('throttle:10,1,mcp-approve');
+                Route::post('/requests/{handle}/deny', [\App\Http\Controllers\Mcp\ConnectController::class, 'deny'])->where('handle', '[A-Za-z0-9]{43}')->middleware('throttle:20,1,mcp-deny');
+                Route::delete('/connections/{id}', [\App\Http\Controllers\Mcp\ConnectController::class, 'disconnect'])->whereNumber('id');
+            });
+
             // Expo push tokens + in-app notification feed (mobile app)
             Route::post('/device-tokens', [DeviceTokenController::class, 'store']);
             Route::get('/notifications', [NotificationController::class, 'index']);
@@ -1171,10 +1182,18 @@ Route::middleware('strip.tags')->group(function () {
 
                 // Claude access (MCP) keys: made, listed and switched off here; docs/mcp.md.
                 Route::get('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'index']);
-                Route::post('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'store'])->middleware('throttle:10,1');
+                Route::post('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'store'])->middleware('throttle:10,1,mcp-key-make');
                 Route::get('/admin/mcp-keys/people', [\App\Http\Controllers\Admin\McpKeyController::class, 'people']);
                 Route::delete('/admin/mcp-keys/{id}', [\App\Http\Controllers\Admin\McpKeyController::class, 'destroy'])->whereNumber('id');
                 Route::get('/admin/mcp-calls', [\App\Http\Controllers\Admin\McpKeyController::class, 'calls']);
+
+                // People's Claude connections and the switch that lets them be made; docs/mcp.md ("Sign-in").
+                Route::get('/admin/mcp-oauth', [\App\Http\Controllers\Admin\McpConnectionController::class, 'show']);
+                Route::put('/admin/mcp-oauth', [\App\Http\Controllers\Admin\McpConnectionController::class, 'update'])->middleware('throttle:20,1,mcp-oauth-switch');
+                Route::post('/admin/mcp-oauth/notify-address-change', [\App\Http\Controllers\Admin\McpConnectionController::class, 'notifyAddressChange'])->middleware('throttle:3,1,mcp-address-notify');
+                Route::get('/admin/mcp-connections', [\App\Http\Controllers\Admin\McpConnectionController::class, 'index']);
+                Route::delete('/admin/mcp-connections/{id}', [\App\Http\Controllers\Admin\McpConnectionController::class, 'destroy'])->whereNumber('id');
+                Route::post('/admin/mcp-connections/disconnect-all', [\App\Http\Controllers\Admin\McpConnectionController::class, 'disconnectAll'])->middleware('throttle:3,1,mcp-disconnect-all');
 
                 // Broadcast push notifications (announcement / maintenance /
                 // custom) to a fleet segment, with per-announcement read +

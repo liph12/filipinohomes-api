@@ -34,7 +34,8 @@ final class McpAudit
                 'duration_ms' => $milliseconds,
                 'bytes' => $bytes,
                 'ip' => request()->ip(),
-            ]);
+                // Only when there is one, so the audit does not need the connections' migration until a connection exists.
+            ] + ($actor->connection === null ? [] : ['mcp_connection_id' => $actor->connection->id]));
         } catch (Throwable $e) {
             report($e);
         }
