@@ -71,13 +71,7 @@ class McpConnection extends Model
     /** Whether the address it was made for is one this API still answers to (the current one, or a former one still listed). */
     public function addressIsAccepted(): bool
     {
-        foreach (McpUrl::acceptedServers() as $address) {
-            if (McpUrl::same($this->resource, $address)) {
-                return true;
-            }
-        }
-
-        return false;
+        return McpUrl::isAccepted($this->resource);
     }
 
     /** Whether it was made for an address other than the current one, so its person is asked to connect again. */

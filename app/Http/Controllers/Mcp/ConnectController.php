@@ -31,15 +31,22 @@ class ConnectController extends Controller
     public function status(Request $request): JsonResponse
     {
         $user = $request->user();
+        // Claude's own "add a connector" page, with Filipino Homes and our address already filled in.
+        $link = 'https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName='.rawurlencode('Filipino Homes').'&connectorUrl='.rawurlencode(McpUrl::server());
+
+        // Every agent's dashboard asks this on every load. While signing in is off there is nothing to look up.
+        if (! OAuthSwitch::enabled()) {
+            return response()->json(['mode' => OAuthSwitch::mode(), 'available' => false, 'role' => null, 'address' => McpUrl::server(), 'connect_link' => $link, 'connections' => []]);
+        }
+
         $role = McpRole::of($user);
 
         return response()->json([
             'mode' => OAuthSwitch::mode(),
-            'available' => OAuthSwitch::enabled() && $role !== null && OAuthSwitch::allows($role),
+            'available' => $role !== null && OAuthSwitch::allows($role),
             'role' => $role?->value,
             'address' => McpUrl::server(),
-            // Claude's own "add a connector" page, with Filipino Homes and our address already filled in.
-            'connect_link' => 'https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName='.rawurlencode('Filipino Homes').'&connectorUrl='.rawurlencode(McpUrl::server()),
+            'connect_link' => $link,
             'connections' => McpConnection::query()
                 ->where('user_id', $user->id)
                 ->active()
@@ -60,11 +67,13 @@ class ConnectController extends Controller
         }
     }
 
-    /** POST /api/mcp/connect/requests/{handle}/approve: yes. Answers where to send the browser. */
+    /** POST /api/mcp/connect/requests/{handle}/approve: yes, for the account the page showed (account_id). Answers where to send the browser. */
     public function approve(Request $request, string $handle, OAuthAuthorizations $authorizations): JsonResponse
     {
+        $shown = $request->validate(['account_id' => ['required', 'integer']])['account_id'];
+
         try {
-            return response()->json(['redirect_to' => $authorizations->approve($handle, $request->user(), Impersonation::isImpersonated($request->user()))], 200, ['Cache-Control' => 'no-store']);
+            return response()->json(['redirect_to' => $authorizations->approve($handle, $request->user(), Impersonation::isImpersonated($request->user()), (int) $shown)], 200, ['Cache-Control' => 'no-store']);
         } catch (OAuthError $e) {
             return $this->fail($e);
         }

@@ -19,14 +19,19 @@ final class OAuthClients
 
     public const LOOPBACK = 'claude-code';
 
+    /** What kind of app a client is: one of Anthropic's (hosted), or a program on the person's own computer. */
+    public const KIND_HOSTED = 'hosted';
+
+    public const KIND_LOOPBACK = 'loopback';
+
     /** The return addresses of the Claude apps (claude.com is where Anthropic says it may move). */
     private const HOSTED_REDIRECTS = [
         'https://claude.ai/api/mcp/auth_callback',
         'https://claude.com/api/mcp/auth_callback',
     ];
 
-    /** Claude Code's: http on this computer, any port, /callback and nothing else. */
-    private const LOOPBACK_REDIRECT = '#^http://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?/callback$#';
+    /** Claude Code's: http on this computer, any port, /callback and nothing else (\z: not even a newline after it). */
+    private const LOOPBACK_REDIRECT = '#^http://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?/callback\z#';
 
     public static function exists(string $clientId): bool
     {
@@ -56,7 +61,7 @@ final class OAuthClients
     /** hosted or loopback */
     public static function kind(string $clientId): string
     {
-        return $clientId === self::LOOPBACK ? 'loopback' : 'hosted';
+        return $clientId === self::LOOPBACK ? self::KIND_LOOPBACK : self::KIND_HOSTED;
     }
 
     /**

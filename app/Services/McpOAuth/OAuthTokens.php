@@ -8,6 +8,7 @@ use App\Models\McpConnection;
 use App\Models\McpOauthRequest;
 use App\Models\McpOauthToken;
 use App\Models\User;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -37,8 +38,11 @@ final class OAuthTokens
 
     public const REFRESH_PREFIX = 'fhort_';
 
-    /** An old refresh token used again this soon after it was spent is a retry, whatever happened since. */
-    private const RETRY_SECONDS = 120;
+    /**
+     * An old refresh token used again this soon after it was spent is a retry, whatever happened since: Claude has
+     * been seen to send the same one twice a few milliseconds apart, and to ask again when an answer was lost.
+     */
+    private const RETRY_SECONDS = 30;
 
     /**
      * What the token endpoint answers.
@@ -109,7 +113,7 @@ final class OAuthTokens
         // Spent first, then checked: a code can be tried once, whatever is wrong with the try.
         $spent = McpOauthRequest::query()
             ->whereKey($request->id)
-            ->where('decision', 'approved')
+            ->where('decision', McpOauthRequest::APPROVED)
             ->whereNull('code_used_at')
             ->where('code_expires_at', '>', now())
             ->update(['code_used_at' => now()]);
@@ -141,24 +145,25 @@ final class OAuthTokens
             throw new OAuthError('invalid_grant', 'That code is not valid.');
         }
 
-        $connection = DB::transaction(function () use ($request, $user, $role): McpConnection {
+        // The connection and its first pair are made together: one that failed halfway would be a connection
+        // that counts toward the person's limit for months and has no tokens.
+        [$connection, $response] = DB::transaction(function () use ($request, $user, $role): array {
             $connection = McpConnection::query()->create([
                 'user_id' => $user->id,
                 'client_id' => $request->client_id,
                 'client_kind' => OAuthClients::kind($request->client_id),
                 'role' => $role->value,
-                'resource' => $request->resource ?? McpUrl::server(),
+                'resource' => $request->resource ?? (McpUrl::canonical(McpUrl::server()) ?? McpUrl::server()),
                 'scope' => 'fh:read',
-                'expires_at' => now()->addDays(max(1, (int) config('fhmcp.refresh_days', 60))),
+                'expires_at' => self::connectionEnds(),
             ]);
 
             McpOauthRequest::query()->whereKey($request->id)->update(['mcp_connection_id' => $connection->id]);
             McpConnections::retireBeyondCap($user, $connection);
 
-            return $connection;
+            return [$connection, $this->mint($connection, null)];
         });
 
-        $response = $this->mint($connection, null);
         McpConnections::tellConnected($user, $connection);
 
         return $response;
@@ -190,7 +195,10 @@ final class OAuthTokens
 
             $role = $connection->user === null ? null : McpRole::of($connection->user);
 
+            // No role on the server any more (switched off, say). Coming back later does not bring the connection back.
             if ($role === null) {
+                McpConnections::end($connection, null, McpConnections::NO_ACCESS);
+
                 return new OAuthError('invalid_grant', 'That refresh token is not valid.');
             }
 
@@ -227,15 +235,28 @@ final class OAuthTokens
     }
 
     /**
-     * The next pair for a connection: its end slides forward, as does the refresh token's.
+     * The next pair for a connection: its end slides forward, as does the refresh token's, but never past
+     * the longest a connection may last.
      *
      * @return array<string, mixed>
      */
     private function next(McpConnection $connection, McpOauthToken $parent): array
     {
-        $connection->forceFill(['expires_at' => now()->addDays(max(1, (int) config('fhmcp.refresh_days', 60)))])->save();
+        $connection->forceFill(['expires_at' => self::connectionEnds($connection->created_at)])->save();
 
         return $this->mint($connection, $parent);
+    }
+
+    /**
+     * When a connection made at $madeAt (now, for a new one) stops unless it is used: the refresh window from
+     * today, or the longest a connection may last from the day it was made, whichever comes first.
+     */
+    private static function connectionEnds(?CarbonInterface $madeAt = null): CarbonInterface
+    {
+        $slides = now()->addDays(max(1, (int) config('fhmcp.refresh_days', 60)));
+        $longest = ($madeAt ?? now())->copy()->addDays(max(1, (int) config('fhmcp.max_connection_days', 180)));
+
+        return $slides->lessThan($longest) ? $slides : $longest;
     }
 
     /**
@@ -276,16 +297,6 @@ final class OAuthTokens
     /** Whether an address is the one the sign-in was for (or, when it named none, one this API answers to). */
     private static function sameAddress(string $given, ?string $wanted): bool
     {
-        if ($wanted !== null) {
-            return McpUrl::same($given, $wanted);
-        }
-
-        foreach (McpUrl::acceptedServers() as $address) {
-            if (McpUrl::same($given, $address)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $wanted !== null ? McpUrl::same($given, $wanted) : McpUrl::isAccepted($given);
     }
 }

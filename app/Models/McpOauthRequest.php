@@ -15,6 +15,11 @@ class McpOauthRequest extends Model
 {
     public const UPDATED_AT = null;
 
+    /** What the person answered. */
+    public const APPROVED = 'approved';
+
+    public const DENIED = 'denied';
+
     protected $fillable = [
         'handle_hash',
         'client_id',

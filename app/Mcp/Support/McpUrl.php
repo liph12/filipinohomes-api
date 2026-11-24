@@ -53,6 +53,18 @@ final class McpUrl
         return array_values(array_unique([self::server(), ...$former]));
     }
 
+    /** Whether an address is one this server answers at: the current one, or a former one still listed. */
+    public static function isAccepted(string $address): bool
+    {
+        foreach (self::acceptedServers() as $accepted) {
+            if (self::same($address, $accepted)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** The document that says where to sign in, for the pointer in a 401 and for the .well-known address. */
     public static function resourceMetadata(): string
     {

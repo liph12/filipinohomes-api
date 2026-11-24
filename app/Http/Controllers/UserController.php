@@ -29,6 +29,7 @@ use App\Models\UserInfo;
 use App\Models\Inquiry;
 use App\Services\LeuterioreRealty\TeamSyncService;
 use App\Services\Agent\AgentCachePurger;
+use App\Services\McpOAuth\McpConnections;
 
 class UserController extends Controller
 {
@@ -979,9 +980,11 @@ class UserController extends Controller
     {
         $user = $request->user();
 
-        // Revoke every session and stop pushing to every device.
+        // Revoke every session and stop pushing to every device. A Claude connected to this account is
+        // a session too: it does not outlive the sign-out.
         $user->deviceTokens()->delete();
         $user->tokens()->delete();
+        McpConnections::endAll($user, McpConnections::LOGGED_OUT);
 
         return response()->json([
             'message' => 'Logged out of all devices',

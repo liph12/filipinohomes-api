@@ -38,6 +38,11 @@ return [
     'refresh_days' => (int) env('FH_MCP_REFRESH_DAYS', 60),
     'max_connections' => 5,
 
+    // The longest a connection lasts from the day it was made, however often it is used: after that the
+    // person connects again. (The refresh token slides forward each time it is used, so without this one
+    // that is used often would never end.)
+    'max_connection_days' => (int) env('FH_MCP_MAX_CONNECTION_DAYS', 180),
+
     // Let a client that has no key yet (claude.ai probes a connector this way when it is
     // added) do the handshake and list the tools. Calling a tool still needs a key. Off by
     // default: a key-less request is a plain 401.

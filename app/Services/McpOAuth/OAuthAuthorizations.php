@@ -28,8 +28,11 @@ final class OAuthAuthorizations
     /** How long Claude has to trade the code for tokens. */
     public const CODE_SECONDS = 60;
 
-    /** A flood guard: sign-ins waiting for an answer, all at once. */
-    private const MAX_WAITING = 5000;
+    /**
+     * A flood guard for the table, not for any one address: sign-ins waiting for an answer, all at once (answered
+     * ones no longer count). Set far above what people do, so that filling it takes a sustained flood.
+     */
+    private const MAX_WAITING = 20000;
 
     /**
      * Checks what Claude asked for and keeps it. Returns the handle the website is given.
@@ -74,7 +77,7 @@ final class OAuthAuthorizations
             throw new OAuthError('invalid_target', 'resource is not this server.', 400, true);
         }
 
-        if (McpOauthRequest::query()->where('expires_at', '>', now())->count() >= self::MAX_WAITING) {
+        if (McpOauthRequest::query()->whereNull('decision')->where('expires_at', '>', now())->count() >= self::MAX_WAITING) {
             throw new OAuthError('temporarily_unavailable', 'Too many sign-ins are waiting. Try again in a few minutes.', 503, true);
         }
 
@@ -113,24 +116,29 @@ final class OAuthAuthorizations
                 'kind' => OAuthClients::kind($request->client_id),
                 'return_host' => (string) parse_url($request->redirect_uri, PHP_URL_HOST),
             ],
-            'account' => ['name' => $user->name, 'email' => $user->email, 'role' => $role?->value],
+            'account' => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email, 'role' => $role?->value],
             'allowed' => $why === null,
             'reason' => $why,
             // An admin's connection opens the whole company's reports, and a loopback one is a program on a computer.
-            'press_and_hold' => $role === McpRole::Admin || OAuthClients::kind($request->client_id) === 'loopback',
+            'press_and_hold' => $role === McpRole::Admin || OAuthClients::kind($request->client_id) === OAuthClients::KIND_LOOPBACK,
             'expires_at' => $request->expires_at->toIso8601String(),
         ];
     }
 
     /**
-     * The person says yes: a one-time code is made and the browser goes back to Claude with it.
+     * The person says yes: a one-time code is made and the browser goes back to Claude with it. It is the
+     * account the page showed that says yes (a second tab may have signed in as someone else since).
      *
      * @return string where to send the browser
      *
      * @throws OAuthError
      */
-    public function approve(string $handle, User $user, bool $impersonated): string
+    public function approve(string $handle, User $user, bool $impersonated, int $shownAccount): string
     {
+        if ($shownAccount !== $user->id) {
+            throw new OAuthError('account_changed', 'The account has changed. Please check it and try again.', 403);
+        }
+
         $request = $this->find($handle);
         $role = McpRole::of($user);
         $why = $this->refusal($request, $role, $impersonated);
@@ -142,7 +150,7 @@ final class OAuthAuthorizations
         $code = Str::random(48);
 
         $answered = McpOauthRequest::query()->whereKey($request->id)->whereNull('decision')->update([
-            'decision' => 'approved',
+            'decision' => McpOauthRequest::APPROVED,
             'user_id' => $user->id,
             'role' => $role->value,
             'code_hash' => hash('sha256', $code),
@@ -166,7 +174,7 @@ final class OAuthAuthorizations
         $request = $this->find($handle);
 
         $answered = McpOauthRequest::query()->whereKey($request->id)->whereNull('decision')->update([
-            'decision' => 'denied',
+            'decision' => McpOauthRequest::DENIED,
             'user_id' => $user->id,
         ]);
 
@@ -221,7 +229,7 @@ final class OAuthAuthorizations
             $impersonated => 'impersonated',
             $role === null => 'no_role',
             ! OAuthSwitch::allows($role) => 'paused',
-            OAuthClients::kind($request->client_id) === 'loopback' && $role !== McpRole::Admin => 'admins_only',
+            OAuthClients::kind($request->client_id) === OAuthClients::KIND_LOOPBACK && $role !== McpRole::Admin => 'admins_only',
             default => null,
         };
     }
@@ -255,13 +263,7 @@ final class OAuthAuthorizations
 
     private static function isOurAddress(string $resource): bool
     {
-        foreach (McpUrl::acceptedServers() as $address) {
-            if (McpUrl::same($resource, $address)) {
-                return true;
-            }
-        }
-
-        return false;
+        return McpUrl::isAccepted($resource);
     }
 
     /** @param  array<string, string>  $params */

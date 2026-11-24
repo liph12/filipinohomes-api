@@ -152,6 +152,8 @@ class AuthenticateMcpKey
 
         if ($role === null) {
             $this->note($request, 'no_access', null, $connection->id);
+            // Switched off, say. Switching them back on does not bring the connection back: they agree again.
+            McpConnections::end($connection, null, McpConnections::NO_ACCESS);
 
             return $this->refuse(403, 'This account cannot use the MCP server.');
         }
@@ -226,12 +228,16 @@ class AuthenticateMcpKey
 
     /**
      * What a 401 tells the client to do. While signing in is on it points at the document that says where to
-     * sign a person in (the shape Claude's own documentation shows); otherwise it only says a key is needed.
+     * sign a person in (the shape the MCP authorization spec shows): a request that carried no credential is told
+     * only where to sign in, one that carried a credential this gate did not accept is told that too (RFC 6750).
+     * Otherwise it only says a key is needed.
      */
     private function challenge(bool $hadToken): string
     {
         if (OAuthSwitch::enabled()) {
-            return 'Bearer error="invalid_token", error_description="'.($hadToken ? 'The access token is not valid' : 'Authentication required').'", resource_metadata="'.McpUrl::resourceMetadata().'", scope="fh:read"';
+            $why = $hadToken ? 'error="invalid_token", error_description="The access token is not valid", ' : '';
+
+            return 'Bearer '.$why.'resource_metadata="'.McpUrl::resourceMetadata().'", scope="fh:read"';
         }
 
         return $hadToken ? 'Bearer realm="mcp", error="invalid_token"' : 'Bearer realm="mcp"';

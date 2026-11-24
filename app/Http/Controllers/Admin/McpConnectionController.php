@@ -12,9 +12,10 @@ use App\Models\User;
 use App\Services\McpOAuth\McpConnections;
 use App\Services\McpOAuth\OAuthClients;
 use App\Services\McpOAuth\OAuthSwitch;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
 
 /**
@@ -56,7 +57,7 @@ class McpConnectionController extends Controller
         $like = '%'.addcslashes($text, '%_\\').'%';
 
         $page = McpConnection::query()
-            ->with('user.role', 'user.agent')
+            ->with('user:id,name,email')
             ->when($text !== '', fn ($query) => $query->whereHas('user', fn ($user) => $user->where('name', 'like', $like)->orWhere('email', 'like', $like)))
             ->orderByDesc('id')
             ->paginate(25);
@@ -77,7 +78,7 @@ class McpConnectionController extends Controller
     /** DELETE /admin/mcp-connections/{id}: end one. Claude would have to sign in again. */
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $connection = McpConnection::query()->with('user.role', 'user.agent')->find($id);
+        $connection = McpConnection::query()->with('user:id,name,email')->find($id);
 
         if ($connection === null) {
             return response()->json(['message' => 'There is no such connection.'], 404);
@@ -85,7 +86,7 @@ class McpConnectionController extends Controller
 
         McpConnections::end($connection, $request->user(), McpConnections::ADMIN);
 
-        return response()->json(['data' => $this->present($connection->refresh()->load('user.role', 'user.agent'))]);
+        return response()->json(['data' => $this->present($connection->refresh()->load('user:id,name,email'))]);
     }
 
     /** POST /admin/mcp-connections/disconnect-all: end every connection that is still good. */
@@ -93,9 +94,13 @@ class McpConnectionController extends Controller
     {
         $ended = 0;
 
-        McpConnection::query()->active()->orderBy('id')->each(function (McpConnection $connection) use ($request, &$ended): void {
-            McpConnections::end($connection, $request->user(), McpConnections::ADMIN);
-            $ended++;
+        // By id, not by page: ending a connection takes it out of the set being walked, and a page-by-page walk
+        // would skip the rows that slide into the pages already passed.
+        McpConnection::query()->active()->chunkById(500, function ($connections) use ($request, &$ended): void {
+            foreach ($connections as $connection) {
+                McpConnections::end($connection, $request->user(), McpConnections::ADMIN);
+                $ended++;
+            }
         });
 
         return response()->json(['ended' => $ended]);
@@ -108,26 +113,44 @@ class McpConnectionController extends Controller
      */
     public function notifyAddressChange(): JsonResponse
     {
-        $current = (string) McpUrl::canonical(McpUrl::server());
-        $done = json_decode((string) Setting::get(self::NOTIFIED, '{}'), true);
-        $done = is_array($done) ? $done : [];
-        $already = array_map('intval', (array) ($done[$current] ?? []));
+        // One run at a time (on this server; the setting below is what a second server goes by).
+        $lock = Cache::lock('fhmcp-address-notify', 120);
 
-        $people = $this->affected()->reject(fn (User $user): bool => in_array($user->id, $already, true));
-
-        foreach ($people as $user) {
-            McpConnections::tell(
-                $user,
-                'Claude address changed',
-                'The address Claude connects to has changed. Please connect Claude again from your portal.',
-                ['type' => 'mcp_address_changed'],
-            );
+        if (! $lock->get()) {
+            return response()->json(['message' => 'These are already being sent. Try again in a moment.'], 409);
         }
 
-        // Only the current address is kept, so a later change starts clean.
-        Setting::set(self::NOTIFIED, json_encode([$current => array_values(array_unique([...$already, ...$people->pluck('id')->all()]))]));
+        try {
+            $current = (string) McpUrl::canonical(McpUrl::server());
+            $done = json_decode((string) Setting::get(self::NOTIFIED, '{}'), true);
+            $done = is_array($done) ? $done : [];
+            $already = array_map('intval', (array) ($done[$current] ?? []));
+            $told = $already;
+            $notified = 0;
+            $failed = 0;
 
-        return response()->json(['notified' => $people->count(), 'already_notified' => count($already)]);
+            $people = User::query()->whereIn('id', $this->affectedIds())->whereNotIn('id', $already)->get();
+
+            // What is remembered is who was reached, a batch at a time: a person it failed for is asked again next time,
+            // and a run that dies halfway does not tell everyone it got to again.
+            foreach ($people->chunk(25) as $batch) {
+                foreach ($batch as $user) {
+                    if (McpConnections::tell($user, 'Claude address changed', 'The address Claude connects to has changed. Please connect Claude again from your portal.', ['type' => 'mcp_address_changed'])) {
+                        $told[] = $user->id;
+                        $notified++;
+                    } else {
+                        $failed++;
+                    }
+                }
+
+                // Only the current address is kept, so a later change starts clean.
+                Setting::set(self::NOTIFIED, json_encode([$current => array_values(array_unique($told))]));
+            }
+
+            return response()->json(['notified' => $notified, 'already_notified' => count($already), 'failed' => $failed]);
+        } finally {
+            $lock->release();
+        }
     }
 
     /** @return array<string, mixed> */
@@ -145,31 +168,31 @@ class McpConnectionController extends Controller
                 'active' => McpConnection::query()->active()->count(),
                 'needing_reconnect' => $this->staleConnections()->count(),
             ],
-            'affected_people' => $this->affected()->count(),
+            'affected_people' => count($this->affectedIds()),
         ];
     }
 
-    /** Active connections made for an address other than the current one. */
-    private function staleConnections()
+    /** Active connections made for an address other than the current one (a connection's address is kept in its canonical form). */
+    private function staleConnections(): Builder
     {
-        return McpConnection::query()->active()->get()->filter(fn (McpConnection $connection): bool => $connection->needsReconnect());
+        return McpConnection::query()->active()->where('resource', '!=', (string) McpUrl::canonical(McpUrl::server()));
     }
 
     /**
      * The people an address change touches: those whose connection was made for another address, and, once
      * an address has been retired, everyone who holds a key (they typed the old address into Claude).
      *
-     * @return Collection<int, User>
+     * @return list<int>
      */
-    private function affected()
+    private function affectedIds(): array
     {
-        $ids = $this->staleConnections()->pluck('user_id');
+        $ids = $this->staleConnections()->distinct()->pluck('user_id');
 
         if ((array) config('fhmcp.former_urls', []) !== []) {
             $ids = $ids->merge(McpKey::query()->active()->pluck('user_id'));
         }
 
-        return User::query()->whereIn('id', $ids->unique()->values()->all())->get();
+        return User::query()->whereIn('id', $ids->unique()->values()->all())->pluck('id')->map(fn ($id): int => (int) $id)->all();
     }
 
     /** @return array<string, mixed> */

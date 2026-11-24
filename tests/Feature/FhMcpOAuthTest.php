@@ -7,6 +7,7 @@ use App\Models\McpConnection;
 use App\Models\McpOauthRequest;
 use App\Models\McpOauthToken;
 use App\Models\User;
+use App\Services\ExpoPushService;
 use App\Services\McpOAuth\OAuthSwitch;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
@@ -18,6 +19,8 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\PersonalAccessToken;
+use Mockery\MockInterface;
+use RuntimeException;
 use Tests\Concerns\CreatesExecutiveReportTables;
 use Tests\TestCase;
 
@@ -162,7 +165,7 @@ class FhMcpOAuthTest extends TestCase
     {
         $this->as($userId);
 
-        return (string) $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertOk()->json('redirect_to');
+        return (string) $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $userId])->assertOk()->json('redirect_to');
     }
 
     /**
@@ -250,6 +253,11 @@ class FhMcpOAuthTest extends TestCase
 
         $this->assertStringContainsString('resource_metadata="'.self::API.'/.well-known/oauth-protected-resource/mcp/filipinohomes"', $challenge);
         $this->assertStringContainsString('scope="fh:read"', $challenge);
+        $this->assertStringNotContainsString('error=', $challenge, 'no credential was sent, so nothing was wrong with one (RFC 6750)');
+
+        $rejected = (string) $this->mcp('tools/list', 'fhoat_'.str_repeat('z', 48))->assertStatus(401)->headers->get('WWW-Authenticate');
+        $this->assertStringContainsString('error="invalid_token"', $rejected);
+        $this->assertStringContainsString('resource_metadata="'.self::API.'/.well-known/oauth-protected-resource/mcp/filipinohomes"', $rejected);
 
         foreach (['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp/filipinohomes'] as $path) {
             $this->getJson($path)->assertOk()
@@ -476,13 +484,13 @@ class FhMcpOAuthTest extends TestCase
 
         $handle = $this->handleOf($this->authorize($this->verifier())->assertStatus(302));
         $this->postJson('/api/mcp/connect/requests/'.$handle.'/deny')->assertOk();
-        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(409)->assertJsonPath('error', 'answered');
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u1']])->assertStatus(409)->assertJsonPath('error', 'answered');
         $this->getJson('/api/mcp/connect/requests/'.$handle)->assertStatus(409);
 
         $expired = $this->handleOf($this->authorize($this->verifier())->assertStatus(302));
         Carbon::setTestNow(now()->addMinutes(16));
         $this->getJson('/api/mcp/connect/requests/'.$expired)->assertStatus(410)->assertJsonPath('error', 'expired');
-        $this->postJson('/api/mcp/connect/requests/'.$expired.'/approve')->assertStatus(410);
+        $this->postJson('/api/mcp/connect/requests/'.$expired.'/approve', ['account_id' => $this->id['u1']])->assertStatus(410);
     }
 
     public function test_saying_no_sends_the_browser_back_with_access_denied_and_the_state(): void
@@ -506,13 +514,14 @@ class FhMcpOAuthTest extends TestCase
         foreach ([$this->id['c1'], $this->makeUser(self::SECRETARY)] as $userId) {
             $this->as($userId);
             $this->getJson('/api/mcp/connect/requests/'.$handle)->assertOk()->assertJsonPath('allowed', false)->assertJsonPath('reason', 'no_role');
-            $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(403)->assertJsonPath('error', 'not_allowed');
+            $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $userId])->assertStatus(403)->assertJsonPath('error', 'not_allowed');
         }
 
         // An agent who has been switched off is stopped before it gets that far, like everything else on the API.
-        $this->as((int) DB::table('agents')->where('id', $this->id['a5'])->value('user_id'));
+        $inactive = (int) DB::table('agents')->where('id', $this->id['a5'])->value('user_id');
+        $this->as($inactive);
         $this->getJson('/api/mcp/connect/requests/'.$handle)->assertStatus(403)->assertJsonPath('account_status', 'inactive');
-        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(403);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $inactive])->assertStatus(403);
 
         // An admin looking at an agent's account through "log in as" must not connect Claude for them.
         $agent = User::query()->findOrFail($this->id['u1']);
@@ -520,20 +529,57 @@ class FhMcpOAuthTest extends TestCase
         $this->app['auth']->forgetGuards();
         $this->actingAs($agent, 'sanctum');
         $this->getJson('/api/mcp/connect/requests/'.$handle)->assertOk()->assertJsonPath('reason', 'impersonated');
-        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(403);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u1']])->assertStatus(403);
 
         $this->assertNull(McpOauthRequest::query()->firstOrFail()->decision, 'nothing was answered');
         $this->assertSame(0, McpConnection::query()->count());
     }
 
-    public function test_a_request_is_answered_once_even_by_two_at_the_same_moment(): void
+    public function test_a_request_that_was_answered_cannot_be_answered_again(): void
     {
         $handle = $this->handleOf($this->authorize($this->verifier())->assertStatus(302));
         $this->approve($handle, $this->id['u1']);
 
         $this->as($this->id['u1']);
-        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(409);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u1']])->assertStatus(409);
         $this->postJson('/api/mcp/connect/requests/'.$handle.'/deny')->assertStatus(409);
+    }
+
+    public function test_two_answers_that_both_found_the_request_waiting_give_one_answer(): void
+    {
+        $handle = $this->handleOf($this->authorize($this->verifier())->assertStatus(302));
+
+        // The other answer lands in the moment between this one finding the request waiting and recording its own.
+        $landed = false;
+        McpOauthRequest::retrieved(function (McpOauthRequest $row) use (&$landed): void {
+            if (! $landed) {
+                $landed = true;
+                McpOauthRequest::query()->whereKey($row->id)->update(['decision' => McpOauthRequest::DENIED]);
+            }
+        });
+
+        $this->as($this->id['u1']);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u1']])->assertStatus(409)->assertJsonPath('error', 'answered');
+
+        $request = McpOauthRequest::query()->firstOrFail();
+        $this->assertSame('denied', $request->decision, 'the answer that landed first stands');
+        $this->assertNull($request->code_hash, 'and no code was made for the other');
+    }
+
+    public function test_an_answer_is_for_the_account_the_page_showed_not_whoever_is_signed_in_by_then(): void
+    {
+        $handle = $this->handleOf($this->authorize($this->verifier())->assertStatus(302));
+
+        // The page described u1's account (and says which). A second tab has since signed in as u3.
+        $this->as($this->id['u1']);
+        $this->getJson('/api/mcp/connect/requests/'.$handle)->assertOk()->assertJsonPath('account.id', $this->id['u1']);
+
+        $this->as($this->id['u3']);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u1']])->assertStatus(403)->assertJsonPath('error', 'account_changed');
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(422);
+
+        $this->assertNull(McpOauthRequest::query()->firstOrFail()->decision, 'nothing was answered');
+        $this->assertSame(0, McpConnection::query()->count());
     }
 
     // ── The code, and the tokens ────────────────────────────────────────────
@@ -737,15 +783,20 @@ class FhMcpOAuthTest extends TestCase
         $this->refresh($second['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
     }
 
-    public function test_a_late_repeat_within_a_couple_of_minutes_is_a_retry_even_after_the_newer_pair_was_used(): void
+    public function test_a_repeat_within_half_a_minute_is_a_retry_even_after_the_newer_pair_was_used_and_a_later_one_is_not(): void
     {
         $first = $this->connect($this->id['u1'])['tokens'];
         $second = $this->refresh($first['refresh_token'])->assertOk()->json();
         $this->mcp('tools/list', $second['access_token'])->assertOk();
 
-        Carbon::setTestNow(now()->addSeconds(60));
+        Carbon::setTestNow(now()->addSeconds(25));
         $this->refresh($first['refresh_token'])->assertOk();
         $this->assertNull(McpConnection::query()->firstOrFail()->revoked_at);
+
+        // Past the window, with the newer pair in use: the old token is in other hands.
+        Carbon::setTestNow(now()->addSeconds(10));
+        $this->refresh($first['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+        $this->assertSame('refresh_reuse', McpConnection::query()->firstOrFail()->revoked_reason);
     }
 
     public function test_refreshing_is_refused_for_something_that_is_not_a_refresh_token_and_for_another_client(): void
@@ -770,16 +821,51 @@ class FhMcpOAuthTest extends TestCase
 
     // ── Who the person is ───────────────────────────────────────────────────
 
-    public function test_a_person_who_loses_their_role_gets_403_and_one_whose_role_changed_has_to_connect_again(): void
+    public function test_a_person_who_loses_their_role_gets_403_and_the_connection_ends_for_good(): void
     {
         $made = $this->connect($this->id['u1'])['tokens'];
         $this->mcp('tools/list', $made['access_token'])->assertOk();
 
-        // Switched off: no role, so the connection opens nothing, and a refresh is refused.
+        // Switched off: no role, so the connection opens nothing, and it ends there and then.
         DB::table('agents')->where('id', $this->id['a1'])->update(['status' => 'terminated']);
         $this->mcp('tools/list', $made['access_token'])->assertStatus(403);
-        $this->refresh($made['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+        $connection = McpConnection::query()->firstOrFail();
+        $this->assertSame('no_access', $connection->revoked_reason);
+        $this->assertNotNull($connection->revoked_at);
+
+        // Switching them back on does not bring it back: they agree again, as they would to a new one.
         DB::table('agents')->where('id', $this->id['a1'])->update(['status' => 'active']);
+        $this->mcp('tools/list', $made['access_token'])->assertStatus(401);
+        $this->refresh($made['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+    }
+
+    public function test_a_refresh_by_a_person_with_no_role_ends_the_connection_too(): void
+    {
+        $made = $this->connect($this->id['u1'])['tokens'];
+
+        DB::table('agents')->where('id', $this->id['a1'])->update(['status' => 'terminated']);
+        $this->refresh($made['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+
+        $this->assertSame('no_access', McpConnection::query()->firstOrFail()->revoked_reason);
+        $this->assertSame(0, McpConnection::query()->active()->count(), 'it no longer shows as in use, nor counts toward the limit');
+    }
+
+    public function test_signing_out_everywhere_takes_the_connected_claude_with_it(): void
+    {
+        $mine = $this->connect($this->id['u1'])['tokens'];
+        $other = $this->connect($this->id['u3'])['tokens'];
+
+        $this->as($this->id['u1']);
+        $this->postJson('/api/logout-all')->assertOk();
+
+        $this->mcp('tools/list', $mine['access_token'])->assertStatus(401);
+        $this->assertSame('logged_out', McpConnection::query()->where('user_id', $this->id['u1'])->firstOrFail()->revoked_reason);
+        $this->mcp('tools/list', $other['access_token'])->assertOk();
+    }
+
+    public function test_a_person_whose_role_changed_has_to_connect_again(): void
+    {
+        $made = $this->connect($this->id['u1'])['tokens'];
         $this->mcp('tools/list', $made['access_token'])->assertOk();
 
         // Made a team leader: what Claude can see is no longer what they agreed to, so it ends and asks again.
@@ -810,7 +896,7 @@ class FhMcpOAuthTest extends TestCase
         $handle = $this->handleOf($this->authorize($this->verifier())->assertStatus(302));
         $this->as($this->id['u3']);
         $this->getJson('/api/mcp/connect/requests/'.$handle)->assertOk()->assertJsonPath('reason', 'paused');
-        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(403);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u3']])->assertStatus(403);
 
         // On again: the same connection works, nothing was lost.
         OAuthSwitch::set(OAuthSwitch::ON);
@@ -826,7 +912,7 @@ class FhMcpOAuthTest extends TestCase
         $handle = $this->handleOf($loopback(54321)->assertStatus(302));
         $this->as($this->id['u1']);
         $this->getJson('/api/mcp/connect/requests/'.$handle)->assertOk()->assertJsonPath('client.kind', 'loopback')->assertJsonPath('reason', 'admins_only');
-        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve')->assertStatus(403);
+        $this->postJson('/api/mcp/connect/requests/'.$handle.'/approve', ['account_id' => $this->id['u1']])->assertStatus(403);
 
         // An admin may, on any port, and it takes a press and hold.
         $handle = $this->handleOf($loopback(61234)->assertStatus(302));
@@ -991,7 +1077,7 @@ class FhMcpOAuthTest extends TestCase
         $found = collect($this->getJson('/api/admin/mcp-connections?q=maria')->assertOk()->json('data'));
         $this->assertSame(['Maria Santos'], $found->pluck('person.name')->all());
         $this->assertCount(0, $this->getJson('/api/admin/mcp-connections?q=nobody')->json('data'));
-        $this->assertCount(2, $this->getJson('/api/admin/mcp-connections?q=%25')->json('data') === [] ? [1, 2] : [], 'a percent sign is a character, not a wildcard');
+        $this->assertCount(0, $this->getJson('/api/admin/mcp-connections?q=%25')->json('data'), 'a percent sign is a character, not a wildcard');
     }
 
     public function test_an_admin_can_end_every_connection_at_once_and_it_is_not_a_side_effect_of_the_switch(): void
@@ -1061,6 +1147,129 @@ class FhMcpOAuthTest extends TestCase
         $this->assertNotEmpty($key['key']);
     }
 
+    // ── What the review found ───────────────────────────────────────────────
+
+    public function test_a_value_that_only_ends_in_a_newline_is_not_a_challenge_or_a_return_address(): void
+    {
+        $verifier = $this->verifier();
+
+        // A challenge with a newline after its 43 characters would not fit the column (a 500 on a real database).
+        $this->authorize($verifier, ['code_challenge' => $this->challenge($verifier)."\n"])->assertStatus(302)->assertHeader('Location');
+        $this->assertSame(0, McpOauthRequest::query()->count());
+
+        // And a return address with one is not Claude Code's.
+        $this->authorize($verifier, ['client_id' => 'claude-code', 'redirect_uri' => "http://localhost:5555/callback\n"])->assertStatus(400);
+        $this->assertSame(0, McpOauthRequest::query()->count());
+    }
+
+    public function test_a_request_that_was_never_answered_does_not_count_against_the_room_for_new_ones(): void
+    {
+        // The count is of requests waiting for an answer; a thousand answered ones leave room.
+        McpOauthRequest::query()->insert(array_map(fn (int $i): array => [
+            'handle_hash' => hash('sha256', 'h'.$i), 'client_id' => 'claude', 'redirect_uri' => self::CLAUDE, 'code_challenge' => str_repeat('a', 43),
+            'decision' => McpOauthRequest::DENIED, 'expires_at' => now()->addMinutes(10), 'created_at' => now(),
+        ], range(1, 50)));
+
+        $this->authorize($this->verifier())->assertStatus(302);
+        $this->assertSame(51, McpOauthRequest::query()->count());
+    }
+
+    public function test_a_connection_that_cannot_get_its_first_tokens_is_not_left_behind(): void
+    {
+        $verifier = $this->verifier();
+        $handle = $this->handleOf($this->authorize($verifier)->assertStatus(302));
+        $code = $this->parts($this->approve($handle, $this->id['u1']))['code'];
+
+        McpOauthToken::creating(function (): void {
+            throw new RuntimeException('the table is gone');
+        });
+
+        $this->token([
+            'grant_type' => 'authorization_code', 'code' => $code, 'redirect_uri' => self::CLAUDE, 'client_id' => 'claude', 'code_verifier' => $verifier, 'resource' => self::SERVER,
+        ])->assertStatus(500)->assertJsonPath('error', 'server_error');
+
+        $this->assertSame(0, McpConnection::query()->count(), 'no connection that counts toward the limit and has no tokens');
+        $this->assertSame(0, McpOauthToken::query()->count());
+    }
+
+    public function test_a_connection_never_lasts_past_the_longest_however_often_it_is_used(): void
+    {
+        config(['fhmcp.max_connection_days' => 90]);
+        $tokens = $this->connect($this->id['u1'])['tokens'];
+        $made = now();
+
+        // Used every fifty days, which on its own would keep it going for ever.
+        Carbon::setTestNow($made->copy()->addDays(50));
+        $tokens = $this->refresh($tokens['refresh_token'])->assertOk()->json();
+        Carbon::setTestNow($made->copy()->addDays(89));
+        $tokens = $this->refresh($tokens['refresh_token'])->assertOk()->json();
+        $this->assertTrue(McpConnection::query()->firstOrFail()->expires_at->equalTo($made->copy()->addDays(90)), 'it slid as far as the longest and no further');
+
+        Carbon::setTestNow($made->copy()->addDays(91));
+        $this->refresh($tokens['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+        $this->mcp('tools/list', $tokens['access_token'])->assertStatus(401);
+    }
+
+    public function test_ending_every_connection_gets_to_the_last_of_them_however_many_there_are(): void
+    {
+        // More than one walk through the table holds: ending a connection takes it out of the set being walked.
+        $now = now();
+        foreach (array_chunk(range(1, 1150), 50) as $ids) {
+            McpConnection::query()->insert(array_map(fn (int $i): array => [
+                'user_id' => $this->id['u1'], 'client_id' => 'claude', 'client_kind' => 'hosted', 'role' => 'agent', 'resource' => self::SERVER,
+                'scope' => 'fh:read', 'expires_at' => $now->copy()->addDays(30), 'created_at' => $now, 'updated_at' => $now,
+            ], $ids));
+        }
+        $this->assertSame(1150, McpConnection::query()->active()->count());
+
+        $this->as($this->id['admin']);
+        $this->postJson('/api/admin/mcp-connections/disconnect-all')->assertOk()->assertJsonPath('ended', 1150);
+        $this->assertSame(0, McpConnection::query()->active()->count());
+    }
+
+    public function test_the_address_change_notice_remembers_who_it_reached_and_asks_the_others_again(): void
+    {
+        $this->connect($this->id['u1']);
+        $this->connect($this->id['u3']);
+        config(['fhmcp.public_url' => 'https://new.example.test', 'fhmcp.former_urls' => [self::API]]);
+
+        // The bell is down for one of them.
+        $down = $this->id['u3'];
+        $reached = [];
+        $this->mock(ExpoPushService::class, function (MockInterface $mock) use (&$down, &$reached): void {
+            $mock->shouldReceive('notify')->andReturnUsing(function (User $user) use (&$down, &$reached): void {
+                if ($user->id === $down) {
+                    throw new RuntimeException('push is down');
+                }
+
+                $reached[] = $user->id;
+            });
+        });
+
+        $this->as($this->id['admin']);
+        $this->postJson('/api/admin/mcp-oauth/notify-address-change')->assertOk()
+            ->assertJsonPath('notified', 1)->assertJsonPath('failed', 1)->assertJsonPath('already_notified', 0);
+        $this->assertSame([$this->id['u1']], $reached);
+
+        // It is back: only the one that was missed is told, and nobody is told twice.
+        $down = null;
+        $this->postJson('/api/admin/mcp-oauth/notify-address-change')->assertOk()
+            ->assertJsonPath('notified', 1)->assertJsonPath('failed', 0)->assertJsonPath('already_notified', 1);
+        $this->assertSame([$this->id['u1'], $this->id['u3']], $reached);
+
+        $this->postJson('/api/admin/mcp-oauth/notify-address-change')->assertOk()->assertJsonPath('notified', 0)->assertJsonPath('already_notified', 2);
+    }
+
+    public function test_while_the_switch_is_off_the_portal_is_told_so_without_looking_anything_up(): void
+    {
+        $this->connect($this->id['u1']);
+        OAuthSwitch::set(OAuthSwitch::OFF);
+
+        $this->as($this->id['u1']);
+        $this->getJson('/api/mcp/connect/status')->assertOk()
+            ->assertJsonPath('mode', 'off')->assertJsonPath('available', false)->assertJsonPath('role', null)->assertJsonPath('connections', []);
+    }
+
     // ── What is left behind ─────────────────────────────────────────────────
 
     public function test_the_clean_up_deletes_only_what_is_dead_and_can_run_twice(): void
@@ -1080,6 +1289,34 @@ class FhMcpOAuthTest extends TestCase
 
         $this->assertSame(0, Artisan::call('fhmcp:prune'), 'twice is fine');
         $this->assertNotEmpty($live);
+    }
+
+    public function test_the_clean_up_keeps_what_is_still_inside_its_windows_and_deletes_what_is_past_them(): void
+    {
+        $now = now();
+        $row = fn (array $o): array => $o + ['revoked_at' => null, 'revoked_reason' => null, 'user_id' => $this->id['u1'], 'client_id' => 'claude', 'client_kind' => 'hosted', 'role' => 'agent', 'resource' => self::SERVER, 'scope' => 'fh:read', 'created_at' => $now, 'updated_at' => $now];
+
+        // Ended: 89 days ago stays, 91 days ago goes. Run out: the same. And one that is live.
+        McpConnection::query()->insert([
+            $row(['expires_at' => $now->copy()->addDay(), 'revoked_at' => $now->copy()->subDays(89), 'revoked_reason' => 'user']),
+            $row(['expires_at' => $now->copy()->addDay(), 'revoked_at' => $now->copy()->subDays(91), 'revoked_reason' => 'user']),
+            $row(['expires_at' => $now->copy()->subDays(89)]),
+            $row(['expires_at' => $now->copy()->subDays(91)]),
+            $row(['expires_at' => $now->copy()->addDays(5)]),
+        ]);
+        [$endedRecently, , $ranOutRecently, , $live] = McpConnection::query()->orderBy('id')->pluck('id')->all();
+
+        // Sign-in requests: still waiting, only just over, and more than a day past their end.
+        $request = fn (string $name, $ends): array => ['handle_hash' => hash('sha256', $name), 'client_id' => 'claude', 'redirect_uri' => self::CLAUDE, 'code_challenge' => str_repeat('a', 43), 'expires_at' => $ends, 'created_at' => $now];
+        McpOauthRequest::query()->insert([$request('waiting', $now->copy()->addMinutes(5)), $request('just over', $now->copy()->subHours(20)), $request('old', $now->copy()->subHours(30))]);
+
+        $this->assertSame(0, Artisan::call('fhmcp:prune'));
+
+        $this->assertSame([$endedRecently, $ranOutRecently, $live], McpConnection::query()->orderBy('id')->pluck('id')->all(), 'the two past 90 days are gone; the other three stay');
+        $this->assertEqualsCanonicalizing([hash('sha256', 'waiting'), hash('sha256', 'just over')], McpOauthRequest::query()->pluck('handle_hash')->all());
+
+        $this->assertSame(0, Artisan::call('fhmcp:prune'), 'twice is fine');
+        $this->assertSame(3, McpConnection::query()->count());
     }
 
     public function test_a_live_connection_is_not_touched_by_the_clean_up(): void

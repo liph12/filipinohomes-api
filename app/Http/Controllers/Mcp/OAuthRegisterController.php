@@ -16,7 +16,7 @@ class OAuthRegisterController extends OAuthController
 {
     public function __invoke(Request $request): JsonResponse
     {
-        if ($response = $this->off() ?? $this->tooMany('fhmcp-oauth-register:'.$request->ip(), 60)) {
+        if ($response = $this->off() ?? $this->tooMany('fhmcp-oauth-register:'.$request->ip(), 600)) {
             return $response;
         }
 

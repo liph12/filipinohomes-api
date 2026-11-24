@@ -6,6 +6,7 @@ use App\Models\Agent;
 use App\Models\Audit;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\McpOAuth\McpConnections;
 use App\Support\OfficeRegionMap;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
@@ -342,6 +343,7 @@ HELP;
         // must not outlive it.
         $user->deviceTokens()->delete();
         $user->tokens()->delete();
+        McpConnections::endAll($user, McpConnections::LOGGED_OUT);
 
         $notes = ['new password, signed out everywhere'];
 

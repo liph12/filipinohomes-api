@@ -19,7 +19,7 @@ class OAuthTokenController extends OAuthController
 {
     public function token(Request $request, OAuthTokens $tokens): JsonResponse
     {
-        if ($response = $this->off() ?? $this->tooMany('fhmcp-oauth-token:'.$request->ip(), 300)) {
+        if ($response = $this->off() ?? $this->tooMany('fhmcp-oauth-token:'.$request->ip(), 1200)) {
             return $response;
         }
 
@@ -41,7 +41,7 @@ class OAuthTokenController extends OAuthController
     /** RFC 7009: it always answers 200, so it cannot be used to find out what is a token. */
     public function revoke(Request $request, OAuthTokens $tokens): JsonResponse
     {
-        if ($response = $this->off() ?? $this->tooMany('fhmcp-oauth-revoke:'.$request->ip(), 120)) {
+        if ($response = $this->off() ?? $this->tooMany('fhmcp-oauth-revoke:'.$request->ip(), 600)) {
             return $response;
         }
 

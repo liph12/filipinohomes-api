@@ -28,6 +28,12 @@ final class McpConnections
 
     public const REFRESH_REUSE = 'refresh_reuse';
 
+    /** The person's account no longer has a role on the server (switched off, say): what they agreed to is gone. */
+    public const NO_ACCESS = 'no_access';
+
+    /** The person signed out everywhere (or had their password reset): nothing opened by that login outlives it. */
+    public const LOGGED_OUT = 'logged_out';
+
     public static function end(McpConnection $connection, ?User $by, string $reason): void
     {
         if ($connection->revoked_at !== null) {
@@ -36,6 +42,16 @@ final class McpConnections
 
         $connection->forceFill(['revoked_at' => now(), 'revoked_by' => $by?->id, 'revoked_reason' => $reason])->save();
         Log::info('fhmcp.connection.ended', ['connection' => $connection->id, 'user' => $connection->user_id, 'reason' => $reason, 'by' => $by?->id]);
+    }
+
+    /** Ends every connection the person still has. Never the reason what called it fails (the sign-out itself has already happened). */
+    public static function endAll(User $user, string $reason): void
+    {
+        try {
+            McpConnection::query()->where('user_id', $user->id)->active()->get()->each(fn (McpConnection $connection) => self::end($connection, null, $reason));
+        } catch (Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -66,14 +82,22 @@ final class McpConnections
         self::tell($user, 'Claude connected', 'Claude was connected to your Filipino Homes account.', ['type' => 'mcp_connection', 'connection_id' => $connection->id]);
     }
 
-    /** @param  array<string, mixed>  $data */
-    public static function tell(User $user, string $title, string $body, array $data): void
+    /**
+     * Whether they were told. A notification that could not be made is never the reason a sign-in fails, but
+     * whoever sent it for a reason that matters (an address change) has to know who was not reached.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public static function tell(User $user, string $title, string $body, array $data): bool
     {
         try {
             app(ExpoPushService::class)->notify($user, 'mcp_connection', $title, $body, $data);
+
+            return true;
         } catch (Throwable $e) {
-            // Never the reason a sign-in fails.
             report($e);
+
+            return false;
         }
     }
 }
