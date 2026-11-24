@@ -596,8 +596,9 @@ Route::middleware('strip.tags')->group(function () {
             Route::post('/openai/improve-title', [OpenAIController::class, 'improveListingTitle']);
             Route::apiResource('users', UserController::class);
             Route::get('/teams/monthly-listings', [TeamController::class, 'monthlyListings']);
-            Route::apiResource('teams', TeamController::class);
-            Route::apiResource('team-agents', TeamAgentController::class);
+            // Reading teams and who is on them is open to a signed-in agent; changing either is admin-only (below).
+            Route::apiResource('teams', TeamController::class)->only(['index', 'show']);
+            Route::apiResource('team-agents', TeamAgentController::class)->only(['index', 'show']);
             Route::apiResource('property_attributes', PropertyAttributesController::class);
             Route::apiResource('properties', PropertyController::class);
             Route::apiResource('listings', ListingController::class)->only(['store', 'update', 'destroy']);
@@ -804,6 +805,11 @@ Route::middleware('strip.tags')->group(function () {
             // GET /admin/inquiries/{id}     → single inquiry with thread
             // POST /admin/inquiries/{id}/reply → send a reply from info@
             Route::middleware(RoleMiddleware::class.':admin')->group(function () {
+                // Creating, renaming and deleting teams, and who is on them and who leads: the pages that do it are
+                // admin pages, and a team's leader is what decides who sees the team's numbers and inquiries.
+                Route::apiResource('teams', TeamController::class)->only(['store', 'update', 'destroy']);
+                Route::apiResource('team-agents', TeamAgentController::class)->only(['store', 'update', 'destroy']);
+
                 // Reactivation requests from deactivated agents (accept / decline).
                 Route::get('/admin/reactivation-requests', [\App\Http\Controllers\ReactivationRequestController::class, 'index']);
                 Route::get('/admin/reactivation-requests/pending-count', [\App\Http\Controllers\ReactivationRequestController::class, 'pendingCount']);
