@@ -17,6 +17,7 @@ use App\Models\McpKey;
 use App\Models\User;
 use App\Services\Audience\AiVisibilityService;
 use App\Services\Audience\TrafficSourceService;
+use App\Services\User\ClientInsightsService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
@@ -47,7 +48,7 @@ class FhMcpTest extends TestCase
 
     private const ENDPOINT = '/mcp/filipinohomes';
 
-    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
+    private const ADMIN_TOOLS = ['fh_ai_visibility', 'fh_clients', 'fh_lookup', 'fh_metric', 'fh_metric_breakdown', 'fh_metric_records', 'fh_metrics_catalog', 'fh_traffic'];
 
     private const AGENT_TOOLS = ['my_lookup', 'my_metric', 'my_metric_breakdown', 'my_metric_records', 'my_metrics_catalog'];
 
@@ -76,6 +77,7 @@ class FhMcpTest extends TestCase
         }
 
         $this->createVisitTables();
+        $this->fakeClientInsights();
         $this->id = $this->seedExecutiveScenario();
         // The shared fixture makes a1 the leader of team Alpha. These tests are about admins and plain
         // agents, so a1 is one here; team leaders are FhMcpTeamLeaderTest's.
@@ -95,6 +97,36 @@ class FhMcpTest extends TestCase
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * The Client Insights page's summary, as fh_clients reads it. The service itself runs MySQL-only SQL
+     * (and has its own page), so these tests give the tool a fixed summary and check what it makes of it.
+     */
+    private function fakeClientInsights(): void
+    {
+        $this->app->instance(ClientInsightsService::class, new class extends ClientInsightsService
+        {
+            public function cachedSummary(): array
+            {
+                return [
+                    'totals' => ['clients' => 4450, 'google' => 2118, 'inquired' => 1475, 'repeat' => 635, 'saved' => 508],
+                    'journey_ranges' => [
+                        '30d' => ['anonymous' => 9000, 'clients' => 794, 'saved' => 40, 'inquired' => 200, 'repeat' => 50],
+                        '90d' => ['anonymous' => 30000, 'clients' => 2000, 'saved' => 150, 'inquired' => 600, 'repeat' => 230],
+                        '12m' => ['anonymous' => 400000, 'clients' => 4446, 'saved' => 507, 'inquired' => 1474, 'repeat' => 635],
+                        'all' => ['anonymous' => 426843, 'clients' => 4450, 'saved' => 508, 'inquired' => 1475, 'repeat' => 635],
+                    ],
+                    'inquiry_buckets' => ['1' => 840, '2–3' => 389, '4–9' => 183, '10–19' => 52, '20+' => 11],
+                    'missed_reply' => [
+                        'replied' => ['clients' => 524, 'inquired_again' => 210, 'came_back' => 257],
+                        'no_reply' => ['clients' => 951, 'inquired_again' => 428, 'came_back' => 456],
+                    ],
+                    // On the page, not for Claude: the per-agent table with emails.
+                    'replies' => ['agents' => [['name' => 'Maria', 'email' => 'maria@example.com']]],
+                ];
+            }
+        });
+    }
 
     /** What fh_traffic reads (the Audience Insights tables), as the migrations make them. */
     private function createVisitTables(): void
@@ -357,7 +389,7 @@ class FhMcpTest extends TestCase
             ->assertOk()
             ->assertJsonPath('result.serverInfo.name', 'Filipino Homes');
 
-        // It can see what exists (all seventeen), to add the connector...
+        // It can see what exists (all eighteen), to add the connector...
         $everything = [...self::ADMIN_TOOLS, ...self::AGENT_TOOLS, ...self::TEAM_TOOLS];
         sort($everything);
         $this->assertSame($everything, collect($this->rpc('tools/list')->assertOk()->json('result.tools'))->pluck('name')->sort()->values()->all());
@@ -662,6 +694,32 @@ class FhMcpTest extends TestCase
         $this->assertSame(0, $value('ats.past_expiry', $this->a1Key), 'L3 is a2\'s');
     }
 
+    public function test_an_admin_reads_the_client_journey_repeat_inquiries_and_what_a_missed_reply_costs(): void
+    {
+        $answer = $this->tool('fh_clients', [], $this->adminKey);
+        $this->assertFalse($answer['is_error'], $answer['text']);
+        $data = $answer['data'];
+
+        $this->assertSame(['clients' => 4450, 'inquired' => 1475, 'inquired_pct' => 33.1, 'never_inquired' => 2975, 'never_inquired_pct' => 66.9], $data['did_they_inquire']);
+        $this->assertSame(['clients' => 635, 'pct_of_clients_who_inquired' => 43.1], $data['inquired_more_than_once']);
+        $this->assertSame(['1' => 840, '2–3' => 389, '4–9' => 183, '10–19' => 52, '20+' => 11], $data['inquiries_per_client']);
+
+        $all = $data['client_journey']['all_time'];
+        $this->assertSame([426843, 4450, 1, 508, 11.4, 1475, 33.1, 635, 43.1], array_values($all));
+        $this->assertSame(['last_30_days', 'last_90_days', 'last_12_months', 'all_time'], array_keys($data['client_journey']));
+
+        $this->assertSame(['clients' => 524, 'inquired_again' => 210, 'inquired_again_pct' => 40.1, 'came_back_to_the_site' => 257, 'came_back_pct' => 49], $data['missed_reply_cost']['got_a_reply']);
+        $this->assertSame(951, $data['missed_reply_cost']['no_reply']['clients']);
+
+        // Only counts: the page's per-agent table (names, emails) never reaches Claude.
+        $this->assertStringNotContainsString('Maria', $answer['text']);
+        $this->assertStringNotContainsString('example.com', $answer['text']);
+
+        // The catalog points to it; an agent has no such tool.
+        $this->assertStringContainsString('fh_clients', (string) $this->tool('fh_metrics_catalog', [], $this->adminKey)['data']['website_traffic']);
+        $this->assertNotNull($this->rpc('tools/call', ['name' => 'fh_clients', 'arguments' => (object) []], $this->a1Key)->json('error'));
+    }
+
     // ── Nothing it hands out carries a person's contact details ─────────────
 
     public function test_no_tool_returns_an_email_address_to_anyone(): void
@@ -676,6 +734,7 @@ class FhMcpTest extends TestCase
             [$this->adminKey, 'fh_lookup', ['type' => 'teams', 'text' => 'al']],
             [$this->adminKey, 'fh_traffic', ['geography' => true]],
             [$this->adminKey, 'fh_ai_visibility', []],
+            [$this->adminKey, 'fh_clients', []],
             [$this->a1Key, 'my_metrics_catalog', []],
             [$this->a1Key, 'my_metric', ['metric' => 'inquiries.received']],
             [$this->a1Key, 'my_metric_breakdown', ['metric' => 'listings.total', 'by' => 'project']],
@@ -751,6 +810,7 @@ class FhMcpTest extends TestCase
             [$this->adminKey, 'fh_lookup', ['type' => 'provinces', 'text' => 'ce']],
             [$this->adminKey, 'fh_traffic', ['geography' => true]],
             [$this->adminKey, 'fh_ai_visibility', []],
+            [$this->adminKey, 'fh_clients', []],
             [$this->a1Key, 'my_metrics_catalog', ['search' => 'sold']],
             [$this->a1Key, 'my_metric', ['metric' => 'listings.live']],
             [$this->a1Key, 'my_metric_breakdown', ['metric' => 'listings.total', 'by' => 'category']],
@@ -808,7 +868,7 @@ class FhMcpTest extends TestCase
     {
         $tools = (new ReflectionClass(FilipinoHomesServer::class))->getDefaultProperties()['tools'];
 
-        $this->assertCount(17, $tools);
+        $this->assertCount(18, $tools);
 
         foreach ($tools as $class) {
             $this->assertTrue(is_subclass_of($class, FhTool::class), "{$class} does not extend FhTool, so it would not be read-only by construction");

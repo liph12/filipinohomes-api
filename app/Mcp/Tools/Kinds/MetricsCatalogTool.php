@@ -64,7 +64,7 @@ abstract class MetricsCatalogTool extends FhTool
             'measured' => '"range" numbers count the days asked for; "now" numbers are as of this moment, whatever the days.',
             // Website traffic is not a catalog number (it has no team, agent or listing to filter by): it has its own tool.
             ...($policy->role() === McpRole::Admin
-                ? ['website_traffic' => 'Website visitors, traffic sources (google, facebook, direct, chatgpt...), referral sites and visitor locations are not in this catalog: use fh_traffic. For AI assistants viewing, crawling and sending people to the site (AI visibility), use fh_ai_visibility.']
+                ? ['website_traffic' => 'Website visitors, traffic sources (google, facebook, direct, chatgpt...), referral sites and visitor locations are not in this catalog: use fh_traffic. For AI assistants viewing, crawling and sending people to the site (AI visibility), use fh_ai_visibility. For the client journey, clients who inquired more than once, inquiries per client and what a missed reply costs, use fh_clients.']
                 : []),
         ];
     }

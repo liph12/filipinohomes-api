@@ -16,7 +16,7 @@ class ClientInsightsController extends Controller
 {
     public function __invoke(ClientInsightsService $clients): JsonResponse
     {
-        return response()->json(Cache::remember('admin:client-insights:v18', 600, fn () => $clients->summary()));
+        return response()->json($clients->cachedSummary());
     }
 
     /** GET /admin/client-insights/missed-reply — "What a missed reply costs" alone, for the main dashboard. */

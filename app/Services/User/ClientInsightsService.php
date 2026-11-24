@@ -32,6 +32,18 @@ class ClientInsightsService
 
     private const PLACES = ['listing', 'agent_profile', 'agent_website', 'agent_unrecorded'];
 
+    /** The page's cache of summary(). Bump the version whenever the payload's shape changes. */
+    public const SUMMARY_CACHE = 'admin:client-insights:v18';
+
+    /**
+     * summary(), cached ten minutes: what the Client Insights page shows, and what Claude's fh_clients
+     * reads, so both share one computation and one set of numbers.
+     */
+    public function cachedSummary(): array
+    {
+        return Cache::remember(self::SUMMARY_CACHE, 600, fn () => $this->summary());
+    }
+
     public function summary(): array
     {
         $clients = DB::table('users')
