@@ -83,9 +83,11 @@ The server is `https://<the API's address>/mcp/filipinohomes` and takes the key 
 
 | Env | Default | What |
 |---|---|---|
+| `FH_MCP_PUBLIC_URL` | (the request's own address) | The API's public address, like `https://xxx.laravel.cloud` (no path, no trailing slash). It is what the dashboard shows and what a new key's connect command uses. **Set it on production**: behind the proxy the request reads `http://`. It is also the address everyone's Claude is connected to, so changing it later means telling people to reconnect |
 | `FH_MCP_OPEN_HANDSHAKE` | false | A client with no key may do the handshake and list the tools (never run one) |
 | `FH_MCP_RATE_LIMIT` | 60 | Requests a minute on one key |
-| `FH_MCP_IP_FAILURES` | 20 | Wrong keys a minute from one address before it is cut off |
+| `FH_MCP_IP_FAILURES` | 20 | Guessed keys (something shaped like a key that is not one) a minute from one address before more guesses from it are cut off. A real key is never turned away by this, and a request with no key does not count |
+| `MCP_ALLOWED_ORIGINS` | `https://claude.ai,https://claude.com` | Websites whose pages may call the server from a browser. Claude's own servers send no origin and are not affected |
 | `FH_MCP_IP_RATE_LIMIT` | 30 | Key-less requests a minute from one address (open handshake only) |
 
 The number of keys, how long they last (`max_days` does not apply to a permanent key), the biggest answer (60,000 bytes) and the most records on a page (25) are set in the file.
@@ -105,6 +107,6 @@ Extend one of the kinds in `app/Mcp/Tools/Kinds` (or `FhTool` for a new shape) a
 
 - **401:** no key, a wrong one, an expired one or a revoked one (the answer is the same on purpose; the reason is in the log as `fhmcp.rejected`).
 - **403:** the key is real but its person may no longer use the server (an agent switched off, a role changed).
-- **429:** too many wrong keys from one address, or too many requests on one key. `Retry-After` says when.
+- **429:** too many guessed keys from one address, or too many requests on one key. `Retry-After` says when. A refusal also carries `WWW-Authenticate: Bearer realm="mcp"` (plus `error="invalid_token"` when a key was sent): that header is set by the gate itself, not by the MCP package.
 - **"too big":** the answer passed `max_result_bytes`. Ask for a shorter period, a narrower filter or fewer rows.
 - **The website card says "isn't available on this server yet":** the API it talks to does not have `/api/admin/mcp-keys` (the website is ahead of the API). **"The keys could not be loaded":** the API answered with an error; the usual cause is a pending migration, so check the log.

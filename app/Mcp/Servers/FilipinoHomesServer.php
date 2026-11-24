@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Servers;
 
+use App\Mcp\Support\McpUrl;
 use App\Mcp\Tools\Admin\FhLookup;
 use App\Mcp\Tools\Admin\FhMetric;
 use App\Mcp\Tools\Admin\FhMetricBreakdown;
@@ -12,6 +13,7 @@ use App\Mcp\Tools\Agent\MyMetric;
 use App\Mcp\Tools\Agent\MyMetricBreakdown;
 use App\Mcp\Tools\Agent\MyMetricRecords;
 use App\Mcp\Tools\Agent\MyMetricsCatalog;
+use Laravel\Mcp\Schema\Icon;
 use Laravel\Mcp\Server;
 use Laravel\Mcp\Server\Attributes\Instructions;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -49,4 +51,20 @@ class FilipinoHomesServer extends Server
         MyMetricRecords::class,
         MyLookup::class,
     ];
+
+    /**
+     * The FH mark, offered to the client as this server's icon. Claude decides whether to show
+     * it (a custom connector may still get its own default); it is not relied on for anything.
+     *
+     * @return list<Icon>
+     */
+    protected function icons(): array
+    {
+        $root = McpUrl::root();
+
+        return [
+            Icon::from($root.'/fh-mark-192.png', 'image/png', ['192x192']),
+            Icon::from($root.'/fh-mark-512.png', 'image/png', ['512x512']),
+        ];
+    }
 }

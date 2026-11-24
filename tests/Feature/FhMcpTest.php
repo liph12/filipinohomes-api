@@ -216,7 +216,7 @@ class FhMcpTest extends TestCase
         $this->rpc('tools/list', [], $this->adminKey)->assertStatus(403);
     }
 
-    public function test_wrong_keys_are_counted_per_address_and_then_everything_from_it_is_cut_off(): void
+    public function test_wrong_keys_are_counted_per_address_and_then_more_guesses_are_cut_off_but_a_real_key_is_not(): void
     {
         config(['fhmcp.ip_failures' => 3]);
 
@@ -224,8 +224,59 @@ class FhMcpTest extends TestCase
             $this->rpc('tools/list', [], 'fhmcp_'.str_repeat('z', 48))->assertStatus(401);
         }
 
-        // Even a good key is turned away from an address that has been guessing.
-        $this->rpc('tools/list', [], $this->adminKey)->assertStatus(429)->assertHeader('Retry-After');
+        // Past the count, one more guess from that address is cut off for the rest of the minute...
+        $this->rpc('tools/list', [], 'fhmcp_'.str_repeat('y', 48))->assertStatus(429)->assertHeader('Retry-After');
+
+        // ...but a real key from the same address is not turned away: the people who use Claude arrive
+        // from a few shared addresses, and someone else's guessing must not lock them out.
+        $this->rpc('tools/list', [], $this->adminKey)->assertOk();
+    }
+
+    public function test_a_request_with_no_key_is_not_a_guess_and_is_never_counted_against_its_address(): void
+    {
+        config(['fhmcp.ip_failures' => 3]);
+
+        // A client that has no key yet asks what it needs; so does anything that is not shaped like a key.
+        foreach (range(1, 10) as $_) {
+            $this->rpc('tools/list')->assertStatus(401);
+            $this->rpc('tools/list', [], 'not-a-key')->assertStatus(401);
+        }
+
+        // Nothing above counted: a wrong key still gets the ordinary answer, not the cut-off.
+        $this->rpc('tools/list', [], 'fhmcp_'.str_repeat('z', 48))->assertStatus(401);
+    }
+
+    public function test_a_refusal_tells_the_client_what_it_needs_in_the_gates_own_words(): void
+    {
+        // The package's own header middleware is off this route, so what is said here is the gate's.
+        $this->rpc('tools/list')->assertStatus(401)->assertHeader('WWW-Authenticate', 'Bearer realm="mcp"');
+        $this->rpc('tools/list', [], 'fhmcp_'.str_repeat('a', 48))->assertStatus(401)->assertHeader('WWW-Authenticate', 'Bearer realm="mcp", error="invalid_token"');
+    }
+
+    public function test_a_request_from_a_claude_page_is_allowed_and_one_from_another_site_is_not(): void
+    {
+        // Claude's own servers send no Origin at all; a browser on a Claude page sends its site.
+        $this->rpc('tools/list', [], $this->a1Key, ['Origin' => 'https://claude.ai'])->assertOk();
+        $this->rpc('tools/list', [], $this->a1Key, ['Origin' => 'https://claude.com'])->assertOk();
+        $this->rpc('tools/list', [], $this->a1Key)->assertOk();
+
+        $this->rpc('tools/list', [], $this->a1Key, ['Origin' => 'https://evil.example'])->assertStatus(403);
+    }
+
+    public function test_the_server_offers_the_fh_mark_as_its_icon_at_the_configured_public_address(): void
+    {
+        config(['fhmcp.public_url' => 'https://api.example.test/']);
+
+        $icons = $this->rpc('initialize', ['protocolVersion' => '2025-06-18', 'capabilities' => (object) [], 'clientInfo' => ['name' => 't', 'version' => '1']], $this->a1Key)
+            ->assertOk()
+            ->json('result.serverInfo.icons');
+
+        $this->assertSame(['https://api.example.test/fh-mark-192.png', 'https://api.example.test/fh-mark-512.png'], array_column($icons, 'src'));
+
+        // And the files are really there to be fetched.
+        foreach (['fh-mark-192.png', 'fh-mark-512.png', 'favicon.ico'] as $file) {
+            $this->assertGreaterThan(1000, filesize(public_path($file)), $file);
+        }
     }
 
     public function test_a_key_is_limited_per_minute_and_one_busy_key_does_not_slow_another(): void

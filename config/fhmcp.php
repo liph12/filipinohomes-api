@@ -13,6 +13,12 @@
 
 return [
 
+    // The address of this API as Claude reaches it, like https://api.example.com (no path, no
+    // trailing slash). It is what the dashboard shows and what a new key's connect command uses.
+    // Left empty, the address each request came to is used, which reads http:// behind a proxy
+    // that ends TLS for us: set it on production.
+    'public_url' => env('FH_MCP_PUBLIC_URL'),
+
     // Let a client that has no key yet (claude.ai probes a connector this way when it is
     // added) do the handshake and list the tools. Calling a tool still needs a key. Off by
     // default: a key-less request is a plain 401.

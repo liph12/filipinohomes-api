@@ -121,6 +121,18 @@ class FhMcpKeysAdminTest extends TestCase
             ->assertJsonPath('server.max_keys', 3);
     }
 
+    public function test_the_address_claude_is_given_is_the_configured_public_one(): void
+    {
+        // Behind the proxy the request reads http://; what people are told to connect to is fixed in config.
+        config(['fhmcp.public_url' => 'https://api.example.test']);
+        $this->as($this->id['admin']);
+
+        $this->postJson('/api/admin/mcp-keys', ['name' => 'x'])->assertCreated()->assertJsonPath('url', 'https://api.example.test/mcp/filipinohomes');
+
+        $this->as($this->id['admin']);
+        $this->getJson('/api/admin/mcp-keys')->assertOk()->assertJsonPath('server.url', 'https://api.example.test/mcp/filipinohomes');
+    }
+
     public function test_an_admin_can_make_a_key_for_an_active_agent_and_it_sees_only_that_agents_own_numbers(): void
     {
         $this->as($this->id['admin']);

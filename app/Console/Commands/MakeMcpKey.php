@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Mcp\Support\McpKeys;
 use App\Mcp\Support\McpRole;
+use App\Mcp\Support\McpUrl;
 use App\Models\User;
 use Illuminate\Console\Command;
 use InvalidArgumentException;
@@ -65,7 +66,7 @@ class MakeMcpKey extends Command
         $this->newLine();
         $this->line('   '.$key);
         $this->newLine();
-        $this->line('Server: '.url('/mcp/filipinohomes'));
+        $this->line('Server: '.McpUrl::server());
         $this->line('Send it as the header   Authorization: Bearer <the key>');
         $this->newLine();
         $this->line($role === McpRole::Admin

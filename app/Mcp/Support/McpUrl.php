@@ -1,0 +1,68 @@
+<?php
+
+namespace App\Mcp\Support;
+
+/**
+ * The MCP server's own address, in one place.
+ *
+ * Behind the proxy that ends TLS for us, url() reads http:// (only the
+ * forwarded address is trusted, not the forwarded scheme), and the same app
+ * answers on more than one host name. What a person is told to connect Claude
+ * to has to be one fixed, https address, so it comes from
+ * config('fhmcp.public_url') when that is set, and from the request only when
+ * it is not (local work, the tests).
+ */
+final class McpUrl
+{
+    /** Where the server is mounted (routes/ai.php). */
+    public const PATH = '/mcp/filipinohomes';
+
+    /** The API's public root, without a trailing slash. */
+    public static function root(): string
+    {
+        $configured = trim((string) config('fhmcp.public_url', ''));
+
+        return rtrim($configured !== '' ? $configured : url('/'), '/');
+    }
+
+    /** The address Claude is given. */
+    public static function server(): string
+    {
+        return self::root().self::PATH;
+    }
+
+    /**
+     * An address as it is compared: lowercase scheme and host, no default
+     * port, no trailing slash, no query and no fragment. Null when it is not
+     * an absolute http(s) address.
+     */
+    public static function canonical(string $url): ?string
+    {
+        $parts = parse_url(trim($url));
+
+        if (! is_array($parts) || ! isset($parts['scheme'], $parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+            return null;
+        }
+
+        $scheme = strtolower($parts['scheme']);
+
+        if (! in_array($scheme, ['http', 'https'], true)) {
+            return null;
+        }
+
+        $port = $parts['port'] ?? null;
+        $default = $scheme === 'https' ? 443 : 80;
+
+        return $scheme.'://'.strtolower($parts['host'])
+            .($port === null || $port === $default ? '' : ':'.$port)
+            .rtrim($parts['path'] ?? '', '/');
+    }
+
+    /** Whether two addresses are the same place. */
+    public static function same(string $one, string $other): bool
+    {
+        $a = self::canonical($one);
+
+        return $a !== null && $a === self::canonical($other);
+    }
+}

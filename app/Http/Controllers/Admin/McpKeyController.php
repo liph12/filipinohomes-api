@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Mcp\Support\McpKeys;
 use App\Mcp\Support\McpRole;
+use App\Mcp\Support\McpUrl;
 use App\Models\Agent;
 use App\Models\McpCall;
 use App\Models\McpKey;
@@ -43,7 +44,7 @@ class McpKeyController extends Controller
         return response()->json([
             'data' => $keys->map(fn (McpKey $key): array => $this->present($key, (int) ($calls[$key->id] ?? 0)))->values(),
             'server' => [
-                'url' => url('/mcp/filipinohomes'),
+                'url' => McpUrl::server(),
                 'max_keys' => (int) config('fhmcp.max_keys', 3),
                 'default_days' => (int) config('fhmcp.default_days', 30),
                 'max_days' => (int) config('fhmcp.max_days', 90),
@@ -82,7 +83,7 @@ class McpKeyController extends Controller
 
         return response()->json([
             'key' => $issued['key'],
-            'url' => url('/mcp/filipinohomes'),
+            'url' => McpUrl::server(),
             'data' => $this->present($issued['record']->load('user.role', 'user.agent', 'creator')),
         ], 201, ['Cache-Control' => 'no-store, private']);
     }

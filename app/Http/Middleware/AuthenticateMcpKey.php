@@ -26,7 +26,15 @@ use Symfony\Component\HttpFoundation\Response;
  *   429  too many wrong keys from one address, or too many requests on one key
  *
  * The reason for a refusal goes to the log, never into the answer. Wrong keys
- * are counted per address, so a script guessing keys is cut off early.
+ * are counted per address, so a script guessing keys is cut off early. Only a
+ * guess counts (something shaped like a key that is not one): a request with
+ * no key at all is how a client asks what it needs, and Claude's users all
+ * arrive from the same few addresses, so neither may count against the rest.
+ * The key is read before the count is looked at, and a good key is never
+ * turned away because of what someone else at its address sent.
+ *
+ * What a 401 says in WWW-Authenticate is this gate's to say: the package's own
+ * header middleware is taken off the route (routes/ai.php).
  *
  * With config('fhmcp.open_handshake') on, a request that carries no key at all
  * may still start the conversation (initialize, ping, notifications, list the
@@ -41,12 +49,6 @@ class AuthenticateMcpKey
     public function handle(Request $request, Closure $next): Response
     {
         $ip = (string) $request->ip();
-        $failures = 'fhmcp-key-failures:'.$ip;
-
-        if (RateLimiter::tooManyAttempts($failures, (int) config('fhmcp.ip_failures', 20))) {
-            return $this->refuse(429, 'Too many failed attempts', RateLimiter::availableIn($failures));
-        }
-
         $token = (string) $request->bearerToken();
 
         if ($token === '' && $this->mayHandshake($request)) {
@@ -64,7 +66,18 @@ class AuthenticateMcpKey
         $key = McpKeys::find($token);
 
         if ($key === null || ! $key->isActive()) {
-            RateLimiter::hit($failures, 60);
+            // A guess is something shaped like a key. Those are counted per address, and past the
+            // count that address's guesses are cut off; nothing else is.
+            if (str_starts_with($token, McpKeys::PREFIX)) {
+                $failures = 'fhmcp-key-failures:'.$ip;
+
+                if (RateLimiter::tooManyAttempts($failures, (int) config('fhmcp.ip_failures', 20))) {
+                    return $this->refuse(429, 'Too many failed attempts', RateLimiter::availableIn($failures));
+                }
+
+                RateLimiter::hit($failures, 60);
+            }
+
             $this->note($request, match (true) {
                 $token === '' => 'no_key',
                 $key === null => 'unknown_key',
@@ -72,7 +85,7 @@ class AuthenticateMcpKey
                 default => 'expired_key',
             });
 
-            return $this->refuse(401, 'Unauthorized');
+            return $this->refuse(401, 'Unauthorized', hadToken: $token !== '');
         }
 
         $user = $key->user;
@@ -117,9 +130,13 @@ class AuthenticateMcpKey
         return is_string($method) && (in_array($method, self::HANDSHAKE, true) || str_starts_with($method, 'notifications/'));
     }
 
-    private function refuse(int $status, string $message, ?int $retryAfter = null): Response
+    private function refuse(int $status, string $message, ?int $retryAfter = null, bool $hadToken = false): Response
     {
-        $headers = $status === 401 ? ['WWW-Authenticate' => 'Bearer'] : [];
+        // What a client is told to do next. A request with no credential at all gets no error code
+        // (RFC 6750); one that carried a credential this gate did not accept gets invalid_token.
+        $headers = $status === 401
+            ? ['WWW-Authenticate' => $hadToken ? 'Bearer realm="mcp", error="invalid_token"' : 'Bearer realm="mcp"']
+            : [];
 
         if ($retryAfter !== null) {
             $headers['Retry-After'] = (string) $retryAfter;
@@ -134,7 +151,8 @@ class AuthenticateMcpKey
 
     private function note(Request $request, string $reason, ?int $key = null): void
     {
-        Log::warning('fhmcp.rejected', [
+        // A request with no key is ordinary (a client finding out what the server wants), not a warning.
+        Log::log($reason === 'no_key' ? 'debug' : 'warning', 'fhmcp.rejected', [
             'reason' => $reason,
             'key' => $key,
             'ip' => $request->ip(),
