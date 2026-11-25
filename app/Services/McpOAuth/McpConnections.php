@@ -55,18 +55,22 @@ final class McpConnections
     }
 
     /**
-     * Keeps a person to the allowed number of connections by ending the ones used least recently.
+     * Keeps a person to the allowed number of connections for an AI by ending the ones used least recently.
      * Claude signs in again from time to time without ever telling us the old one is gone, so
-     * without this they would pile up. The one just made is never the one that goes.
+     * without this they would pile up. The one just made is never the one that goes, and one AI's
+     * connections never push another's out: Claude Code's and Claude's count together, ChatGPT's apart.
      */
     public static function retireBeyondCap(User $user, McpConnection $keep): void
     {
         $limit = max(1, (int) config('fhmcp.max_connections', 5));
+        $provider = OAuthClients::providerOf($keep->client_id);
 
         $active = McpConnection::query()
             ->where('user_id', $user->id)
+            ->when($provider !== null, fn ($query) => $query->whereIn('client_id', OAuthClients::clientsOf($provider)))
             ->active()
             ->orderByRaw('coalesce(last_used_at, created_at) desc')
+            ->orderByDesc('id')
             ->get();
 
         foreach ($active->slice($limit) as $old) {
@@ -76,10 +80,12 @@ final class McpConnections
         }
     }
 
-    /** A bell notification (and a push, if they have the app) that Claude was connected to their account. */
+    /** A bell notification (and a push, if they have the app) that an AI (Claude, ChatGPT) was connected to their account. */
     public static function tellConnected(User $user, McpConnection $connection): void
     {
-        self::tell($user, 'Claude connected', 'Claude was connected to your Filipino Homes account.', ['type' => 'mcp_connection', 'connection_id' => $connection->id]);
+        $ai = OAuthClients::providerName((string) OAuthClients::providerOf($connection->client_id));
+
+        self::tell($user, "{$ai} connected", "{$ai} was connected to your Filipino Homes account.", ['type' => 'mcp_connection', 'connection_id' => $connection->id]);
     }
 
     /**

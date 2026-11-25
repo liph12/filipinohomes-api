@@ -1065,9 +1065,10 @@ class FhMcpOAuthTest extends TestCase
 
         $rows = collect($list->json('data'));
         $this->assertSame(['Pedro Reyes', 'Maria Santos'], $rows->pluck('person.name')->all(), 'newest first');
-        $this->assertSame(['id', 'person', 'role', 'client', 'state', 'needs_reconnect', 'created_at', 'last_used_at', 'expires_at', 'revoked_at', 'revoked_reason', 'calls_7d'], array_keys($rows->first()));
+        $this->assertSame(['id', 'person', 'role', 'client', 'provider', 'state', 'needs_reconnect', 'created_at', 'last_used_at', 'expires_at', 'revoked_at', 'revoked_reason', 'calls_7d'], array_keys($rows->first()));
         $this->assertSame(['agent', 'agent'], $rows->pluck('role')->all());
         $this->assertSame(['Claude', 'Claude'], $rows->pluck('client')->all());
+        $this->assertSame(['claude', 'claude'], $rows->pluck('provider')->all());
         $this->assertSame([0, 1], $rows->pluck('calls_7d')->all());
         $this->assertSame(['total' => 2, 'page' => 1, 'per_page' => 25, 'last_page' => 1], $list->json('meta'));
         $this->assertStringNotContainsString($maria['access_token'], $list->getContent());
@@ -1133,13 +1134,13 @@ class FhMcpOAuthTest extends TestCase
             ->assertJsonPath('affected_people', 2);
 
         $this->postJson('/api/admin/mcp-oauth/notify-address-change')->assertOk()->assertJsonPath('notified', 2)->assertJsonPath('already_notified', 0);
-        $this->assertSame(1, DB::table('app_notifications')->where('user_id', $this->id['u1'])->where('title', 'Claude address changed')->count());
-        $this->assertSame(1, DB::table('app_notifications')->where('user_id', $this->id['u3'])->where('title', 'Claude address changed')->count());
-        $this->assertStringNotContainsString('Authorize', (string) DB::table('app_notifications')->where('title', 'Claude address changed')->value('body'));
+        $this->assertSame(1, DB::table('app_notifications')->where('user_id', $this->id['u1'])->where('title', 'AI address changed')->count());
+        $this->assertSame(1, DB::table('app_notifications')->where('user_id', $this->id['u3'])->where('title', 'AI address changed')->count());
+        $this->assertStringNotContainsString('Authorize', (string) DB::table('app_notifications')->where('title', 'AI address changed')->value('body'));
 
         // Once for each person.
         $this->postJson('/api/admin/mcp-oauth/notify-address-change')->assertOk()->assertJsonPath('notified', 0)->assertJsonPath('already_notified', 2);
-        $this->assertSame(2, DB::table('app_notifications')->where('title', 'Claude address changed')->count());
+        $this->assertSame(2, DB::table('app_notifications')->where('title', 'AI address changed')->count());
 
         // When the old address stops being listed, what was made for it stops, and Claude is asked to sign in again.
         config(['fhmcp.former_urls' => []]);

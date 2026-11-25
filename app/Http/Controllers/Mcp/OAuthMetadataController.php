@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Mcp;
 
 use App\Mcp\Support\McpUrl;
+use App\Services\McpOAuth\OAuthSwitch;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -57,6 +58,9 @@ class OAuthMetadataController extends OAuthController
             'code_challenge_methods_supported' => ['S256'],
             'token_endpoint_auth_methods_supported' => ['none'],
             'scopes_supported' => ['fh:read', 'offline_access'],
+            // RFC 9207, only while ChatGPT is open (it is what lets ChatGPT use its stable return address); every
+            // authorization response then carries `iss`, the same string as `issuer` above.
+            ...(OAuthSwitch::issuerIdentified() ? ['authorization_response_iss_parameter_supported' => true] : []),
         ], 200, ['Cache-Control' => 'public, max-age=60']);
     }
 }

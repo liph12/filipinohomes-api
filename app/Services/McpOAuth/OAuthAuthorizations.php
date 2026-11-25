@@ -9,10 +9,10 @@ use App\Models\User;
 use Illuminate\Support\Str;
 
 /**
- * The first half of signing in: Claude sends the person's browser to
+ * The first half of signing in: an AI (Claude, ChatGPT) sends the person's browser to
  * /oauth/authorize, the request is checked and kept (start), the website shows
  * the person which account is asking and what they are allowing (describe), and
- * they answer (approve or deny), which sends the browser back to Claude with a
+ * they answer (approve or deny), which sends the browser back to the AI with a
  * one-time code, or with "access_denied".
  *
  * The browser is only ever sent back to a return address on OAuthClients' list,
@@ -25,7 +25,7 @@ final class OAuthAuthorizations
     /** How long a person has to answer. */
     public const REQUEST_MINUTES = 15;
 
-    /** How long Claude has to trade the code for tokens. */
+    /** How long the AI has to trade the code for tokens. */
     public const CODE_SECONDS = 60;
 
     /**
@@ -35,7 +35,7 @@ final class OAuthAuthorizations
     private const MAX_WAITING = 20000;
 
     /**
-     * Checks what Claude asked for and keeps it. Returns the handle the website is given.
+     * Checks what the AI asked for and keeps it. Returns the handle the website is given.
      *
      * @param  array<string, mixed>  $query  the query string exactly as it was sent
      *
@@ -49,6 +49,13 @@ final class OAuthAuthorizations
         // Until the return address is known to be good, a mistake is shown, never redirected.
         if (! OAuthClients::exists($clientId) || ! OAuthClients::allowsRedirect($clientId, $redirect)) {
             throw new OAuthError('invalid_request', 'This sign-in link is not valid.');
+        }
+
+        // An AI an admin has not opened (ChatGPT, until they do): the person is told where they came from.
+        $provider = (string) OAuthClients::providerOf($clientId);
+
+        if (OAuthSwitch::providerMode($provider) === OAuthSwitch::OFF) {
+            throw new OAuthError('access_denied', 'Connecting '.OAuthClients::providerName($provider).' to Filipino Homes is not open yet.', 403, true);
         }
 
         $state = self::state($query);
@@ -126,7 +133,7 @@ final class OAuthAuthorizations
     }
 
     /**
-     * The person says yes: a one-time code is made and the browser goes back to Claude with it. It is the
+     * The person says yes: a one-time code is made and the browser goes back to the AI with it. It is the
      * account the page showed that says yes (a second tab may have signed in as someone else since).
      *
      * @return string where to send the browser
@@ -144,7 +151,7 @@ final class OAuthAuthorizations
         $why = $this->refusal($request, $role, $impersonated);
 
         if ($why !== null || $role === null) {
-            throw new OAuthError('not_allowed', self::reasonText($why ?? 'no_role'), 403);
+            throw new OAuthError('not_allowed', self::reasonText($why ?? 'no_role', $request->client_id), 403);
         }
 
         $code = Str::random(48);
@@ -165,7 +172,7 @@ final class OAuthAuthorizations
     }
 
     /**
-     * The person says no: the browser goes back to Claude with access_denied.
+     * The person says no: the browser goes back to the AI with access_denied.
      *
      * @throws OAuthError
      */
@@ -186,7 +193,7 @@ final class OAuthAuthorizations
     }
 
     /**
-     * Where the browser goes when Claude's request itself was wrong but its return address was good.
+     * Where the browser goes when the AI's request itself was wrong but its return address was good.
      *
      * @param  array<string, mixed>  $query
      */
@@ -211,7 +218,7 @@ final class OAuthAuthorizations
         }
 
         if ($request->expires_at->isPast()) {
-            throw new OAuthError('expired', 'This sign-in has expired. Start again from Claude.', 410);
+            throw new OAuthError('expired', 'This sign-in has expired. Start again from the app you were connecting.', 410);
         }
 
         if ($request->decision !== null) {
@@ -228,19 +235,21 @@ final class OAuthAuthorizations
             // An admin looking at an agent's account through the "log in as" feature must not connect Claude for them.
             $impersonated => 'impersonated',
             $role === null => 'no_role',
-            ! OAuthSwitch::allows($role) => 'paused',
+            ! OAuthSwitch::allows($role, $request->client_id) => 'paused',
             OAuthClients::kind($request->client_id) === OAuthClients::KIND_LOOPBACK && $role !== McpRole::Admin => 'admins_only',
             default => null,
         };
     }
 
-    public static function reasonText(string $reason): string
+    public static function reasonText(string $reason, ?string $clientId = null): string
     {
+        $ai = OAuthClients::providerName((string) ($clientId === null ? OAuthClients::PROVIDER_CLAUDE : OAuthClients::providerOf($clientId)));
+
         return match ($reason) {
-            'impersonated' => 'Sign in as yourself, not through another account, to connect Claude.',
-            'paused' => 'Connecting Claude is not open to your account yet.',
+            'impersonated' => "Sign in as yourself, not through another account, to connect {$ai}.",
+            'paused' => "Connecting {$ai} is not open to your account yet.",
             'admins_only' => 'This kind of connection is not open to your account.',
-            default => 'This account cannot connect Claude.',
+            default => "This account cannot connect {$ai}.",
         };
     }
 
@@ -275,6 +284,11 @@ final class OAuthAuthorizations
     /** @param  array<string, string>  $params */
     private static function append(string $uri, array $params): string
     {
+        // RFC 9207: every response, an error too, says who it is from (see OAuthSwitch::issuerIdentified).
+        if (OAuthSwitch::issuerIdentified()) {
+            $params['iss'] = McpUrl::root();
+        }
+
         $pairs = [];
 
         foreach ($params as $name => $value) {

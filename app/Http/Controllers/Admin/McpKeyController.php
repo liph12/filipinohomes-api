@@ -19,7 +19,7 @@ use InvalidArgumentException;
 
 /**
  * Admin: the keys of the MCP server (Claude reading FH's numbers), from the
- * dashboard (System Settings > Claude access). Admin role only, see routes/api.php.
+ * dashboard (System Settings > AI access). Admin role only, see routes/api.php.
  * What the server is, and why a key can only read: docs/mcp.md.
  *
  * A key is shown ONCE, in the answer that makes it (never cached), and nowhere

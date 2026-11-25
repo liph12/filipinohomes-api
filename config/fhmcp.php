@@ -20,9 +20,14 @@ return [
     'public_url' => env('FH_MCP_PUBLIC_URL'),
 
     // Sign-in for Claude (people connect their own Claude with their FH login instead of copying a key).
-    // The switch itself is in the database, set from System Settings > Claude access (off, admins or on);
+    // The switch itself is in the database, set from System Settings > AI access (off, admins or on);
     // this is what it is until someone sets it. Off means no sign-in route answers at all.
     'oauth_mode' => env('FH_MCP_OAUTH', 'off'),
+
+    // ChatGPT's own switch (off, admins or on), set from System Settings > AI access; this is what it is until
+    // someone sets it. It can only narrow the switch above: ChatGPT works where both allow a person. Off means
+    // ChatGPT cannot be added, and nothing about what Claude is sent changes.
+    'chatgpt_oauth_mode' => env('FH_MCP_CHATGPT_OAUTH', 'off'),
 
     // The page on the website where a person confirms the account (the API sends the browser there).
     'consent_url' => env('FH_MCP_CONSENT_URL', 'https://filipinohomes.com/connect/claude'),

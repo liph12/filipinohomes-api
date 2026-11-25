@@ -141,7 +141,7 @@ final class OAuthTokens
         $role = $user === null ? null : McpRole::of($user);
 
         // The person has to be what they were when they said yes, and still allowed to be.
-        if ($user === null || $role === null || $role->value !== $request->role || ! OAuthSwitch::allows($role)) {
+        if ($user === null || $role === null || $role->value !== $request->role || ! OAuthSwitch::allows($role, $request->client_id)) {
             throw new OAuthError('invalid_grant', 'That code is not valid.');
         }
 
@@ -206,7 +206,7 @@ final class OAuthTokens
             if ($role->value !== $connection->role) {
                 McpConnections::end($connection, null, McpConnections::ROLE_CHANGED);
 
-                return new OAuthError('invalid_grant', 'Connect Claude again to continue.');
+                return new OAuthError('invalid_grant', 'Connect '.OAuthClients::providerName((string) OAuthClients::providerOf($connection->client_id)).' again to continue.');
             }
 
             if ($pair->rotated_at === null) {

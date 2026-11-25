@@ -1186,7 +1186,7 @@ Route::middleware('strip.tags')->group(function () {
                 Route::patch('/admin/app-versions/{id}', [AppVersionController::class, 'update']);
                 Route::delete('/admin/app-versions/{id}', [AppVersionController::class, 'destroy']);
 
-                // Claude access (MCP) keys: made, listed and switched off here; docs/mcp.md.
+                // AI access (MCP) keys: made, listed and switched off here; docs/mcp.md.
                 Route::get('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'index']);
                 Route::post('/admin/mcp-keys', [\App\Http\Controllers\Admin\McpKeyController::class, 'store'])->middleware('throttle:10,1,mcp-key-make');
                 Route::get('/admin/mcp-keys/people', [\App\Http\Controllers\Admin\McpKeyController::class, 'people']);
@@ -1196,6 +1196,7 @@ Route::middleware('strip.tags')->group(function () {
                 // People's Claude connections and the switch that lets them be made; docs/mcp.md ("Sign-in").
                 Route::get('/admin/mcp-oauth', [\App\Http\Controllers\Admin\McpConnectionController::class, 'show']);
                 Route::put('/admin/mcp-oauth', [\App\Http\Controllers\Admin\McpConnectionController::class, 'update'])->middleware('throttle:20,1,mcp-oauth-switch');
+                Route::put('/admin/mcp-oauth/providers/{provider}', [\App\Http\Controllers\Admin\McpConnectionController::class, 'updateProvider'])->middleware('throttle:20,1,mcp-oauth-switch');
                 Route::post('/admin/mcp-oauth/notify-address-change', [\App\Http\Controllers\Admin\McpConnectionController::class, 'notifyAddressChange'])->middleware('throttle:3,1,mcp-address-notify');
                 Route::get('/admin/mcp-connections', [\App\Http\Controllers\Admin\McpConnectionController::class, 'index']);
                 Route::delete('/admin/mcp-connections/{id}', [\App\Http\Controllers\Admin\McpConnectionController::class, 'destroy'])->whereNumber('id');

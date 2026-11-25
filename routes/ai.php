@@ -37,7 +37,7 @@ Mcp::web('/mcp/filipinohomes', FilipinoHomesServer::class)
 | A person connects their own Claude to their FH account instead of copying a
 | key (docs/mcp.md, "Sign-in"). These are the routes Claude's servers and the
 | person's browser use. They sit at the root of the site, where the standard
-| expects them; while the switch (System Settings > Claude access) is off every
+| expects them; while the switch (System Settings > AI access) is off every
 | one of them answers 404, and the 401 of the MCP route says nothing about it.
 |
 */

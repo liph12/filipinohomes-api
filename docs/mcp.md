@@ -1,8 +1,8 @@
-# The MCP server: Claude reading Filipino Homes
+# The MCP server: Claude and ChatGPT reading Filipino Homes
 
-`POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key and can read Filipino Homes' numbers through twenty-one tools (an admin is shown nine, an agent six, a team leader eleven). It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
+`POST /mcp/filipinohomes` is an MCP (Model Context Protocol) endpoint. Claude (Claude Code, the Claude apps, or a program that uses the Claude API) connects to it with a key, or by signing in, and ChatGPT by signing in (it cannot use a key: see [ChatGPT](#chatgpt)). Either can read Filipino Homes' numbers through twenty-one tools (an admin is shown nine, an agent six, a team leader eleven). It is **read-only**: nothing it offers can create, change, delete or send anything, and it cannot reach the database, a file or a server.
 
-The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php` and `FhMcpTeamLeaderTest.php`. Admins make and revoke keys on the website (System Settings > Claude access); that side is `app/Http/Controllers/Admin/McpKeyController.php` and `tests/Feature/FhMcpKeysAdminTest.php`.
+The code is in `app/Mcp`, the route in `routes/ai.php`, the dials in `config/fhmcp.php`, the tests in `tests/Feature/FhMcpTest.php` and `FhMcpTeamLeaderTest.php`. Admins make and revoke keys on the website (System Settings > AI access); that side is `app/Http/Controllers/Admin/McpKeyController.php` and `tests/Feature/FhMcpKeysAdminTest.php`.
 
 ## Who sees what
 
@@ -53,7 +53,7 @@ Not because Claude is told no, though the server's instructions do tell it to re
 
 What is **not** covered, so you can decide about it:
 
-- **What Claude is shown, Anthropic receives.** An admin key reads company-wide numbers and record lists (listing titles, agent and team names, counts). Keep to the key rules below and decide what you are comfortable sending.
+- **What an AI is shown, its company receives:** Anthropic for Claude, and OpenAI for ChatGPT (only while an admin has opened ChatGPT, and only for the people it is opened to). An admin connection reads company-wide numbers and record lists (listing titles, agent and team names, counts). Keep to the key rules below and decide what you are comfortable sending, and to whom.
 - **Text inside records is data, not instructions**, and the server says so, but a model can still be misled by a listing title. That is why the tools only read: the worst it can do is say something wrong.
 - **The database user is not read-only.** The tools never write, and the tests prove it, but the connection could. For a belt as well as braces, give the MCP its own read-only database user (not done).
 - **The limits are counted per server.** The per-key and per-address limits live in the cache. Where the cache is not shared between instances (Laravel Cloud), each instance counts on its own, so the real limit is higher than the number in the config.
@@ -64,7 +64,7 @@ A key belongs to one person, is shown once when it is made, and only its SHA-256
 
 ### On the website (admins)
 
-System Settings > **Claude access (MCP)** (`/admin/system-settings`). Admins only: the card says so to anyone else, and the API refuses too (`/api/admin/mcp-keys*` is in the admin-only route group).
+System Settings > **AI access (MCP)** (`/admin/system-settings`). Admins only: the card says so to anyone else, and the API refuses too (`/api/admin/mcp-keys*` is in the admin-only route group).
 
 - **New key:** for an **admin** (any admin, the signed-in one listed first with "(you)"; their key sees the whole company), a **team leader** (their team and its members) or an **agent** (only their own numbers), each picked from a search, a name to tell it apart, and for how long: 7, 30, 60 or 90 days, or Permanent. The key is shown **once**, in the dialog, with a copy button and the ready-made `claude mcp add` line. The dialog cannot be closed by a stray click or Escape while the key is showing, and after it closes the key is nowhere: the list has only its first characters. A lost key is replaced, not recovered.
 - **The list** shows who a key is for, what it can see (`No access now` once its person was switched off), its first characters, when it works until (or `Permanent`), when it was last used, how many calls it made in the last 7 days, and which admin made it.
@@ -90,7 +90,7 @@ On the ECS servers, run them as a one-off artisan task ([operations.md](operatio
 
 Revoke at once when someone leaves or a key may have been seen. The person's account does not need to change.
 
-## Sign-in: people connect their own Claude
+## Sign-in: people connect their own AI
 
 Instead of an admin making a key and handing it over, an admin, a team leader or an agent connects their own Claude to their own FH account. It is the way most people should connect: nothing is copied anywhere, the person can end it from their portal, and in claude.ai a key only works for the accounts that have Claude's request-headers beta.
 
@@ -98,25 +98,27 @@ Instead of an admin making a key and handing it over, an admin, a team leader or
 
 1. In the portal (**Claude** in the menu) they press **Connect to Claude**. That opens Claude's own "Add custom connector" dialog with Filipino Homes and our address filled in. Claude asks them to confirm it and to press **Connect**: those two clicks are Claude's, and FH cannot skip them.
 2. Claude sends their browser to the API (`/oauth/authorize`), which checks the request and sends it on to the page on the website (`FH_MCP_CONSENT_URL`, `/connect/claude`). They sign in to FH if they are not already, confirm which account it is (or choose "use another account") and press **Authorize**. An admin's, and a program on a computer's (Claude Code), take a press and hold.
-3. Back in Claude they are connected. A bell notification says so, and the portal lists their connections, each with **Disconnect**. Admins see them all on System Settings > Claude access (the **Connections** tab) and can end one, or all.
+3. Back in Claude they are connected. A bell notification says so, and the portal lists their connections, each with **Disconnect**. Admins see them all on System Settings > AI access (the **Connections** tab) and can end one, or all.
 
 **How it works**
 
 - It is OAuth 2.1 with PKCE (S256), the way Claude's connectors expect (Claude's own documentation: connectors > authentication). A request with no key gets a `401` that points at `/.well-known/oauth-protected-resource/mcp/filipinohomes`; that and `/.well-known/oauth-authorization-server` say where to register, sign in and ask for tokens. All of it is at the root of the API (`routes/ai.php`, `app/Http/Controllers/Mcp`, `app/Services/McpOAuth`), plus `/register`, `/authorize` and `/token`, which Claude falls back to.
-- **Registering stores nothing.** The only apps that may ask a person to sign in are Claude (return address `https://claude.ai/api/mcp/auth_callback`, or `claude.com`) and Claude Code (`http://localhost|127.0.0.1|[::1]:<any port>/callback`). A fixed client id comes back (`claude` or `claude-code`); the names the person sees are ours, never what the caller said. Anything asking to be sent back anywhere else is refused, at registration and again at sign-in, and a mistake before the return address is known to be good is shown on a page of ours and goes nowhere.
+- **Registering stores nothing.** The only apps that may ask a person to sign in are Claude (return address `https://claude.ai/api/mcp/auth_callback`, or `claude.com`), Claude Code (`http://localhost|127.0.0.1|[::1]:<any port>/callback`) and ChatGPT (see [ChatGPT](#chatgpt)). A fixed client id comes back (`claude`, `claude-code` or `chatgpt`); the names the person sees are ours, never what the caller said. Anything asking to be sent back anywhere else is refused, at registration and again at sign-in, and a mistake before the return address is known to be good is shown on a page of ours and goes nowhere.
 - **A code is good for a minute and for one try.** It is spent before it is checked, so a wrong guess does not leave it to be tried again.
-- **Tokens.** An access token (`fhoat_...`, 8 hours) and a refresh token (`fhort_...`, 60 days, slides forward each time it is used, but never past 180 days from the day the connection was made: `FH_MCP_MAX_CONNECTION_DAYS`); only their SHA-256 is kept. A refresh makes the next pair. Claude has been seen to send the same refresh twice a few milliseconds apart, to ask again when an answer was lost, and to sign in again without saying the old connection is gone, so: an old refresh token used again within 30 seconds is a retry and gets a fresh pair, and so is one used later while the newer pair has never been used; one used later, after the newer pair has been used, is in other hands and the connection ends. A person keeps at most five connections; a sixth ends the one used least recently.
+- **Tokens.** An access token (`fhoat_...`, 8 hours) and a refresh token (`fhort_...`, 60 days, slides forward each time it is used, but never past 180 days from the day the connection was made: `FH_MCP_MAX_CONNECTION_DAYS`); only their SHA-256 is kept. A refresh makes the next pair. Claude has been seen to send the same refresh twice a few milliseconds apart, to ask again when an answer was lost, and to sign in again without saying the old connection is gone, so: an old refresh token used again within 30 seconds is a retry and gets a fresh pair, and so is one used later while the newer pair has never been used; one used later, after the newer pair has been used, is in other hands and the connection ends. A person keeps at most five connections for each AI (Claude's and Claude Code's count together, ChatGPT's apart); a sixth ends the one used least recently.
 - **What a person agrees to is the account the page showed.** The page tells the API which account it described when the person says yes (`account_id`), and the API refuses if the signed-in account is another by then (a second tab, say).
 - **The person's role is judged on every request**, as a key's is, and the connection remembers the role it was authorized for: a person who has since become a team leader, or stopped being one, has their connection ended and Claude asks them to connect again, so what they agreed to is always what Claude can see. A person who is switched off gets a `403` and the connection ends there: switching them back on does not bring it back, they agree again. A connection also ends when its person signs out everywhere, or has their password reset by the staff seeder (reasons `logged_out`, `no_access`, `role_changed`, `refresh_reuse`, `user`, `admin`, `claude`, `replaced`).
 - **A connection opens `/mcp/filipinohomes` and nothing else.** It is not a Sanctum token and the rest of the API does not know it. Calls made through it are in `mcp_calls` with the connection (`mcp_connection_id`).
 
-**The switch** (System Settings > Claude access; `Setting` `fhmcp.oauth`, first value from `FH_MCP_OAUTH`)
+**The switch** (System Settings > AI access; `Setting` `fhmcp.oauth`, first value from `FH_MCP_OAUTH`)
 
 | | |
 |---|---|
 | **off** (the start) | No sign-in route answers (404) and a `401` says nothing about signing in. Also off on any address that is not `https` (plain `http` works for localhost only, for trying it) |
 | **admins** | Only admins may connect or use a connection (everyone else gets a `403`). The documents and refreshes still answer, so connectors already made are not stranded. **This is also how to pause after launch**: turning it off would make Claude forget where to sign in |
 | **on** | Everyone who has a role on the MCP server (an admin, a team leader, an active agent) |
+
+That switch is the **master**, and Claude's own. ChatGPT has a switch of its own (`Setting` `fhmcp.oauth.chatgpt`, first value from `FH_MCP_CHATGPT_OAUTH`, **off** to start; System Settings > AI access shows both) with the same three positions, and it can only **narrow** the master: a person can use ChatGPT only where the master and ChatGPT's switch both allow them (the master off stops everything). ChatGPT off, nobody can add it (the plugin form is told "not open yet"), and connections it already holds are **paused**: their calls get a `403` that says why, never a `401` that would have ChatGPT ask the person to sign in again, their refresh tokens still work, and turning ChatGPT back on restores them. Claude's connections are never touched by ChatGPT's switch.
 
 Ending connections is a separate button (**Disconnect everyone**, press and hold), never a side effect of the switch. A keyless handshake (`FH_MCP_OPEN_HANDSHAKE`) is not allowed while sign-in is on: the `401` is what starts the sign-in.
 
@@ -125,7 +127,7 @@ Ending connections is a separate button (**Disconnect everyone**, press and hold
 Everyone's Claude is connected to the address in `FH_MCP_PUBLIC_URL`, so changing it means telling people to connect again. To make it painless:
 
 1. Put the old address in `FH_MCP_FORMER_URLS` (comma separated) and the new one in `FH_MCP_PUBLIC_URL`. While an address is listed, connections made for it keep working, and their people see **Reconnect** on their portal page.
-2. On System Settings > Claude access, press **Notify them**: a bell notification (and a push to those with the app) goes to every person with a connection made for the old address, and to every key holder, once for each person.
+2. On System Settings > AI access, press **Notify them**: a bell notification (and a push to those with the app) goes to every person with a connection made for the old address, and to every key holder, once for each person.
 3. When they have moved over, take the old address out of `FH_MCP_FORMER_URLS`: what was made for it stops, and Claude asks the person to sign in again.
 
 **Deploying it**
@@ -134,13 +136,34 @@ Everyone's Claude is connected to the address in `FH_MCP_PUBLIC_URL`, so changin
 2. Set `FH_MCP_PUBLIC_URL` to the API's `https` address and `FH_MCP_CONSENT_URL` to the website's page if it is not `https://filipinohomes.com/connect/claude`.
 3. Claude connects from Anthropic's servers (`160.79.104.0/21`, IPv4): Cloudflare, or any firewall in front of the API, must let them through to `/mcp`, `/.well-known/*`, `/oauth/*`, `/register`, `/authorize` and `/token`, and the API's address must not redirect to another host (Claude drops the key on a redirect). From outside, `curl -i https://<address>/.well-known/oauth-authorization-server` should answer `200` once the switch is on, and `curl -i -X POST https://<address>/mcp/filipinohomes` should answer `401` with a `WWW-Authenticate` header that has `resource_metadata`.
 4. Set the switch to **admins**, connect your own Claude (claude.ai and Claude Code), ask a question, and check the list, the activity and the bell. Then **on**.
+5. ChatGPT is a later step, and only when the website with its page is live (see [ChatGPT](#chatgpt)): let OpenAI's ranges through, open ChatGPT for **admins**, add it from ChatGPT as an admin, ask a question, check the list. Then, if you want it, **on**. After deploying with ChatGPT off, run the two `curl` checks above, confirm a Claude connection that existed before still lists tools, and connect Claude once afresh.
+
+## ChatGPT
+
+People connect ChatGPT from the same portal page as Claude (**AI Connections** in the menu), and an admin opens it in System Settings > AI access (it starts **off**). ChatGPT has no link that fills a form in, so the page shows the address to paste and the steps:
+
+1. In ChatGPT (on chatgpt.com, in a browser) open **Plugins**, select **Add**, then **Add custom MCP server**.
+2. Name it Filipino Homes and paste the address the page shows (it must be exactly that address: it is the `resource` ChatGPT sends, and the API refuses any other).
+3. Set authentication to **OAuth**, then **Create**.
+4. ChatGPT opens FH's page: sign in, confirm the account and press **Authorize** (an admin's takes a press and hold).
+
+What to know before opening it:
+
+- **ChatGPT can only sign in; it cannot use a key** (OpenAI's custom MCP servers take OAuth or nothing). So the keys in System Settings are for Claude Code and other tools that can send a bearer key.
+- **Plans.** OpenAI's help centre gives custom MCP servers to Business and Enterprise/Edu workspaces (a workspace owner adds it), and read access to Pro; it does not say Free, Go or Plus, and its pages disagree with each other: whoever tries it first finds out. It works on the web, not in the mobile app, so the flyer-on-a-phone use is Claude's. A published ChatGPT connection keeps a frozen copy of the tool list: when the tools change, a workspace admin has to refresh it.
+- **The return address.** ChatGPT uses `https://chatgpt.com/connector_platform_oauth_redirect` when the server names its issuer (RFC 9207), and `https://chatgpt.com/connector/oauth/<id>` otherwise (OpenAI does not say what an id looks like, so the API accepts any characters a URL path may hold, and nothing else: https, `chatgpt.com`, no query). Both are accepted, and checked again when the person signs in, so which one ChatGPT registered and which it uses cannot disagree.
+- **The issuer.** While ChatGPT's switch is not off, and `FH_MCP_PUBLIC_URL` is set, every authorization response (a refusal too) carries `iss`, and `/.well-known/oauth-authorization-server` says `authorization_response_iss_parameter_supported`. The `iss` is the document's `issuer`, byte for byte. With ChatGPT off, neither is there, and what Claude is sent is exactly what it always was; if Claude's sign-in ever misbehaves after ChatGPT is opened, this is the first thing to look at (turning ChatGPT off removes it, and the document is cached for up to a minute).
+- **Where ChatGPT connects from.** OpenAI's servers, from ranges it publishes and changes (`https://openai.com/chatgpt-connectors.json`; fetch it regularly, as OpenAI advises). Cloudflare, and Vercel if the address is the website's (`next.config.ts` forwards `/mcp/filipinohomes`, `/.well-known/*`, `/oauth/*`, `/register`, `/authorize` and `/token` to the API), must let them through without a challenge, as for Anthropic below. A 401 from the MCP route carries `WWW-Authenticate` with `resource_metadata`, which is what makes ChatGPT start signing in; a firewall that answers it instead shows as "failed to resolve OAuth client" or "does not implement OAuth" in ChatGPT.
+- **The origin check.** A request that carries an `Origin` header must be on `MCP_ALLOWED_ORIGINS` (`config/mcp.php`: claude.ai, claude.com, chatgpt.com and chat.openai.com by default); one with no `Origin`, which is what a server-to-server client sends, passes. If production sets the variable itself, add the two ChatGPT origins to it.
+- **Order.** Deploy the API, then the website (its sign-in page has to accept `chatgpt.com` as a place to send a person back to), and only then open ChatGPT. With it off nothing about Claude changes.
+- Tools are read-only and marked so (`readOnlyHint`), which is how ChatGPT knows it need not ask before a call. ChatGPT reportedly refuses a tool whose name, description and arguments are over about 5,000 tokens and struggles with a tool list over about 100 KB (developer reports, not OpenAI's documentation): ours are far under both (measured 2026-11-25: the largest tool is about 750 tokens, and a whole list is about 10 KB for an agent, 16 KB for an admin and 20 KB for a team leader).
 
 ## Connecting Claude
 
 The server is `https://<the API's address>/mcp/filipinohomes` and takes the key as `Authorization: Bearer <key>`.
 
 - **Claude Code:** `claude mcp add --transport http filipinohomes https://<address>/mcp/filipinohomes --header "Authorization: Bearer <key>"`, then `/mcp` shows it connected.
-- **claude.ai or Claude Desktop (a custom connector):** a key only fits where the connector dialog has a **Request headers** section (a Claude beta that not every account has): the URL above, with `Authorization` = `Bearer <key>`. Without that section claude.ai wants a sign-in instead (the person signs in to FH and authorizes): see [Sign-in](#sign-in-people-connect-their-own-claude), which is how most people should connect. claude.ai probes a connector without a key when it is added and may refuse it on a 401. If it does, set `FH_MCP_OPEN_HANDSHAKE=true`: a client without a key can then start the conversation and list the tools, and still cannot run one.
+- **claude.ai or Claude Desktop (a custom connector):** a key only fits where the connector dialog has a **Request headers** section (a Claude beta that not every account has): the URL above, with `Authorization` = `Bearer <key>`. Without that section claude.ai wants a sign-in instead (the person signs in to FH and authorizes): see [Sign-in](#sign-in-people-connect-their-own-ai), which is how most people should connect. claude.ai probes a connector without a key when it is added and may refuse it on a 401. If it does, set `FH_MCP_OPEN_HANDSHAKE=true`: a client without a key can then start the conversation and list the tools, and still cannot run one.
 - **The Claude API (FH One):** `mcp_servers: [{ type: "url", url: "...", name: "fh", authorization_token: "<key>" }]` with `tools: [{ type: "mcp_toolset", mcp_server_name: "fh" }]` and the beta header `mcp-client-2025-11-20`.
 - **Trying it locally:** `php artisan mcp:inspector mcp/filipinohomes`.
 
@@ -152,24 +175,25 @@ The server is `https://<the API's address>/mcp/filipinohomes` and takes the key 
 | `FH_MCP_OPEN_HANDSHAKE` | false | A client with no key may do the handshake and list the tools (never run one) |
 | `FH_MCP_RATE_LIMIT` | 60 | Requests a minute on one key |
 | `FH_MCP_IP_FAILURES` | 20 | Guessed keys (something shaped like a key that is not one) a minute from one address before more guesses from it are cut off. A real key is never turned away by this, and a request with no key does not count |
-| `FH_MCP_OAUTH` | off | Where the sign-in switch starts, until someone sets it on System Settings (off, admins or on). It is a database setting, so changing it needs no deploy |
+| `FH_MCP_OAUTH` | off | Where the sign-in switch (Claude's, and the master) starts, until someone sets it on System Settings (off, admins or on). It is a database setting, so changing it needs no deploy |
+| `FH_MCP_CHATGPT_OAUTH` | off | Where ChatGPT's own switch starts, until someone sets it on System Settings. It can only narrow the one above. Off: ChatGPT cannot be added, and nothing Claude is sent changes |
 | `FH_MCP_CONSENT_URL` | `https://filipinohomes.com/connect/claude` | The website page where a person confirms the account |
 | `FH_MCP_FORMER_URLS` | (none) | Addresses the API used to be reached at, comma separated: connections made for one keep working while it is listed |
 | `FH_MCP_ACCESS_HOURS` | 8 | How long an access token lasts (every request re-checks the connection, the role and the switch, so this is not how long access lasts) |
 | `FH_MCP_REFRESH_DAYS` | 60 | How long an unused connection survives; each use slides it forward |
 | `FH_MCP_MAX_CONNECTION_DAYS` | 180 | The longest a connection lasts from the day it was made, however often it is used; then the person connects again |
-| `MCP_ALLOWED_ORIGINS` | `https://claude.ai,https://claude.com` | Websites whose pages may call the server from a browser. Claude's own servers send no origin and are not affected |
+| `MCP_ALLOWED_ORIGINS` | `https://claude.ai,https://claude.com,https://chatgpt.com,https://chat.openai.com` | Websites whose pages may call the server from a browser. Claude's and ChatGPT's own servers send no origin and are not affected. If production sets this itself, include all of them |
 | `FH_MCP_IP_RATE_LIMIT` | 30 | Key-less requests a minute from one address (open handshake only) |
 
 The number of keys, how long they last (`max_days` does not apply to a permanent key), the biggest answer (60,000 bytes) and the most records on a page (25) are set in the file.
 
 ## Deploying it
 
-1. Four migrations (the last is for [Sign-in](#sign-in-people-connect-their-own-claude)): `2026_11_24_000001` adds the tables `mcp_keys` and `mcp_calls`; `000002` adds who made and who revoked a key (the website's admin page); `000003` lets a key have no end date (`expires_at` may be empty). The deploy workflow stops while a migration is pending: run them as in [releases.md](releases.md#procedure-run-pending-migrations). Until `000002` has run, making or revoking a key on the website fails (the artisan commands keep working); until `000003` has run, only the permanent choice fails. Rolling `000003` back ends any permanent key (it gets an end date of now) rather than leave one with no end. `000004` is for sign-in: until it has run only sign-in is affected.
+1. Four migrations (the last is for [Sign-in](#sign-in-people-connect-their-own-ai)): `2026_11_24_000001` adds the tables `mcp_keys` and `mcp_calls`; `000002` adds who made and who revoked a key (the website's admin page); `000003` lets a key have no end date (`expires_at` may be empty). The deploy workflow stops while a migration is pending: run them as in [releases.md](releases.md#procedure-run-pending-migrations). Until `000002` has run, making or revoking a key on the website fails (the artisan commands keep working); until `000003` has run, only the permanent choice fails. Rolling `000003` back ends any permanent key (it gets an end date of now) rather than leave one with no end. `000004` is for sign-in: until it has run only sign-in is affected.
 2. The endpoint has to be reachable from the internet over HTTPS at `/mcp/filipinohomes` (Claude's servers connect to it): check the load balancer and Cloudflare let it through, and that no bot rule blocks Anthropic.
 3. `route:cache` includes `routes/ai.php`. Set `FH_MCP_PUBLIC_URL` (the dials below).
 4. Before giving keys to team leaders, run `php artisan fhmcp:team-check` once on production: it prints counts only (teams, leaders, who would be shown the team tools, members in two teams) and changes nothing.
-5. The website can be deployed before or after the API. Without the API routes, the card says Claude access is not available on this server yet and shows nothing else.
+5. The website can be deployed before or after the API. Without the API routes, the card says AI access is not available on this server yet and shows nothing else.
 
 ## Adding a tool safely
 
@@ -180,6 +204,6 @@ Extend one of the kinds in `app/Mcp/Tools/Kinds` (or `FhTool` for a new shape) a
 - **401:** no key, a wrong one, an expired one or a revoked one (the answer is the same on purpose; the reason is in the log as `fhmcp.rejected`).
 - **403:** the key is real but its person may no longer use the server (an agent switched off, a role changed).
 - **429:** too many guessed keys from one address, or too many requests on one key. `Retry-After` says when. A refusal also carries `WWW-Authenticate: Bearer realm="mcp"` (plus `error="invalid_token"` when a key was sent): that header is set by the gate itself, not by the MCP package. While sign-in is on it is `Bearer resource_metadata="<API>/.well-known/oauth-protected-resource/mcp/filipinohomes", scope="fh:read"`, with `error="invalid_token"` and a description added only when a credential was sent and was not accepted (RFC 6750: a request with no credential is told where to sign in and nothing more).
-- **Claude says it couldn't connect, or the connector stays on "Connect":** from outside, run the two `curl` checks under [Deploying it](#sign-in-people-connect-their-own-claude) (the documents answer `200`; the `401` carries `resource_metadata`). The usual causes are a firewall or Cloudflare rule blocking Anthropic's range, the API's address redirecting to another host, the switch being off, or `FH_MCP_PUBLIC_URL` not being the `https` address the person typed into Claude. The `fhmcp.rejected` log lines (reason `unknown_token`, `ended_token`, `no_access`, `paused`) and `fhmcp.connection.ended` say what happened to a connection.
+- **Claude says it couldn't connect, or the connector stays on "Connect":** from outside, run the two `curl` checks under [Deploying it](#sign-in-people-connect-their-own-ai) (the documents answer `200`; the `401` carries `resource_metadata`). The usual causes are a firewall or Cloudflare rule blocking Anthropic's range, the API's address redirecting to another host, the switch being off, or `FH_MCP_PUBLIC_URL` not being the `https` address the person typed into Claude. The `fhmcp.rejected` log lines (reason `unknown_token`, `ended_token`, `no_access`, `paused`) and `fhmcp.connection.ended` say what happened to a connection.
 - **"too big":** the answer passed `max_result_bytes`. Ask for a shorter period, a narrower filter or fewer rows.
 - **The website card says "isn't available on this server yet":** the API it talks to does not have `/api/admin/mcp-keys` (the website is ahead of the API). **"The keys could not be loaded":** the API answered with an error; the usual cause is a pending migration, so check the log.

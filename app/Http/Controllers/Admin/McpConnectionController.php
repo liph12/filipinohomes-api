@@ -20,7 +20,7 @@ use Illuminate\Validation\Rule;
 
 /**
  * Admin: people's Claude connections and the switch that lets them be made
- * (System Settings > Claude access). Admin role only, see routes/api.php.
+ * (System Settings > AI access). Admin role only, see routes/api.php.
  * What a connection is, and what the switch does: docs/mcp.md, "Sign-in".
  *
  * An admin can see every connection and end any of them, and end all of them
@@ -38,12 +38,27 @@ class McpConnectionController extends Controller
         return response()->json($this->state());
     }
 
-    /** PUT /admin/mcp-oauth: set the switch to off, admins or on. */
+    /** PUT /admin/mcp-oauth: set the switch to off, admins or on. It is Claude's, and the master of the others. */
     public function update(Request $request): JsonResponse
     {
         $data = $request->validate(['mode' => ['required', Rule::in(OAuthSwitch::MODES)]]);
 
         OAuthSwitch::set($data['mode']);
+
+        return response()->json($this->state());
+    }
+
+    /**
+     * PUT /admin/mcp-oauth/providers/{provider}: set one AI's own switch (ChatGPT's; Claude's is the one above).
+     * It can only narrow the master: a person uses the AI where both allow them.
+     */
+    public function updateProvider(Request $request, string $provider): JsonResponse
+    {
+        abort_unless($provider === OAuthClients::PROVIDER_CHATGPT, 404);
+
+        $data = $request->validate(['mode' => ['required', Rule::in(OAuthSwitch::MODES)]]);
+
+        OAuthSwitch::setProvider($provider, $data['mode']);
 
         return response()->json($this->state());
     }
@@ -135,7 +150,7 @@ class McpConnectionController extends Controller
             // and a run that dies halfway does not tell everyone it got to again.
             foreach ($people->chunk(25) as $batch) {
                 foreach ($batch as $user) {
-                    if (McpConnections::tell($user, 'Claude address changed', 'The address Claude connects to has changed. Please connect Claude again from your portal.', ['type' => 'mcp_address_changed'])) {
+                    if (McpConnections::tell($user, 'AI address changed', 'The address your AI assistant connects to has changed. Please connect it again from your portal.', ['type' => 'mcp_address_changed'])) {
                         $told[] = $user->id;
                         $notified++;
                     } else {
@@ -169,7 +184,31 @@ class McpConnectionController extends Controller
                 'needing_reconnect' => $this->staleConnections()->count(),
             ],
             'affected_people' => count($this->affectedIds()),
+            // Each AI's own switch (Claude's is `mode` above) and what it holds; ChatGPT's is set apart, below the master.
+            'providers' => $this->providers(),
         ];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function providers(): array
+    {
+        $providers = [];
+
+        foreach (OAuthClients::providers() as $id => $name) {
+            $clients = OAuthClients::clientsOf($id);
+
+            $providers[] = [
+                'id' => $id,
+                'name' => $name,
+                'mode' => OAuthSwitch::providerMode($id),
+                'connections' => [
+                    'active' => McpConnection::query()->active()->whereIn('client_id', $clients)->count(),
+                    'needing_reconnect' => $this->staleConnections()->whereIn('client_id', $clients)->count(),
+                ],
+            ];
+        }
+
+        return $providers;
     }
 
     /** Active connections made for an address other than the current one (a connection's address is kept in its canonical form). */
@@ -205,6 +244,7 @@ class McpConnectionController extends Controller
             'person' => $user === null ? null : ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
             'role' => $connection->role,
             'client' => OAuthClients::name($connection->client_id),
+            'provider' => OAuthClients::providerOf($connection->client_id),
             'state' => $connection->state(),
             'needs_reconnect' => $connection->needsReconnect(),
             'created_at' => $connection->created_at?->toIso8601String(),

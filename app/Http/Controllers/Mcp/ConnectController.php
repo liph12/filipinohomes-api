@@ -27,7 +27,7 @@ use Illuminate\Http\Request;
  */
 class ConnectController extends Controller
 {
-    /** GET /api/mcp/connect/status: can this person connect Claude, and what do they hold. */
+    /** GET /api/mcp/connect/status: can this person connect an AI (Claude, ChatGPT), and what do they hold. */
     public function status(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -36,7 +36,7 @@ class ConnectController extends Controller
 
         // Every agent's dashboard asks this on every load. While signing in is off there is nothing to look up.
         if (! OAuthSwitch::enabled()) {
-            return response()->json(['mode' => OAuthSwitch::mode(), 'available' => false, 'role' => null, 'address' => McpUrl::server(), 'connect_link' => $link, 'connections' => []]);
+            return response()->json(['mode' => OAuthSwitch::mode(), 'available' => false, 'role' => null, 'address' => McpUrl::server(), 'connect_link' => $link, 'providers' => $this->providers(null), 'connections' => []]);
         }
 
         $role = McpRole::of($user);
@@ -47,6 +47,7 @@ class ConnectController extends Controller
             'role' => $role?->value,
             'address' => McpUrl::server(),
             'connect_link' => $link,
+            'providers' => $this->providers($role),
             'connections' => McpConnection::query()
                 ->where('user_id', $user->id)
                 ->active()
@@ -103,12 +104,36 @@ class ConnectController extends Controller
         return response()->json(['data' => $this->present($connection->refresh())]);
     }
 
+    /**
+     * The AIs, and whether this person may connect each right now: `mode` is that AI's own switch (Claude's is the
+     * one the top-level `mode` and `available` are about, as they always were), `available` is whether the switches
+     * let this person's role in.
+     *
+     * @return list<array{id: string, name: string, mode: string, available: bool}>
+     */
+    private function providers(?McpRole $role): array
+    {
+        $providers = [];
+
+        foreach (OAuthClients::providers() as $id => $name) {
+            $providers[] = [
+                'id' => $id,
+                'name' => $name,
+                'mode' => OAuthSwitch::providerMode($id),
+                'available' => $role !== null && OAuthSwitch::allows($role, OAuthClients::clientOf($id)),
+            ];
+        }
+
+        return $providers;
+    }
+
     /** @return array<string, mixed> */
     private function present(McpConnection $connection): array
     {
         return [
             'id' => $connection->id,
             'client' => OAuthClients::name($connection->client_id),
+            'provider' => OAuthClients::providerOf($connection->client_id),
             'created_at' => $connection->created_at?->toIso8601String(),
             'last_used_at' => $connection->last_used_at?->toIso8601String(),
             'state' => $connection->state(),

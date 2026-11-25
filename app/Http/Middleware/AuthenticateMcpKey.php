@@ -6,6 +6,7 @@ use App\Mcp\Support\McpKeys;
 use App\Mcp\Support\McpRole;
 use App\Mcp\Support\McpUrl;
 use App\Services\McpOAuth\McpConnections;
+use App\Services\McpOAuth\OAuthClients;
 use App\Services\McpOAuth\OAuthSwitch;
 use App\Services\McpOAuth\OAuthTokens;
 use Closure;
@@ -165,10 +166,10 @@ class AuthenticateMcpKey
             return $this->refuse(401, 'Unauthorized', hadToken: true);
         }
 
-        if (! OAuthSwitch::allows($role)) {
+        if (! OAuthSwitch::allows($role, $connection->client_id)) {
             $this->note($request, 'paused', null, $connection->id);
 
-            return $this->refuse(403, 'Connecting Claude is not open to your account yet.');
+            return $this->refuse(403, 'Connecting '.OAuthClients::providerName((string) OAuthClients::providerOf($connection->client_id)).' is not open to your account yet.');
         }
 
         $bucket = 'fhmcp-conn:'.$connection->id;
