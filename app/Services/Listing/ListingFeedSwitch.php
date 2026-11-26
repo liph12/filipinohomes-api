@@ -49,6 +49,9 @@ final class ListingFeedSwitch
 
     private static float $memoAt = 0.0;
 
+    /** Set only while pretendingGuard() runs. */
+    private static ?bool $guardOverride = null;
+
     /**
      * The confirmed prices, decoded once per read of the memo above (the resource asks for them once per listing).
      *
@@ -65,9 +68,29 @@ final class ListingFeedSwitch
 
     public static function priceGuard(): bool
     {
+        if (self::$guardOverride !== null) {
+            return self::$guardOverride;
+        }
+
         $value = strtolower(self::read(self::GUARD, config('listings.price_guard') ? 'on' : 'off'));
 
         return in_array($value, ['on', '1', 'true'], true);
+    }
+
+    /**
+     * Run `$fn` with the price guard forced on or off, whatever the settings say, for the reports that compare the
+     * two. Nothing is written; the previous state is restored even if `$fn` throws.
+     */
+    public static function pretendingGuard(bool $on, callable $fn): mixed
+    {
+        $before = self::$guardOverride;
+        self::$guardOverride = $on;
+
+        try {
+            return $fn();
+        } finally {
+            self::$guardOverride = $before;
+        }
     }
 
     /** 'off' | 'log' | 'enforce' */
