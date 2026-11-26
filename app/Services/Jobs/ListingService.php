@@ -3,6 +3,8 @@
 namespace App\Services\Jobs;
 
 use App\Models\Listing;
+use App\Services\Listing\ListingFeedSwitch;
+use App\Services\Listing\ListingRotationPicker;
 use Illuminate\Support\Facades\DB;
 
 class ListingService
@@ -14,6 +16,12 @@ class ListingService
 
     public function updateBatchListings()
     {
+        // 'fair' (the `listings.rotation.picker` setting) changes WHICH listings are stamped, not how
+        // or how often: see ListingRotationPicker. Anything else is the walk below, as it was built.
+        if (ListingFeedSwitch::rotationPicker() === 'fair') {
+            return ListingRotationPicker::run();
+        }
+
         $state = DB::table('scheduler_states')
             ->where('key', 'listing_update')
             ->first();

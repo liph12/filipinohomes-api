@@ -5,6 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\Agent;
 use App\Models\Listing;
 use App\Models\Post;
+use App\Services\Listing\ListingDates;
+use App\Services\Listing\ListingFeedSwitch;
+use App\Services\Listing\ListingPriceRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,11 +21,12 @@ class SitemapController extends Controller
     {
         $perPage = min((int) $request->input('per_page', 500), 1000);
 
-        $paginator = Listing::query()
+        $query = Listing::query()
             ->publiclyListed()
             ->select('id', 'slug', 'created_at', 'updated_at')
-            ->orderBy('id')
-            ->paginate($perPage);
+            ->orderBy('id');
+        $this->withRealLastmod($query);
+        $paginator = $query->paginate($perPage);
 
         return response()->json([
             'data' => $paginator->items(),
@@ -92,12 +96,13 @@ class SitemapController extends Controller
     {
         $perPage = min((int) $request->input('per_page', 200), 500);
 
-        $paginator = Listing::query()
+        $query = Listing::query()
             ->publiclyListed()
             ->select('id', 'slug', 'name', 'featured_photo', 'property_id', 'updated_at')
             ->with('property:id,photos')
-            ->orderBy('id')
-            ->paginate($perPage);
+            ->orderBy('id');
+        $this->withRealLastmod($query);
+        $paginator = $query->paginate($perPage);
 
         return response()->json([
             'data' => $paginator->items(),
@@ -244,6 +249,7 @@ class SitemapController extends Controller
                   ->where('mpt.modifier', '=', 'affordable');
             })
             ->whereColumn('listings.price', '<=', 'mpt.percentile_price')
+            ->tap(fn ($q) => $this->onlyBelievablePrices($q))
             ->select(
                 'categories.name as category',
                 'property_types.name as type',
@@ -316,6 +322,7 @@ class SitemapController extends Controller
             $query = $this->publiclyListedListingsJoin()
                 ->where('categories.name', 'For Sale')
                 ->where('listings.price', '<=', $cap)
+                ->tap(fn ($q) => $this->onlyBelievablePrices($q))
                 ->select(
                     'categories.name as category',
                     'property_types.name as type',
@@ -351,6 +358,35 @@ class SitemapController extends Controller
             'province' => $r->province,
             'total'    => (int) $r->total,
         ];
+    }
+
+    /**
+     * A price band ("under ₱1M", "affordable") counts listings priced at or below a ceiling, so a price that cannot
+     * be an asking price (a lot's ₱700 per sqm, a rent typed as 25) must not qualify, or the page promises listings
+     * its own result list will not show. Only while the `listings.price_guard` switch is on.
+     */
+    private function onlyBelievablePrices($query): void
+    {
+        if (! ListingFeedSwitch::priceGuard()) {
+            return;
+        }
+        [$sql, $bindings] = ListingPriceRules::believableSql(ListingFeedSwitch::approvedPrices());
+        $query->whereRaw($sql, $bindings);
+    }
+
+    /**
+     * Adds `lastmod`, the date the listing REALLY last changed (ListingDates), to a listing sitemap query:
+     * `updated_at` is stamped by the hourly rotation on listings nobody touched, so it is not a date Google should
+     * be told. Only while the `listings.sitemap_lastmod` switch is on: the date costs a lookup in the audit history
+     * for every row of the page.
+     */
+    private function withRealLastmod($query): void
+    {
+        if (! ListingFeedSwitch::sitemapLastmod()) {
+            return;
+        }
+        [$lastmod, $bindings] = ListingDates::lastmodSql();
+        $query->selectRaw("{$lastmod} AS lastmod", $bindings);
     }
 
     /**

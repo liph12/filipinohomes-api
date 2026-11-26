@@ -76,6 +76,7 @@ use App\Http\Controllers\SeoCommandController;
 use App\Http\Controllers\SeoInventoryController;
 use App\Http\Controllers\SessionController;
 use App\Http\Controllers\SitemapController;
+use App\Http\Controllers\ListingPriceController;
 use App\Http\Controllers\TeamAgentController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\UserController;
@@ -614,6 +615,11 @@ Route::middleware('strip.tags')->group(function () {
             Route::patch('/listings/{listing}/status', [ListingController::class, 'updateStatus']);
             Route::patch('/listings/{listing}/featured', [ListingController::class, 'updateIsFeatured']);
             Route::patch('/listings/{listing}/verify', [ListingController::class, 'updateVerification']);
+            // "Price on request" prompt: an agent's listings whose price cannot be shown as an asking price,
+            // and the two ways out (confirm an unusual price / enter the right one). See ListingPriceController.
+            Route::get('/my-listings/price-issues', [ListingPriceController::class, 'issues']);
+            Route::post('/listings/{listing}/price/confirm', [ListingPriceController::class, 'confirm']);
+            Route::post('/listings/{listing}/price/correct', [ListingPriceController::class, 'correct']);
             // Per-listing audit history (admin + team leader of that listing).
             // NOTE: the audit-queue list route lives up in the guest-token group
             // (before `/listings/{slug}`) so its literal segment isn't read as a

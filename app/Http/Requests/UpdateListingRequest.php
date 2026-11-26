@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\AssumeDetail;
+use App\Rules\PlausibleListingPrice;
 
 use App\Support\PhilippinePin;
 use Illuminate\Foundation\Http\FormRequest;
@@ -45,7 +46,7 @@ class UpdateListingRequest extends FormRequest
             'property_subtype_id' => 'sometimes|exists:property_subtypes,id',
             'name'                => 'sometimes|string|max:255', 
             'address'             => 'sometimes|string',
-            'price'               => 'sometimes|numeric|min:0',
+            'price'               => ['sometimes', 'numeric', 'min:0', new PlausibleListingPrice($this->route('listing'))],
             'bedroom_count'       => 'nullable|integer|min:0',
             'bathroom_count'      => 'nullable|integer|min:0',
             'garage_count'        => 'nullable|integer|min:0',

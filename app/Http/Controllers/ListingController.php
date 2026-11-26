@@ -15,6 +15,7 @@ use App\Models\ListingInquiry;
 use App\Models\Property;
 use App\Models\PropertySubtype;
 use App\Models\User;
+use App\Rules\PlausibleListingPrice;
 use App\Services\Agent\AgentCachePurger;
 use App\Services\AuditMailService;
 use App\Services\ExpoPushService;
@@ -28,6 +29,8 @@ use App\Services\Listing\ListingClusterService;
 use App\Services\Listing\ListingCreatedService;
 use App\Services\Listing\ListingDealsService;
 use App\Services\Listing\ListingDemandService;
+use App\Services\Listing\ListingFeed;
+use App\Services\Listing\ListingFeedSwitch;
 use App\Services\Listing\ListingHeatmapService;
 use App\Services\Listing\ListingPriceInsightsService;
 use App\Services\Listing\ListingQualityService;
@@ -227,38 +230,61 @@ class ListingController extends Controller
         // so the two scopes match today).
         $isAgentScoped = (int) $request->input('agent_id') > 0;
 
+        // The public result pages can be ordered in three groups: available with a price that can be
+        // shown, then available with a price shown as "Price on request", then sold / rented / leased
+        // (see ListingFeed). Off until the `listings.feed.order` switch says so. The detail-page rails
+        // (`pool`) and an agent's own page keep the newest-update order.
+        if (! $isAgentScoped
+            && ! $request->filled('pool')
+            && ListingFeedSwitch::order() === ListingFeedSwitch::ORDER_GROUPS) {
+            $scoped = Listing::publiclyListed()->filter($request);
+
+            return new ListingResourceCollection(
+                ListingFeed::paginate($request, $scoped, $perPage, $this->publicFeedRelations())
+            );
+        }
+
         $listings = ($isAgentScoped ? Listing::visibleOnAgentPage() : Listing::publiclyListed())
-            ->with([
-                // Eager-load every relation the Resource touches so a page
-                // hydrates in a fixed number of queries instead of N+1 per listing:
-                // PropertyResource reads barangay→city→province + furnishing;
-                // PropertySubtypeResource reads ->type; AgentResource reads ->user.
-                'property.propertyAttribute.subtype.type',
-                // nearbyFacility is whenLoaded() in PropertyResource and the browse
-                // grid card never renders it — so it's loaded only on the detail
-                // page (resolveByKeywordsAndSlug), not here. Saves one query + the
-                // hasMany facility rows on every browse page.
-                'property.barangay.city.province',
-                'property.furnishing',
-                'category',
-                // "For Assume" money — the card shows cash-out AND all-in, so
-                // without this every pasalo card would lazy-load its own row.
-                'assumeDetail',
-                'agent' => function ($q) {
-                    $q->withCount('listings');
-                },
-                // withCount/withMax feed AgentResource's last_login_at + login_count
-                // without an N+1 per listing's agent.
-                'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
-                // AgentResource emits page_slug from pageBuilder — eager-load it so
-                // the card's agent link doesn't lazy-load one row per listing.
-                'agent.pageBuilder',
-            ])
+            ->with($this->publicFeedRelations())
             ->filter($request)
             ->orderByDesc('updated_at')
             ->paginate($perPage);
 
         return new ListingResourceCollection($listings);
+    }
+
+    /**
+     * The relations a result page reads, eager-loaded so a page costs a fixed number of queries
+     * instead of N+1 per listing.
+     *
+     * @return array<int|string, mixed>
+     */
+    private function publicFeedRelations(): array
+    {
+        return [
+            // PropertyResource reads barangay→city→province + furnishing;
+            // PropertySubtypeResource reads ->type; AgentResource reads ->user.
+            'property.propertyAttribute.subtype.type',
+            // nearbyFacility is whenLoaded() in PropertyResource and the browse
+            // grid card never renders it — so it's loaded only on the detail
+            // page (resolveByKeywordsAndSlug), not here. Saves one query + the
+            // hasMany facility rows on every browse page.
+            'property.barangay.city.province',
+            'property.furnishing',
+            'category',
+            // "For Assume" money — the card shows cash-out AND all-in, so
+            // without this every pasalo card would lazy-load its own row.
+            'assumeDetail',
+            'agent' => function ($q) {
+                $q->withCount('listings');
+            },
+            // withCount/withMax feed AgentResource's last_login_at + login_count
+            // without an N+1 per listing's agent.
+            'agent.user' => fn ($q) => $q->withCount('loginLogs')->withMax('loginLogs', 'logged_in_at'),
+            // AgentResource emits page_slug from pageBuilder — eager-load it so
+            // the card's agent link doesn't lazy-load one row per listing.
+            'agent.pageBuilder',
+        ];
     }
 
     public function resolveByKeywordsAndSlug(Request $request)
@@ -2749,7 +2775,7 @@ class ListingController extends Controller
             'status' => 'sometimes|string|max:255',
             'name' => 'sometimes|string|max:255',
             'slug' => 'nullable|string|max:255',
-            'price' => 'sometimes|numeric|min:0',
+            'price' => ['sometimes', 'numeric', 'min:0', new PlausibleListingPrice($listing)],
             'featured_photo' => 'nullable|string|max:255',
             'is_featured' => 'sometimes|boolean',
             'clicks' => 'nullable|integer|min:0',

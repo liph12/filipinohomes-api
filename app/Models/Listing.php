@@ -6,6 +6,8 @@ use App\Auditing\LogsActivity;
 use App\Jobs\PingIndexNow;
 use App\Services\Agent\AgentCachePurger;
 use App\Services\IndexNowService;
+use App\Services\Listing\ListingFeedSwitch;
+use App\Services\Listing\ListingPriceRules;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -71,6 +73,24 @@ class Listing extends Model implements Auditable
      * MySQL has no such column.
      */
     public ?bool $was_actually_updated = null;
+
+    /**
+     * While true, an agent's price change does not send a Verified listing back to review. Only set by
+     * {@see withoutPriceReview()}, for the "your price looks wrong" prompt: an agent who fixes a typo
+     * (25 → 25,000) is repairing the listing, not re-pricing what the audit vouched for.
+     */
+    private static bool $suppressPriceReview = false;
+
+    /** Run $fn with the price-change review reopening switched off (and always switched back on). */
+    public static function withoutPriceReview(callable $fn): mixed
+    {
+        self::$suppressPriceReview = true;
+        try {
+            return $fn();
+        } finally {
+            self::$suppressPriceReview = false;
+        }
+    }
 
     /**
      * Columns that, when changed, affect what an agent's public profile
@@ -307,6 +327,9 @@ class Listing extends Model implements Auditable
      */
     private static function reopenReviewOnAgentPriceChange(self $listing): void
     {
+        if (self::$suppressPriceReview) {
+            return;
+        }
         if (! in_array($listing->getOriginal('verification_status'), ['verified', 'fully_verified'], true)
             || $listing->isDirty('verification_status')) {
             return;
@@ -599,6 +622,14 @@ class Listing extends Model implements Auditable
 
         if ($priceMax = $request->input('price_max')) {
             $query->where('listings.price', '<=', $priceMax);
+        }
+
+        // A price bound asks for listings priced between two figures, so a price that cannot be an asking
+        // price (a rent typed as 25 for ₱25,000, a ₱700 per-sqm lot) must not qualify. Off until the
+        // `listings.price_guard` switch says so; the price filters then match what the page shows.
+        if (($request->input('price_min') || $request->input('price_max')) && ListingFeedSwitch::priceGuard()) {
+            [$believable, $bindings] = ListingPriceRules::believableSql(ListingFeedSwitch::approvedPrices());
+            $query->whereRaw($believable, $bindings);
         }
 
         if ($request->filled('sqm_min')) {

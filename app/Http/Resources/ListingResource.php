@@ -2,6 +2,8 @@
 namespace App\Http\Resources;
 
 use App\Services\Listing\AssumeComputation;
+use App\Services\Listing\ListingFeedSwitch;
+use App\Services\Listing\ListingPriceRules;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\AgentResource;
@@ -29,6 +31,11 @@ class ListingResource extends JsonResource
             'name'           => $this->name,
             'slug'           => $this->slug,
             'price'          => $this->price,
+            // The verdict on the price ("ok" | "suspect"): present only while the price guard is on and the
+            // relations it reads are loaded. A suspect price is shown as "Price on request" until its agent
+            // confirms or corrects it; the number itself is never changed. The reason and the suggested
+            // figure are for the listing's own agent and admins only.
+            ...$this->priceVerdict($canSeeAudit),
             'featured_photo' => $this->featured_photo,
             // Agent-promoted flyer capture used as the primary og:image
             // (null → the frontend's generated /og/listing card).
@@ -98,5 +105,40 @@ class ListingResource extends JsonResource
                 );
             }),
         ];
+    }
+
+    /**
+     * `price_status` (and, for the owner / an admin, `price_reason`, `price_suggested` and
+     * `price_confirmable`). Nothing is added while the guard is off, or when the relations the verdict
+     * reads are not loaded (it never lazy-loads: a page of twelve would cost forty queries).
+     *
+     * @return array<string, mixed>
+     */
+    private function priceVerdict(bool $forOwner): array
+    {
+        if (! ListingFeedSwitch::priceGuard() || ! $this->relationLoaded('category')) {
+            return [];
+        }
+
+        $attributes = $this->relationLoaded('property') && $this->property?->relationLoaded('propertyAttribute')
+            ? $this->property->propertyAttribute
+            : null;
+        $subtype = $attributes?->relationLoaded('subtype') ? $attributes->subtype : null;
+        $type = $subtype?->relationLoaded('type') ? $subtype->type?->name : null;
+
+        $approved = ListingFeedSwitch::approvedPrices();
+        $confirmed = isset($approved[$this->id]) && abs($approved[$this->id] - (float) $this->price) < 0.005;
+        $verdict = ListingPriceRules::classify($this->price, $this->category?->name, $type, $attributes?->lot_area, $confirmed);
+
+        $out = ['price_status' => $verdict['status']];
+        if ($forOwner && $verdict['status'] === 'suspect') {
+            $out += [
+                'price_reason' => $verdict['reason'],
+                'price_suggested' => $verdict['suggested'],
+                'price_confirmable' => $verdict['confirmable'],
+            ];
+        }
+
+        return $out;
     }
 }

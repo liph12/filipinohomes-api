@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\AssumeDetail;
+use App\Rules\PlausibleListingPrice;
 
 use App\Support\PhilippinePin;
 use Illuminate\Foundation\Http\FormRequest;
@@ -50,7 +51,7 @@ class StoreListingRequest extends FormRequest
             'property_subtype_id' => 'required|exists:property_subtypes,id',
             'name' => 'required|string|max:255',
             'address' => 'required|string',
-            'price' => 'required|numeric|min:0',
+            'price' => ['required', 'numeric', 'min:0', new PlausibleListingPrice],
             'bedroom_count' => 'nullable|integer|min:0',
             'bathroom_count' => 'nullable|integer|min:0',
             'garage_count' => 'nullable|integer|min:0',
